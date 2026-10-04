@@ -383,13 +383,9 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     },
     # TASK-33011: moved verbatim out of app.py with ServiceWiringMixin.
     "tldw_chatbook/app_service_wiring.py": {
-        "Deferred workspace agent provisioning wiring failed": (
-            "type(exc).__name__",
-        ),
+        "Deferred workspace agent provisioning wiring failed": ("type(exc).__name__",),
         "Workspace agent provisioning skipped": (),
-        "Workspace agent backfill failed during app wiring": (
-            "type(exc).__name__",
-        ),
+        "Workspace agent backfill failed during app wiring": ("type(exc).__name__",),
         "Workspace agent backfill provisioned": ("provisioned",),
     },
     # TASK-33011: moved verbatim out of app.py with LibraryIngestQueueMixin.
@@ -404,9 +400,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     },
     "tldw_chatbook/Workspaces/agent_provisioning.py": {
         "Workspace agent provisioning failed": ("type(exc).__name__",),
-        "Workspace agent backfill could not persist defaults": (
-            "type(exc).__name__",
-        ),
+        "Workspace agent backfill could not persist defaults": ("type(exc).__name__",),
         "Workspace agent backfill had failures": (),
         "Workspace agent backfill completion flag could not be stored": (
             "type(exc).__name__",
@@ -415,12 +409,8 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/Workspaces/registry_service.py": {
         "Workspace agent provisioning hook failed": ("type(exc).__name__",),
         "Workspace agent provisioning returned no defaults": (),
-        "Workspace agent defaults could not be persisted": (
-            "type(exc).__name__",
-        ),
-        "Ignoring malformed workspace assistant_defaults": (
-            "type(exc).__name__",
-        ),
+        "Workspace agent defaults could not be persisted": ("type(exc).__name__",),
+        "Ignoring malformed workspace assistant_defaults": ("type(exc).__name__",),
     },
     "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py": {
         "GGUF launch lease close failed": ("provider",),
@@ -1019,7 +1009,8 @@ def test_task_15743_exception_types_survive_loguru_forwarding() -> None:
             # Receipt degradation also supports a missing exception. Only its
             # literal fallback is safe; arbitrary conditional payloads are not.
             if not any(
-                value in {
+                value
+                in {
                     "type(exc).__name__",
                     "type(exc).__name__ if exc is not None else 'invalid_state'",
                 }
@@ -1154,7 +1145,9 @@ def test_build_inventory_projects_schema_v3_path_candidates(
     assert "summary" not in inventory
     assert inventory["path_privacy_rules"]["candidate_status"] == ("legacy_unreviewed")
     assert (
-        diagnostic_inventory.inventory_summary(inventory)["path_privacy_candidate_calls"]
+        diagnostic_inventory.inventory_summary(inventory)[
+            "path_privacy_candidate_calls"
+        ]
         == 1
     )
     assert inventory["path_privacy_candidates"] == [
@@ -3475,7 +3468,9 @@ def test_inventory_excludes_nested_virtualenv_but_keeps_application_sources(
 
 def test_buddy_uat_lifecycle_diagnostics_do_not_capture_private_errors(monkeypatch):
     owners = {
-        "tldw_chatbook/UI/LLM_Management_Window.py": {"Lazy LLM view mount failed: view={}": ("safe_view",)},
+        "tldw_chatbook/UI/LLM_Management_Window.py": {
+            "Lazy LLM view mount failed: view={}": ("safe_view",)
+        },
         "tldw_chatbook/UI/Screens/library_screen.py": {
             "Pending Library lifecycle write failed during unmount.": ()
         },

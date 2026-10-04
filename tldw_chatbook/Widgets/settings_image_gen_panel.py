@@ -75,7 +75,9 @@ _GENERATION_DEFAULT_FIELDS: tuple[tuple[str, str], ...] = (
     ("context_llm_timeout_seconds", "Context LLM timeout (s)"),
 )
 
-_DEMO_HINT_TEXT = "Test a generation end-to-end: command palette → Image Generation demo"
+_DEMO_HINT_TEXT = (
+    "Test a generation end-to-end: command palette → Image Generation demo"
+)
 
 
 def _key_source_line(key_source: str) -> str:
@@ -192,7 +194,9 @@ class ImageGenSettingsPanel(Vertical):
         # VALUE instead of a placeholder.
         raw_top: Mapping = load_user_image_generation_table()
         rows = build_backend_rows(cfg)
-        rows_by_id: dict[str, ImageGenBackendRow] = {row.backend_id: row for row in rows}
+        rows_by_id: dict[str, ImageGenBackendRow] = {
+            row.backend_id: row for row in rows
+        }
         overlay = self.overlay
 
         effective_default_backend = overlay.get("default_backend", cfg.default_backend)
@@ -207,7 +211,10 @@ class ImageGenSettingsPanel(Vertical):
         with Horizontal(classes="settings-input-row settings-select-row"):
             yield Static("Default backend", classes="settings-input-label")
             yield Select(
-                [(BACKEND_LABELS[backend_id], backend_id) for backend_id in BACKEND_IDS],
+                [
+                    (BACKEND_LABELS[backend_id], backend_id)
+                    for backend_id in BACKEND_IDS
+                ],
                 value=(
                     effective_default_backend
                     if effective_default_backend in BACKEND_IDS
@@ -295,9 +302,13 @@ class ImageGenSettingsPanel(Vertical):
                                 )
                             else:
                                 raw_value = raw_backend.get(spec.toml_key)
-                                default_value = "" if raw_value is None else str(raw_value)
+                                default_value = (
+                                    "" if raw_value is None else str(raw_value)
+                                )
                                 yield Input(
-                                    value=str(overlay.get(field_overlay_key, default_value)),
+                                    value=str(
+                                        overlay.get(field_overlay_key, default_value)
+                                    ),
                                     id=f"settings-imagegen-field-{backend_id}-{spec.toml_key}",
                                     classes="settings-compact-input",
                                     placeholder=effective_placeholder(
@@ -305,15 +316,22 @@ class ImageGenSettingsPanel(Vertical):
                                     ),
                                 )
                         if spec.kind == "secret":
-                            source_classes = "settings-imagegen-hint settings-imagegen-key-source"
+                            source_classes = (
+                                "settings-imagegen-hint settings-imagegen-key-source"
+                            )
                             if row.secret_optional and key_source == "missing":
-                                source_classes += " settings-imagegen-key-source-neutral"
+                                source_classes += (
+                                    " settings-imagegen-key-source-neutral"
+                                )
                             yield Static(
                                 _key_source_line(key_source),
                                 id=f"settings-imagegen-key-source-{backend_id}",
                                 classes=source_classes,
                             )
-                        if backend_id == "openrouter" and spec.toml_key == "default_model":
+                        if (
+                            backend_id == "openrouter"
+                            and spec.toml_key == "default_model"
+                        ):
                             yield Static(
                                 "env OPENROUTER_IMAGE_MODEL overrides this",
                                 classes="settings-imagegen-hint",

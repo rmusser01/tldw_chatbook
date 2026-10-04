@@ -44,18 +44,24 @@ def format_refresh_notification(report: RefreshReport) -> str | None:
     write_failures: list[str] = []
     for outcome in report.outcomes:
         if outcome.status == "refreshed" and outcome.saved_model_ids:
-            parts.append(f"{outcome.provider_list_key}: {len(outcome.saved_model_ids)} new saved")
+            parts.append(
+                f"{outcome.provider_list_key}: {len(outcome.saved_model_ids)} new saved"
+            )
         elif (
             outcome.status == "refreshed"
             and outcome.new_model_ids
             and not outcome.write_failed
         ):
             # Suppressed on write failure: the save-failed clause already covers it.
-            parts.append(f"{outcome.provider_list_key}: {len(outcome.new_model_ids)} new cached")
+            parts.append(
+                f"{outcome.provider_list_key}: {len(outcome.new_model_ids)} new cached"
+            )
         elif outcome.status == "baseline":
             if outcome.new_model_ids:
                 # Baseline suppressed the write; the diff is still reported as cached.
-                parts.append(f"{outcome.provider_list_key}: {len(outcome.new_model_ids)} new cached")
+                parts.append(
+                    f"{outcome.provider_list_key}: {len(outcome.new_model_ids)} new cached"
+                )
             else:
                 parts.append(f"{outcome.provider_list_key}: catalog cached")
         if outcome.write_failed:
@@ -88,7 +94,9 @@ class ModelCatalogRefreshed(Message):
         self.providers = frozenset(providers)
 
 
-async def forward_model_catalog_refreshed(app: Any, event: ModelCatalogRefreshed) -> bool:
+async def forward_model_catalog_refreshed(
+    app: Any, event: ModelCatalogRefreshed
+) -> bool:
     """Forward the event to a mounted screen exposing a refresh handler.
 
     Textual messages bubble UP only: App.post_message() never reaches a Screen's

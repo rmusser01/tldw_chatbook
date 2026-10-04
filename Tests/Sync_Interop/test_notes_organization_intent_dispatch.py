@@ -1059,11 +1059,15 @@ def test_folder_link_restore_uses_repository_lineage_and_source_version_allocato
         **_scope(),
     )
 
-    restored = notes.get_connection().execute(
-        "SELECT source_version, routing_metadata_json "
-        "FROM notes_organization_sync_intents "
-        "WHERE domain = 'notes.folder_link' ORDER BY intent_sequence DESC LIMIT 1"
-    ).fetchone()
+    restored = (
+        notes.get_connection()
+        .execute(
+            "SELECT source_version, routing_metadata_json "
+            "FROM notes_organization_sync_intents "
+            "WHERE domain = 'notes.folder_link' ORDER BY intent_sequence DESC LIMIT 1"
+        )
+        .fetchone()
+    )
     assert tuple(restored) == (41, '{"restore_intent":true}')
 
 

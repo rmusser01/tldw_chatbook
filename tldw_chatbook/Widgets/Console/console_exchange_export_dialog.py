@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_exchange_export import (
     ExchangeExportUnavailable,
     project_exchange_export,
 )
+
 # This module is on the Chat first-paint leg at module scope
 # (console_conversation_inspector -> chat_screen), so the profile vocabulary
 # and its shared presentation come from the two light leaves -- NEVER from
@@ -30,6 +31,7 @@ from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Widgets.Console.trace_export_profile_ui import (
+    EXPORT_STILL_WRITING,
     TRACE_EXPORT_PROFILE_COPY,
     TRACE_EXPORT_PROFILE_LABELS,
     full_trace_confirmation,
@@ -101,7 +103,9 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
     def compose(self) -> ComposeResult:
         full_available = self._capture.capture_detail.value == "full"
         with Vertical(id="exchange-export-dialog"):
-            yield Static("Export Exchange call", id="exchange-export-title", markup=False)
+            yield Static(
+                "Export Exchange call", id="exchange-export-title", markup=False
+            )
             with VerticalScroll(id="exchange-export-body"):
                 yield Static(
                     "Choose what leaves this machine. Credentials stay structurally blocked.",
@@ -138,7 +142,9 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
                 )
                 with RadioSet(id="exchange-export-destinations"):
                     yield RadioButton(
-                        "Clipboard", id="exchange-export-destination-clipboard", value=True
+                        "Clipboard",
+                        id="exchange-export-destination-clipboard",
+                        value=True,
                     )
                     yield RadioButton("File", id="exchange-export-destination-file")
                 path = Input(
@@ -151,9 +157,7 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
             yield Static("Ready", id="exchange-export-status", markup=False)
             with Horizontal(id="exchange-export-actions"):
                 yield Button("Cancel", id="exchange-export-cancel")
-                yield Button(
-                    "Export", id="exchange-export-submit", variant="primary"
-                )
+                yield Button("Export", id="exchange-export-submit", variant="primary")
 
     def on_mount(self) -> None:
         self.query_one("#exchange-export-submit", Button).focus()
@@ -190,9 +194,9 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
             raise ValueError("unsupported export destination")
         self._destination = destination
         self.query_one("#exchange-export-path", Input).display = destination == "file"
-        self.query_one(
-            "#exchange-export-destination-clipboard", RadioButton
-        ).value = destination == "clipboard"
+        self.query_one("#exchange-export-destination-clipboard", RadioButton).value = (
+            destination == "clipboard"
+        )
         self.query_one("#exchange-export-destination-file", RadioButton).value = (
             destination == "file"
         )
@@ -224,16 +228,12 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
     @on(Button.Pressed, "#exchange-export-submit")
     def _export(self, event: Button.Pressed) -> None:
         event.stop()
-        self.run_worker(
-            self.export_selected(), group="exchange-export", exclusive=True
-        )
+        self.run_worker(self.export_selected(), group="exchange-export", exclusive=True)
 
     @on(Input.Submitted, "#exchange-export-path")
     def _submit_path(self, event: Input.Submitted) -> None:
         event.stop()
-        self.run_worker(
-            self.export_selected(), group="exchange-export", exclusive=True
-        )
+        self.run_worker(self.export_selected(), group="exchange-export", exclusive=True)
 
     def _revision_is_current(self) -> bool:
         try:
@@ -339,9 +339,7 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
             return False
         except Exception as exc:  # noqa: BLE001 - content-free disclosure boundary
             self._projection = None
-            self._set_status(
-                f"Export failed ({type(exc).__name__}).", error=True
-            )
+            self._set_status(f"Export failed ({type(exc).__name__}).", error=True)
             return False
         finally:
             self._exporting = False
@@ -365,3 +363,15 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
             self._set_status("Export is finishing; the destination remains protected.")
             return
         self.dismiss_safe_once(None)
+
+    async def confirm_quit(self) -> bool:
+        """Stay while the export runs, as Escape does (TASK-33622.15).
+
+        Returns:
+            refuse_quit_while_working's answer mid-export; else True.
+        """
+        if not self._exporting:
+            return True
+        from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
+
+        return await refuse_quit_while_working(self, EXPORT_STILL_WRITING)

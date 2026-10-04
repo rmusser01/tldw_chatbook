@@ -26,6 +26,34 @@ def _format_bytes(size_bytes: int) -> str:
     return f"{mib:.1f} MiB"
 
 
+async def confirm_quit_discarding_generated_video(screen: ModalScreen) -> bool:
+    """Ask whether quitting may discard a generated video still awaiting a choice.
+
+    The one quit prompt for every screen of the generated-video choice: the
+    capacity modal itself, and (TASK-33622.15) its Save-to-disk picker and
+    that picker's Replace / Destination-changed confirmations, which open
+    after the capacity modal has closed. Must run inside a worker; the app's
+    quit flow is one.
+
+    Args:
+        screen: The open screen of that choice.
+
+    Returns:
+        True to let the quit proceed; False to stay on that screen.
+    """
+    from tldw_chatbook.Widgets.confirmation_dialog import (
+        confirm_quit_discarding_edits,
+    )
+
+    return await confirm_quit_discarding_edits(
+        screen,
+        "Quitting discards this generated video. The generated result "
+        "will be lost and cannot be recovered.",
+        title="Discard generated video and quit?",
+        cancel_label="Stay",
+    )
+
+
 class ConsoleVideoCapacityModal(SafeModalDismissMixin, ModalScreen[CapacityAction]):
     """Ask where to put a generated video that is not in the managed store."""
 
@@ -119,7 +147,9 @@ class ConsoleVideoCapacityModal(SafeModalDismissMixin, ModalScreen[CapacityActio
             save_variant = "default"
 
         with Vertical(id="video-capacity-dialog"):
-            yield Static("Generated video", classes="console-modal-header", markup=False)
+            yield Static(
+                "Generated video", classes="console-modal-header", markup=False
+            )
             yield Static(
                 "Generated size: "
                 f"{_format_bytes(self._size_bytes)} · Configured capacity: "
@@ -205,17 +235,7 @@ class ConsoleVideoCapacityModal(SafeModalDismissMixin, ModalScreen[CapacityActio
         Returns:
             True to let the quit proceed; False to stay on this choice.
         """
-        from tldw_chatbook.Widgets.confirmation_dialog import (
-            confirm_quit_discarding_edits,
-        )
-
-        return await confirm_quit_discarding_edits(
-            self,
-            "Quitting discards this generated video. The generated result "
-            "will be lost and cannot be recovered.",
-            title="Discard generated video and quit?",
-            cancel_label="Stay",
-        )
+        return await confirm_quit_discarding_generated_video(self)
 
     def _apply_discard_confirmation(
         self,

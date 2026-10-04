@@ -53,7 +53,9 @@ def test_saving_leaves_unrendered_tools_keys_alone(tmp_path, monkeypatch):
 
     config_module.load_settings(force_reload=True)
     try:
-        config_module.save_settings_to_cli_config({"tools": {"read_file_enabled": True}})
+        config_module.save_settings_to_cli_config(
+            {"tools": {"read_file_enabled": True}}
+        )
         config_module.load_settings(force_reload=True)
         assert config_module.get_cli_setting("tools", "create_note_enabled") is True
     finally:
@@ -107,7 +109,7 @@ def test_risk_tags_are_not_rendered_as_textual_markup():
     src = pathlib.Path("tldw_chatbook/UI/Tools_Settings_Window.py").read_text(
         encoding="utf-8"
     )
-    assert '[{tags}]' not in src and '[{", ".join' not in src
+    assert "[{tags}]" not in src and '[{", ".join' not in src
 
 
 def test_every_gateable_tool_gets_a_switch_id():
@@ -139,9 +141,7 @@ def test_web_deep_search_gate_key_round_trips_to_config(tmp_path, monkeypatch):
             {"tools": {"web_deep_search_enabled": True}}
         )
         config_module.load_settings(force_reload=True)
-        specs = _default_specs(
-            tmp_path, workspace_executor=_NoopWorkspaceExecutor()
-        )
+        specs = _default_specs(tmp_path, workspace_executor=_NoopWorkspaceExecutor())
         assert "web_deep_search" in {s.name for s in specs}
     finally:
         config_module._SETTINGS_CACHE = None

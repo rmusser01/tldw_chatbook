@@ -15,7 +15,8 @@ async def wait_for(case, predicate):
     try:
         async with asyncio.timeout(30):
             while not predicate():
-                await case.pilot.pause(0.02)
+                await asyncio.sleep(0.02)
+        await case.pilot.pause()
     except TimeoutError:
         pytest.fail(
             f"Console state: {case.controller.run_state}; rules: {case.rules.state(case.session_id).phase}; primary calls: {len(case.requests)}; helper calls: {len(case.transport.requests)}; learning: {case.learning_results}; draft: {case.composer.draft_text()!r}; dispatched: {[(r.accepted, r.visible_copy) for r in case.dispatches]}; failures: {case.failures}"

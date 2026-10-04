@@ -33,9 +33,7 @@ REGION_TITLES: dict[Region, str] = {
     Region.RIGHT_RAIL: "Inspector",
 }
 
-SELF_HEADED_REGIONS: frozenset[Region] = frozenset(
-    {Region.ITEMS, Region.RIGHT_RAIL}
-)
+SELF_HEADED_REGIONS: frozenset[Region] = frozenset({Region.ITEMS, Region.RIGHT_RAIL})
 
 _READ_GRIP_REGIONS: tuple[Region, ...] = (
     Region.LEFT_RAIL,
@@ -116,9 +114,7 @@ class WatchlistsWorkbench(Vertical):
         self._rendered_layout = layout
         self._layout_apply_lock = asyncio.Lock()
         self.set_class(self.read_mode, "watchlists-read-mode")
-        self.set_reactive(
-            WatchlistsWorkbench.effective_layout_request, (0, layout)
-        )
+        self.set_reactive(WatchlistsWorkbench.effective_layout_request, (0, layout))
         self._sync_expanded_side_pane_class(layout=layout)
 
     @property
@@ -253,15 +249,11 @@ class WatchlistsWorkbench(Vertical):
         restore_focus = {
             region
             for region in prepared
-            if self.query_one(
-                f"#wl-grip-{region.value}", WatchlistsPaneGrip
-            ).has_focus
+            if self.query_one(f"#wl-grip-{region.value}", WatchlistsPaneGrip).has_focus
         }
         try:
             for region, node in prepared.items():
-                grip = self.query_one(
-                    f"#wl-grip-{region.value}", WatchlistsPaneGrip
-                )
+                grip = self.query_one(f"#wl-grip-{region.value}", WatchlistsPaneGrip)
                 if region is Region.RIGHT_RAIL:
                     await body.mount(node, after=grip)
                 else:
@@ -294,9 +286,7 @@ class WatchlistsWorkbench(Vertical):
                     if self._contains_focus(mounted):
                         grip.focus()
                     await mounted.remove()
-            grip = self.query_one(
-                f"#wl-grip-{region.value}", WatchlistsPaneGrip
-            )
+            grip = self.query_one(f"#wl-grip-{region.value}", WatchlistsPaneGrip)
             grip.expanded = expanded
         for region in restore_focus:
             mounted = self._mounted_region_body(region)
@@ -321,9 +311,7 @@ class WatchlistsWorkbench(Vertical):
         """Expose whether the effective mode has an expanded side body."""
         read_mode = self.read_mode if read_mode is None else read_mode
         layout = self.region_layout if layout is None else layout
-        side_regions = (
-            _READ_GRIP_REGIONS if read_mode else _MANAGEMENT_GRIP_REGIONS
-        )
+        side_regions = _READ_GRIP_REGIONS if read_mode else _MANAGEMENT_GRIP_REGIONS
         self.set_class(
             any(not layout.is_collapsed(region) for region in side_regions),
             _EXPANDED_SIDE_PANE_CLASS,
@@ -389,9 +377,7 @@ class WatchlistsWorkbench(Vertical):
             self.set_reactive(
                 WatchlistsWorkbench.effective_layout_request, (token, layout)
             )
-            self._sync_expanded_side_pane_class(
-                read_mode=next_read_mode, layout=layout
-            )
+            self._sync_expanded_side_pane_class(read_mode=next_read_mode, layout=layout)
             self.post_message(
                 RegionLayoutApplied(token=token, previous=previous, layout=layout)
             )
@@ -482,9 +468,7 @@ class WatchlistsWorkbench(Vertical):
             node_id
             for node_id in prepared_nodes
             if node_id.startswith("wl-region-")
-            and self._grip_has_focus(
-                Region(node_id.removeprefix("wl-region-"))
-            )
+            and self._grip_has_focus(Region(node_id.removeprefix("wl-region-")))
         }
         for child in list(body.children):
             if child.id not in desired_ids:
@@ -517,9 +501,7 @@ class WatchlistsWorkbench(Vertical):
             if container is not None:
                 await self._replace_region_content(container, replacement)
 
-        grip_regions = (
-            _READ_GRIP_REGIONS if read_mode else _MANAGEMENT_GRIP_REGIONS
-        )
+        grip_regions = _READ_GRIP_REGIONS if read_mode else _MANAGEMENT_GRIP_REGIONS
         for region in grip_regions:
             grip = self.query_one(f"#wl-grip-{region.value}", WatchlistsPaneGrip)
             grip.expanded = not layout.is_collapsed(region)

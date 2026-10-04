@@ -75,7 +75,10 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app.py": 5712,
     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
     # 4,999 lines it is larger than two rows below, so it is born governed.
-    "tldw_chatbook/app_ingest_queue.py": 4999,
+    # 2026-10-03 (PR #2993): TASK-20973's provenance block added 16 lines;
+    # the signature probe moved beside the poller's other pure helpers in
+    # Library/server_ingest_reconcile.py: 5,015 -> 4,985.
+    "tldw_chatbook/app_ingest_queue.py": 4985,
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
@@ -99,11 +102,35 @@ _BUDGETS: dict[str, int] = {
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16397,
+    # 2026-10-03 (PR #2993, owner decision): +128 is formatter reflow only
+    # (TASK-26000 series, Ruff 0.15.22; the file is AST-identical to the
+    # 16,397-line version), so the row is re-measured, not grown.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16525,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7764,
+    # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
+    # words and open focus moved to console_settings_field_row.py.
+    # TASK-33006.2 lowers it to 7,466: the support sync moved there too, and
+    # the modal's own support table and "no effect" copy are gone. Its
+    # review fix lowers it to 7,445: the required check and the control
+    # support reads moved there as well. TASK-33006.3 lowers it to 7,410:
+    # the Request estimate and name disclosures are built there now.
+    # TASK-33006.4 lowers it to 6,201: the provider picker, the model search
+    # and their adapters, Custom model and Keep unverified are gone; the
+    # model changes only through Switch model's pick mode. Its review fix
+    # lowers it to 6,189: a created entry's landing moved to the field rows.
+    # TASK-33006.5 lowers it to 6,156: the footer buttons lost their
+    # compose-time geometry and Use saved defaults lives in
+    # console_settings_saved_defaults.py. TASK-33006.6 lowers it to 6,143:
+    # the label column's inline widths moved to app CSS, so the Context view
+    # can widen it. TASK-33006.7 lowers it to 6,142: one handler switches
+    # both views, which now open at their top. The Phase 6 final review fix
+    # lowers it to 6,103: Save as model default shows on the saved-defaults
+    # answer, so the persisted-table predicate is gone. (Counts above predate
+    # PR #2993's ruff reflow of this file, +60 lines AST-identical; Phase 6
+    # rebased onto it measures 6,193.)
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6193,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them
@@ -124,8 +151,29 @@ _BUDGETS: dict[str, int] = {
     # `origin/dev` 9e33252708 — see the module docstring's second pass.
     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14324,
     # TASK-33921: 10,854 on dev 2026-10-03 (over by 450); the Voice step moved
-    # to UI/Wizards/first_run_voice_step.py.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 9866,
+    # to UI/Wizards/first_run_voice_step.py. TASK-34100.1: every other step
+    # moved to its own module (9,866 -> 3,149), then the busy line and the
+    # worker helper's call sites landed (3,183); review round 1 moved the
+    # fence's focus hold into first_run_step_guard.py (3,182); round 2 held the
+    # fence through finishing (3,181); round 3 shared the discovery reuse rule
+    # (3,179). The wizard keeps the container, progress, nav bar, dialog and
+    # screen.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3177,
+    # TASK-34100.1: the step modules the split left at 1,000 lines or more
+    # are pinned at their exact size, so the split cannot regrow a god module
+    # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
+    # Model. New code for one of them goes in a helper module beside the step
+    # (first_run_<step>_<topic>.py), never in a raised row. The smaller step
+    # modules and helpers (Welcome, RAG, Tools, Notes, Appearance, Protect,
+    # Summary, the shared widgets, the discovery helpers, the busy line and
+    # the step guard) have no row: this file pins hand-picked god modules, and
+    # a row on a small module would stop the next fix adding even one line.
+    # Provider 2,461 -> 2,458: the Qodo round moved the handoff clear into
+    # first_run_model_discovery.drop_unreusable_handoff.
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2458,
+    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1708,
+    "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1070,
+    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
 }

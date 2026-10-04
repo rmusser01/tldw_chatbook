@@ -2,6 +2,8 @@
 
 import shutil
 import sqlite3
+
+import pytest
 from contextlib import closing
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -28,14 +30,15 @@ def test_installed_response_rules_are_local_only(chachanotes_template_db, tmp_pa
                 "console_response_rule_assessments",
                 "console_machine_followup_receipts",
             } <= names
-            assert db._CURRENT_SCHEMA_VERSION == 76
+            assert db._CURRENT_SCHEMA_VERSION == 77
             assert cursor.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         db.close()
 
 
-def test_v75_migrates_using_installed_sql_without_losing_history(
-    tmp_path, chachanotes_template_db
+@pytest.mark.parametrize("version", [75, 76])
+def test_historical_migrates_using_installed_sql_without_losing_history(
+    tmp_path, chachanotes_template_db, version
 ):
     from tldw_chatbook.DB.recovery_core_schema import CHACHANOTES_V75_SCHEMA
 
@@ -43,7 +46,9 @@ def test_v75_migrates_using_installed_sql_without_losing_history(
     shutil.copyfile(chachanotes_template_db, path)
     with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("PRAGMA foreign_keys=OFF")
-        connection.execute("DROP TRIGGER console_response_rules_conversation_cleanup")
+        connection.execute(
+            "DROP TRIGGER IF EXISTS console_response_rules_conversation_cleanup"
+        )
         names = [
             r[0]
             for r in connection.execute(
@@ -53,7 +58,8 @@ def test_v75_migrates_using_installed_sql_without_losing_history(
         for name in names:
             connection.execute('DROP TABLE "' + name + '"')
         connection.execute(
-            "UPDATE db_schema_version SET version=75 WHERE schema_name='rag_char_chat_schema'"
+            "UPDATE db_schema_version SET version=? WHERE schema_name='rag_char_chat_schema'",
+            (version,),
         )
         actual = tuple(
             r[0]
@@ -64,7 +70,7 @@ def test_v75_migrates_using_installed_sql_without_losing_history(
         assert actual == CHACHANOTES_V75_SCHEMA
     db = CharactersRAGDB(path, "rules-migration")
     try:
-        assert db._get_db_version(db.get_connection()) == 76
+        assert db._get_db_version(db.get_connection()) == 77
         with db.transaction() as cursor:
             assert (
                 cursor.execute(

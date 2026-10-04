@@ -45,6 +45,13 @@ from typing import Any
 from loguru import logger
 
 from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
+from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_PENDING_APPROVAL_KIND,
+    CONSOLE_PENDING_QUESTION_KIND,
+    CONSOLE_PENDING_SKILL_INSTALL_KIND,
+    CONSOLE_PENDING_SKILL_SCRIPT_KIND,
+    CONSOLE_PENDING_WORKTREE_MERGE_KIND,
+)
 
 #: Kind -> the controller attribute holding that kind's UI setter. The
 #: setters are attach-time assignments and may be absent entirely
@@ -55,18 +62,18 @@ from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
 #: (`remount_for_session`); approvals are re-derived separately by the
 #: sites' own approval block, which also drives the attach path.
 SESSION_REMOUNT_KINDS: tuple[str, ...] = (
-    "skill_install",
-    "skill_script",
-    "worktree_merge",
-    "question",
+    CONSOLE_PENDING_SKILL_INSTALL_KIND,
+    CONSOLE_PENDING_SKILL_SCRIPT_KIND,
+    CONSOLE_PENDING_WORKTREE_MERGE_KIND,
+    CONSOLE_PENDING_QUESTION_KIND,
 )
 
 KIND_SETTER_ATTRS: dict[str, str] = {
-    "approval": "set_pending_approval",
-    "skill_install": "set_pending_skill_install",
-    "skill_script": "set_pending_skill_script",
-    "worktree_merge": "set_pending_worktree_merge",
-    "question": "set_pending_question",
+    CONSOLE_PENDING_APPROVAL_KIND: "set_pending_approval",
+    CONSOLE_PENDING_SKILL_INSTALL_KIND: "set_pending_skill_install",
+    CONSOLE_PENDING_SKILL_SCRIPT_KIND: "set_pending_skill_script",
+    CONSOLE_PENDING_WORKTREE_MERGE_KIND: "set_pending_worktree_merge",
+    CONSOLE_PENDING_QUESTION_KIND: "set_pending_question",
 }
 
 
@@ -726,7 +733,12 @@ class InterruptRoundHost:
             if on_outcome is not None:
                 on_outcome("revoked")
             return "revoked"
-        if not hard_expired() and kind in {"approval", "skill_install", "skill_script", "worktree_merge"}:
+        if not hard_expired() and kind in {
+            CONSOLE_PENDING_APPROVAL_KIND,
+            CONSOLE_PENDING_SKILL_INSTALL_KIND,
+            CONSOLE_PENDING_SKILL_SCRIPT_KIND,
+            CONSOLE_PENDING_WORKTREE_MERGE_KIND,
+        }:
             with self.lock:
                 notify_hook = not state.get("run_hook_notified", False)
                 state["run_hook_notified"] = True
@@ -740,7 +752,12 @@ class InterruptRoundHost:
         publish_decision = getattr(self._seams, "_publish_pending_decision", None)
         retained_decision = (
             session_id is not None
-            and kind in {"approval", "skill_install", "skill_script"}
+            and kind
+            in {
+                CONSOLE_PENDING_APPROVAL_KIND,
+                CONSOLE_PENDING_SKILL_INSTALL_KIND,
+                CONSOLE_PENDING_SKILL_SCRIPT_KIND,
+            }
             and callable(publish_decision)
         )
         if retained_decision and not hard_expired():

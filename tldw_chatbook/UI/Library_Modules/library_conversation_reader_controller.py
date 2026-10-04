@@ -462,26 +462,14 @@ class LibraryConversationReaderController:
         return None
 
     def _ensure_library_conversation_reader_selection(self) -> None:
-        """Start the initial selected-row read once the permanent pane mounts."""
+        """Load the selected row, or re-check its loaded transcript."""
         conversation_id = self._selected_conversation_id
         if not conversation_id or self._library_conversations_select_mode:
             return
-        state = self._library_conversation_reader_state
-        record_version = self._conversation_reader_record_version(
-            self._conversation_reader_record(conversation_id)
-        )
-        if state.selected_id == conversation_id and (
-            (
-                state.loading
-                and (record_version is None or state.selected_version == record_version)
-            )
-            or (
-                state.loaded_actions_eligible
-                and (record_version is None or state.loaded_version == record_version)
-            )
-        ):
-            return
-        self._start_library_conversation_reader_selection(conversation_id)
+        # Off the boot path: Library's reader is the only caller.
+        from .library_conversation_reader_freshness import ensure_reader_current
+
+        ensure_reader_current(self, conversation_id)
 
     def _start_library_conversation_reader_selection(
         self, conversation_id: str
@@ -767,6 +755,9 @@ class LibraryConversationReaderController:
 
             state = self._library_conversation_reader_state
             if state.complete:
+                from .library_conversation_reader_freshness import recheck_settled_load
+
+                recheck_settled_load(self)
                 return
             next_offset = len(state.messages)
             if next_offset <= request.message_offset:

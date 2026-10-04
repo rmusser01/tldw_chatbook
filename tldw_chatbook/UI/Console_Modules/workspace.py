@@ -194,7 +194,6 @@ WORKSPACE_CONVERSATIONS_ACCESS_UNKNOWN = "Workspace access unknown."
 WORKSPACE_CONVERSATIONS_LOAD_FAILED = "Couldn't load conversations."
 
 
-
 @dataclass(slots=True)
 class SearchAttemptState:
     """One projection's explicit debounce, request, result, and Retry state."""
@@ -778,8 +777,8 @@ class ConsoleWorkspaceController:
         # Folder binding status may touch the filesystem.  Context rendering
         # runs on Textual's event loop, so it reads only this immutable cache;
         # one controller-owned worker refreshes it off-loop below.
-        self._workspace_files_availability_by_id: Mapping[str, bool] = (
-            MappingProxyType({})
+        self._workspace_files_availability_by_id: Mapping[str, bool] = MappingProxyType(
+            {}
         )
         self._workspace_files_runtime_bindings_by_id: Mapping[
             str, tuple[WorkspaceRuntimeBinding, ...]
@@ -1089,11 +1088,15 @@ class ConsoleWorkspaceController:
                     if modal.is_mounted:
                         modal.query_one("#console-workspace-files-back").focus()
                 else:
-                    self.app_instance.notify(WORKSPACE_FILES_OTHER_VISIT_COPY, severity="warning")
+                    self.app_instance.notify(
+                        WORKSPACE_FILES_OTHER_VISIT_COPY, severity="warning"
+                    )
                 return
             if self._workspace_files_admission_claim is not None:
                 if self._workspace_files_admission_claim != requested_id:
-                    self.app_instance.notify(WORKSPACE_FILES_OTHER_VISIT_COPY, severity="warning")
+                    self.app_instance.notify(
+                        WORKSPACE_FILES_OTHER_VISIT_COPY, severity="warning"
+                    )
                 return
             self._workspace_files_admission_claim = requested_id
         try:
@@ -1118,7 +1121,7 @@ class ConsoleWorkspaceController:
             async with self._workspace_files_admission_lock:
                 if self._workspace_files_modal is not None:
                     # A closing visit owns the ledger until its awaited
-                # unmount callback clears it; never retarget it.
+                    # unmount callback clears it; never retarget it.
                     return
                 self._workspace_files_visit_workspace_id = resolution.workspace_id
                 try:
@@ -1250,7 +1253,9 @@ class ConsoleWorkspaceController:
             workspace_id=workspace.workspace_id,
             workspace_name=workspace.name,
             active_workspace_id=(active.workspace_id if active is not None else None),
-            active_workspace_name=(active.name if active is not None else "Local Default"),
+            active_workspace_name=(
+                active.name if active is not None else "Local Default"
+            ),
             bindings=tuple(bindings),
             had_bindings=bool(raw_bindings),
         )
@@ -3012,6 +3017,7 @@ class ConsoleWorkspaceController:
             ),
             run_markers=run_markers,
         )
+
     def _console_conversation_appearance_map(
         self, conversation_ids: Iterable[str]
     ) -> dict[str, tuple[str, str]]:
@@ -3029,9 +3035,7 @@ class ConsoleWorkspaceController:
         off_loop`) alongside the persisted-rows cache. Unknown ids simply
         miss the cached map, exactly like a failed read.
         """
-        service = getattr(
-            self.app_instance, "local_chat_conversation_service", None
-        )
+        service = getattr(self.app_instance, "local_chat_conversation_service", None)
         get_appearances = getattr(service, "get_conversation_appearances", None)
         if not callable(get_appearances):
             return {}
@@ -3131,10 +3135,9 @@ class ConsoleWorkspaceController:
             session_character_id = _session_character_id(session)
             session_character_label = ""
             if session_character_id is not None:
-                session_character_label = (
-                    str(getattr(session, "character_name", "") or "").strip()
-                    or character_labels.get(session_character_id, "")
-                )
+                session_character_label = str(
+                    getattr(session, "character_name", "") or ""
+                ).strip() or character_labels.get(session_character_id, "")
             persisted_id = (
                 str(session.persisted_conversation_id).strip()
                 if session.persisted_conversation_id
@@ -3201,9 +3204,7 @@ class ConsoleWorkspaceController:
             if row.workspace_id and row.workspace_label
         }
         cached_by_conversation = {
-            str(row.conversation_id): row
-            for row in cached
-            if row.conversation_id
+            str(row.conversation_id): row for row in cached if row.conversation_id
         }
         active_session_id = store.active_session_id
         controller = self._console_chat_controller
@@ -3346,9 +3347,7 @@ class ConsoleWorkspaceController:
             *self._workspace_membership_rows.values(),
         )
         native_rows = self._native_console_switcher_rows(cached_named_rows)
-        rows = self._merge_console_switcher_memory_rows(
-            native_rows, cached_named_rows
-        )
+        rows = self._merge_console_switcher_memory_rows(native_rows, cached_named_rows)
         # task-31208: decorate the switcher projection with per-conversation
         # appearance (icon + color) the same way the rail's merge does, so
         # both surfaces show the same customization.
@@ -3365,9 +3364,7 @@ class ConsoleWorkspaceController:
         runtime = getattr(self.app_instance, "console_runtime", None)
         receipt_service = getattr(runtime, "activity_receipts", None)
         receipts = (
-            receipt_service.unseen_snapshot()
-            if receipt_service is not None
-            else ()
+            receipt_service.unseen_snapshot() if receipt_service is not None else ()
         )
         controller = self._console_chat_controller
         signals: list[ConsoleSwitcherActivitySignal] = []
@@ -3453,9 +3450,7 @@ class ConsoleWorkspaceController:
         query_plan = plan_console_history_query(validated_query)
         if not query_plan.can_match:
             return ConsoleSwitcherHistoryPage((), bounded_offset, bounded_limit, 0)
-        service = getattr(
-            self.app_instance, "local_chat_conversation_service", None
-        )
+        service = getattr(self.app_instance, "local_chat_conversation_service", None)
         include_mode = False
         if service is None:
             service = getattr(
@@ -3776,9 +3771,7 @@ class ConsoleWorkspaceController:
                                     ):
                                         database.close_connection()
 
-                            result = await asyncio.to_thread(
-                                read_in_worker
-                            )
+                            result = await asyncio.to_thread(read_in_worker)
                     if inspect.isawaitable(result):
                         result = await result
                 except Exception as exc:
@@ -4405,7 +4398,11 @@ class ConsoleWorkspaceController:
             result_total_count=total,
             result_limit=CONSOLE_CONVERSATION_BROWSER_RESULT_LIMIT,
             subagent_counts=subagent_counts,
-            progress_counts=(bridge.progress_counts() if callable(getattr(bridge, "progress_counts", None)) else {}),
+            progress_counts=(
+                bridge.progress_counts()
+                if callable(getattr(bridge, "progress_counts", None))
+                else {}
+            ),
             # The visible-row cap grows with the measured rail body height so
             # the Chats section expands to fill its even share of the rail
             # alongside the Workspaces tree; the historical 12-row default
@@ -5143,7 +5140,9 @@ class ConsoleWorkspaceController:
         self.push_screen(
             WorkspaceCreateModal(
                 registry_service=registry_service,
-                persona_service=getattr(self.app_instance, "local_character_persona_service", None),
+                persona_service=getattr(
+                    self.app_instance, "local_character_persona_service", None
+                ),
                 description="Local workspace created from Console.",
             ),
             self._handle_workspace_create_result,
@@ -5158,12 +5157,17 @@ class ConsoleWorkspaceController:
             return
         record = registry.get_workspace(workspace_id)
         if record is None or record.archived:
-            self.app_instance.notify("This workspace is unavailable.", severity="warning")
+            self.app_instance.notify(
+                "This workspace is unavailable.", severity="warning"
+            )
             return
-        self.push_screen(WorkspacePersonaDefaultModal(
-            registry, getattr(self.app_instance, "local_character_persona_service", None),
-            workspace_id,
-        ))
+        self.push_screen(
+            WorkspacePersonaDefaultModal(
+                registry,
+                getattr(self.app_instance, "local_character_persona_service", None),
+                workspace_id,
+            )
+        )
 
     def _handle_workspace_create_result(
         self, result: WorkspaceCreateResult | None
@@ -5846,18 +5850,18 @@ class ConsoleWorkspaceController:
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
             return ConsoleActivationResultKind.FAILED
-        target = request.target if isinstance(
-            request, CharacterConversationActivationRequest
-        ) else request
+        target = (
+            request.target
+            if isinstance(request, CharacterConversationActivationRequest)
+            else request
+        )
         try:
             with db.transaction() as connection:
                 authority_row = connection.execute(
                     "SELECT local_authority_id FROM rag_identity_context "
                     "WHERE context_name = 'default' LIMIT 2"
                 ).fetchone()
-                authority = (
-                    str(authority_row[0]) if authority_row is not None else ""
-                )
+                authority = str(authority_row[0]) if authority_row is not None else ""
                 if authority != target.character.data_authority_id:
                     return ConsoleActivationResultKind.DATA_PROFILE_CHANGED
                 record = connection.execute(
@@ -6107,9 +6111,11 @@ class ConsoleWorkspaceController:
             ConsoleActivationCommit,
         )
 
-        target = request.target if isinstance(
-            request, CharacterConversationActivationRequest
-        ) else request
+        target = (
+            request.target
+            if isinstance(request, CharacterConversationActivationRequest)
+            else request
+        )
         store = self._ensure_console_chat_store()
         before = {session.id: session for session in store.sessions()}
         opened = bool(
@@ -6183,9 +6189,11 @@ class ConsoleWorkspaceController:
             CharacterConversationActivationRequest,
         )
 
-        target = request.target if isinstance(
-            request, CharacterConversationActivationRequest
-        ) else request
+        target = (
+            request.target
+            if isinstance(request, CharacterConversationActivationRequest)
+            else request
+        )
         store = self._ensure_console_chat_store()
         active = next(
             (
@@ -6197,8 +6205,7 @@ class ConsoleWorkspaceController:
         )
         if (
             active is None
-            or str(active.persisted_conversation_id or "")
-            != target.conversation_id
+            or str(active.persisted_conversation_id or "") != target.conversation_id
             or not self._screen.is_mounted
         ):
             return False
@@ -6210,9 +6217,7 @@ class ConsoleWorkspaceController:
             transcript_settled = bool(
                 getattr(self._screen, "_last_native_transcript_refresh_key", None)
                 is not None
-                and getattr(
-                    self._screen, "_last_native_transcript_session_id", None
-                )
+                and getattr(self._screen, "_last_native_transcript_session_id", None)
                 == active.id
             )
             return (
@@ -6559,15 +6564,20 @@ class ConsoleWorkspaceController:
         status and can stall every Console interaction, so renderers only
         enqueue this best-effort cache refresh and fail closed until it lands.
         """
-        requested_ids = tuple(sorted({str(item or "").strip() for item in workspace_ids if str(item or "").strip()}))
-        now = time.monotonic()
-        if (
-            requested_ids == self._workspace_files_availability_requested_ids
-            and (
-                self._workspace_files_availability_refresh_in_flight
-                or now - self._workspace_files_availability_cached_at
-                < WORKSPACE_FILES_AVAILABILITY_CACHE_TTL_SECONDS
+        requested_ids = tuple(
+            sorted(
+                {
+                    str(item or "").strip()
+                    for item in workspace_ids
+                    if str(item or "").strip()
+                }
             )
+        )
+        now = time.monotonic()
+        if requested_ids == self._workspace_files_availability_requested_ids and (
+            self._workspace_files_availability_refresh_in_flight
+            or now - self._workspace_files_availability_cached_at
+            < WORKSPACE_FILES_AVAILABILITY_CACHE_TTL_SECONDS
         ):
             return
         self._workspace_files_availability_requested_ids = requested_ids
@@ -6598,7 +6608,9 @@ class ConsoleWorkspaceController:
                     continue
                 try:
                     folder_bindings = tuple(registry.list_folder_bindings(workspace_id))
-                    list_runtime_bindings = getattr(registry, "list_runtime_bindings", None)
+                    list_runtime_bindings = getattr(
+                        registry, "list_runtime_bindings", None
+                    )
                     runtime_bindings = (
                         tuple(list_runtime_bindings(workspace_id))
                         if callable(list_runtime_bindings)
@@ -6716,9 +6728,7 @@ class ConsoleWorkspaceController:
         return replace(
             state,
             workspace_files_available=bool(
-                self._workspace_files_availability_by_id.get(
-                    state.workspace_id, False
-                )
+                self._workspace_files_availability_by_id.get(state.workspace_id, False)
             ),
             workspace_files_available_by_id=availability,
         )
@@ -7427,9 +7437,7 @@ class ConsoleWorkspaceController:
         """Apply the picker's result; ``None`` means it was cancelled."""
         if appearance is None:
             return
-        service = getattr(
-            self.app_instance, "local_chat_conversation_service", None
-        )
+        service = getattr(self.app_instance, "local_chat_conversation_service", None)
         set_appearance = getattr(service, "set_conversation_appearance", None)
         if not callable(set_appearance):
             self.app_instance.notify(
@@ -7685,10 +7693,13 @@ class ConsoleWorkspaceController:
                 )
                 return
             self._rename_console_conversation(
-                conversation_id, sanitize_string(candidate, max_length=_CONVERSATION_TITLE_MAX)
+                conversation_id,
+                sanitize_string(candidate, max_length=_CONVERSATION_TITLE_MAX),
             )
 
-        self.app_instance.push_screen(ConsoleRenameSessionModal(title=current_title), _apply)
+        self.app_instance.push_screen(
+            ConsoleRenameSessionModal(title=current_title), _apply
+        )
 
     def _rename_console_conversation(
         self, conversation_id: str, new_title: str
@@ -7697,7 +7708,9 @@ class ConsoleWorkspaceController:
 
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
-            self.app_instance.notify("Conversation storage is unavailable.", severity="error")
+            self.app_instance.notify(
+                "Conversation storage is unavailable.", severity="error"
+            )
             return
 
         async def _run() -> None:
@@ -7724,7 +7737,9 @@ class ConsoleWorkspaceController:
                     "Console conversation rename failed: exception_type={}",
                     type(exc).__name__,
                 )
-                self.app_instance.notify("Could not rename that conversation.", severity="error")
+                self.app_instance.notify(
+                    "Could not rename that conversation.", severity="error"
+                )
                 return
             self.app_instance.notify(f"Renamed to {new_title}.")
             await self._refresh_console_conversation_browser_after_selection()
@@ -7768,7 +7783,9 @@ class ConsoleWorkspaceController:
 
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
-            self.app_instance.notify("Conversation storage is unavailable.", severity="error")
+            self.app_instance.notify(
+                "Conversation storage is unavailable.", severity="error"
+            )
             return
 
         label = conversation_title or "Conversation"

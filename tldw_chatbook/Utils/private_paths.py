@@ -1332,7 +1332,8 @@ def atomic_private_write_bytes(
             state = raw._check(operation)
             if state.route == "config" and state.selected == selected:
                 state.config_publication = (
-                    selected, (temporary_stat.st_dev, temporary_stat.st_ino)
+                    selected,
+                    (temporary_stat.st_dev, temporary_stat.st_ino),
                 )
         if existing_stat is None:
             status = PrivatePathStatus.CREATED_PRIVATE
@@ -1447,13 +1448,20 @@ def open_private_text_append_stream(
             selected.parent.mkdir(parents=True, exist_ok=True)
             operation = _runtime_operation(selected)
             if operation is None:
-                return selected.open("a", encoding=encoding, errors=errors, newline="\n")
+                return selected.open(
+                    "a", encoding=encoding, errors=errors, newline="\n"
+                )
             fd = _native_open(
                 selected, os.O_WRONLY | os.O_APPEND | os.O_CREAT, _PRIVATE_FILE_MODE
             )
             try:
                 stream = os.fdopen(
-                    fd, "a", encoding=encoding, errors=errors, newline="\n", closefd=False
+                    fd,
+                    "a",
+                    encoding=encoding,
+                    errors=errors,
+                    newline="\n",
+                    closefd=False,
                 )
             except BaseException:
                 _native_close(fd)
@@ -1852,7 +1860,9 @@ def secure_private_directory(
                     # open. Reopen without following links and apply the same
                     # owner/type/mode checks below; existence is not trust.
                     pass
-                next_fd = _open_directory_component(current_fd, component, **open_options)
+                next_fd = _open_directory_component(
+                    current_fd, component, **open_options
+                )
             except OSError as exc:
                 current_fd, symlink_hops = _follow_trusted_symlink(
                     current_fd=current_fd,

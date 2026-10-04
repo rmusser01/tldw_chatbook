@@ -123,8 +123,7 @@ def next_briefing_eligibility(
     if last_activity is None:
         return current.astimezone(timezone.utc)
     return (
-        last_activity
-        + timedelta(seconds=int(row["briefing_cadence_seconds"]))
+        last_activity + timedelta(seconds=int(row["briefing_cadence_seconds"]))
     ).astimezone(timezone.utc)
 
 

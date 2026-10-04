@@ -1,7 +1,7 @@
 {
   "_comment": "Screen pre-importer payload census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "pass_added_modules": 556,
-  "pass_added_loc": 412083,
+  "pass_added_modules": 557,
+  "pass_added_loc": 412492,
   "routes": {
     "acp": {
       "loc": 520,
@@ -10,7 +10,7 @@
       ]
     },
     "ccp": {
-      "loc": 54707,
+      "loc": 54571,
       "modules": [
         "tldw_chatbook.Backup_Recovery.persona_visual_participants",
         "tldw_chatbook.Character_Chat.Character_Chat_Lib",
@@ -174,7 +174,7 @@
       ]
     },
     "library": {
-      "loc": 125112,
+      "loc": 125646,
       "modules": [
         "tldw_chatbook.Audio.meeting_session",
         "tldw_chatbook.Chunking",
@@ -350,6 +350,7 @@
         "tldw_chatbook.Widgets.ModelArtifacts.local_gguf_import",
         "tldw_chatbook.Widgets.ModelArtifacts.plan_panel",
         "tldw_chatbook.Widgets.ModelArtifacts.runtime_choice_modal",
+        "tldw_chatbook.Widgets.adaptive_pane_shell",
         "tldw_chatbook.Widgets.destination_workbench",
         "tldw_chatbook.Widgets.workbench_focus"
       ]
@@ -491,7 +492,7 @@
       ]
     },
     "settings": {
-      "loc": 60054,
+      "loc": 60065,
       "modules": [
         "tldw_chatbook.Agents.agent_presets",
         "tldw_chatbook.Audio.voice_process_types",

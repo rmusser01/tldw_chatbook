@@ -189,7 +189,9 @@ TOP_K_ERROR_TEXT = "Top-K must be a whole number of 1 or more."
 #: separate cost sub-line was tried first and pushed the targets
 #: section's own Add/Create controls off the bottom of a 160x45 terminal,
 #: confirmed live, not merely reasoned about.
-CAPTURE_CONTINUATIONS_LABEL = "Capture a continuation per cell (raw mode: +1 request/cell)"
+CAPTURE_CONTINUATIONS_LABEL = (
+    "Capture a continuation per cell (raw mode: +1 request/cell)"
+)
 
 #: Verbatim tooltip, the fuller cost/content explanation for a mouse user
 #: hovering the checkbox -- never the ONLY place this cost is stated (see
@@ -643,7 +645,9 @@ class BenchEditor(Vertical):
         # field -- `save_bench` has no `dataset_id` parameter on its edit
         # path, see that function's own docstring), so the tooltip states
         # that rather than merely omitting an edit control silently.
-        dataset_static = Static(dataset_text, id="evals-detail-bench-dataset", markup=False)
+        dataset_static = Static(
+            dataset_text, id="evals-detail-bench-dataset", markup=False
+        )
         dataset_static.tooltip = (
             "The dataset is set when a bench is created and cannot be changed here."
         )
@@ -675,9 +679,7 @@ class BenchEditor(Vertical):
                         markup=False,
                     )
         else:
-            yield Static(
-                "(no probes yet)", id="evals-bench-probes-preview-empty"
-            )
+            yield Static("(no probes yet)", id="evals-bench-probes-preview-empty")
         yield TextArea("\n".join(config.probes), id="evals-bench-probes")
 
         # task-1710: opt into a per-cell continuation. Part of the form
@@ -923,7 +925,9 @@ class BenchEditor(Vertical):
             # control past `#evals-detail-pane`'s clip rectangle at a
             # realistic viewport (confirmed live via `test_every_pane_
             # descendant_stays_within_its_pane`).
-            Select(options, allow_blank=False, compact=True, id="evals-bench-add-target"),
+            Select(
+                options, allow_blank=False, compact=True, id="evals-bench-add-target"
+            ),
             Button(
                 "Add",
                 id="evals-bench-add-target-button",
@@ -1110,7 +1114,9 @@ class BenchEditor(Vertical):
         from textual.css.query import QueryError  # noqa: PLC0415 -- narrow, matches this module's other local imports
 
         try:
-            self._pending_target_name = self.query_one("#evals-target-name", Input).value
+            self._pending_target_name = self.query_one(
+                "#evals-target-name", Input
+            ).value
         except QueryError:
             pass
         try:
@@ -1239,7 +1245,7 @@ class BenchEditor(Vertical):
         if not button_id.startswith(prefix):
             return
         try:
-            index = int(button_id[len(prefix):])
+            index = int(button_id[len(prefix) :])
         except ValueError:
             return
         if not 0 <= index < len(self._staged_target_ids):
@@ -1311,7 +1317,9 @@ class BenchEditor(Vertical):
                 value = ""
             prefix = value if value != "" else None
         self.post_message(
-            self.CreateTargetRequested(name=name, prefix=prefix, system_prompt=system_prompt)
+            self.CreateTargetRequested(
+                name=name, prefix=prefix, system_prompt=system_prompt
+            )
         )
 
     @on(Button.Pressed, "#evals-bench-save")
@@ -1390,7 +1398,11 @@ class BenchEditor(Vertical):
         # some of this module's own tests still use.
         resolved_targets = _resolve_bench_targets(db, config.target_ids)
         invalid_target = next(
-            (t for t in resolved_targets if not t.is_valid_for_mode(config.prompt_mode)),
+            (
+                t
+                for t in resolved_targets
+                if not t.is_valid_for_mode(config.prompt_mode)
+            ),
             None,
         )
         if invalid_target is not None:
@@ -1516,7 +1528,9 @@ class ClassicTaskDetail(Vertical):
     ``_compose_inspector_pane``, which renders no button at all for a
     classic selection."""
 
-    def __init__(self, view_model: EvalsViewModel, task: dict[str, Any], **kwargs: Any) -> None:
+    def __init__(
+        self, view_model: EvalsViewModel, task: dict[str, Any], **kwargs: Any
+    ) -> None:
         super().__init__(**kwargs)
         self._view_model = view_model
         # NOT `self._task` -- Textual's own `MessagePump` uses that name
@@ -1563,5 +1577,7 @@ class ClassicTaskDetail(Vertical):
                 )
 
         yield Static(
-            CLASSIC_TASK_DEFERRAL_SENTENCE, id="evals-detail-classic-deferral", markup=False
+            CLASSIC_TASK_DEFERRAL_SENTENCE,
+            id="evals-detail-classic-deferral",
+            markup=False,
         )

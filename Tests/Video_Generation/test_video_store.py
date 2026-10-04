@@ -214,11 +214,7 @@ def _inject_snapshot_failure(store, monkeypatch, victim, seam, error_type):
         original_resolve = Path.resolve
 
         def patched_resolve(path, *args, **kwargs):
-            if (
-                state["active"]
-                and state["in_snapshot"]
-                and path == victim
-            ):
+            if state["active"] and state["in_snapshot"] and path == victim:
                 fail()
             return original_resolve(path, *args, **kwargs)
 
@@ -293,7 +289,10 @@ def test_parse_marker_ignores_non_video_content():
 
 
 def test_slugify_normalizes_prompt():
-    assert slugify_prompt("A Red Dragon, soaring over Mt. Fuji!") == "a-red-dragon-soaring-over-mt"
+    assert (
+        slugify_prompt("A Red Dragon, soaring over Mt. Fuji!")
+        == "a-red-dragon-soaring-over-mt"
+    )
     assert slugify_prompt("   ") == "clip"
     assert slugify_prompt("!!!") == "clip"
     assert len(slugify_prompt("word " * 40)) <= 48
@@ -363,9 +362,7 @@ def test_stale_slug_allocation_cannot_publish_a_second_canonical_extension(
             slugs["first"] = slug
             allocated.wait(5)
             paths.append(
-                first_store.save(
-                    "message", slug, b"first-mp4", extension="mp4"
-                )
+                first_store.save("message", slug, b"first-mp4", extension="mp4")
             )
         except BaseException as exc:  # pragma: no cover - asserted below
             errors.append(exc)
@@ -379,9 +376,7 @@ def test_stale_slug_allocation_cannot_publish_a_second_canonical_extension(
             allocated.wait(5)
             assert first_published.wait(5)
             if operation == "save":
-                second_store.save(
-                    "message", slug, b"second-webm", extension="webm"
-                )
+                second_store.save("message", slug, b"second-webm", extension="webm")
             else:
                 second_store.adopt_oversized(
                     "message",
@@ -408,9 +403,7 @@ def test_stale_slug_allocation_cannot_publish_a_second_canonical_extension(
     assert isinstance(errors[0], video_store_module.VideoStoreSaveError)
     assert str(errors[0]) == "managed video target already exists"
     assert [video.path for video in first_store.iter_stored()] == [paths[0]]
-    assert second_store.resolve(
-        "message", "shared-clip", extension="webm"
-    ) is None
+    assert second_store.resolve("message", "shared-clip", extension="webm") is None
     assert not list(root.rglob(".video-stage-*"))
     if operation == "adopt_oversized":
         assert second_stream.tell() == 0
@@ -492,9 +485,7 @@ def test_invalid_explicit_resolve_is_not_sanitized_to_mp4(store):
 
 
 @pytest.mark.parametrize("operation", ["save", "adopt"])
-def test_publication_gate_cancel_wins_before_save_or_adopt_commit(
-    store, operation
-):
+def test_publication_gate_cancel_wins_before_save_or_adopt_commit(store, operation):
     reached_precommit = threading.Event()
     release_precommit = threading.Event()
     errors = []
@@ -689,7 +680,10 @@ def test_public_writes_reject_internal_stage_namespace_without_mutation(
             store.save("new", reserved_slug, b"new-bytes", extension="mp4")
         else:
             store.adopt_oversized(
-                "new", reserved_slug, stream, size_bytes=len(stream.getvalue()),
+                "new",
+                reserved_slug,
+                stream,
+                size_bytes=len(stream.getvalue()),
                 extension="mp4",
             )
 
@@ -734,7 +728,9 @@ def test_save_enforces_cap_oldest_first_without_startup_cleanup(tmp_path):
 
 
 def test_save_uses_safe_path_to_break_equal_mtime_ties(tmp_path):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     later_path = store.save("z-message", "clip", b"z" * 500_000, extension="mp4")
     earlier_path = store.save("a-message", "clip", b"a" * 500_000, extension="mp4")
     os.utime(later_path, (10, 10))
@@ -820,7 +816,9 @@ def test_oversized_save_returns_frozen_capacity_outcome_without_managed_write(tm
 def test_adopt_oversized_publishes_complete_candidate_before_removing_old_files(
     tmp_path, monkeypatch
 ):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     first = store.save("old-a", "clip", b"a" * 300_000, extension="mp4")
     second = store.save("old-b", "clip", b"b" * 300_000, extension="mp4")
     stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
@@ -834,7 +832,10 @@ def test_adopt_oversized_publishes_complete_candidate_before_removing_old_files(
 
     monkeypatch.setattr(store, "_commit_sibling", observe_complete_candidate)
     result = store.adopt_oversized(
-        "new", "large", stream, size_bytes=1024 * 1024 + 1,
+        "new",
+        "large",
+        stream,
+        size_bytes=1024 * 1024 + 1,
         extension="mp4",
     )
 
@@ -846,10 +847,10 @@ def test_adopt_oversized_publishes_complete_candidate_before_removing_old_files(
     assert not stream.closed
 
 
-def test_failed_oversized_adoption_keeps_source_open_and_rewound(
-    tmp_path, monkeypatch
-):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+def test_failed_oversized_adoption_keeps_source_open_and_rewound(tmp_path, monkeypatch):
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     old = store.save("old", "clip", b"a" * 300_000, extension="mp4")
     stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
 
@@ -859,7 +860,10 @@ def test_failed_oversized_adoption_keeps_source_open_and_rewound(
     monkeypatch.setattr(store, "_commit_sibling", fail_commit)
     with pytest.raises(video_store_module.VideoStoreSaveError):
         store.adopt_oversized(
-            "new", "large", stream, size_bytes=1024 * 1024 + 1,
+            "new",
+            "large",
+            stream,
+            size_bytes=1024 * 1024 + 1,
             extension="mp4",
         )
 
@@ -875,12 +879,17 @@ def test_oversized_source_read_failure_is_typed_and_recoverable(tmp_path):
         def read(self, *args, **kwargs):
             raise RuntimeError("PRIVATE-SOURCE-FAILURE")
 
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     stream = BrokenStream(b"z" * (1024 * 1024 + 1))
 
     with pytest.raises(video_store_module.VideoStoreSaveError) as raised:
         store.adopt_oversized(
-            "new", "large", stream, size_bytes=1024 * 1024 + 1,
+            "new",
+            "large",
+            stream,
+            size_bytes=1024 * 1024 + 1,
             extension="mp4",
         )
 
@@ -891,10 +900,15 @@ def test_oversized_source_read_failure_is_typed_and_recoverable(tmp_path):
 
 
 def test_fresh_ttl_startup_retains_one_sole_oversized_exception(tmp_path):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
     adopted = store.adopt_oversized(
-        "new", "large", stream, size_bytes=1024 * 1024 + 1,
+        "new",
+        "large",
+        stream,
+        size_bytes=1024 * 1024 + 1,
         extension="mp4",
     )
 
@@ -905,7 +919,9 @@ def test_fresh_ttl_startup_retains_one_sole_oversized_exception(tmp_path):
 
 
 def test_ttl_startup_restores_cap_when_oversized_file_has_another_survivor(tmp_path):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     oversized = store.root / "old" / "large.mp4"
     companion = store.root / "new" / "small.mp4"
     oversized.parent.mkdir(parents=True)
@@ -929,7 +945,10 @@ def test_session_startup_removes_sole_oversized_exception(tmp_path):
     )
     stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
     adopted = ttl_store.adopt_oversized(
-        "new", "large", stream, size_bytes=1024 * 1024 + 1,
+        "new",
+        "large",
+        stream,
+        size_bytes=1024 * 1024 + 1,
         extension="mp4",
     )
     session_store = VideoStore(
@@ -943,7 +962,9 @@ def test_session_startup_removes_sole_oversized_exception(tmp_path):
 
 
 def test_ordinary_save_evicts_sole_oversized_exception_before_success(tmp_path):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     adopted = store.adopt_oversized(
         "old",
         "large",
@@ -969,7 +990,9 @@ def test_symlinked_store_root_blocks_save_before_external_publication(
     sentinel.write_bytes(b"PRIVATE-SENTINEL")
     linked_root = tmp_path / "gv"
     linked_root.symlink_to(external, target_is_directory=True)
-    store = VideoStore(root=linked_root, config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=linked_root, config=_config(retention="ttl", max_store_mb=1)
+    )
     committed = False
     original_commit = store._commit_sibling
 
@@ -996,7 +1019,9 @@ def test_symlinked_store_root_never_resolves_external_video(tmp_path):
     external_target.write_bytes(b"PRIVATE-SENTINEL")
     linked_root = tmp_path / "gv"
     linked_root.symlink_to(external, target_is_directory=True)
-    store = VideoStore(root=linked_root, config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=linked_root, config=_config(retention="ttl", max_store_mb=1)
+    )
 
     assert store.resolve("msg", "clip", extension="mp4") is None
     assert external_target.read_bytes() == b"PRIVATE-SENTINEL"
@@ -1010,7 +1035,9 @@ def test_symlinked_store_root_blocks_startup_retention(tmp_path):
     sentinel.write_bytes(b"PRIVATE-SENTINEL")
     linked_root = tmp_path / "gv"
     linked_root.symlink_to(external, target_is_directory=True)
-    store = VideoStore(root=linked_root, config=_config(retention="session", max_store_mb=1))
+    store = VideoStore(
+        root=linked_root, config=_config(retention="session", max_store_mb=1)
+    )
 
     with pytest.raises(video_store_module.VideoStoreSaveError) as raised:
         store.enforce_retention()
@@ -1029,7 +1056,9 @@ def test_symlinked_store_root_blocks_oversized_adoption_before_external_publicat
     sentinel.write_bytes(b"PRIVATE-SENTINEL")
     linked_root = tmp_path / "gv"
     linked_root.symlink_to(external, target_is_directory=True)
-    store = VideoStore(root=linked_root, config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=linked_root, config=_config(retention="ttl", max_store_mb=1)
+    )
     stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
     committed = False
     original_commit = store._commit_sibling
@@ -1042,7 +1071,10 @@ def test_symlinked_store_root_blocks_oversized_adoption_before_external_publicat
     monkeypatch.setattr(store, "_commit_sibling", observe_commit)
     with pytest.raises(video_store_module.VideoStoreSaveError) as raised:
         store.adopt_oversized(
-            "new", "large", stream, size_bytes=1024 * 1024 + 1,
+            "new",
+            "large",
+            stream,
+            size_bytes=1024 * 1024 + 1,
             extension="mp4",
         )
 
@@ -1062,7 +1094,9 @@ def test_symlinked_store_root_blocks_clear_all(tmp_path):
     sentinel.write_bytes(b"PRIVATE-SENTINEL")
     linked_root = tmp_path / "gv"
     linked_root.symlink_to(external, target_is_directory=True)
-    store = VideoStore(root=linked_root, config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=linked_root, config=_config(retention="ttl", max_store_mb=1)
+    )
 
     with pytest.raises(video_store_module.VideoStoreSaveError) as raised:
         store.clear_all()
@@ -1085,7 +1119,9 @@ def test_windows_reparse_store_root_blocks_startup_retention(tmp_path):
     )
     if completed.returncode:
         pytest.skip("host cannot construct a test root junction")
-    store = VideoStore(root=junction, config=_config(retention="session", max_store_mb=1))
+    store = VideoStore(
+        root=junction, config=_config(retention="session", max_store_mb=1)
+    )
 
     with pytest.raises(video_store_module.VideoStoreSaveError):
         store.enforce_retention()
@@ -1094,7 +1130,9 @@ def test_windows_reparse_store_root_blocks_startup_retention(tmp_path):
 
 
 def test_save_refuses_existing_target_without_changing_old_bytes(tmp_path):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     existing = store.save("msg", "clip", b"old-bytes", extension="mp4")
 
     with pytest.raises(video_store_module.VideoStoreSaveError):
@@ -1105,14 +1143,19 @@ def test_save_refuses_existing_target_without_changing_old_bytes(tmp_path):
 
 
 def test_adoption_refuses_existing_target_without_changing_old_bytes(tmp_path):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     existing = store.save("msg", "clip", b"old-bytes", extension="mp4")
     unrelated = store.save("other", "clip", b"unrelated-bytes", extension="mp4")
     stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
 
     with pytest.raises(video_store_module.VideoStoreSaveError):
         store.adopt_oversized(
-            "msg", "clip", stream, size_bytes=1024 * 1024 + 1,
+            "msg",
+            "clip",
+            stream,
+            size_bytes=1024 * 1024 + 1,
             extension="mp4",
         )
 
@@ -1127,7 +1170,9 @@ def test_adoption_refuses_existing_target_without_changing_old_bytes(tmp_path):
 def test_capacity_operations_never_follow_symlinked_directories_or_files(
     tmp_path,
 ):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     external = tmp_path / "private"
     external.mkdir()
     sentinel = external / "PRIVATE-SENTINEL"
@@ -1202,7 +1247,9 @@ def test_snapshot_excludes_internal_file_symlink_alias(tmp_path):
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows reparse containment case")
 def test_capacity_operations_never_follow_windows_junction(tmp_path):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     external = tmp_path / "private"
     external.mkdir()
     sentinel = external / "PRIVATE-SENTINEL"
@@ -1305,7 +1352,10 @@ def test_transactions_remove_regular_orphan_stages_before_capacity_work(
     else:
         payload = b"z" * (1024 * 1024 + 1)
         adopted = store.adopt_oversized(
-            "new", "clip", io.BytesIO(payload), size_bytes=len(payload),
+            "new",
+            "clip",
+            io.BytesIO(payload),
+            size_bytes=len(payload),
             extension="mp4",
         )
         assert adopted.read_bytes() == payload
@@ -1343,7 +1393,10 @@ def test_orphan_stage_cleanup_failure_aborts_capacity_transaction(
             store.save("new", "clip", b"n" * 300_000, extension="mp4")
         else:
             store.adopt_oversized(
-                "new", "clip", stream, size_bytes=1024 * 1024 + 1,
+                "new",
+                "clip",
+                stream,
+                size_bytes=1024 * 1024 + 1,
                 extension="mp4",
             )
 
@@ -1399,7 +1452,10 @@ def test_transactions_leave_suspicious_orphan_stage_link_and_external_target(
     else:
         payload = b"z" * (1024 * 1024 + 1)
         store.adopt_oversized(
-            "new", "clip", io.BytesIO(payload), size_bytes=len(payload),
+            "new",
+            "clip",
+            io.BytesIO(payload),
+            size_bytes=len(payload),
             extension="mp4",
         )
 
@@ -1448,10 +1504,17 @@ def test_unlock_failure_after_success_does_not_reverse_committed_save(
     assert saved.read_bytes() == b"committed"
     assert close_calls == ["close"]
     assert warnings == [("VideoStore: lease unlock failed ({})", ("OSError",))]
-    assert VideoStore(root=root, config=_config(retention="ttl")).save(
-        "later", "clip", b"later",
-        extension="mp4",
-    ).read_bytes() == b"later"
+    assert (
+        VideoStore(root=root, config=_config(retention="ttl"))
+        .save(
+            "later",
+            "clip",
+            b"later",
+            extension="mp4",
+        )
+        .read_bytes()
+        == b"later"
+    )
 
 
 def test_unlock_failure_never_masks_primary_transaction_error(tmp_path, monkeypatch):
@@ -1513,10 +1576,17 @@ def test_close_failure_after_success_does_not_reverse_committed_save(
     assert saved.read_bytes() == b"committed"
     assert close_calls == ["close"]
     assert warnings == [("VideoStore: lease close failed ({})", ("OSError",))]
-    assert VideoStore(root=root, config=_config(retention="ttl")).save(
-        "later", "clip", b"later",
-        extension="mp4",
-    ).read_bytes() == b"later"
+    assert (
+        VideoStore(root=root, config=_config(retention="ttl"))
+        .save(
+            "later",
+            "clip",
+            b"later",
+            extension="mp4",
+        )
+        .read_bytes()
+        == b"later"
+    )
 
 
 def test_instance_rlock_prevents_thread_transaction_overlap(tmp_path, monkeypatch):
@@ -1585,7 +1655,9 @@ def test_instance_rlock_prevents_thread_transaction_overlap(tmp_path, monkeypatc
 
 
 def test_adopt_oversized_takes_instance_rlock(tmp_path):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     stream = io.BytesIO(b"z" * (1024 * 1024 + 1))
     stream.seek(7)
     result = []
@@ -1593,7 +1665,10 @@ def test_adopt_oversized_takes_instance_rlock(tmp_path):
     def operation():
         result.append(
             store.adopt_oversized(
-                "new", "large", stream, size_bytes=1024 * 1024 + 1,
+                "new",
+                "large",
+                stream,
+                size_bytes=1024 * 1024 + 1,
                 extension="mp4",
             )
         )
@@ -1611,7 +1686,9 @@ def test_adopt_oversized_takes_instance_rlock(tmp_path):
 
 
 def test_enforce_retention_takes_instance_rlock(tmp_path):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="session", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="session", max_store_mb=1)
+    )
     existing = store.save("old", "clip", b"old-bytes", extension="mp4")
 
     _call_while_instance_rlock_is_held(
@@ -1624,7 +1701,9 @@ def test_enforce_retention_takes_instance_rlock(tmp_path):
 
 
 def test_clear_all_takes_instance_rlock(tmp_path):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     existing = store.save("old", "clip", b"old-bytes", extension="mp4")
 
     _call_while_instance_rlock_is_held(
@@ -1739,7 +1818,10 @@ def test_adopt_oversized_takes_root_lease(tmp_path, monkeypatch):
         root,
         monkeypatch,
         lambda: store.adopt_oversized(
-            "new", "large", stream, size_bytes=1024 * 1024 + 1,
+            "new",
+            "large",
+            stream,
+            size_bytes=1024 * 1024 + 1,
             extension="mp4",
         ),
     )
@@ -1799,7 +1881,9 @@ def test_spawned_saves_leave_actual_store_within_capacity(tmp_path):
 def test_atomic_commit_failure_preserves_old_store_and_removes_sibling(
     tmp_path, monkeypatch
 ):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     first = store.save("old-a", "clip", b"a" * 300_000, extension="mp4")
     second = store.save("old-b", "clip", b"b" * 300_000, extension="mp4")
     original = {first: first.read_bytes(), second: second.read_bytes()}
@@ -1819,7 +1903,9 @@ def test_atomic_commit_failure_preserves_old_store_and_removes_sibling(
 
 
 def test_first_required_victim_failure_withdraws_new_target(tmp_path, monkeypatch):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     oldest = store.save("old-a", "clip", b"a" * 600_000, extension="mp4")
     survivor = store.save("old-b", "clip", b"b" * 300_000, extension="mp4")
     os.utime(oldest, (1, 1))
@@ -1843,7 +1929,9 @@ def test_first_required_victim_failure_withdraws_new_target(tmp_path, monkeypatc
 def test_later_victim_failure_withdraws_new_target_and_leaves_bounded_store(
     tmp_path, monkeypatch
 ):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     first = store.save("old-a", "clip", b"a" * 350_000, extension="mp4")
     second = store.save("old-b", "clip", b"b" * 350_000, extension="mp4")
     third = store.save("old-c", "clip", b"c" * 100_000, extension="mp4")
@@ -1872,7 +1960,9 @@ def test_later_victim_failure_withdraws_new_target_and_leaves_bounded_store(
 def test_capacity_victim_is_revalidated_after_snapshot_before_unlink(
     tmp_path, monkeypatch
 ):
-    store = VideoStore(root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1))
+    store = VideoStore(
+        root=tmp_path / "gv", config=_config(retention="ttl", max_store_mb=1)
+    )
     oldest = store.save("old", "clip", b"o" * 900_000, extension="mp4")
     os.utime(oldest, (1, 1))
     external = tmp_path / "private"
@@ -1964,7 +2054,9 @@ def test_capacity_accounts_for_unknown_video_suffix(tmp_path):
 
     assert not unknown.exists()
     assert saved.exists()
-    assert sum(video.size_bytes for video in store.iter_stored()) <= store.capacity_bytes
+    assert (
+        sum(video.size_bytes for video in store.iter_stored()) <= store.capacity_bytes
+    )
 
 
 def test_session_retention_wipes_everything(tmp_path):

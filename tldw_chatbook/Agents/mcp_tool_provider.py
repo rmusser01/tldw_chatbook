@@ -667,14 +667,14 @@ class MCPToolProvider:
             hub_tools, **self._profile_kwargs()
         )
         from tldw_chatbook.MCP.permission_store import definition_hash
+
         eligible = [
             tool
             for tool in hub_tools
             if effective.get((tool.server_key, tool.name), _FAIL_CLOSED_STATE).state
             != "deny"
             and (
-                self._maximum_tool_ids is None
-                or tool.tool_id in self._maximum_tool_ids
+                self._maximum_tool_ids is None or tool.tool_id in self._maximum_tool_ids
             )
             and (
                 self._maximum_definition_hashes is None
@@ -1218,7 +1218,9 @@ class MCPToolProvider:
         # audit row is a policy refusal, with the reason as its error.
         refusal = self._server_session_character_write_refusal(tool)
         if refusal is not None:
-            self._record_decision_safe(tool, decision=POLICY_DENIED_DECISION, error=refusal)
+            self._record_decision_safe(
+                tool, decision=POLICY_DENIED_DECISION, error=refusal
+            )
             return ToolResult.blocked(refusal)
 
         # PR2a Task 5: only THIS run's own stamp may resolve this call. The
@@ -1351,8 +1353,7 @@ class MCPToolProvider:
             policy = self._persona_policy_provider()
         except Exception as exc:  # noqa: BLE001 -- a broken provider never blocks invoke
             logger.warning(
-                "MCPToolProvider: persona_policy_provider failed for {}; "
-                "error_type={}",
+                "MCPToolProvider: persona_policy_provider failed for {}; error_type={}",
                 tool.name,
                 type(exc).__name__,
             )
@@ -1404,7 +1405,9 @@ class MCPToolProvider:
             )
             return False
 
-    def _arg_rule_allows_safe(self, tool: HubTool, args: Mapping[str, Any] | dict) -> bool:
+    def _arg_rule_allows_safe(
+        self, tool: HubTool, args: Mapping[str, Any] | dict
+    ) -> bool:
         """TASK-26012: whether a stored argument-scoped rule quiets this call.
 
         Duck-typed and fail-closed: a service without the capability (or a
@@ -1694,6 +1697,7 @@ class MCPToolProvider:
                 # An approval may have arrived after this chain stopped.
                 automatic_work.check()
             timeout = self._service._tool_call_timeout() + _RESULT_WAIT_SLACK_SECONDS
+
             # Task 4 (PR-T3): the same schema `tool.input_schema` the Hub
             # workbench's Test Tool form renders from -- named argument
             # NAMES only, never values, so an agent-initiated run is
@@ -1722,6 +1726,7 @@ class MCPToolProvider:
             execution_factory = execute_observed if policies else create_execution
 
             if automatic_work is not None:
+
                 async def execute_authorized():
                     # Scheduling on the main loop can itself wait. Bind the
                     # captured authority and check again at actual dispatch.

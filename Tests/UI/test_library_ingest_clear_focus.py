@@ -240,9 +240,7 @@ async def test_typing_into_the_pre_recompose_field_after_clear_survives(
             # the way out, which is precisely why the two tests above pass
             # with or without the fix.)
             clear_button = screen.query_one("#library-ingest-clear-path", Button)
-            screen.handle_library_ingest_clear_path(
-                Button.Pressed(clear_button)
-            )
+            screen.handle_library_ingest_clear_path(Button.Pressed(clear_button))
 
             # ...and type into the widget that is still mounted right now,
             # exactly as a fast typist does.

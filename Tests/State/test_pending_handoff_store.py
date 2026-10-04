@@ -154,7 +154,7 @@ def test_stage_replaces_unclaimed_value_with_channel_local_revision() -> None:
 
 def test_conversation_settings_return_handoff_replaces_and_detaches() -> None:
     store = PendingHandoffStore()
-    first = ConversationSettingsReturnIntent("session-1", 4, "model", "console-settings-model-picker")
+    first = ConversationSettingsReturnIntent("session-1", 4, "model", "console-settings-model-change")
     second = ConversationSettingsReturnIntent("session-2", 5, "context", None)
     assert store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, first) == 1
     assert store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, second) == 2
@@ -248,7 +248,7 @@ def test_settle_transferred_claim_preserves_pending_replacement() -> None:
     store = PendingHandoffStore()
     first = ConversationSettingsReturnIntent("session-1", 4, "model", None)
     replacement = ConversationSettingsReturnIntent(
-        "session-2", 5, "context", "console-settings-provider"
+        "session-2", 5, "context", "console-settings-base-url"
     )
     first_revision = store.stage(HandoffChannel.CONVERSATION_SETTINGS_RETURN, first)
     first_claim = store.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)

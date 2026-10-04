@@ -149,9 +149,7 @@ def test_audio_token_details_default_to_zero_when_absent():
 
 def test_unrecognized_payload_returns_none():
     assert (
-        ProviderUsage.from_provider_payload(
-            {"tokens": 5}, provider="x", model="y"
-        )
+        ProviderUsage.from_provider_payload({"tokens": 5}, provider="x", model="y")
         is None
     )
     assert ProviderUsage.from_provider_payload(None, provider="x", model="y") is None

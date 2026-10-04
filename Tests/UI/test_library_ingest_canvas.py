@@ -154,9 +154,7 @@ class _MessageRecordingHost(ConsolidatedCSSApp):
         self._state = state
         self.option_changes: list[LibraryIngestCanvas.OptionValueChanged] = []
         self.panel_toggles: list[LibraryIngestCanvas.OptionPanelToggled] = []
-        self.tooling_detail_toggles: list[
-            LibraryIngestCanvas.ToolingDetailToggled
-        ] = []
+        self.tooling_detail_toggles: list[LibraryIngestCanvas.ToolingDetailToggled] = []
         self.parakeet_install_requests = 0
         self.directory_browse_requests: list[tuple[str, str]] = []
         self.transcribe_cpp_gguf_requests = 0
@@ -506,9 +504,7 @@ async def test_type_group_panels_render_for_detected_groups():
     ):
         async with app.run_test() as pilot:
             pdf_panel = pilot.app.query_one("#type-group-pdf", Collapsible)
-            generic_panel = pilot.app.query_one(
-                "#type-group-generic", Collapsible
-            )
+            generic_panel = pilot.app.query_one("#type-group-generic", Collapsible)
             assert "PDF documents" in str(pdf_panel.title)
             assert str(pdf_panel.title) == "PDF documents"
             assert "Import behavior" in str(generic_panel.title)
@@ -516,9 +512,7 @@ async def test_type_group_panels_render_for_detected_groups():
             # state the fold hides; the default is off.
             assert str(generic_panel.title) == "Import behavior · analysis off"
 
-            scope = pilot.app.query_one(
-                "#type-group-pdf .type-group-scope", Static
-            )
+            scope = pilot.app.query_one("#type-group-pdf .type-group-scope", Static)
             assert "Applies to every PDF document in this import." in str(
                 scope.renderable
             )
@@ -630,7 +624,9 @@ async def test_chunk_size_disabled_when_chunk_unchecked():
         assert chunk_overlap_input.disabled is True
 
 
-def _import_behavior_state(*, backend: str, analyze: bool = False) -> LibraryIngestCanvasState:
+def _import_behavior_state(
+    *, backend: str, analyze: bool = False
+) -> LibraryIngestCanvasState:
     """Build one expanded generic panel for a selected effective backend."""
     form = _default_form()
     form.expanded_type_groups.add("generic")
@@ -682,9 +678,7 @@ async def test_server_import_behavior_adds_keep_original_file_and_fits_compact_w
 
     async with app.run_test(size=(80, 20)) as pilot:
         await pilot.pause()
-        keep_original = pilot.app.query_one(
-            "#opt-generic-keep_original_file", Checkbox
-        )
+        keep_original = pilot.app.query_one("#opt-generic-keep_original_file", Checkbox)
         for widget_id in (
             "#opt-generic-custom_prompt",
             "#opt-generic-system_prompt",
@@ -761,9 +755,7 @@ async def test_option_value_changed_posted_on_checkbox_change():
     matching = [
         event
         for event in app.option_changes
-        if event.group == "pdf"
-        and event.name == "ocr"
-        and event.value is True
+        if event.group == "pdf" and event.name == "ocr" and event.value is True
     ]
     assert len(matching) == 1
 
@@ -796,7 +788,9 @@ async def test_option_value_changed_posted_on_select_change():
     matching = [
         event
         for event in app.option_changes
-        if event.group == "pdf" and event.name == "pdf_engine" and event.value == "pymupdf"
+        if event.group == "pdf"
+        and event.name == "pdf_engine"
+        and event.value == "pymupdf"
     ]
     assert len(matching) == 1
 
@@ -825,7 +819,9 @@ async def test_option_value_changed_posted_on_input_change():
     matching = [
         event
         for event in app.option_changes
-        if event.group == "generic" and event.name == "chunk_size" and event.value == "1234"
+        if event.group == "generic"
+        and event.name == "chunk_size"
+        and event.value == "1234"
     ]
     assert len(matching) == 1
 
@@ -897,9 +893,7 @@ async def test_parsing_row_reserves_progress_line_before_first_worker_tick():
     state = build_library_ingest_state((job,), form=_default_form())
     app = _QueuePanelHost(state)
     async with app.run_test() as pilot:
-        progress = pilot.app.query_one(
-            "#library-ingest-progress-ingest-job-1", Static
-        )
+        progress = pilot.app.query_one("#library-ingest-progress-ingest-job-1", Static)
         assert progress.display is True
         assert str(progress.renderable) == "Preparing import"
 
@@ -916,9 +910,7 @@ async def test_writing_row_reserves_saving_line_without_progress_payload():
     state = build_library_ingest_state((job,), form=_default_form())
     app = _QueuePanelHost(state)
     async with app.run_test() as pilot:
-        progress = pilot.app.query_one(
-            "#library-ingest-progress-ingest-job-1", Static
-        )
+        progress = pilot.app.query_one("#library-ingest-progress-ingest-job-1", Static)
         assert progress.display is True
         assert str(progress.renderable) == "Saving to Library"
 
@@ -939,9 +931,7 @@ async def test_progress_line_uses_formatter_without_repeating_state():
     state = build_library_ingest_state((job,), form=_default_form())
     app = _QueuePanelHost(state)
     async with app.run_test() as pilot:
-        progress = pilot.app.query_one(
-            "#library-ingest-progress-ingest-job-1", Static
-        )
+        progress = pilot.app.query_one("#library-ingest-progress-ingest-job-1", Static)
         rendered = str(progress.renderable)
         assert rendered == "40% · Extracting page 2 of 5"
         assert "Â·" not in rendered
@@ -991,9 +981,7 @@ async def test_progress_detail_paints_below_row_without_obscuring_actions_or_nei
     async with app.run_test(size=size) as pilot:
         await pilot.pause()
         row = pilot.app.query_one("#library-ingest-row-0", Static)
-        progress = pilot.app.query_one(
-            "#library-ingest-progress-ingest-job-1", Static
-        )
+        progress = pilot.app.query_one("#library-ingest-progress-ingest-job-1", Static)
         actions = pilot.app.query_one(".library-ingest-row-actions")
         neighbor = pilot.app.query_one("#library-ingest-row-1", Static)
         counts = pilot.app.query_one("#library-ingest-queue-counts", Static)
@@ -1011,8 +999,7 @@ async def test_progress_detail_paints_below_row_without_obscuring_actions_or_nei
 
         def painted_text(widget) -> str:
             return "\n".join(
-                strips[y].text
-                for y in range(widget.region.y, widget.region.bottom)
+                strips[y].text for y in range(widget.region.y, widget.region.bottom)
             )
 
         assert "parsing" in painted_text(row)
@@ -1049,8 +1036,7 @@ async def test_active_ingest_confirm_copy_fits_fixed_gate_at_72x18(copy):
         start = app.query_one("#library-ingest-start", Button)
         strips = app.screen._compositor.render_strips()
         painted = "".join(
-            strip.text
-            for strip in strips[quiet.region.y : quiet.region.bottom]
+            strip.text for strip in strips[quiet.region.y : quiet.region.bottom]
         )
 
         assert quiet.region.height == 1
@@ -1267,9 +1253,7 @@ async def test_transcribe_cpp_failure_renders_only_eligible_recovery_actions():
     app = _CanvasHost(state)
 
     async with app.run_test() as pilot:
-        choose = pilot.app.query_one(
-            "#library-ingest-choose-gguf-ingest-job-1", Button
-        )
+        choose = pilot.app.query_one("#library-ingest-choose-gguf-ingest-job-1", Button)
         retry = pilot.app.query_one(
             "#library-ingest-retry-faster-whisper-ingest-job-1", Button
         )
@@ -1311,9 +1295,7 @@ async def test_research_failure_renders_only_honest_catalog_retry_action():
 @pytest.mark.asyncio
 async def test_transcribe_cpp_provider_shows_path_free_configured_picker():
     form = _default_form()
-    form.type_options = {
-        "audio_video": {"transcription_provider": "transcribe-cpp"}
-    }
+    form.type_options = {"audio_video": {"transcription_provider": "transcribe-cpp"}}
     state = build_library_ingest_state(
         (),
         form=form,
@@ -1370,9 +1352,7 @@ async def test_recent_ingests_section_renders_terminal_jobs():
         source_path="/tmp/queued.txt",
         state=IngestJobState.QUEUED,
     )
-    state = build_library_ingest_state(
-        (done, failed, queued), form=_default_form()
-    )
+    state = build_library_ingest_state((done, failed, queued), form=_default_form())
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
         recent = pilot.app.query_one("#library-ingest-recent", Collapsible)
@@ -1798,10 +1778,7 @@ async def test_idle_external_fence_preserves_focused_form_input(
 
         assert screen._ingest_state.form.title == "Atlas notes"
         assert screen._ingest_state.form.type_options["pdf"]["ocr_language"] == "fr"
-        assert (
-            screen._ingest_state.form.type_options["generic"]["chunk_size"]
-            == "2048"
-        )
+        assert screen._ingest_state.form.type_options["generic"]["chunk_size"] == "2048"
         assert screen.query_one("#library-ingest-title", Input) is title
         assert screen.app.focused is title
         assert title.cursor_position == 5
@@ -3137,8 +3114,10 @@ async def test_backend_switch_appears_only_with_a_server_configured():
         assert len(pilot.app.query("#library-ingest-server-line")) == 0
 
     with_server = build_library_ingest_state(
-        (), form=LibraryIngestFormState(), runtime_source="server",
-        server_ingest_available=True
+        (),
+        form=LibraryIngestFormState(),
+        runtime_source="server",
+        server_ingest_available=True,
     )
     app = _CanvasHost(with_server)
     async with app.run_test() as pilot:
@@ -3167,14 +3146,16 @@ async def test_backend_switch_offers_the_way_back_when_targeting_the_server():
 
 @pytest.mark.asyncio
 async def test_backend_state_is_rendered_before_the_switch():
-    """"Imports run on X" must precede the button that changes it.
+    """ "Imports run on X" must precede the button that changes it.
 
     With the button first, the pane read as a contradiction top-to-bottom:
     "Import on the server" directly above "Imports run on this machine."
     """
     state = build_library_ingest_state(
-        (), form=LibraryIngestFormState(), runtime_source="server",
-        server_ingest_available=True
+        (),
+        form=LibraryIngestFormState(),
+        runtime_source="server",
+        server_ingest_available=True,
     )
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
@@ -3231,9 +3212,7 @@ async def test_done_row_progress_line_has_no_state_prefix():
     state = build_library_ingest_state((job,), form=_default_form())
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
-        progress = pilot.app.query_one(
-            "#library-ingest-progress-ingest-job-1", Static
-        )
+        progress = pilot.app.query_one("#library-ingest-progress-ingest-job-1", Static)
         assert str(progress.renderable) == "Imported report.txt"
 
 
@@ -3357,8 +3336,7 @@ async def test_select_fields_carry_visible_labels():
             # so accept the label with or without the suffix, pinned to
             # the exact separator so a missing label still fails.
             assert any(
-                text == label or text.startswith(f"{label} — ")
-                for text in labels
+                text == label or text.startswith(f"{label} — ") for text in labels
             ), f"select {label!r} has no visible label; rendered: {labels!r}"
 
 
@@ -3454,12 +3432,14 @@ async def test_severity_colour_supplements_glyphs_and_invalid_field_marked() -> 
         assert any("library-ingest-row-failed" in c for c in classes)
         assert any("library-ingest-row-skipped" in c for c in classes)
         # The done row carries neither severity class.
-        assert sum(
-            1
-            for c in classes
-            if "library-ingest-row-failed" in c
-            or "library-ingest-row-skipped" in c
-        ) == 2
+        assert (
+            sum(
+                1
+                for c in classes
+                if "library-ingest-row-failed" in c or "library-ingest-row-skipped" in c
+            )
+            == 2
+        )
 
         # Glyph + word survive alongside the colour (monochrome contract).
         by_id = {row.job_id: row for row in state.queue_rows}
@@ -3534,9 +3514,7 @@ async def test_document_panel_renders_with_processing_and_ocr_controls():
         async with app.run_test() as pilot:
             panel = pilot.app.query_one("#type-group-document", Collapsible)
             assert "Word/Office documents" in str(panel.title)
-            method = pilot.app.query_one(
-                "#opt-document-processing_method", Select
-            )
+            method = pilot.app.query_one("#opt-document-processing_method", Select)
             assert method.value == "auto"
             ocr = pilot.app.query_one("#opt-document-ocr", Checkbox)
             # Under the default "auto" method OCR is offerable (docling is
@@ -3594,9 +3572,7 @@ async def test_pdf_ocr_checkbox_enabled_under_docling_engine():
 async def test_translate_checkbox_inert_under_parakeet_provider():
     """(task-3303 AC4) Only faster-whisper translates; parakeet renders it inert."""
     form = _default_form()
-    form.type_options = {
-        "audio_video": {"transcription_provider": "parakeet-onnx"}
-    }
+    form.type_options = {"audio_video": {"transcription_provider": "parakeet-onnx"}}
     state = build_library_ingest_state(
         (),
         form=form,
@@ -3729,9 +3705,9 @@ async def test_every_select_renders_human_labels_never_raw_tokens():
                     for prompt, value in select._options
                     if value is not Select.BLANK
                 ]
-                assert {value for _prompt, value in rendered} == set(
-                    field.options
-                ), f"{group}.{name}: persisted values must stay the tokens"
+                assert {value for _prompt, value in rendered} == set(field.options), (
+                    f"{group}.{name}: persisted values must stay the tokens"
+                )
                 for prompt, value in rendered:
                     assert prompt != value, (
                         f"{group}.{name}: option {value!r} renders its raw "
@@ -3740,8 +3716,14 @@ async def test_every_select_renders_human_labels_never_raw_tokens():
                 # The persisted selection is still an internal token.
                 assert select.value in field.options
             # Every group with a select was actually swept.
-            assert {"pdf", "document", "audio_video", "ebook", "web",
-                    "generic"} <= seen_groups
+            assert {
+                "pdf",
+                "document",
+                "audio_video",
+                "ebook",
+                "web",
+                "generic",
+            } <= seen_groups
 
 
 @pytest.mark.asyncio
@@ -3894,9 +3876,7 @@ async def test_failed_queue_row_bracket_error_renders_clean():
     ``\\[web_security]`` verbatim (REPL-pinned: escape+from_markup on this
     exact shape leaks). Verbatim ``markup=False`` rendering: byte-identical
     text, no escape artifacts, nothing swallowed as a tag."""
-    error = (
-        "note [remedy: check [keys] in config.toml, or set [keys] off]"
-    )
+    error = "note [remedy: check [keys] in config.toml, or set [keys] off]"
     failed = LibraryIngestJob(
         job_id="ingest-job-1",
         source_path="/tmp/[draft] notes.txt",
@@ -3976,9 +3956,7 @@ async def test_disabled_text_field_label_keeps_its_hint_too():
     ):
         async with app.run_test() as pilot:
             assert (
-                pilot.app.query_one(
-                    "#opt-audio_video-cookies_file", Input
-                ).disabled
+                pilot.app.query_one("#opt-audio_video-cookies_file", Input).disabled
                 is True
             )
             cookies = _label_before(pilot, "opt-audio_video-cookies_file")
@@ -4047,9 +4025,9 @@ async def test_each_copy_install_button_names_its_own_extra():
         )
         assert any("audio" in text for text in rendered), rendered
         assert any("video" in text for text in rendered), rendered
-        assert any(
-            "transcription_faster_whisper" in text for text in rendered
-        ), rendered
+        assert any("transcription_faster_whisper" in text for text in rendered), (
+            rendered
+        )
 
 
 # --- task-14822: the tooling-warning wall folds -----------------------------
@@ -4095,26 +4073,16 @@ async def test_tooling_warnings_collapse_to_one_summary_line():
     per-warning detail moves behind a collapsed fold."""
     app = _CanvasHost(_warned_state(11))
     async with app.run_test() as pilot:
-        summary_block = pilot.app.query_one(
-            "#library-ingest-preflight-summary"
-        )
-        summary = pilot.app.query_one(
-            "#ingest-preflight-tooling-summary", Static
-        )
+        summary_block = pilot.app.query_one("#library-ingest-preflight-summary")
+        summary = pilot.app.query_one("#ingest-preflight-tooling-summary", Static)
         assert summary.visual.plain.startswith("⚠")
-        fold = pilot.app.query_one(
-            "#ingest-preflight-tooling-detail", Collapsible
-        )
+        fold = pilot.app.query_one("#ingest-preflight-tooling-detail", Collapsible)
         assert fold.collapsed is True, "the detail must start folded away"
         # Every warning line still exists -- inside the fold, not stacked
         # above the rest of the form.
         for index in range(11):
-            warning = pilot.app.query_one(
-                f"#ingest-preflight-warning-{index}", Static
-            )
-            assert fold in warning.ancestors, (
-                f"warning {index} is not inside the fold"
-            )
+            warning = pilot.app.query_one(f"#ingest-preflight-warning-{index}", Static)
+            assert fold in warning.ancestors, f"warning {index} is not inside the fold"
         # No warning Static is a direct child of the summary block.
         assert not [
             child
@@ -4182,17 +4150,13 @@ def test_tooling_summary_line_names_affected_files_from_the_one_forecast():
         _StubWarnedState(11, _StubForecast(doomed=21, staged_total=21))
     )
     assert doomed == (
-        "⚠ 21 of 21 files need tooling that isn't installed — "
-        "those imports will fail."
+        "⚠ 21 of 21 files need tooling that isn't installed — those imports will fail."
     ), doomed
 
     # A forecast that puts NO staged file at risk still explains the block.
-    none_affected = ingest_tooling_summary_line(
-        _StubWarnedState(4, _StubForecast())
-    )
+    none_affected = ingest_tooling_summary_line(_StubWarnedState(4, _StubForecast()))
     assert none_affected == (
-        "⚠ 4 optional components aren't installed — "
-        "no staged file needs them."
+        "⚠ 4 optional components aren't installed — no staged file needs them."
     ), none_affected
 
 
@@ -4239,12 +4203,8 @@ async def test_one_combined_install_command_is_offered_outside_the_fold():
 
     app = _ClipboardHost(_warned_state(3))
     async with app.run_test() as pilot:
-        button = pilot.app.query_one(
-            "#ingest-preflight-copy-all-commands", Button
-        )
-        fold = pilot.app.query_one(
-            "#ingest-preflight-tooling-detail", Collapsible
-        )
+        button = pilot.app.query_one("#ingest-preflight-copy-all-commands", Button)
+        fold = pilot.app.query_one("#ingest-preflight-tooling-detail", Collapsible)
         assert fold not in button.ancestors, (
             "the combined command must not be hidden behind the fold"
         )
@@ -4304,9 +4264,7 @@ async def test_outcome_lines_do_not_share_the_tooling_warning_class():
     async with app.run_test() as pilot:
         unsupported = pilot.app.query_one("#ingest-unsupported-summary", Static)
         empty = pilot.app.query_one("#ingest-empty-summary", Static)
-        tooling = pilot.app.query_one(
-            "#ingest-preflight-tooling-summary", Static
-        )
+        tooling = pilot.app.query_one("#ingest-preflight-tooling-summary", Static)
         for outcome in (unsupported, empty):
             assert outcome.has_class("library-ingest-outcome-line"), (
                 f"{outcome.id} carries no outcome weight: {outcome.classes}"
@@ -4346,9 +4304,7 @@ async def test_collapsed_title_omits_values_of_disabled_fields():
             panel = pilot.app.query_one("#type-group-pdf", Collapsible)
             title = str(panel.title)
             disabled_labels = [
-                widget
-                for widget in panel.query(Select)
-                if widget.disabled
+                widget for widget in panel.query(Select) if widget.disabled
             ]
             assert disabled_labels, "precondition: the group is gated"
             # Not one gated field's value may appear in the receipt.
@@ -4392,9 +4348,12 @@ async def test_collapsed_panel_with_an_invalid_value_is_marked_in_its_title():
         )
         from tldw_chatbook.Library.ingest_capabilities import get_capabilities
 
-        assert build_type_group_title(
-            get_capabilities("generic"), form.type_options["generic"]
-        ) == title
+        assert (
+            build_type_group_title(
+                get_capabilities("generic"), form.type_options["generic"]
+            )
+            == title
+        )
 
 
 @pytest.mark.asyncio
@@ -4405,9 +4364,7 @@ async def test_opening_the_tooling_fold_is_not_reported_as_an_option_panel():
     detail``."""
     app = _MessageRecordingHost(_warned_state(3))
     async with app.run_test() as pilot:
-        fold = pilot.app.query_one(
-            "#ingest-preflight-tooling-detail", Collapsible
-        )
+        fold = pilot.app.query_one("#ingest-preflight-tooling-detail", Collapsible)
         fold.collapsed = False
         await pilot.pause()
         assert fold.collapsed is False
@@ -4523,9 +4480,7 @@ def test_the_fold_line_says_will_fail_for_a_doomed_selection():
         f"{forecast_summary_line(forecast)!r}"
     )
     assert "may fail" not in line, line
-    assert "optional" not in line, (
-        f"required tooling described as optional: {line!r}"
-    )
+    assert "optional" not in line, f"required tooling described as optional: {line!r}"
     assert "21 of 21 files" in line, line
     # And it must not disagree with the two lines derived from the same
     # object at the commit point.
@@ -4602,9 +4557,7 @@ def _state_with_advisory_note(tooling_warnings: int = 2):
     is set here directly because the canvas is the half under test.
     """
     state = _warned_state(tooling_warnings)
-    object.__setattr__(
-        state, "warning_lines", list(state.warning_lines) + [_URL_NOTE]
-    )
+    object.__setattr__(state, "warning_lines", list(state.warning_lines) + [_URL_NOTE])
     object.__setattr__(state, "advisory_lines", (_URL_NOTE,))
     return state
 
@@ -4632,18 +4585,14 @@ async def test_a_featureless_note_renders_outside_the_fold():
     real message and mislabels it as missing tooling."""
     app = _CanvasHost(_state_with_advisory_note(2))
     async with app.run_test() as pilot:
-        fold = pilot.app.query_one(
-            "#ingest-preflight-tooling-detail", Collapsible
-        )
+        fold = pilot.app.query_one("#ingest-preflight-tooling-detail", Collapsible)
         note = pilot.app.query_one("#ingest-preflight-note-0", Static)
         assert _URL_NOTE in note.visual.plain, note.visual.plain
         assert fold not in note.ancestors, (
             "the advisory note is hidden inside the tooling fold"
         )
         # And it is not repeated inside the fold as a tooling warning.
-        folded_text = " ".join(
-            widget.visual.plain for widget in fold.query(Static)
-        )
+        folded_text = " ".join(widget.visual.plain for widget in fold.query(Static))
         assert _URL_NOTE not in folded_text, folded_text
 
 
@@ -4696,9 +4645,7 @@ async def test_an_expanded_fold_survives_a_dynamic_region_recompose():
     app = _CanvasHost(_warned_state(4))
     async with app.run_test() as pilot:
         summary = pilot.app.query_one(LibraryIngestPreflightSummary)
-        fold = pilot.app.query_one(
-            "#ingest-preflight-tooling-detail", Collapsible
-        )
+        fold = pilot.app.query_one("#ingest-preflight-tooling-detail", Collapsible)
         fold.collapsed = False
         await pilot.pause()
 
@@ -4707,9 +4654,7 @@ async def test_an_expanded_fold_survives_a_dynamic_region_recompose():
         summary.refresh(recompose=True)
         await pilot.pause()
 
-        reborn = pilot.app.query_one(
-            "#ingest-preflight-tooling-detail", Collapsible
-        )
+        reborn = pilot.app.query_one("#ingest-preflight-tooling-detail", Collapsible)
         assert reborn.collapsed is False, (
             "the fold snapped shut under the user on a registry tick"
         )
@@ -4722,9 +4667,7 @@ async def test_toggling_the_fold_is_reported_so_the_screen_can_persist_it():
     ``OptionPanelToggled`` has for the option panels."""
     app = _MessageRecordingHost(_warned_state(3))
     async with app.run_test() as pilot:
-        fold = pilot.app.query_one(
-            "#ingest-preflight-tooling-detail", Collapsible
-        )
+        fold = pilot.app.query_one("#ingest-preflight-tooling-detail", Collapsible)
         fold.collapsed = False
         await pilot.pause()
         fold.collapsed = True
@@ -4744,9 +4687,7 @@ async def test_a_state_carried_expansion_opens_the_fold_on_compose():
     object.__setattr__(state, "tooling_detail_expanded", True)
     app = _CanvasHost(state)
     async with app.run_test() as pilot:
-        fold = pilot.app.query_one(
-            "#ingest-preflight-tooling-detail", Collapsible
-        )
+        fold = pilot.app.query_one("#ingest-preflight-tooling-detail", Collapsible)
         assert fold.collapsed is False, (
             "a persisted expansion did not survive the rebuild"
         )
@@ -4820,9 +4761,7 @@ async def test_a_single_install_command_yields_a_single_copy_control():
 
     app = _ClipboardHost(_warned_state(1))
     async with app.run_test() as pilot:
-        buttons = list(
-            pilot.app.query(".ingest-preflight-copy-command")
-        )
+        buttons = list(pilot.app.query(".ingest-preflight-copy-command"))
         assert len(buttons) == 1, (
             "one command, two copy controls: "
             f"{[(b.id, b.label.plain) for b in buttons]}"

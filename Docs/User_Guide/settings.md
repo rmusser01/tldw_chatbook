@@ -329,7 +329,10 @@ loads the latest saved defaults. New Console chats take the saved defaults, and
 so does an open chat you have not touched yet: no messages and no edited
 settings. It follows the next time Console shows it, even when its provider
 already reads Ready, and Console tells you if its provider changed. A chat that
-holds any work keeps its own settings.
+holds any work keeps its own settings; to give it the new defaults, open
+**Chat settings** (**Ctrl+O**) in that chat, choose **Use saved defaults**,
+then **Apply to this chat**. That applies them to the one chat and writes
+nothing to `config.toml`.
 
 #### QwenCloud
 
@@ -741,16 +744,17 @@ unchanged — what changed is response validation and request strictness:
   report the server's response shape so the tolerant profile can be widened
   with evidence.
 
-**Creating one.** In the Console settings modal, the **New endpoint…**
+**Creating one.** In Chat settings, the **New endpoint…**
 button sits with **Endpoint** (it appears for providers that take a base
 URL, and whenever named endpoints exist). It opens "New endpoint from
 template": pick a template — the "OpenAI-compatible (blank)" starter, any
 provider, or an existing named entry (as a duplicate) — adjust the prefilled
 **Family**, **Endpoint**, and **Models**, give it a **Display name** (the
 slug is derived from the name), and press **Create**. The entry is written
-to `config.toml` immediately, the modal switches to the new provider, and
-model discovery runs against the new URL; **Cancel** leaves config
-untouched. Because entries are durable config, selecting one never trips
+to `config.toml` immediately; the modal lists the models the new server
+serves and opens Switch model's pick mode on the entry, so the chat moves
+only once you pick one of its models (see the Console guide's Chat
+settings). **Cancel** leaves config untouched. Because entries are durable config, selecting one never trips
 the "Endpoint not saved" block, and conversations using them survive
 restart.
 
@@ -1212,7 +1216,7 @@ to **Transcript**, with an explanation beside the controls. Frame rates accept
 1–12; a non-finite value in a hand-edited configuration loads the default of 6.
 
 The current conversation's **Thinking history replay** control lives in its
-Console settings, because Auto/Include/Exclude is durable conversation state,
+Chat settings, because Auto/Include/Exclude is durable conversation state,
 not a device presentation setting. **Save as default for new conversations**
 copies that optional value to `console.thinking_history_policy_default` for
 future conversations only. An effective **Required** state is derived from
@@ -1280,13 +1284,39 @@ to bind external folders."
 
 ### Data & Privacy — Privacy & Security
 
-A read-out of your privacy posture: whether config encryption is on, whether
-redaction is active, how many sensitive fields and provider secrets exist
-(counted, never shown), how many referenced environment variables are actually
-set, and your skill-trust status. **Check Privacy** recomputes it; **Open
-Providers & Models** and **Open Advanced Config** are jump buttons. Encryption
-and credentials remain read-only here; change secrets in Providers & Models or
-Advanced Config.
+The page opens with the **Encryption** card, the one place after setup to
+manage the master password that encrypts API keys in config.toml. Its state
+line reads "Config encryption: Off — API keys are stored as plain text in
+config.toml.", "On — you'll enter your master password when chatbook
+starts.", or "On, but locked" when this session started without the password
+(saved keys then read as missing until you relaunch and unlock). Three
+actions, each gated by a password dialog that opens with its field focused:
+
+| Action | Asks for | What happens |
+|---|---|---|
+| **Encrypt keys…** | A new master password, twice | Encrypts every saved key. Refused when encryption is already on. The dialog warns that rewriting config.toml drops comments and custom formatting. |
+| **Change password…** | Your current master password and the new one (twice) | Re-encrypts the saved keys under the new password. A wrong current password changes nothing. |
+| **Turn off encryption…** | Your current master password | Decrypts the saved keys and stores them as plain text again. |
+
+Each action runs in the background and reports its result on the card ("Done:
+…", "That password didn't match. Nothing was changed.", or a failure line). A
+failed action never leaves config.toml half-written: the previous file is
+restored. If restoring it fails too, the card says config.toml may have changed
+and the state line shows what the file holds now. **Encrypt keys…** also
+refuses when encryption is off but a saved key is still encrypted with an
+earlier password; the card names that setting and where to re-enter or clear
+it first: Settings ▸ Providers & Models for a provider's API key, Settings ▸
+Advanced Config for anything else (a web-search key or a server token, for
+example). Startup unlock, the forgotten-password reset
+and what happens with a wrong password are described in
+[First-Run Setup](First_Run_Setup.md#starting-chatbook-when-your-keys-are-encrypted).
+
+Below it is a read-out of your privacy posture: whether redaction is active,
+how many sensitive fields and provider secrets exist (counted, never shown),
+how many referenced environment variables are actually set, and your
+skill-trust status. **Check Privacy** recomputes it; **Open Providers &
+Models** and **Open Advanced Config** are jump buttons. Credentials remain
+read-only here; change secrets in Providers & Models or Advanced Config.
 
 The exception is the unmistakable **DANGER!!! RAW CLI HOST ACCESS** section.
 **Allow raw CLI host access** drafts the persistent
@@ -1600,14 +1630,18 @@ not open an editor.
 - **A splash change had no effect.** All splash settings are startup-only.
   Separately, **Animation speed (x)** is saved to a place this page does not
   read back, so it looks unchanged when you return (backlog task-2706).
-- **Privacy & Security cannot edit encryption or credentials.** Those rows are
-  still read-only. Its raw CLI unlock is the deliberate exception: it uses the
-  category's Save/Revert draft, while Arm/Disarm changes process memory only.
+- **Privacy & Security cannot edit credentials.** The posture rows are
+  read-only. Key encryption is changed through the Encryption card's
+  password-gated actions, which apply at once (no Save). The raw CLI unlock is
+  the one value that uses the category's Save/Revert draft, while Arm/Disarm
+  changes process memory only.
 - **"Open Config File" didn't open anything.** By design — that palette command
   only prints the file's location.
 - **A Console setting didn't take.** Global fallbacks reach new chats and open
   chats you have not touched; a chat with messages or edited settings keeps
-  what it resolved, and a session or provider+model setting outranks them. Rail presentation is different: after a
+  what it resolved (in that chat, **Chat settings** ▸ **Use saved defaults**,
+  then **Apply to this chat**, adopts them), and a session or provider+model
+  setting outranks them. Rail presentation is different: after a
   successful Save, return to a freshly opened Console screen to see it; no app
   restart is required.
 - **Save Raw TOML is greyed out.** Validate the current text. If the file changed

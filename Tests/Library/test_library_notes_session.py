@@ -38,9 +38,7 @@ NOW = datetime(2026, 7, 31, 12, 34, tzinfo=timezone.utc)
 def test_notes_reader_has_no_parallel_state_authority() -> None:
     """The session coordinator remains the only Database Notes reader model."""
     assert (
-        importlib.util.find_spec(
-            "tldw_chatbook.Library.library_notes_reader_state"
-        )
+        importlib.util.find_spec("tldw_chatbook.Library.library_notes_reader_state")
         is None
     )
 

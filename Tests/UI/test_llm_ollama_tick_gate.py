@@ -100,9 +100,7 @@ async def test_inactive_screen_tick_constructs_no_worker(monkeypatch):
         await pilot.app.push_screen(Screen())
         await pilot.pause()
         assert window.is_attached, "test premise: the window is still mounted"
-        assert not window.screen.is_active, (
-            "test premise: the Models screen is covered"
-        )
+        assert not window.screen.is_active, "test premise: the Models screen is covered"
 
         constructions = _shadow_run_worker(window)
         for _ in range(5):
@@ -120,9 +118,7 @@ async def test_active_screen_tick_schedules_one_exclusive_worker(monkeypatch):
     app = _build_test_app()
     async with app.run_test(size=(120, 40)) as pilot:
         window = await _mount_models(monkeypatch, pilot)
-        assert window.screen.is_active, (
-            "test premise: the Models screen is on top"
-        )
+        assert window.screen.is_active, "test premise: the Models screen is on top"
 
         constructions = _shadow_run_worker(window)
         window._schedule_ollama_api_state()

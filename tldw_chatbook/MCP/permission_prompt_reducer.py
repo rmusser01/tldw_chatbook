@@ -86,9 +86,7 @@ def format_permission_prompt_report(
         for index, recommendation in enumerate(
             report.recommendations[:max_recommendations], start=1
         ):
-            approval_word = (
-                "time" if recommendation.approved_count == 1 else "times"
-            )
+            approval_word = "time" if recommendation.approved_count == 1 else "times"
             label = recommendation.server_label or recommendation.server_key
             last_seen = (
                 f", last seen {recommendation.last_seen}"
@@ -119,7 +117,8 @@ def format_permission_prompt_report(
             if reason_counts[reason]
         ]
         unknown_count = sum(
-            count for reason, count in reason_counts.items()
+            count
+            for reason, count in reason_counts.items()
             if reason not in _EXCLUSION_LABELS
         )
         if unknown_count:

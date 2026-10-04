@@ -320,10 +320,7 @@ def test_console_session_surface_uses_flex_height_not_full_percent_height():
             "    border: none;"
         ) in css
         assert (
-            "#console-staged-context-tray {\n"
-            "    height: auto;\n"
-            "    min-height: 0;\n"
-            "}"
+            "#console-staged-context-tray {\n    height: auto;\n    min-height: 0;\n}"
         ) in css
         assert (
             "#console-workspace-context {\n    height: auto;\n    min-height: 0;"
@@ -856,7 +853,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
             run_active=False,
             can_save_chatbook=False,
             send_blocked=True,
-            setup_blocked_reason="Choose a model in Console Settings before sending.",
+            setup_blocked_reason="Choose a model in Chat settings before sending.",
         )
         await pilot.pause(0.1)
 
@@ -874,9 +871,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
             == "Send blocked — choose a model to continue ›"
         )
         assert send_button.disabled is True
-        assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
-        )
+        assert send_button.tooltip == "Choose a model in Chat settings before sending."
 
         composer.load_draft("draft despite missing setup")
         await pilot.pause(0.1)
@@ -888,9 +883,7 @@ async def test_console_composer_empty_setup_blocked_state_shows_reason():
         # A typed draft does not lift a setup block.
         assert send_button.disabled is True
         assert disabled_reason.styles.display == "block"
-        assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
-        )
+        assert send_button.tooltip == "Choose a model in Chat settings before sending."
 
 
 @pytest.mark.asyncio
@@ -2527,9 +2520,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
             not in _visible_text(console)
         )
         send_button = console.query_one("#console-send-message", Button)
-        assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
-        )
+        assert send_button.tooltip == "Choose a model in Chat settings before sending."
         assert "Setup required: Choose model before sending." not in _visible_text(
             console
         )
@@ -2575,9 +2566,7 @@ async def test_console_choose_model_state_hides_redundant_recovery_strip(monkeyp
             not in _visible_text(console)
         )
         send_button = console.query_one("#console-send-message", Button)
-        assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
-        )
+        assert send_button.tooltip == "Choose a model in Chat settings before sending."
 
 
 @pytest.mark.asyncio
@@ -3586,9 +3575,9 @@ def test_console_rag_source_status_unchanged_with_a_pending_launch():
     )
     # A stale sent-notice sitting alongside a NEW pending launch changes
     # nothing -- pending-launch derivation takes over unconditionally.
-    assert screen._retrieval._console_rag_source_status(launch, sent_source_count=5) == (
-        "staged from Library Search/RAG"
-    )
+    assert screen._retrieval._console_rag_source_status(
+        launch, sent_source_count=5
+    ) == ("staged from Library Search/RAG")
 
 
 def test_console_rag_source_status_remembers_the_last_send_when_nothing_is_staged():
@@ -3610,10 +3599,13 @@ def test_console_rag_source_status_genuinely_empty_reads_not_staged():
     screen = ChatScreen(app)
 
     assert screen._retrieval._console_rag_source_status(None) == "not staged"
-    assert screen._retrieval._console_rag_source_status(None, sent_source_count=0) == "not staged"
-    assert screen._retrieval._console_rag_source_status(None, sent_source_count=None) == (
-        "not staged"
+    assert (
+        screen._retrieval._console_rag_source_status(None, sent_source_count=0)
+        == "not staged"
     )
+    assert screen._retrieval._console_rag_source_status(
+        None, sent_source_count=None
+    ) == ("not staged")
 
 
 def test_console_inspector_sources_row_remembers_the_last_send():
@@ -3659,7 +3651,9 @@ def test_console_strip_and_inspector_sent_counts_provably_agree():
     inspector_state_2 = screen._build_console_inspector_state(None)
     rows_by_label_2 = {row.label: row for row in inspector_state_2.rows}
     assert strip_state_2.notice == "Evidence sent with this message · 2 sources"
-    assert rows_by_label_2["Retrieval"].value == "sent with the last message · 2 sources"
+    assert (
+        rows_by_label_2["Retrieval"].value == "sent with the last message · 2 sources"
+    )
 
 
 def test_console_prefers_configured_provider_when_app_reactive_is_stale_default():
@@ -3758,9 +3752,7 @@ async def test_console_run_inspector_shows_blocked_provider_and_missing_rag_sour
         # disappear together -- a stranded reason line would still advertise a
         # control the user cannot reach.
         assert not list(console.query("#console-inspector-review-tool-call"))
-        assert not list(
-            console.query("#console-inspector-review-tool-call-reason")
-        )
+        assert not list(console.query("#console-inspector-review-tool-call-reason"))
 
 
 @pytest.mark.asyncio
@@ -3998,9 +3990,8 @@ async def test_console_rag_action_requests_library_retrieval_and_stages_result(
         # scope-summary grammar under the Console's own "Sources" noun
         # ("Scope" here already means the retrieval ITEM scope), and it
         # names what is off -- the default still being today's three.
-        assert (
-            "Sources: Notes, Media, Conversations (Prompts off)"
-            in _visible_text(console)
+        assert "Sources: Notes, Media, Conversations (Prompts off)" in _visible_text(
+            console
         )
         await _run_manual_library_search(console, pilot, query)
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
@@ -4258,9 +4249,7 @@ async def test_console_rag_staging_shows_evidence_summary_authority_and_snippet(
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-run-library-rag")
 
-        await _run_manual_library_search(
-            console, pilot, "Why did the incident happen?"
-        )
+        await _run_manual_library_search(console, pilot, "Why did the incident happen?")
         await _wait_for_selector(console, pilot, "#console-live-work-payload-source-id")
         await _open_console_inspector(console, pilot)
         await _wait_for_selector(console, pilot, "#console-inspector-evidence")
@@ -4327,9 +4316,7 @@ async def test_console_rag_send_blocks_when_staged_evidence_is_not_context_eligi
 
         text = _visible_text(console)
         assert "Evidence: 0/1 available (blocked)" in text
-        assert (
-            "Console send blocked: Library search has no available evidence" in text
-        )
+        assert "Console send blocked: Library search has no available evidence" in text
         assert "Review source authority before sending." in text
         assert composer.draft_text() == "Answer using the staged RAG evidence"
 
@@ -4809,8 +4796,7 @@ async def test_console_command_provider_covers_every_alt_bound_action():
         paste_hits = [hit async for hit in provider.search("paste image")]
         assert paste_hits, "expected the paste-image command to be searchable"
         assert any(
-            hit.command == console.action_paste_clipboard_image
-            for hit in paste_hits
+            hit.command == console.action_paste_clipboard_image for hit in paste_hits
         )
 
 

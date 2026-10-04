@@ -6,15 +6,31 @@ Provides modal dialogs for entering master password for config file encryption.
 Supports both initial password setup and password entry for decryption.
 """
 
+from dataclasses import dataclass, field as dataclass_field
 from typing import Optional, Callable, Literal
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical, VerticalScroll, Horizontal
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Label, Input, Static
+from textual.widgets import Button, Label, Input, Static
 from textual.validation import Length
 from loguru import logger
+
+from .state_checkbox import StateCheckbox
+
+
+@dataclass(frozen=True)
+class PasswordChange:
+    """What a ``mode="change"`` dialog dismisses with (TASK-34100.4).
+
+    ``change_encryption_password(old, new)`` needs both passwords; the old
+    change mode had one field plus a confirm. ``repr`` hides both values.
+    """
+
+    current: str = dataclass_field(repr=False)
+    new: str = dataclass_field(repr=False)
+
 
 #: Shown wherever a user is about to enable config encryption for the first
 #: time. Encrypting rewrites config.toml through a TOML parse/serialize
@@ -34,7 +50,31 @@ class PasswordDialog(ModalScreen):
 
     # TASK-21141 (UAT K-2): keyboard users need a way out. Escape follows
     # the same path as the Cancel button.
-    BINDINGS = [Binding("escape", "cancel_dialog", "Cancel", show=False)]
+    # TASK-34100.4 review round 2 (F-R2-5): Tab and Shift+Tab are PRIORITY
+    # bindings here. Textual's own Tab is a non-priority Screen binding: the
+    # App forwards each key to the focused field first, so in a burst
+    # ('current<Tab>new<Tab>new' from a password manager's auto-type) the
+    # keys after a Tab reached the OLD field before the Tab moved focus, and
+    # submit reported "Passwords do not match". A priority binding moves
+    # focus before the next key is forwarded.
+    BINDINGS = [
+        Binding("escape", "cancel_dialog", "Cancel", show=False),
+        Binding("tab", "app.focus_next", "Next field", show=False, priority=True),
+        Binding(
+            "shift+tab",
+            "app.focus_previous",
+            "Previous field",
+            show=False,
+            priority=True,
+        ),
+    ]
+
+    # TASK-34100.4 (protect-summary-05): the first password field takes focus
+    # on open, so typing without Tab fills it. Without this, App.AUTO_FOCUS
+    # ('*') picked the VerticalScroll wrapper: keystrokes vanished and its
+    # focus border drew a stray inner frame. Change mode overrides this per
+    # instance to its current-password field.
+    AUTO_FOCUS = "#password-input"
 
     DEFAULT_CSS = """
     PasswordDialog {
@@ -136,6 +176,8 @@ class PasswordDialog(ModalScreen):
         """
         super().__init__(name=name)
         self.mode = mode
+        if mode == "change":
+            self.AUTO_FOCUS = "#current-password-input"
         self.custom_title = title
         self.custom_message = message
         self.on_submit_callback = on_submit
@@ -156,32 +198,50 @@ class PasswordDialog(ModalScreen):
                 # TASK-21141 (UAT K-1/K-4): requirements and the
                 # forgotten-password consequence stated BEFORE first submit,
                 # not discovered through a failed attempt.
+                # TASK-34100.4: a forgotten password no longer locks the
+                # whole app -- startup offers a reset of the saved keys.
                 self.custom_message = (
                     "Create a master password to encrypt your API keys and "
                     "sensitive configuration data. At least 8 characters. "
                     "If you forget it, the encrypted keys cannot be "
-                    "recovered — you'll need to re-enter them."
+                    "recovered — you can reset them when chatbook starts and "
+                    "re-enter them; nothing else is lost."
                 )
             elif mode == "unlock":
                 self.custom_message = (
                     "Enter your master password to decrypt the configuration file."
                 )
             elif mode == "change":
-                self.custom_message = "Enter your current master password to change it."
+                self.custom_message = (
+                    "Enter your current master password, then choose a new "
+                    "one (at least 8 characters). Your saved API keys are "
+                    "re-encrypted with the new password."
+                )
 
     def compose(self) -> ComposeResult:
         """Create the dialog layout."""
         with Container():
             # TASK-21141 (UAT K-3): scrollable so the button row stays
             # reachable even when a short terminal clips the container —
-            # focus movement scrolls it into view.
-            with VerticalScroll():
+            # focus movement scrolls it into view. TASK-34100.4: never
+            # focusable itself (see AUTO_FOCUS).
+            with VerticalScroll(can_focus=False):
                 yield Label(self.custom_title, classes="dialog-title")
                 yield Static(self.custom_message, classes="dialog-message")
 
+                if self.mode == "change":
+                    yield Input(
+                        placeholder="Current master password",
+                        password=True,
+                        id="current-password-input",
+                        classes="password-input",
+                    )
+
                 # Password input
                 yield Input(
-                    placeholder="Enter password",
+                    placeholder=(
+                        "New password" if self.mode == "change" else "Enter password"
+                    ),
                     password=True,
                     id="password-input",
                     classes="password-input",
@@ -196,7 +256,11 @@ class PasswordDialog(ModalScreen):
                 # Confirm password for setup/change modes
                 if self.mode in ["setup", "change"]:
                     yield Input(
-                        placeholder="Confirm password",
+                        placeholder=(
+                            "Confirm new password"
+                            if self.mode == "change"
+                            else "Confirm password"
+                        ),
                         password=True,
                         id="confirm-input",
                         classes="password-input",
@@ -208,7 +272,9 @@ class PasswordDialog(ModalScreen):
                     )
 
                 # TASK-21141 (UAT K-6): let the user see what they typed.
-                yield Checkbox(
+                # TASK-34100.4: the shared glyph checkbox, so its state is a
+                # ✓ / blank cell rather than a colour-only X.
+                yield StateCheckbox(
                     "Show password",
                     id="show-password-toggle",
                     classes="show-password-toggle",
@@ -247,9 +313,9 @@ class PasswordDialog(ModalScreen):
         else:
             return "strength-strong", "Strong password"
 
-    @on(Checkbox.Changed, "#show-password-toggle")
-    def on_show_password_toggled(self, event: Checkbox.Changed) -> None:
-        """Reveal or mask both password fields (UAT K-6)."""
+    @on(StateCheckbox.Changed, "#show-password-toggle")
+    def on_show_password_toggled(self, event: StateCheckbox.Changed) -> None:
+        """Reveal or mask every password field (UAT K-6)."""
         for field in self.query(".password-input").results(Input):
             field.password = not event.value
 
@@ -310,16 +376,30 @@ class PasswordDialog(ModalScreen):
                 self.show_error("Passwords do not match")
                 return
 
+        result: str | PasswordChange = password
+        if self.mode == "change":
+            current = self.query_one("#current-password-input", Input).value
+            if not current:
+                self.show_error("Enter your current master password")
+                return
+            if current == password:
+                self.show_error("Choose a new password that is different")
+                return
+            result = PasswordChange(current=current, new=password)
+
         # Call the callback if provided
         if self.on_submit_callback:
             try:
-                self.on_submit_callback(password)
-                self.dismiss(password)
+                self.on_submit_callback(result)
+                self.dismiss(result)
             except Exception as e:
-                logger.error(f"Error in password submit callback: {e}")
+                logger.error(
+                    "Error in password submit callback (error_type={}).",
+                    type(e).__name__,
+                )
                 self.show_error(str(e))
         else:
-            self.dismiss(password)
+            self.dismiss(result)
 
     @on(Button.Pressed, "#cancel-button")
     def on_cancel(self) -> None:
@@ -335,7 +415,9 @@ class PasswordDialog(ModalScreen):
     @on(Input.Submitted)
     def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle Enter key in input fields."""
-        if event.input.id == "password-input" and self.mode in ["setup", "change"]:
+        if event.input.id == "current-password-input":
+            self.query_one("#password-input", Input).focus()
+        elif event.input.id == "password-input" and self.mode in ["setup", "change"]:
             # Move focus to confirm input
             self.query_one("#confirm-input", Input).focus()
         else:

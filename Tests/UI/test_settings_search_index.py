@@ -167,9 +167,7 @@ def _is_labeled_row_toggle_button(widget: Button) -> bool:
     row = _enclosing_input_row(widget)
     if row is None:
         return False
-    if not any(
-        "settings-input-label" in child.classes for child in row.query(Static)
-    ):
+    if not any("settings-input-label" in child.classes for child in row.query(Static)):
         return False
     interactive = [
         child
@@ -211,8 +209,7 @@ async def test_every_rendered_setting_is_in_the_search_index(hook_file):
             }
             for widget in body.query("*"):
                 is_setting = isinstance(widget, VALUE_WIDGET_TYPES) or (
-                    isinstance(widget, Button)
-                    and _is_labeled_row_toggle_button(widget)
+                    isinstance(widget, Button) and _is_labeled_row_toggle_button(widget)
                 )
                 if not is_setting:
                     continue
@@ -246,12 +243,9 @@ async def test_every_rendered_setting_is_in_the_search_index(hook_file):
                         if fid == widget_id
                     }
                     if not any(
-                        rendered in label or label in rendered
-                        for label in labels
+                        rendered in label or label in rendered for label in labels
                     ):
-                        label_drift.append(
-                            (category_value, widget_id, rendered)
-                        )
+                        label_drift.append((category_value, widget_id, rendered))
 
     for category_value, minimum in PER_CATEGORY_MIN_SETTINGS.items():
         assert category_value not in HARNESS_BLIND_CATEGORIES

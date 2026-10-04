@@ -147,10 +147,24 @@ jobs:
     # Its own job rather than another step on pr-fast-lane: that lane measured
     # ~20 min against a 30-min cap, and spending its last headroom here would
     # make the required check fail on a timeout the first time either half grew.
+    #
+    # TASK-34353: the serial census itself then reached 14-19 min against this
+    # job's 20-min cap, and PRs adding census files timed out with zero failing
+    # tests (#2992 three times). So the census runs as round-robin shards
+    # (`check_ui_pr_gate_census.py --shard`): each shard is a subsequence of
+    # the census, in census order, on the same minimal dependency set. What
+    # changes is only which files run before a given file -- a file that needed
+    # a particular predecessor was relying on leaked state, which is a bug the
+    # split surfaces, not hides. Add a shard (not minutes) when one nears the cap.
     name: UI Fast Lane
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      # Report every shard, so one red shard does not hide another.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
 
     steps:
       - uses: actions/checkout@v4
@@ -169,10 +183,16 @@ jobs:
       - name: Run the gated Tests/UI slice
         run: |
           # Census order is the run order; see the checker for why it may not
-          # silently shrink.
-          mapfile -t UI_FILES < <(grep -vE '^\s*(#|$)' scripts/ui_pr_gate_census.txt)
-          echo "Gating ${#UI_FILES[@]} Tests/UI files."
-          pytest "${UI_FILES[@]}" \
+          # silently shrink. Written to a file first so a failing checker fails
+          # the step (bash -e) instead of yielding an empty list.
+          python scripts/check_ui_pr_gate_census.py --shard \
+            "${{ strategy.job-index }}" "${{ strategy.job-total }}" \
+            > "$RUNNER_TEMP/ui-shard.txt"
+          mapfile -t SHARD < "$RUNNER_TEMP/ui-shard.txt"
+          # An empty shard would make bare `pytest` collect the whole tree.
+          test "${#SHARD[@]}" -gt 0
+          echo "Gating shard $(( ${{ strategy.job-index }} + 1 ))/${{ strategy.job-total }}: ${#SHARD[@]} Tests/UI files."
+          pytest "${SHARD[@]}" \
             --timeout=180 \
             --tb=short
 

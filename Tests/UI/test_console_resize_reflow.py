@@ -143,7 +143,12 @@ def _resize_full_settings(
     focus_context: bool = False,
     transfer: ConsoleSettingsTransfer | None = None,
 ) -> ConsoleSettingsModal:
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    # A Temperature the saved chain lacks, so the footer offers every action:
+    # Save as model default shows only while a save would change the
+    # defaults (Phase 6 final review I5).
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="model-a", temperature=0.9
+    )
     return ConsoleSettingsModal(
         settings=settings,
         transfer=transfer,
@@ -334,18 +339,25 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         await pilot.pause()
 
         panel = modal.query_one("#console-settings-modal")
-        actions = list(modal.query("#console-settings-actions Button"))
+        # Rewritten on purpose by TASK-33006.5: Cancel is the Context view's,
+        # and Use saved defaults leads (dimmed here: this harness passes no
+        # draft rebaser, which it needs).
+        actions = [
+            button
+            for button in modal.query("#console-settings-actions Button")
+            if button.display
+        ]
         assert [str(button.label) for button in actions] == [
-            "Cancel",
-            "Save as provider defaults",
-            "Default for new chats",
-            "Use for this conversation",
+            "Use saved defaults",
+            "Save as model default",
+            "Default for new chats (Ctrl+N)",
+            "Apply to this chat (Ctrl+Enter)",
         ]
         assert panel.region.x >= 0
         assert panel.region.right <= width
         assert panel.region.bottom <= 24
-        assert all(button.display for button in actions)
-        assert all(button.can_focus and not button.disabled for button in actions)
+        assert actions[0].disabled
+        assert all(button.can_focus and not button.disabled for button in actions[1:])
         assert all(
             panel.content_region.contains_region(button.region) for button in actions
         ), (
@@ -357,7 +369,7 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         actions[1].focus()
         await pilot.pause()
         focus_order: list[str] = []
-        for _ in actions:
+        for _ in actions[1:]:
             focused = app.focused
             focus_order.append(getattr(focused, "id", "") or "")
             assert focused is not None
@@ -368,7 +380,6 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
             "console-settings-save-default",
             "console-settings-make-default",
             "console-settings-save",
-            "console-settings-cancel",
         ]
         apply_button = actions[-1]
         top_hit = modal.get_widget_at(
@@ -520,12 +531,14 @@ async def test_fold_hint_follows_the_body_scroll_position(recovery: bool) -> Non
 
 @pytest.mark.asyncio
 async def test_fold_hint_follows_content_that_grows_without_a_scroll() -> None:
-    """TASK-33003.4: at 211x44 the focused provider picker's results overflow.
+    """TASK-33003.4: content that grows without a scroll still moves the hint.
 
-    The results open on focus and close on blur, and nothing but the body's
-    own size tells the hint; the live open state used to hide it with 9 rows
-    below. If a later layout change moves the fold, pick the height where the
-    open results overflow and the closed ones fit.
+    Nothing but the body's own size tells the hint. Rewritten on purpose by
+    TASK-33006.1: the grower was the provider picker's open results, focused
+    on open; now focus opens on Temperature with the whole Model view
+    fitting at 211x44, and Enter on the Sampling title grows the body by six
+    rows in place (the title stays focused and nothing scrolls), then
+    collapses it again.
     """
 
     app = _ProductionResizeModalHarness()
@@ -534,7 +547,6 @@ async def test_fold_hint_follows_content_that_grows_without_a_scroll() -> None:
         await app.push_screen(modal)
         body = modal.query_one("#console-settings-body")
         fold = modal.query_one("#console-settings-fold-hint", Static)
-        results = modal.query_one("#console-settings-provider-picker-results")
 
         async def settle() -> None:
             for _ in range(4):
@@ -543,20 +555,24 @@ async def test_fold_hint_follows_content_that_grows_without_a_scroll() -> None:
 
         await settle()
         assert app.focused is not None
-        assert app.focused.id == "console-settings-provider-picker-input"
-        precondition = (results.display, body.scroll_y, body.max_scroll_y)
-        assert results.display and body.scroll_y < body.max_scroll_y, precondition
+        assert app.focused.id == "console-settings-temperature"
+        assert body.max_scroll_y == 0 and not fold.display
+
+        modal.query_one("#console-settings-sampling CollapsibleTitle").focus()
+        await pilot.press("enter")
+        await settle()
+        precondition = (body.scroll_y, body.max_scroll_y)
+        assert body.scroll_y < body.max_scroll_y, precondition
         assert fold.display
 
-        await pilot.press("tab")
+        await pilot.press("enter")
         await settle()
-        precondition = (results.display, body.max_scroll_y)
-        assert not results.display and body.max_scroll_y == 0, precondition
+        assert body.max_scroll_y == 0, body.max_scroll_y
         assert not fold.display
 
-        await pilot.press("shift+tab")
+        await pilot.press("enter")
         await settle()
-        assert results.display and body.scroll_y < body.max_scroll_y
+        assert body.scroll_y < body.max_scroll_y
         assert fold.display
 
 
@@ -649,7 +665,7 @@ async def test_full_settings_recovery_keyboard_scrolls_and_stays_in_phase_action
 @pytest.mark.parametrize(
     ("focus_model", "focus_context", "restored_focus_id"),
     (
-        (True, False, "model-search-picker-input"),
+        (True, False, "console-settings-model-change"),
         (False, True, "console-context-budget-mode"),
     ),
 )
@@ -828,7 +844,6 @@ async def test_full_settings_successful_recovery_clears_prior_error_banner(
 @pytest.mark.parametrize(
     "button_id",
     (
-        "console-settings-cancel",
         "console-settings-save-default",
         "console-settings-save",
     ),
@@ -858,7 +873,13 @@ async def test_blocked_full_settings_keeps_enabled_actions_mouse_reachable(
 
         panel = modal.query_one("#console-settings-modal")
         blocked = modal.query_one("#console-settings-new-chat-default-block")
-        actions = list(modal.query("#console-settings-actions Button"))
+        # TASK-33006.5: Cancel is the Context view's, so the Model view's
+        # shown actions are measured (its Cancel case is gone).
+        actions = [
+            button
+            for button in modal.query("#console-settings-actions Button")
+            if button.display
+        ]
         assert blocked.display
         assert "not configured" in str(blocked.renderable)
         assert modal.query_one("#console-settings-make-default", Button).disabled
@@ -909,7 +930,8 @@ async def test_blocked_quick_transfer_keeps_initial_model_focus_visible(
         fold = modal.query_one("#console-settings-fold-hint", Static)
         focused = app.focused
         assert focused is not None
-        assert focused.id == "model-search-picker-input"
+        # TASK-33006.4: Change (the MODEL row) is the model's control now.
+        assert focused.id == "console-settings-model-change"
         assert body.content_region.contains_region(focused.region)
         assert blocked.display
         assert "not configured" in str(blocked.renderable)

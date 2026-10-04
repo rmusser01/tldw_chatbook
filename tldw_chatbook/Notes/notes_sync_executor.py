@@ -4156,7 +4156,9 @@ class NotesSyncExecutor:
                 )
             elif stage == "file_reverified":
                 _, cancelled = await self._joined_thread_call(
-                    lambda: run_worker_coroutine(self._commit_keep_both_binding(request))
+                    lambda: run_worker_coroutine(
+                        self._commit_keep_both_binding(request)
+                    )
                 )
             elif stage == "binding_updated":
                 _, cancelled = await self._joined_thread_call(

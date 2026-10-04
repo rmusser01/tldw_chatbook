@@ -39,7 +39,10 @@ class TestV2Chunker:
     def test_chunker_with_custom_config(self):
         """Test Chunker with custom configuration."""
         config = ChunkerConfig(
-            default_method=ChunkingMethod.SENTENCES, default_max_size=100, default_overlap=10, language="fr"
+            default_method=ChunkingMethod.SENTENCES,
+            default_max_size=100,
+            default_overlap=10,
+            language="fr",
         )
         chunker = Chunker(config=config)
         assert chunker.config.default_method == ChunkingMethod.SENTENCES
@@ -117,7 +120,9 @@ class TestV2Chunker:
             },
         )
         assert rows
-        headers = [row for row in rows if row["metadata"].get("paragraph_kind") == "header_atx"]
+        headers = [
+            row for row in rows if row["metadata"].get("paragraph_kind") == "header_atx"
+        ]
         assert headers, "Expected header chunk to be present"
         assert headers[0]["text"].strip().startswith("# Heading")
 
@@ -186,7 +191,9 @@ class TestV2Chunker:
             max_size=3,
             method_options={"min_chunk_size": 5},
         )
-        paragraph_chunks = [c for c in chunks if c["metadata"].get("paragraph_kind") == "paragraph"]
+        paragraph_chunks = [
+            c for c in chunks if c["metadata"].get("paragraph_kind") == "paragraph"
+        ]
         assert paragraph_chunks
         counts = [len(c["text"].split()) for c in paragraph_chunks]
         assert max(counts) >= 5
@@ -197,7 +204,11 @@ class TestV2Chunker:
         text = "Intro paragraph.\n\n**Bold Heading**\n\nBody paragraph."
         template = {
             "boundaries": [
-                {"kind": "bold_subsection", "pattern": r"^\s*\*\*[^*]+\*\*\s*$", "flags": "m"}
+                {
+                    "kind": "bold_subsection",
+                    "pattern": r"^\s*\*\*[^*]+\*\*\s*$",
+                    "flags": "m",
+                }
             ]
         }
 
@@ -210,15 +221,23 @@ class TestV2Chunker:
         )
         assert chunks
         # Expect the bold heading itself to be tagged and the body to carry its section path
-        assert any(c.get("metadata", {}).get("paragraph_kind") == "bold_subsection" for c in chunks)
-        assert any("Bold Heading" in (c.get("metadata", {}).get("section_path") or "") for c in chunks)
+        assert any(
+            c.get("metadata", {}).get("paragraph_kind") == "bold_subsection"
+            for c in chunks
+        )
+        assert any(
+            "Bold Heading" in (c.get("metadata", {}).get("section_path") or "")
+            for c in chunks
+        )
 
     def test_hierarchical_preserves_raw_bidi_override(self):
         """Hierarchical output defaults to sanitized text, with optional raw fidelity."""
         chunker = Chunker()
         text = "Alpha\u202eBeta Gamma"
 
-        plain_chunks = chunker.chunk_text(text, method="words", max_size=2, overlap=0, language="en")
+        plain_chunks = chunker.chunk_text(
+            text, method="words", max_size=2, overlap=0, language="en"
+        )
         hier_chunks_sanitized = chunker.chunk_text_hierarchical_flat(
             text,
             method="words",
@@ -243,7 +262,9 @@ class TestV2Chunker:
         """Flattened hierarchical chunks should include a normalized chunk_type."""
         chunker = Chunker()
         text = "# Heading\n\nParagraph content.\n\n- list item"
-        chunks = chunker.chunk_text_hierarchical_flat(text, method="sentences", max_size=20, overlap=0)
+        chunks = chunker.chunk_text_hierarchical_flat(
+            text, method="sentences", max_size=20, overlap=0
+        )
 
         assert chunks
         for chunk in chunks:
@@ -263,7 +284,9 @@ class TestV2Chunker:
                 code_mode="ast",
                 max_size=128,
             )
-        assert any(call.args and call.args[0] == "code_ast" for call in spy.call_args_list)
+        assert any(
+            call.args and call.args[0] == "code_ast" for call in spy.call_args_list
+        )
 
     def test_hierarchical_code_mode_ast_routes_child_chunks(self):
         """Hierarchical mode must preserve code_mode routing for nested chunking."""
@@ -276,13 +299,15 @@ class TestV2Chunker:
                 language="en",
                 method_options={"code_mode": "ast"},
             )
-        assert any(call.args and call.args[0] == "code_ast" for call in spy.call_args_list)
+        assert any(
+            call.args and call.args[0] == "code_ast" for call in spy.call_args_list
+        )
 
     # --- Ported (chunking-engine-parity Task 4) -------------------------
     # Loads the real gpt2 tokenizer; the real_hf_cache fixture points the
     # HF stack at the real (pre-sandbox) cache with offline mode forced, so
     # no network is touched. Skips if gpt2 is genuinely not cached.
-    @pytest.mark.usefixtures('real_hf_cache')
+    @pytest.mark.usefixtures("real_hf_cache")
     def test_process_text_tokenizer_override(self):
         """tokenizer_name_or_path should use per-call strategy without mutating cached tokens."""
         chunker = Chunker()
@@ -304,7 +329,9 @@ class TestV2Chunker:
     def test_chunk_text_with_metadata_ignores_whitespace_only_input(self):
         """Whitespace-only payloads should return an empty list just like chunk_text."""
         chunker = Chunker()
-        result = chunker.chunk_text_with_metadata(" \n\t\r ", method="words", max_size=10)
+        result = chunker.chunk_text_with_metadata(
+            " \n\t\r ", method="words", max_size=10
+        )
         assert result == []
 
     def test_invalid_method_raises_error(self):
@@ -365,7 +392,9 @@ class TestV2Chunker:
 
     def test_chunk_cache_includes_llm_signature(self):
         """Cache should miss when LLM hook/config changes and hit when restored."""
-        config = ChunkerConfig(default_method=ChunkingMethod.WORDS, enable_cache=True, cache_size=4)
+        config = ChunkerConfig(
+            default_method=ChunkingMethod.WORDS, enable_cache=True, cache_size=4
+        )
         chunker = Chunker(config=config)
         text = "llm cache sanity text"
 
@@ -485,20 +514,29 @@ class TestV2Chunker:
         """Frontmatter parsing should handle nested, pretty-printed JSON blocks."""
         chunker = Chunker()
         frontmatter = (
-            "{\n" '  "__tldw_frontmatter__": true,\n' '  "meta": {"nested": 1},\n' '  "tags": ["a", "b"]\n' "}\n"
+            "{\n"
+            '  "__tldw_frontmatter__": true,\n'
+            '  "meta": {"nested": 1},\n'
+            '  "tags": ["a", "b"]\n'
+            "}\n"
         )
         body = "# Heading\n\nBody text continues here."
         rows = chunker.process_text(frontmatter + body)
         assert rows
         meta = rows[0]["metadata"]
-        assert meta.get("initial_document_json_metadata") == {"meta": {"nested": 1}, "tags": ["a", "b"]}
+        assert meta.get("initial_document_json_metadata") == {
+            "meta": {"nested": 1},
+            "tags": ["a", "b"],
+        }
 
     def test_process_text_can_disable_frontmatter_parsing(self):
         """Frontmatter parsing can be explicitly disabled even when sentinel is present."""
         chunker = Chunker()
         payload = '{"meta": "z", "__tldw_frontmatter__": true}\n{"fourth": 4}\n'
 
-        rows = chunker.process_text(payload, options={"enable_frontmatter_parsing": False})
+        rows = chunker.process_text(
+            payload, options={"enable_frontmatter_parsing": False}
+        )
         assert rows
         combined_text = " ".join(row.get("text", "") for row in rows)
         assert '"meta": "z"' in combined_text
@@ -532,7 +570,11 @@ class TestV2Chunker:
         with pytest.raises(InvalidInputError):
             list(chunker.chunk_file_stream(file_path, method="words", max_size=10))
 
-        chunks = list(chunker.chunk_file_stream(file_path, method="words", max_size=10, encoding="cp1252"))
+        chunks = list(
+            chunker.chunk_file_stream(
+                file_path, method="words", max_size=10, encoding="cp1252"
+            )
+        )
         assert chunks
         reconstructed = " ".join(chunks)
         assert "café" in reconstructed
@@ -558,10 +600,14 @@ class TestV2Chunker:
             fake_increment_counter,
         )
 
-        chunker.chunk_text("one two three four five", method="words", max_size=2, overlap=0)
+        chunker.chunk_text(
+            "one two three four five", method="words", max_size=2, overlap=0
+        )
 
         stored = [
-            labels for name, labels in calls if name == "chunker_cache_put_total" and labels.get("result") == "stored"
+            labels
+            for name, labels in calls
+            if name == "chunker_cache_put_total" and labels.get("result") == "stored"
         ]
         assert stored, f"Expected stored metric call, saw {calls}"
         assert all("reason" in lbl for lbl in stored)
@@ -570,7 +616,9 @@ class TestV2Chunker:
         """process_text metadata should reflect the actual strategy used."""
         chunker = Chunker()
         code_snippet = "def foo():\n    return 42\n"
-        rows = chunker.process_text(code_snippet, options={"method": "code", "language": "python"})
+        rows = chunker.process_text(
+            code_snippet, options={"method": "code", "language": "python"}
+        )
         assert rows
         methods = {row["metadata"].get("chunk_method") for row in rows}
         assert methods == {"code_ast"}
@@ -582,7 +630,12 @@ class TestV2Chunker:
 
         rows = chunker.process_text(
             text,
-            options={"method": "words", "max_size": 50, "overlap": 0, "hierarchical": "false"},
+            options={
+                "method": "words",
+                "max_size": 50,
+                "overlap": 0,
+                "hierarchical": "false",
+            },
         )
 
         assert rows
@@ -617,15 +670,21 @@ class TestV2Chunker:
             recorded_exceptions.append((exception, escaped))
 
         monkeypatch.setattr(chunker_module, "start_span", fake_start_span)
-        monkeypatch.setattr(chunker_module, "set_span_attribute", fake_set_span_attribute)
+        monkeypatch.setattr(
+            chunker_module, "set_span_attribute", fake_set_span_attribute
+        )
         monkeypatch.setattr(chunker_module, "add_span_event", fake_add_span_event)
-        monkeypatch.setattr(chunker_module, "record_span_exception", fake_record_span_exception)
+        monkeypatch.setattr(
+            chunker_module, "record_span_exception", fake_record_span_exception
+        )
 
         rows = Chunker().process_text("One sentence. Another sentence.")
 
         assert rows
         assert ("chunk.method", "words") in span_attributes
-        assert any(event_name == "chunker.completed" for event_name, _attrs in span_events)
+        assert any(
+            event_name == "chunker.completed" for event_name, _attrs in span_events
+        )
         assert recorded_exceptions == []
 
     def test_chunk_file_stream_avoids_partial_tokens(self, tmp_path):
@@ -649,7 +708,9 @@ class TestV2Chunker:
         assert streamed  # sanity: got output
         for chunk in streamed:
             for token in chunk.split():
-                assert token in original_tokens, f"Unexpected token fragment {token!r} in chunk {chunk!r}"
+                assert token in original_tokens, (
+                    f"Unexpected token fragment {token!r} in chunk {chunk!r}"
+                )
 
     def test_chunk_file_stream_preserves_word_boundaries(self, tmp_path):
         """Streaming word chunks must not fuse adjacent tokens without whitespace."""
@@ -735,7 +796,9 @@ class TestV2Chunker:
         """chunk_text should accept ChunkingMethod enum inputs."""
         chunker = Chunker()
         text = "This is a short test sentence."
-        chunks = chunker.chunk_text(text, method=ChunkingMethod.WORDS, max_size=5, overlap=0)
+        chunks = chunker.chunk_text(
+            text, method=ChunkingMethod.WORDS, max_size=5, overlap=0
+        )
         assert chunks
         assert all(isinstance(chunk, str) for chunk in chunks)
 
@@ -821,7 +884,9 @@ class TestSentencesStrategy:
 
     def test_sentences_basic_chunking(self):
         """Test basic sentence-based chunking."""
-        from tldw_chatbook.Chunking.engine.strategies.sentences import SentenceChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.sentences import (
+            SentenceChunkingStrategy,
+        )
 
         strategy = SentenceChunkingStrategy()
         text = "First sentence. Second sentence. Third sentence. Fourth sentence."
@@ -833,7 +898,9 @@ class TestSentencesStrategy:
 
     def test_sentences_handles_various_punctuation(self):
         """Test handling of various sentence endings."""
-        from tldw_chatbook.Chunking.engine.strategies.sentences import SentenceChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.sentences import (
+            SentenceChunkingStrategy,
+        )
 
         strategy = SentenceChunkingStrategy()
         text = "Question? Exclamation! Statement. Another?"
@@ -845,10 +912,14 @@ class TestSentencesStrategy:
 
     def test_sentences_metadata_preserves_offsets_with_whitespace(self):
         """Sentence chunks should preserve original spacing for source-aligned spans."""
-        from tldw_chatbook.Chunking.engine.strategies.sentences import SentenceChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.sentences import (
+            SentenceChunkingStrategy,
+        )
 
         strategy = SentenceChunkingStrategy()
-        text = "First sentence.\n\n   Second sentence!  Third sentence?\nFourth sentence."
+        text = (
+            "First sentence.\n\n   Second sentence!  Third sentence?\nFourth sentence."
+        )
         chunks = strategy.chunk_with_metadata(text, max_size=2, overlap=1)
 
         assert len(chunks) >= 2
@@ -869,7 +940,9 @@ class TestParagraphsStrategy:
 
     def test_paragraphs_basic_chunking(self):
         """Test basic paragraph-based chunking."""
-        from tldw_chatbook.Chunking.engine.strategies.paragraphs import ParagraphChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.paragraphs import (
+            ParagraphChunkingStrategy,
+        )
 
         strategy = ParagraphChunkingStrategy()
         text = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n\nFourth paragraph."
@@ -881,7 +954,9 @@ class TestParagraphsStrategy:
 
     def test_paragraphs_single_paragraph(self):
         """Test handling of text without paragraph breaks."""
-        from tldw_chatbook.Chunking.engine.strategies.paragraphs import ParagraphChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.paragraphs import (
+            ParagraphChunkingStrategy,
+        )
 
         strategy = ParagraphChunkingStrategy()
         text = "This is all one paragraph without any breaks."
@@ -892,7 +967,9 @@ class TestParagraphsStrategy:
 
     def test_paragraphs_with_metadata(self):
         """Test paragraph chunking with metadata."""
-        from tldw_chatbook.Chunking.engine.strategies.paragraphs import ParagraphChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.paragraphs import (
+            ParagraphChunkingStrategy,
+        )
 
         strategy = ParagraphChunkingStrategy()
         text = "Para 1.\n\nPara 2.\n\nPara 3."
@@ -911,10 +988,12 @@ class TestTokensStrategy:
     # Loads the real gpt2 tokenizer; the real_hf_cache fixture points the
     # HF stack at the real (pre-sandbox) cache with offline mode forced, so
     # no network is touched. Skips if gpt2 is genuinely not cached.
-    @pytest.mark.usefixtures('real_hf_cache')
+    @pytest.mark.usefixtures("real_hf_cache")
     def test_tokens_basic_chunking(self):
         """Test basic token-based chunking."""
-        from tldw_chatbook.Chunking.engine.strategies.tokens import TokenChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.tokens import (
+            TokenChunkingStrategy,
+        )
 
         # Test with actual tokenizer or skip if not available
         try:
@@ -931,7 +1010,10 @@ class TestTokensStrategy:
 
     def test_tokens_fallback_clamps_minimum_chunk_size(self):
         """Fallback tokenization should still emit chunks for very small max_size."""
-        from tldw_chatbook.Chunking.engine.strategies.tokens import FallbackTokenizer, TokenChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.tokens import (
+            FallbackTokenizer,
+            TokenChunkingStrategy,
+        )
 
         strategy = TokenChunkingStrategy()
         # Force fallback mode regardless of available libraries
@@ -947,10 +1029,12 @@ class TestTokensStrategy:
     # Loads the real gpt2 tokenizer; the real_hf_cache fixture points the
     # HF stack at the real (pre-sandbox) cache with offline mode forced, so
     # no network is touched. Skips if gpt2 is genuinely not cached.
-    @pytest.mark.usefixtures('real_hf_cache')
+    @pytest.mark.usefixtures("real_hf_cache")
     def test_tokens_preserve_leading_indentation_when_chunking_mid_block(self):
         """Token chunks must retain leading whitespace to keep code formatting intact."""
-        from tldw_chatbook.Chunking.engine.strategies.tokens import TokenChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.tokens import (
+            TokenChunkingStrategy,
+        )
 
         strategy = TokenChunkingStrategy()
         text = "\n".join(
@@ -977,7 +1061,9 @@ class TestEbookChaptersStrategy:
 
     def test_ebook_chapters_basic(self):
         """Test basic chapter detection and chunking."""
-        from tldw_chatbook.Chunking.engine.strategies.ebook_chapters import EbookChapterChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.ebook_chapters import (
+            EbookChapterChunkingStrategy,
+        )
 
         strategy = EbookChapterChunkingStrategy()
         text = """Chapter 1: Introduction
@@ -989,7 +1075,9 @@ class TestEbookChaptersStrategy:
         Chapter 3: Conclusion
         Final content."""
 
-        chunks = strategy.chunk(text, max_size=1000)  # Large size to keep chapters intact
+        chunks = strategy.chunk(
+            text, max_size=1000
+        )  # Large size to keep chapters intact
 
         assert len(chunks) == 3
         assert "Chapter 1" in chunks[0]
@@ -1040,7 +1128,9 @@ class TestChunkerMetrics:
 
     def test_ebook_no_chapters(self):
         """Test handling of text without chapter markers."""
-        from tldw_chatbook.Chunking.engine.strategies.ebook_chapters import EbookChapterChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.ebook_chapters import (
+            EbookChapterChunkingStrategy,
+        )
 
         strategy = EbookChapterChunkingStrategy()
         text = "This is text without any chapter markers. " * 20
@@ -1051,7 +1141,9 @@ class TestChunkerMetrics:
 
     def test_ebook_custom_pattern(self):
         """Test custom chapter pattern."""
-        from tldw_chatbook.Chunking.engine.strategies.ebook_chapters import EbookChapterChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.ebook_chapters import (
+            EbookChapterChunkingStrategy,
+        )
 
         strategy = EbookChapterChunkingStrategy()
         text = """Part 1: Beginning
@@ -1064,7 +1156,9 @@ class TestChunkerMetrics:
         Final content."""
 
         # Use custom pattern that matches "Part N:"
-        chunks = strategy.chunk(text, max_size=1000, custom_chapter_pattern=r"Part \d+:")
+        chunks = strategy.chunk(
+            text, max_size=1000, custom_chapter_pattern=r"Part \d+:"
+        )
 
         assert len(chunks) == 3
         assert "Part 1" in chunks[0]
@@ -1075,7 +1169,9 @@ class TestSemanticStrategy:
 
     def test_semantic_basic_chunking(self):
         """Test basic semantic chunking."""
-        from tldw_chatbook.Chunking.engine.strategies.semantic import SemanticChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.semantic import (
+            SemanticChunkingStrategy,
+        )
 
         # Test with actual model or skip if not available
         try:
@@ -1096,7 +1192,9 @@ class TestJSONStrategy:
 
     def test_json_list_chunking(self):
         """Test chunking of JSON lists."""
-        from tldw_chatbook.Chunking.engine.strategies.json_xml import JSONChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.json_xml import (
+            JSONChunkingStrategy,
+        )
 
         strategy = JSONChunkingStrategy()
         json_text = '[{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]'
@@ -1113,7 +1211,9 @@ class TestJSONStrategy:
 
     def test_json_dict_chunking(self):
         """Test chunking of JSON objects."""
-        from tldw_chatbook.Chunking.engine.strategies.json_xml import JSONChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.json_xml import (
+            JSONChunkingStrategy,
+        )
 
         strategy = JSONChunkingStrategy()
         json_text = '{"key1": "value1", "key2": "value2", "key3": "value3"}'
@@ -1130,7 +1230,9 @@ class TestJSONStrategy:
 
     def test_json_invalid_input(self):
         """Test handling of invalid JSON."""
-        from tldw_chatbook.Chunking.engine.strategies.json_xml import JSONChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.json_xml import (
+            JSONChunkingStrategy,
+        )
 
         strategy = JSONChunkingStrategy()
         with pytest.raises(InvalidInputError):
@@ -1142,7 +1244,9 @@ class TestXMLStrategy:
 
     def test_xml_basic_chunking(self):
         """Test basic XML chunking."""
-        from tldw_chatbook.Chunking.engine.strategies.json_xml import XMLChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.json_xml import (
+            XMLChunkingStrategy,
+        )
 
         strategy = XMLChunkingStrategy()
         xml_text = """<root>
@@ -1158,7 +1262,9 @@ class TestXMLStrategy:
 
     def test_xml_invalid_input(self):
         """Test handling of invalid XML."""
-        from tldw_chatbook.Chunking.engine.strategies.json_xml import XMLChunkingStrategy
+        from tldw_chatbook.Chunking.engine.strategies.json_xml import (
+            XMLChunkingStrategy,
+        )
 
         strategy = XMLChunkingStrategy()
         with pytest.raises(InvalidInputError):
@@ -1170,16 +1276,22 @@ class TestRollingSummarizeStrategy:
 
     def test_rolling_summarize_without_llm(self):
         """Rolling summarize fails closed when no LLM is configured."""
-        from tldw_chatbook.Chunking.engine.strategies.rolling_summarize import RollingSummarizeStrategy
+        from tldw_chatbook.Chunking.engine.strategies.rolling_summarize import (
+            RollingSummarizeStrategy,
+        )
 
         strategy = RollingSummarizeStrategy()
         with pytest.raises(ProcessingError, match="unavailable"):
             strategy.chunk("Some text to summarize", max_size=100)
 
-    @patch("tldw_chatbook.Chunking.engine.strategies.rolling_summarize.RollingSummarizeStrategy._call_llm")
+    @patch(
+        "tldw_chatbook.Chunking.engine.strategies.rolling_summarize.RollingSummarizeStrategy._call_llm"
+    )
     def test_rolling_summarize_with_llm(self, mock_llm):
         """Test rolling summarize with mocked LLM."""
-        from tldw_chatbook.Chunking.engine.strategies.rolling_summarize import RollingSummarizeStrategy
+        from tldw_chatbook.Chunking.engine.strategies.rolling_summarize import (
+            RollingSummarizeStrategy,
+        )
 
         # Mock LLM responses
         mock_llm.return_value = "Summarized content"
@@ -1196,7 +1308,9 @@ class TestRollingSummarizeStrategy:
 
     def test_rolling_summarize_chunk_with_metadata_without_llm(self):
         """Metadata mode also fails closed when no LLM is configured."""
-        from tldw_chatbook.Chunking.engine.strategies.rolling_summarize import RollingSummarizeStrategy
+        from tldw_chatbook.Chunking.engine.strategies.rolling_summarize import (
+            RollingSummarizeStrategy,
+        )
 
         strategy = RollingSummarizeStrategy()
         with pytest.raises(ProcessingError, match="unavailable"):
@@ -1206,10 +1320,14 @@ class TestRollingSummarizeStrategy:
                 overlap=1,
             )
 
-    @patch("tldw_chatbook.Chunking.engine.strategies.rolling_summarize.RollingSummarizeStrategy._call_llm")
+    @patch(
+        "tldw_chatbook.Chunking.engine.strategies.rolling_summarize.RollingSummarizeStrategy._call_llm"
+    )
     def test_rolling_summarize_chunk_with_metadata_with_llm(self, mock_llm):
         """chunk_with_metadata should map summaries to source spans when LLM is used."""
-        from tldw_chatbook.Chunking.engine.strategies.rolling_summarize import RollingSummarizeStrategy
+        from tldw_chatbook.Chunking.engine.strategies.rolling_summarize import (
+            RollingSummarizeStrategy,
+        )
 
         mock_llm.return_value = "Summarized content"
         strategy = RollingSummarizeStrategy(llm_call_func=Mock(return_value="Summary"))
@@ -1230,7 +1348,9 @@ def test_structure_aware_chunk_with_metadata_spans():
 
     text = "# Title\n\nParagraph one.\n\n- item\n"
     ck = Chunker()
-    results = ck.chunk_text_with_metadata(text, method="structure_aware", max_size=2, overlap=0, language="en")
+    results = ck.chunk_text_with_metadata(
+        text, method="structure_aware", max_size=2, overlap=0, language="en"
+    )
 
     assert results
     prev_end = -1
@@ -1327,10 +1447,16 @@ class TestErrorHandling:
         text = "First sentence. Second sentence. Third sentence."
 
         sentence_chunks = chunker.chunk_text(text, method="Sentences", max_size=1)
-        assert sentence_chunks, "Expected chunks when using mixed-case 'Sentences' method"
+        assert sentence_chunks, (
+            "Expected chunks when using mixed-case 'Sentences' method"
+        )
 
-        word_chunks_with_meta = chunker.chunk_text_with_metadata(text, method="WORDS", max_size=3)
-        assert word_chunks_with_meta, "Expected metadata chunks when using upper-case 'WORDS' method"
+        word_chunks_with_meta = chunker.chunk_text_with_metadata(
+            text, method="WORDS", max_size=3
+        )
+        assert word_chunks_with_meta, (
+            "Expected metadata chunks when using upper-case 'WORDS' method"
+        )
         assert word_chunks_with_meta[0].metadata.method == "words"
 
     def test_invalid_parameters(self):
@@ -1358,7 +1484,9 @@ class TestPerformance:
         large_text = "word " * 10000  # Large text
 
         # Generator should not create all chunks at once
-        generator = chunker.chunk_text_generator(large_text, method="words", max_size=100)
+        generator = chunker.chunk_text_generator(
+            large_text, method="words", max_size=100
+        )
 
         # Get first chunk without generating all
         first_chunk = next(generator)
@@ -1392,8 +1520,8 @@ class TestAsyncChunkerConcurrency:
         pytest.importorskip(
             "tldw_chatbook.Chunking.engine.async_chunker",
             reason="async_chunker is NOT VENDORED (descope 2026-08-23 spec "
-                    "§4.2: server http_client/exceptions deps; chatbook "
-                    "chunks in-process — no consumer)",
+            "§4.2: server http_client/exceptions deps; chatbook "
+            "chunks in-process — no consumer)",
         )
         from tldw_chatbook.Chunking.engine.async_chunker import AsyncChunker
 
@@ -1420,10 +1548,14 @@ class TestAsyncChunkerConcurrency:
                 )
 
                 assert english_chunks, "Expected English chunks from async chunker"
-                assert any(" " in chunk for chunk in english_chunks), "English chunks lost whitespace separation"
+                assert any(" " in chunk for chunk in english_chunks), (
+                    "English chunks lost whitespace separation"
+                )
 
                 assert japanese_chunks, "Expected Japanese chunks from async chunker"
-                assert " " not in "".join(japanese_chunks), "Japanese chunks should not contain inserted spaces"
+                assert " " not in "".join(japanese_chunks), (
+                    "Japanese chunks should not contain inserted spaces"
+                )
 
 
 def test_paragraph_chunk_with_metadata_offsets_match_source():
@@ -1453,7 +1585,7 @@ def test_paragraph_chunk_with_metadata_offsets_match_source():
 # --- Ported (chunking-engine-parity Task 4) -----------------------------
 # Loads the real gpt2 tokenizer; the real_hf_cache fixture forces an
 # offline read of the real cache (no network).
-@pytest.mark.usefixtures('real_hf_cache')
+@pytest.mark.usefixtures("real_hf_cache")
 def test_hierarchical_tokens_offsets_map_to_source():
     """Hierarchical tokens path must map local spans to global offsets and preserve exact source slices."""
     chunker = Chunker()
@@ -1483,7 +1615,11 @@ def test_hierarchical_tokens_offsets_map_to_source():
 def test_paragraph_chunk_with_crlf_offsets_match_source():
     """Paragraphs with Windows CRLF line endings should produce accurate offsets."""
     chunker = Chunker()
-    text = "\r\n\r\n  Para A line 1\r\nline 2  \r\n\r\n\r\n" "   Para B\r\n\r\n" "Para C with trailing spaces   \r\n"
+    text = (
+        "\r\n\r\n  Para A line 1\r\nline 2  \r\n\r\n\r\n"
+        "   Para B\r\n\r\n"
+        "Para C with trailing spaces   \r\n"
+    )
     results = chunker.chunk_text_with_metadata(
         text,
         method="paragraphs",

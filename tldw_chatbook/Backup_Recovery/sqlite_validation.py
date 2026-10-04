@@ -83,6 +83,12 @@ def _installed_owner(owner_id):
     raise ValueError("unsupported_sqlite_owner")
 
 
+#: The five Evals tables whose inert ``version`` column the v5 -> v6 step drops.
+_EVALS_VERSION_COLUMN_TABLES = frozenset(
+    {"eval_tasks", "eval_datasets", "eval_models", "eval_runs", "ab_tests"}
+)
+
+
 class _Restrictions:
     def __init__(self, connection, cancel=None):
         self.cancel = cancel
@@ -108,7 +114,42 @@ class _Restrictions:
             or monotonic() >= self.deadline
         )
 
+    def _evals_drop_column_step(self, action, first, second, database):
+        """Whether this is part of the Evals v5 -> v6 ``DROP COLUMN version`` step.
+
+        TASK-19566 F8 declares that step so a v5 Evals backup can be restored.
+        ``ALTER TABLE ... DROP COLUMN`` reports the dropped COLUMN in the
+        authorizer's database slot and rewrites the stored CREATE text in the
+        temp schema as well as the main one, so every one of these fails the
+        main-database-only rule. Only the five declared tables, only the
+        ``version`` column, and only while this owner's migration gate is open.
+
+        Args:
+            action: The SQLite authorizer action code.
+            first: The action's first argument.
+            second: The action's second argument.
+            database: The authorizer's database slot.
+
+        Returns:
+            ``True`` for exactly the operations that step performs.
+        """
+        if not (self.migrating and self.migration_owner == "db.evals"):
+            return False
+        if action == sqlite3.SQLITE_ALTER_TABLE:
+            return (
+                first == "main"
+                and second in _EVALS_VERSION_COLUMN_TABLES
+                and database == "version"
+            )
+        if database != "temp" or first != "sqlite_temp_master":
+            return False
+        if action == sqlite3.SQLITE_READ:
+            return second in {"type", "name", "sql"}
+        return action == sqlite3.SQLITE_UPDATE and second == "sql"
+
     def authorize(self, action, first, second, database, source):
+        if self._evals_drop_column_step(action, first, second, database):
+            return sqlite3.SQLITE_OK
         if database not in (None, "main"):
             return sqlite3.SQLITE_DENY
         if action in (
@@ -147,6 +188,8 @@ class _Restrictions:
                 allowed |= {"printf", "sqlite_rename_test", "sqlite_rename_quotefix"}
                 if self.migration_owner == "db.prompts.primary":
                     allowed.add("trim")
+                if self.migration_owner == "db.evals":
+                    allowed.add("sqlite_drop_column")
             return sqlite3.SQLITE_OK if second in allowed else sqlite3.SQLITE_DENY
         if action == sqlite3.SQLITE_PRAGMA:
             reads = {
@@ -547,7 +590,7 @@ def _check(connection, owner, policy, restrictions):
             and connection.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()
-            != (75,)
+            != (77,)
         ):
             return ("unsupported_schema_version",), None
         checker = getattr(owner, "_validate_connection", None)

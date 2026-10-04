@@ -456,10 +456,14 @@ def main() -> int:
 
     for name, ok, reading in checks:
         print(f"[{'PASS' if ok else 'FAIL'}] {name}: {reading}")
-    print(f"windows={walk['calls']} coverage={walk['coverage_pct']}% report={REPORT_PATH}")
+    print(
+        f"windows={walk['calls']} coverage={walk['coverage_pct']}% report={REPORT_PATH}"
+    )
     after = _digest(_REAL_CONFIG)
     if after != _REAL_CONFIG_SHA_BEFORE:
-        print(f"ISOLATION BREACH: real config changed ({_REAL_CONFIG_SHA_BEFORE} -> {after})")
+        print(
+            f"ISOLATION BREACH: real config changed ({_REAL_CONFIG_SHA_BEFORE} -> {after})"
+        )
         return 2
     return 0 if all(ok for _n, ok, _r in checks) else 1
 

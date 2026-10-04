@@ -20,10 +20,7 @@ from typing import (
 )
 
 from loguru import logger
-from textual import (
-    on,
-    work,
-)
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import (
     Horizontal,
@@ -48,12 +45,13 @@ from tldw_chatbook.TTS.omnivoice_artifact_catalog import (
 )
 from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
-from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupCheckbox,
     SetupRadioButton,
     SetupRadioSet,
     SetupStep,
 )
+from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker, wizard_work
 from tldw_chatbook.Widgets.ModelArtifacts import (
     InstallProgressed,
     ModelInstallModal,
@@ -367,11 +365,10 @@ class VoiceSetupStep(SetupStep):
         self._omnivoice_state_generation += 1
         self._load_omnivoice_state(self._omnivoice_state_generation)
 
-    @work(
+    @wizard_work(
         thread=True,
         group="setup-voice-omnivoice-state",
         exclusive=True,
-        exit_on_error=False,
     )
     def _load_omnivoice_state(self, generation: int) -> None:
         model_root = self._omnivoice_settings().get("model_root")
@@ -438,11 +435,10 @@ class VoiceSetupStep(SetupStep):
         self._refresh_sample_state()
         self._omnivoice_preflight()
 
-    @work(
+    @wizard_work(
         thread=True,
         group="setup-voice-omnivoice-install",
         exclusive=True,
-        exit_on_error=False,
     )
     def _omnivoice_preflight(self) -> None:
         try:
@@ -475,11 +471,10 @@ class VoiceSetupStep(SetupStep):
             return
         self._omnivoice_provision()
 
-    @work(
+    @wizard_work(
         thread=True,
         group="setup-voice-omnivoice-install",
         exclusive=True,
-        exit_on_error=False,
     )
     def _omnivoice_provision(self) -> None:
         report = self._omnivoice_report
@@ -677,11 +672,11 @@ class VoiceSetupStep(SetupStep):
         self._test_in_progress_generation = generation
         self.query_one("#setup-voice-status", Static).update("Testing voice…")
         self._refresh_sample_state()
-        self.run_worker(
+        run_wizard_worker(
+            self,
             self._run_voice_sample(generation, draft),
             exclusive=True,
             group="setup-voice-sample",
-            exit_on_error=False,
         )
 
     @on(Button.Pressed, "#setup-voice-add-key")
@@ -704,11 +699,11 @@ class VoiceSetupStep(SetupStep):
                 "Could not open Settings. Use Speech & TTS to add the API key."
             )
             return
-        self.run_worker(
+        run_wizard_worker(
+            self,
             route,
             exclusive=True,
             group="setup-voice-api-key-settings",
-            exit_on_error=False,
         )
 
     def _existing_openai_credential(self) -> str | None:
@@ -864,13 +859,13 @@ class VoiceSetupStep(SetupStep):
             voice_state.OMNIVOICE_GENERATING_COPY
         )
         self._refresh_sample_state()
-        self.run_worker(
+        run_wizard_worker(
+            self,
             self._run_omnivoice_sample(
                 generation, text, self._speed_or_default(), self._omnivoice_seed_value()
             ),
             exclusive=True,
             group="setup-voice-sample",
-            exit_on_error=False,
         )
 
     def _update_voice_status_text(self, text: str) -> None:
@@ -1047,6 +1042,10 @@ class VoiceSetupStep(SetupStep):
 
     def receive_stts_settings_runtime_result(self, result: object) -> None:
         self._receive_save_result(result)
+
+    def busy_label(self) -> str:
+        """What a slow Next from Voice is doing: the save can take 30 s."""
+        return "Saving voice settings…"
 
     def get_step_data(self) -> Dict[str, Any]:
         values: Dict[str, Any] = {

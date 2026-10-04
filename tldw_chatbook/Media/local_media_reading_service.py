@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from tldw_chatbook.STT.persistence import (
     load_transcription_provenance_document,
 )
+from tldw_chatbook.Utils.egress import UrlProvenance
 
 # Sentinel for ``get_library_media_chunks``'s ``chunk_type`` filter: the
 # primary (flat / NULL ``chunk_type``) family -- the family flat ingest
@@ -250,9 +251,7 @@ class LocalMediaReadingService:
 
     # --- Library read seams (task-1337) ---
 
-    def list_library_media(
-        self, *, limit: int = 20, offset: int = 0
-    ) -> dict[str, Any]:
+    def list_library_media(self, *, limit: int = 20, offset: int = 0) -> dict[str, Any]:
         """Page the active local media library for agent-facing list tools.
 
         Args:
@@ -429,7 +428,9 @@ class LocalMediaReadingService:
 
         families = sorted(
             {
-                row["chunk_type"] if row["chunk_type"] is not None else _PRIMARY_FAMILY_LABEL
+                row["chunk_type"]
+                if row["chunk_type"] is not None
+                else _PRIMARY_FAMILY_LABEL
                 for row in rows
             }
         )
@@ -455,7 +456,9 @@ class LocalMediaReadingService:
                 metadata = {}
             return {
                 "chunk_index": int(row["chunk_index"]),
-                "chunk_type": row["chunk_type"] if row["chunk_type"] is not None else _PRIMARY_FAMILY_LABEL,
+                "chunk_type": row["chunk_type"]
+                if row["chunk_type"] is not None
+                else _PRIMARY_FAMILY_LABEL,
                 "text": text,
                 "start_char": row["start_char"],
                 "end_char": row["end_char"],
@@ -644,10 +647,9 @@ class LocalMediaReadingService:
             # a preformatted ``fts_match_query`` makes ``search_media_db``
             # drop the title/content LIKE legs, and the probe's
             # "under-report, never over-report" argument rests on them.
-            if (
-                tuple(filters.get("fields") or ()) == LIBRARY_BROWSE_SEARCH_FIELDS
-                and not filters.get("fts_match_query")
-            ):
+            if tuple(
+                filters.get("fields") or ()
+            ) == LIBRARY_BROWSE_SEARCH_FIELDS and not filters.get("fts_match_query"):
                 payload["match_reasons"] = db.library_browse_keyword_only_matches(
                     [row["id"] for row in items], query
                 )
@@ -1417,8 +1419,19 @@ class LocalMediaReadingService:
         *,
         urls: list[str] | None = None,
         file_paths: list[str] | None = None,
+        url_provenance: UrlProvenance = UrlProvenance.UNKNOWN,
         **options: Any,
     ) -> dict[str, Any]:
+        """Process video URLs/local files without DB persistence.
+
+        (TASK-20973) ``url_provenance`` is the trust decision for any URL
+        in ``urls``, expressed HERE at the public seam rather than inferred
+        from the caller set: the default is ``UNKNOWN`` (fail closed at the
+        egress check -- this method's URL parameter is exactly the
+        caller-supplied-URL seam that used to self-trust unconditionally),
+        and a caller that has established user entry passes
+        ``UrlProvenance.USER_ENTERED`` explicitly.
+        """
         inputs = self._combine_url_file_inputs(urls=urls, file_paths=file_paths)
         if not inputs:
             return self._failed_local_no_db_processing_result(
@@ -1431,6 +1444,7 @@ class LocalMediaReadingService:
         payload = processor.process_videos(
             inputs=inputs,
             download_video_flag=download_video_flag,
+            url_provenance=url_provenance,
             **self._local_audio_video_options(options),
         )
         return self._mark_local_no_db_processing(payload)

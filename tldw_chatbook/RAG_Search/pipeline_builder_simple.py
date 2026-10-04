@@ -228,9 +228,7 @@ async def _execute_parallel_step(
                 # zero-drift-for-unscoped-calls convention.
                 fts5_kwargs = dict(scope_kwargs)
                 if scope is not None:
-                    fts5_kwargs["diagnostics"] = context.setdefault(
-                        "diagnostics", {}
-                    )
+                    fts5_kwargs["diagnostics"] = context.setdefault("diagnostics", {})
                 # Only search_media_fts5 accepts keyword_filter
                 if func_name == "search_media_fts5":
                     task = func(

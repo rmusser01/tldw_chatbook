@@ -86,6 +86,7 @@ Notes on the schema:
 | messages | `components/_messages.tcss` | message-header, message-text, message-actions (all Canonical) |
 | ds_primitives | `components/_ds_primitives.tcss` | ds-panel, ds-toolbar, ds-field-row, ds-info-callout, ds-approval-card, ds-destination-header (all Canonical; extracted from the agentic monolith in task 9) |
 | sizing | `utilities/_helpers.tcss` | w-auto, w-full, w-fill, w-0, h-auto, h-full, h-fill, h-0, h-1, h-2, h-3, p-0, m-0, mt-1, mb-0, border-none (all Canonical; the tokenized replacements for runtime `.styles.*` literals, task 12) |
+| panes | `features/_library.tcss` | none — widget contract (`AdaptivePaneShell`/`AdaptivePaneGrip`/`DestinationRailRowButton` keyed to destination classes; ADR-212) |
 
 ## Entry template
 
@@ -400,6 +401,10 @@ family.
 importers) for confirm flows; `SafeModalDismissMixin`
 (`Widgets/modal_dismissal.py`, 58 of 66 modals) for every modal's
 escape/click dismissal contract.
+
+The standard `ConfirmationDialog` body uses native vertical scrolling with a
+viewport height cap and docked actions; its cancel button retains initial focus.
+Specialized confirmations that compose their own body retain their layout.
 
 **Lifecycle.** Canonical family (owning sheet `components/_dialogs.tcss`;
 `dialog-title`/`dialog-buttons` promoted and registered in ADR-161 task 4 —
@@ -827,3 +832,82 @@ Additional explicit override classes (same precedence contract):
 - `h-10` — `height: $ds-size-10`.
 - `p-left-1` — `padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1`.
 - `w-7` — `width: $ds-size-7`.
+
+---
+
+## Panes (adaptive pane shell)
+
+**Purpose.** One three-pane destination frame — navigation rail, items list,
+work pane — with a full-height grip after each optional pane, shared by the
+Library's adaptive readers and Roleplay (ADR-212). The widgets live in
+`tldw_chatbook/Widgets/adaptive_pane_shell.py`; the pure geometry lives in
+`Utils/adaptive_reader_state.py` (`resolve_adaptive_pane_layout`). This family
+is a **widget contract**, not a class vocabulary: every rule is keyed to a
+destination's own classes and lives in that destination's lazy split sheet.
+
+**When-not-to-use.** Not for a destination that is not on the adaptive-shell
+grammar (ADR-212 does not authorise Watchlists convergence, an app-wide
+workbench or a third shell pane). Never add a neutral class to a shell rule:
+a token with no split owner pins the whole rule to the boot bundle.
+
+**Structure.**
+
+```python
+from tldw_chatbook.Widgets.adaptive_pane_shell import (
+    AdaptivePaneClasses,
+    AdaptivePaneShell,
+)
+
+ROLEPLAY_CLASSES = AdaptivePaneClasses(
+    shell="roleplay-shell",
+    nav="roleplay-nav",
+    items="roleplay-items",
+    work="roleplay-shell-work",
+    grip="roleplay-shell-grip",
+)
+
+def compose_frame(self):
+    yield AdaptivePaneShell(
+        rail, items, work, layout,
+        id_prefix="roleplay",
+        library_label="Navigation",
+        items_label="Characters",
+        destination=ROLEPLAY_CLASSES,
+        id="roleplay-shell",
+    )
+```
+
+B1 chooses Roleplay's final names; every value must equal or start with one
+of the destination's split prefixes (for Roleplay, spec R18's
+`roleplay-shell`, `roleplay-rail`, `roleplay-nav`, `roleplay-items`) or its
+rule lands in the boot bundle.
+
+**Class inventory.** None public. Each destination supplies an
+`AdaptivePaneClasses` set: `shell`, `nav`, `items`, `work`, `grip`. The
+Library's set is `LIBRARY_ADAPTIVE_READER_CLASSES`
+(`library-adaptive-reader-shell`, `-library`, `-items`, `-work`,
+`-pane-grip`); Roleplay's arrives in B1.
+
+**States.** Grip rest: `$ds-surface-raised` background, `$ds-text-muted`
+text, no outline. Hover: `$ds-text-primary`. Focus: `$ds-action-focus`
+with `bold reverse` and no outline (task-31276: an outline on a shell-tall
+grip paints over the work pane's first row). Disabled: grips are never
+disabled; a closed pane is `display: none` + `disabled`. Rail rows
+(`DestinationRailRowButton`): the current row is `▸` + bold, the focused
+row is the destination's left focus bar, never the same token as current.
+
+**Tokens consumed.** `$ds-surface-raised`, `$ds-text-muted`,
+`$ds-text-primary`, `$ds-action-focus`, `$ds-width-fill`, `$ds-height-full`,
+`$ds-size-0`, `$ds-space-0`. Widths are never tokens: the resolver sets them
+inline (`# ds-runtime:`), and the grip reserves exactly the profile's
+`grip_width`.
+
+**Python idiom.** Resolve with `resolve_adaptive_pane_layout`, then
+`shell.sync_layout(layout)` (equality-guarded; never recompose). Rename a
+grip with `grip.sync_label(name)`. Fit rail rows with
+`fit_rail_row_label(row, width, current=...)` and patch them with
+`DestinationRailRowButton.sync_row`. Handle `PaneToggleRequested`,
+`AdaptivePaneShellResized` and `PaneVisibilityChanged` with `@on(...)`.
+
+**Lifecycle.** Canonical as a contract (registry `"classes"` empty by
+design; owning sheet `features/_library.tcss` for the Library's set).

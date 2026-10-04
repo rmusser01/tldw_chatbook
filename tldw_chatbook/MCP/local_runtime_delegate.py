@@ -406,9 +406,7 @@ class LocalMCPRuntimeDelegate:
             # and the service payload returns unchanged (structured errors
             # included -- they are data, not exceptions).
             service = self._get_library_service()
-            return await in_worker(
-                self, service.invoke, normalized_name, payload
-            )
+            return await in_worker(self, service.invoke, normalized_name, payload)
         handler = getattr(self, f"_tool_{normalized_name}", None)
         if handler is None:
             raise KeyError(f"Unsupported local MCP tool: {normalized_name}")

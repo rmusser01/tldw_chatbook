@@ -280,9 +280,12 @@ class ConsoleConversationActionMenu(VerticalScroll):
             classes="conversation-menu-summary",
         )
         for item in build_conversation_menu(self._target, self._page):
-            label = f"{item.label} ▸" if item.opens_page and item.action_id.endswith(
-                ("status", "more", "copy")
-            ) else item.label
+            label = (
+                f"{item.label} ▸"
+                if item.opens_page
+                and item.action_id.endswith(("status", "more", "copy"))
+                else item.label
+            )
             if item.is_current:
                 label = f"• {label}"
             button = Button(

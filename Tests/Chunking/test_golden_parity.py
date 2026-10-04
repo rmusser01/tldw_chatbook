@@ -20,6 +20,7 @@ for the tokens arm: it points the HF stack at the REAL (pre-sandbox) cache
 with offline mode forced — a pure local read, no network — and skips with a
 true reason only if gpt2 is genuinely absent from this machine's cache.
 """
+
 import json
 from pathlib import Path
 
@@ -32,14 +33,28 @@ CORPUS = {
     "prose": "The quick brown fox jumps over the lazy dog. " * 20,
     "markdown_atx": "# Title\n\n## Section A\n\nPara one.\n\n## Section B\n\nPara two.\n",
     "ebook": "# Chapter 1\n\nFirst chapter text.\n\n# Chapter 2\n\nSecond chapter text.\n",
-    "json": '{"data": [' + ", ".join(f'{{"item": {i}, "text": "value {i}"}}' for i in range(20)) + ']}',
-    "xml": "<root>" + "".join(f"<item id='{i}'>text {i}</item>" for i in range(20)) + "</root>",
+    "json": '{"data": ['
+    + ", ".join(f'{{"item": {i}, "text": "value {i}"}}' for i in range(20))
+    + "]}",
+    "xml": "<root>"
+    + "".join(f"<item id='{i}'>text {i}</item>" for i in range(20))
+    + "</root>",
     "code": "def f%d():\n    return %d\n" * 10,
     "cjk": "这是一段中文文本。" * 10,
 }
-METHODS = ["words", "sentences", "paragraphs", "tokens", "json", "xml",
-           "ebook_chapters", "structure_aware", "code", "fixed_size",
-           "propositions"]
+METHODS = [
+    "words",
+    "sentences",
+    "paragraphs",
+    "tokens",
+    "json",
+    "xml",
+    "ebook_chapters",
+    "structure_aware",
+    "code",
+    "fixed_size",
+    "propositions",
+]
 
 
 @pytest.fixture(params=METHODS)

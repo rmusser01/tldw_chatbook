@@ -938,10 +938,9 @@ class TestFirstRunProviderContracts:
 
         assert china.endpoint == default.endpoint == ""
         assert china.discovery_endpoint != default.discovery_endpoint
-        assert (
-            setup_state.build_first_run_model_discovery_key(china)
-            != setup_state.build_first_run_model_discovery_key(default)
-        )
+        assert setup_state.build_first_run_model_discovery_key(
+            china
+        ) != setup_state.build_first_run_model_discovery_key(default)
 
     def test_static_openai_builtin_discovery_identity_remains_supported(self):
         draft = setup_state.resolve_first_run_provider_draft(
@@ -2180,7 +2179,9 @@ class TestSummaryThreeState:
         from tldw_chatbook.Agents.builtin_tool_gate import TOOL_GATES_PANE_PATH
         from tldw_chatbook.UI.Wizards.first_run_setup_state import build_summary_rows
 
-        rows = {r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)}
+        rows = {
+            r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)
+        }
         assert rows["Tools"].detail == (
             f"all off; turn them on under {TOOL_GATES_PANE_PATH}"
         )
@@ -2349,10 +2350,7 @@ class TestProviderTrustChain:
     def test_classify_discovery_failure(self):
         classify = setup_state.classify_discovery_failure
         assert classify("available", "") == setup_state.PROVIDER_PROBE_NONE
-        assert (
-            classify("listing_unavailable", "")
-            == setup_state.PROVIDER_PROBE_NONE
-        )
+        assert classify("listing_unavailable", "") == setup_state.PROVIDER_PROBE_NONE
         assert (
             classify("connection_failed", "authentication")
             == setup_state.PROVIDER_PROBE_AUTH
@@ -2405,9 +2403,7 @@ class TestProviderTrustChain:
         assert "authentication" in out[0].detail
         assert out[1] == rows[1]
         # No failure — untouched (identity, not equality, is fine too).
-        assert (
-            setup_state.apply_probe_failure_to_summary_rows(rows, "") == rows
-        )
+        assert setup_state.apply_probe_failure_to_summary_rows(rows, "") == rows
         # An unconfigured Provider row keeps its own, more specific message.
         unconfigured = (
             setup_state.SummaryRow(
@@ -2471,10 +2467,7 @@ class TestEnvKeyFirstRunNotice:
         assert names == ("OPENAI_API_KEY",)
 
     def test_no_env_value_means_no_notice(self):
-        assert (
-            setup_state.env_keys_that_silenced_first_run(self._config(), {})
-            == ()
-        )
+        assert setup_state.env_keys_that_silenced_first_run(self._config(), {}) == ()
 
     def test_inline_config_key_means_no_notice(self):
         names = setup_state.env_keys_that_silenced_first_run(

@@ -386,9 +386,7 @@ def _resolve_first_run_provider_endpoints(
         provider_settings,
     )
     if discovery_endpoint:
-        discovery_resolution = resolve_provider_endpoint(
-            owner_key, discovery_endpoint
-        )
+        discovery_resolution = resolve_provider_endpoint(owner_key, discovery_endpoint)
         if discovery_resolution.errors or discovery_resolution.chat_url is None:
             raise ValueError("Provider discovery endpoint is invalid.")
         discovery_endpoint = discovery_resolution.chat_url
@@ -540,9 +538,7 @@ PROVIDER_PROBE_AUTH = "authentication"
 PROVIDER_PROBE_CONNECTION = "connection"
 
 
-def classify_discovery_failure(
-    discovery_state: str, failure_category: str
-) -> str:
+def classify_discovery_failure(discovery_state: str, failure_category: str) -> str:
     """Collapse a discovery UI outcome into the trust-chain's three states.
 
     Args:
@@ -1508,7 +1504,6 @@ def tools_commit_delta(
     }
 
 
-
 def build_appearance_commit(
     *,
     default_theme: str | None,
@@ -1733,8 +1728,7 @@ def read_provider_secret_presence(
     explicit_source = (
         credential_source.strip().lower()
         if type(credential_source) is str
-        and credential_source.strip().lower()
-        in {"none", "stored", "environment"}
+        and credential_source.strip().lower() in {"none", "stored", "environment"}
         else None
     )
     env_var_raw = settings.get("api_key_env_var")

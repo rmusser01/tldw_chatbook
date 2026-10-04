@@ -417,11 +417,11 @@ def build_library_media_viewer_state(
         is_markdown=is_markdown,
         backend=backend,
         canonical_id=canonical_id
-        or (
-            f"{backend}:media:{media_id.removeprefix('media-')}" if media_id else ""
-        ),
+        or (f"{backend}:media:{media_id.removeprefix('media-')}" if media_id else ""),
         original_source=url,
-        stored_representation=("Complete stored text" if content else "No stored content"),
+        stored_representation=(
+            "Complete stored text" if content else "No stored content"
+        ),
     )
 
 

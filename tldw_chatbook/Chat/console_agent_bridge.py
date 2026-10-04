@@ -1539,6 +1539,7 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_GATE_ERROR_REFUSAL,
         LOCAL_KILL_SWITCH_REFUSAL,
         LOCAL_ROOT_CHANGED_REFUSAL,
+        LOCAL_RUN_WORKTREE_RELEASED_REFUSAL,
         LOCAL_TIMEOUT_REFUSAL,
         LOCAL_USER_DENY_REFUSAL,
         LOCAL_WORKER_FAILED_REFUSAL,
@@ -1570,6 +1571,7 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_ROOT_CHANGED_REFUSAL: "blocked",
         LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: "blocked",
         LOCAL_WORKER_FAILED_REFUSAL: "blocked",
+        LOCAL_RUN_WORKTREE_RELEASED_REFUSAL: "blocked",
         MCP_UNRESOLVED_REFUSAL: "blocked",
         MCP_TIMEOUT_REFUSAL: "blocked",
     })

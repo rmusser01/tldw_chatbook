@@ -94,8 +94,7 @@ async def test_status_select_carries_a_visible_label():
         row = pane.query_one("#items-toolbar")
         children = list(row.children)
         index = next(
-            i for i, child in enumerate(children)
-            if child.id == "items-status-select"
+            i for i, child in enumerate(children) if child.id == "items-status-select"
         )
         label = children[index - 1]
         assert isinstance(label, Static)
@@ -103,7 +102,9 @@ async def test_status_select_carries_a_visible_label():
 
 
 @pytest.mark.asyncio
-async def test_markup_shaped_item_text_is_escaped_at_the_datatable_boundary(sample_items):
+async def test_markup_shaped_item_text_is_escaped_at_the_datatable_boundary(
+    sample_items,
+):
     """`DataTable` markup-parses `str` cells, and item title / source name are
     remote feed content -- so `[bold red]BREAKING[/]` in a feed title would be
     interpreted as Rich markup rather than shown as text (TASK-1348 AC#1). The
@@ -243,7 +244,9 @@ async def test_queued_indicator_renders_from_the_normalized_flag_on_load(sample_
 
 
 @pytest.mark.asyncio
-async def test_update_item_queued_cell_repaints_in_place_without_recompose(sample_items):
+async def test_update_item_queued_cell_repaints_in_place_without_recompose(
+    sample_items,
+):
     """Mirrors `update_item_status_cell`'s own contract: the same instances
     (pane AND table) must survive the repaint -- the Phase D pattern this
     stream keeps re-verifying (a recompose once destroyed the live table)."""
@@ -275,10 +278,12 @@ def test_item_published_text_prefers_the_real_publish_date():
     """AC#2: the column reads `published_date`, not `created_at` -- the
     UAT's exact defect (every row from one check carrying the same
     microsecond-identical ingest time under a "Published" heading)."""
-    text = ItemsPane.item_published_text({
-        "published_date": "2026-08-04T17:55:00+00:00",
-        "created_at": "2026-08-04T18:15:22.123456+00:00",
-    })
+    text = ItemsPane.item_published_text(
+        {
+            "published_date": "2026-08-04T17:55:00+00:00",
+            "created_at": "2026-08-04T18:15:22.123456+00:00",
+        }
+    )
     from tldw_chatbook.UI.Watchlists_Modules.humane_time import humane_timestamp
 
     assert text == humane_timestamp("2026-08-04T17:55:00+00:00")
@@ -294,19 +299,22 @@ def test_item_published_text_falls_back_honestly_when_the_feed_omits_one():
     publish date under a "Published" heading."""
     from tldw_chatbook.UI.Watchlists_Modules.humane_time import humane_timestamp
 
-    text = ItemsPane.item_published_text({
-        "published_date": None,
-        "created_at": "2026-08-04T18:15:22+00:00",
-    })
+    text = ItemsPane.item_published_text(
+        {
+            "published_date": None,
+            "created_at": "2026-08-04T18:15:22+00:00",
+        }
+    )
     assert text == f"added {humane_timestamp('2026-08-04T18:15:22+00:00')}"
     assert "Published" not in text  # no false claim of being a publish date
 
 
 def test_item_published_text_with_neither_field_shows_the_dash():
     assert ItemsPane.item_published_text({}) == "-"
-    assert ItemsPane.item_published_text(
-        {"published_date": None, "created_at": None}
-    ) == "-"
+    assert (
+        ItemsPane.item_published_text({"published_date": None, "created_at": None})
+        == "-"
+    )
 
 
 @pytest.mark.asyncio

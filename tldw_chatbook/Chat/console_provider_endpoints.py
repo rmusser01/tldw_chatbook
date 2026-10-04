@@ -12,9 +12,12 @@ from tldw_chatbook.Chat.provider_endpoint_contract import (
     resolve_provider_endpoint,
 )
 
+#: Chat settings' footer action that saves an unsaved endpoint.
+SAVE_ENDPOINT_ACTION_LABEL = "Save endpoint & use model"
 UNSAVED_ENDPOINT_COPY = (
-    "Provider blocked: this endpoint is not saved. Save it with Save model "
-    "defaults in Console Settings, or in F4 Settings, before sending."
+    "Provider blocked: this endpoint is not saved. Save it with "
+    f"{SAVE_ENDPOINT_ACTION_LABEL} in Chat settings, or in F4 Settings, before "
+    "sending."
 )
 #: Single source of the llama.cpp origin Chatbook defaults to (and teaches in
 #: its docs) when nothing is configured. The stock `llama-server` port 8080 is

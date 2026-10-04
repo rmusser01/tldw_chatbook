@@ -60,7 +60,9 @@ from tldw_chatbook.Video_Generation.video_formats import (
 
 _PROMPT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _SUPPORTED_REFERENCE_KINDS = frozenset({"first_frame", "reference_image"})
-_SUPPORTED_OUTPUT_CLASSES = frozenset({"SaveVideo", "VHS_VideoCombine", "SaveAnimatedWEBP"})
+_SUPPORTED_OUTPUT_CLASSES = frozenset(
+    {"SaveVideo", "VHS_VideoCombine", "SaveAnimatedWEBP"}
+)
 _TITLE_CONTROLS = {
     "prompt": frozenset({"prompt"}),
     "negativeprompt": frozenset({"negative_prompt"}),
@@ -180,7 +182,9 @@ class ComfyUIVideoAdapter:
         """Return the configured ComfyUI request/poll deadline in seconds."""
         return max(
             1,
-            int(self._config.comfyui_timeout_seconds or DEFAULT_COMFYUI_TIMEOUT_SECONDS),
+            int(
+                self._config.comfyui_timeout_seconds or DEFAULT_COMFYUI_TIMEOUT_SECONDS
+            ),
         )
 
     def _trusted_origins(self, base_url: str) -> frozenset:
@@ -215,9 +219,7 @@ class ComfyUIVideoAdapter:
         data_root = get_user_data_dir().resolve()
         workflow_root = data_root / "video_workflows"
         if workflow_root.is_symlink():
-            raise VideoGenerationError(
-                "ComfyUI workflow path escapes video_workflows"
-            )
+            raise VideoGenerationError("ComfyUI workflow path escapes video_workflows")
         user_candidate = workflow_root / candidate.name
         if user_candidate.is_symlink():
             raise VideoGenerationError("ComfyUI workflow symlink is not allowed")
@@ -240,9 +242,15 @@ class ComfyUIVideoAdapter:
         try:
             parsed = json.loads(selected.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            raise VideoGenerationError(f"failed to load ComfyUI workflow {candidate.name}: {exc}") from exc
-        if not isinstance(parsed, dict) or not all(isinstance(node, dict) for node in parsed.values()):
-            raise VideoGenerationError("ComfyUI workflow must be an API JSON object keyed by node id")
+            raise VideoGenerationError(
+                f"failed to load ComfyUI workflow {candidate.name}: {exc}"
+            ) from exc
+        if not isinstance(parsed, dict) or not all(
+            isinstance(node, dict) for node in parsed.values()
+        ):
+            raise VideoGenerationError(
+                "ComfyUI workflow must be an API JSON object keyed by node id"
+            )
         return parsed
 
     # -- workflow shaping -------------------------------------------------
@@ -255,7 +263,9 @@ class ComfyUIVideoAdapter:
             if isinstance(node, dict) and str(node.get("class_type", "")).strip()
         }
         if not required:
-            raise VideoGenerationError("ComfyUI workflow contains no node class_type values")
+            raise VideoGenerationError(
+                "ComfyUI workflow contains no node class_type values"
+            )
         if self._available_node_classes is None:
             try:
                 info = fetch_json(
@@ -265,16 +275,23 @@ class ComfyUIVideoAdapter:
                     trusted_origins=self._trusted_origins(base_url),
                 )
             except (ImageGenerationError, httpx.HTTPStatusError) as exc:
-                raise VideoBackendUnavailableError(f"ComfyUI object_info failed: {exc}") from exc
+                raise VideoBackendUnavailableError(
+                    f"ComfyUI object_info failed: {exc}"
+                ) from exc
             except Exception as exc:
-                raise VideoBackendUnavailableError(f"ComfyUI object_info failed: {exc}") from exc
+                raise VideoBackendUnavailableError(
+                    f"ComfyUI object_info failed: {exc}"
+                ) from exc
             if not isinstance(info, dict):
-                raise VideoBackendUnavailableError("ComfyUI object_info response was not a JSON object")
+                raise VideoBackendUnavailableError(
+                    "ComfyUI object_info response was not a JSON object"
+                )
             self._available_node_classes = {str(name) for name in info}
         missing = sorted(required - self._available_node_classes)
         if missing:
             raise VideoBackendUnavailableError(
-                "ComfyUI is missing required workflow node classes: " + ", ".join(missing)
+                "ComfyUI is missing required workflow node classes: "
+                + ", ".join(missing)
             )
 
     @staticmethod
@@ -292,7 +309,9 @@ class ComfyUIVideoAdapter:
         return set(_TITLE_CONTROLS.get(compact, frozenset()))
 
     @staticmethod
-    def _set_input(inputs: dict[str, Any], fields: tuple[str, ...], value: Any) -> str | None:
+    def _set_input(
+        inputs: dict[str, Any], fields: tuple[str, ...], value: Any
+    ) -> str | None:
         """Set and return the first direct canonical field, if available."""
         for field in fields:
             if field in inputs and not isinstance(inputs[field], list):
@@ -304,8 +323,7 @@ class ComfyUIVideoAdapter:
     def _is_h3_workflow(graph: dict[str, Any]) -> bool:
         """Return whether a graph exposes the MiniMax H3 fixed-control node."""
         return any(
-            isinstance(node, dict)
-            and node.get("class_type") == "MiniMaxH3ImageToVideo"
+            isinstance(node, dict) and node.get("class_type") == "MiniMaxH3ImageToVideo"
             for node in graph.values()
         )
 
@@ -416,10 +434,9 @@ class ComfyUIVideoAdapter:
 
         node = generation_nodes[0]
         inputs = node.get("inputs")
-        if (
-            not isinstance(inputs, dict)
-            or not expected_controls <= self._title_controls(node)
-        ):
+        if not isinstance(
+            inputs, dict
+        ) or not expected_controls <= self._title_controls(node):
             raise VideoGenerationError(
                 "ComfyUI prompt requires a direct 'Prompt Width Height' control "
                 f"on class {expected_class}"
@@ -472,14 +489,14 @@ class ComfyUIVideoAdapter:
     @staticmethod
     def _parse_ratio(ratio: str) -> float:
         """Parse a positive numeric ``W:H`` ratio supplied for an H3 graph."""
-        match = re.fullmatch(
-            r"\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\s*", ratio
-        )
+        match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*:\s*(\d+(?:\.\d+)?)\s*", ratio)
         if match is None:
             raise VideoGenerationError("ComfyUI H3 ratio must be a numeric W:H value")
         width, height = (float(part) for part in match.groups())
         if width <= 0 or height <= 0:
-            raise VideoGenerationError("ComfyUI H3 ratio must be a positive numeric W:H value")
+            raise VideoGenerationError(
+                "ComfyUI H3 ratio must be a positive numeric W:H value"
+            )
         return width / height
 
     def _parameterize_h3_workflow(
@@ -529,15 +546,25 @@ class ComfyUIVideoAdapter:
         effective_seed = self._require_direct_value(
             self._direct_value(seed_inputs, ("noise_seed", "seed")), "seed", "Seed"
         )
-        if isinstance(effective_seed, bool) or not isinstance(effective_seed, int) or effective_seed < 0:
-            raise VideoGenerationError("ComfyUI seed requires a non-negative integer 'Seed' control")
+        if (
+            isinstance(effective_seed, bool)
+            or not isinstance(effective_seed, int)
+            or effective_seed < 0
+        ):
+            raise VideoGenerationError(
+                "ComfyUI seed requires a non-negative integer 'Seed' control"
+            )
 
         duration_inputs = self._h3_control_inputs(
             graph, "duration", "duration", "Duration", "PrimitiveFloat"
         )
         if request.duration_seconds is not None:
             self._require_injection(
-                self._set_input(duration_inputs, ("value", "duration_seconds"), request.duration_seconds),
+                self._set_input(
+                    duration_inputs,
+                    ("value", "duration_seconds"),
+                    request.duration_seconds,
+                ),
                 "duration",
                 "Duration",
             )
@@ -597,14 +624,19 @@ class ComfyUIVideoAdapter:
             expected_ratio = self._parse_ratio(request.ratio)
             actual_ratio = width / height
             if abs(actual_ratio - expected_ratio) / expected_ratio > 0.03 + 1e-12:
-                raise VideoGenerationError("ComfyUI H3 ratio is incompatible with effective dimensions")
+                raise VideoGenerationError(
+                    "ComfyUI H3 ratio is incompatible with effective dimensions"
+                )
 
         save_nodes = [
-            node for node in graph.values()
+            node
+            for node in graph.values()
             if isinstance(node, dict) and node.get("class_type") == "SaveVideo"
         ]
         if not save_nodes:
-            raise VideoGenerationError("ComfyUI H3 requires a SaveVideo MP4 output control")
+            raise VideoGenerationError(
+                "ComfyUI H3 requires a SaveVideo MP4 output control"
+            )
         if any(
             not isinstance(node.get("inputs"), dict)
             or str(node["inputs"].get("format", "")).lower() != "mp4"
@@ -642,7 +674,12 @@ class ComfyUIVideoAdapter:
         )
         if request.negative_prompt is not None:
             self._require_injection(
-                self._set_control(graph, "negative_prompt", ("text", "prompt"), request.negative_prompt),
+                self._set_control(
+                    graph,
+                    "negative_prompt",
+                    ("text", "prompt"),
+                    request.negative_prompt,
+                ),
                 "negative prompt",
                 "Negative Prompt",
             )
@@ -668,7 +705,10 @@ class ComfyUIVideoAdapter:
                     effective_height = value
         if request.duration_seconds is not None:
             duration_applied = self._set_control(
-                graph, "duration", ("value", "duration_seconds"), request.duration_seconds
+                graph,
+                "duration",
+                ("value", "duration_seconds"),
+                request.duration_seconds,
             )
             if duration_applied is None and request.fps is not None:
                 duration_applied = self._set_control(
@@ -688,12 +728,16 @@ class ComfyUIVideoAdapter:
             effective_fps = float(request.fps)
         if image_name is not None:
             self._require_injection(
-                self._set_control(graph, "input_image", ("image", "image_name"), image_name),
+                self._set_control(
+                    graph, "input_image", ("image", "image_name"), image_name
+                ),
                 "input image",
                 "Input Image",
             )
         if request.extra_params:
-            raise VideoGenerationError("ComfyUI custom workflow does not support extra params")
+            raise VideoGenerationError(
+                "ComfyUI custom workflow does not support extra params"
+            )
         for field in ("ratio", "model", "sampler", "steps", "cfg_scale"):
             if getattr(request, field) is not None:
                 raise VideoGenerationError(
@@ -718,11 +762,19 @@ class ComfyUIVideoAdapter:
         graph = copy.deepcopy(workflow)
         requested_seed = request.seed
         if requested_seed is not None and requested_seed < -1:
-            raise VideoGenerationError("ComfyUI seed must be -1 or a non-negative integer")
-        resolved_seed = secrets.randbelow(2**63) if requested_seed == -1 else requested_seed
+            raise VideoGenerationError(
+                "ComfyUI seed must be -1 or a non-negative integer"
+            )
+        resolved_seed = (
+            secrets.randbelow(2**63) if requested_seed == -1 else requested_seed
+        )
         if self._is_h3_workflow(graph):
-            return self._parameterize_h3_workflow(graph, request, image_name, resolved_seed)
-        return self._parameterize_generic_workflow(graph, request, image_name, resolved_seed)
+            return self._parameterize_h3_workflow(
+                graph, request, image_name, resolved_seed
+            )
+        return self._parameterize_generic_workflow(
+            graph, request, image_name, resolved_seed
+        )
 
     def _resolve_uploaded_image(
         self,
@@ -739,9 +791,14 @@ class ComfyUIVideoAdapter:
         if not assets:
             return
         if len(assets) != 1:
-            raise VideoGenerationError("ComfyUI supports one image first_frame/reference_image input")
+            raise VideoGenerationError(
+                "ComfyUI supports one image first_frame/reference_image input"
+            )
         asset = assets[0]
-        if asset.kind not in _SUPPORTED_REFERENCE_KINDS or not asset.mime_type.lower().startswith("image/"):
+        if (
+            asset.kind not in _SUPPORTED_REFERENCE_KINDS
+            or not asset.mime_type.lower().startswith("image/")
+        ):
             raise VideoGenerationError(
                 "ComfyUI supports only image first_frame/reference_image inputs"
             )
@@ -759,14 +816,20 @@ class ComfyUIVideoAdapter:
                 trusted_origins=self._trusted_origins(base_url),
             )
         except (ImageGenerationError, httpx.HTTPStatusError) as exc:
-            raise VideoGenerationError(f"ComfyUI prompt submission failed: {exc}") from exc
+            raise VideoGenerationError(
+                f"ComfyUI prompt submission failed: {exc}"
+            ) from exc
         except Exception as exc:
-            raise VideoGenerationError(f"ComfyUI prompt submission failed: {exc}") from exc
+            raise VideoGenerationError(
+                f"ComfyUI prompt submission failed: {exc}"
+            ) from exc
         if not isinstance(response, dict):
             raise VideoGenerationError("ComfyUI prompt response was not JSON")
         prompt_id = response.get("prompt_id")
         if not isinstance(prompt_id, str) or not _PROMPT_ID_RE.fullmatch(prompt_id):
-            raise VideoGenerationError("ComfyUI prompt response did not include a valid prompt_id")
+            raise VideoGenerationError(
+                "ComfyUI prompt response did not include a valid prompt_id"
+            )
         return prompt_id
 
     def _poll_for_output(
@@ -795,9 +858,13 @@ class ComfyUIVideoAdapter:
                     trusted_origins=self._trusted_origins(base_url),
                 )
             except (ImageGenerationError, httpx.HTTPStatusError) as exc:
-                raise VideoGenerationError(f"ComfyUI history polling failed: {exc}") from exc
+                raise VideoGenerationError(
+                    f"ComfyUI history polling failed: {exc}"
+                ) from exc
             except Exception as exc:
-                raise VideoGenerationError(f"ComfyUI history polling failed: {exc}") from exc
+                raise VideoGenerationError(
+                    f"ComfyUI history polling failed: {exc}"
+                ) from exc
             descriptor = self._find_output_descriptor(
                 history, prompt_id, graph, requested_container
             )
@@ -845,21 +912,31 @@ class ComfyUIVideoAdapter:
                     data={"overwrite": "true"},
                 )
                 if response.is_redirect:
-                    raise ImageGenerationError("ComfyUI image upload returned a redirect")
+                    raise ImageGenerationError(
+                        "ComfyUI image upload returned a redirect"
+                    )
                 response.raise_for_status()
                 data = response.json()
         except (ImageGenerationError, httpx.HTTPError, ValueError) as exc:
             raise VideoGenerationError(f"ComfyUI image upload failed: {exc}") from exc
         except Exception as exc:
             raise VideoGenerationError(f"ComfyUI image upload failed: {exc}") from exc
-        if not isinstance(data, dict) or not isinstance(data.get("name"), str) or not data["name"].strip():
-            raise VideoGenerationError("ComfyUI image upload response did not include a filename")
+        if (
+            not isinstance(data, dict)
+            or not isinstance(data.get("name"), str)
+            or not data["name"].strip()
+        ):
+            raise VideoGenerationError(
+                "ComfyUI image upload response did not include a filename"
+            )
         name = data["name"].strip()
         raw_subfolder = data.get("subfolder", "")
         if raw_subfolder is None:
             raw_subfolder = ""
         if not isinstance(raw_subfolder, str):
-            raise VideoGenerationError("ComfyUI image upload response included an unsafe path")
+            raise VideoGenerationError(
+                "ComfyUI image upload response included an unsafe path"
+            )
         subfolder = raw_subfolder.strip()
         if (
             name in {".", ".."}
@@ -870,12 +947,12 @@ class ComfyUIVideoAdapter:
             or "\x00" in subfolder
             or (
                 subfolder
-                and any(
-                    part in {"", ".", ".."} for part in subfolder.split("/")
-                )
+                and any(part in {"", ".", ".."} for part in subfolder.split("/"))
             )
         ):
-            raise VideoGenerationError("ComfyUI image upload response included an unsafe path")
+            raise VideoGenerationError(
+                "ComfyUI image upload response included an unsafe path"
+            )
         return f"{subfolder}/{name}" if subfolder else name
 
     # -- history/output parsing ------------------------------------------
@@ -910,7 +987,9 @@ class ComfyUIVideoAdapter:
         status = entry.get("status")
         if not isinstance(status, dict):
             return
-        state = str(status.get("status_str") or status.get("status") or "").strip().lower()
+        state = (
+            str(status.get("status_str") or status.get("status") or "").strip().lower()
+        )
         if state in {"error", "failed", "interrupted", "cancelled", "canceled"}:
             detail = cls._safe_execution_message(status.get("messages"))
             message = "ComfyUI execution failed"
@@ -924,7 +1003,9 @@ class ComfyUIVideoAdapter:
         status = entry.get("status")
         if not isinstance(status, dict) or status.get("completed") is not True:
             return False
-        state = str(status.get("status_str") or status.get("status") or "").strip().lower()
+        state = (
+            str(status.get("status_str") or status.get("status") or "").strip().lower()
+        )
         return state in {"success", "succeeded", "completed", "complete"}
 
     @staticmethod
@@ -1025,7 +1106,9 @@ class ComfyUIVideoAdapter:
                 trusted_origins=self._trusted_origins(base_url),
             )
         except ImageGenerationError as exc:
-            raise VideoGenerationError(f"ComfyUI output download failed: {exc}") from exc
+            raise VideoGenerationError(
+                f"ComfyUI output download failed: {exc}"
+            ) from exc
         suffix = Path(descriptor["filename"]).suffix
         try:
             container = suffix.removeprefix(".")

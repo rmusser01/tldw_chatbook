@@ -210,6 +210,7 @@ from tldw_chatbook.Chat.console_speech import (
 )
 from tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences
 from tldw_chatbook.Chat.console_trace_provenance import ConsoleTraceCaptureMode
+
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_voice_promotion import (
         CompletedVoicePairCommit,
@@ -1368,9 +1369,9 @@ class _ConsoleSettingsPersistenceLifecycle:
     component_revisions: dict[ConsoleSettingsComponent, int] = field(
         default_factory=dict
     )
-    generation_bases: dict[
-        str, ConsoleGenerationSettingsSnapshot | None
-    ] = field(default_factory=dict)
+    generation_bases: dict[str, ConsoleGenerationSettingsSnapshot | None] = field(
+        default_factory=dict
+    )
     context_bases: dict[str, int | None] = field(default_factory=dict)
 
 
@@ -1666,7 +1667,8 @@ class ConsoleChatStore:
         on_canvas_context_changed: Callable[[str | None], None] | None = None,
         assistant_defaults_provider: Callable[
             [str, ConsoleSessionSettings | None], ConsoleAssistantStartup
-        ] | None = None,
+        ]
+        | None = None,
         on_assistant_default_notice: Callable[[str], None] | None = None,
         response_rule_store: "ResponseRuleStore | None" = None,
     ) -> None:
@@ -1818,9 +1820,7 @@ class ConsoleChatStore:
         self._settings_persistence_lifecycles: dict[
             str, _ConsoleSettingsPersistenceLifecycle
         ] = {}
-        self._roleplay_persistence_locks: dict[
-            str, _RoleplayPersistenceLockEntry
-        ] = {}
+        self._roleplay_persistence_locks: dict[str, _RoleplayPersistenceLockEntry] = {}
         self._settings_session_incarnations: dict[str, int] = {}
         # Public settings origins need their own app-lifetime fence. Async
         # drain incarnations are an implementation detail and can be cleaned
@@ -2294,7 +2294,9 @@ class ConsoleChatStore:
         if assistant_kind is UNSPECIFIED_ASSISTANT:
             assistant_kind, assistant_id = "generic", "console"
             if self._assistant_defaults_provider is not None:
-                startup = self._assistant_defaults_provider(target_workspace_id, settings)
+                startup = self._assistant_defaults_provider(
+                    target_workspace_id, settings
+                )
                 if canonical_settings_baseline is not None:
                     canonical_settings_baseline = startup.settings
                 settings = startup.settings
@@ -2401,11 +2403,16 @@ class ConsoleChatStore:
                 )
             if activate:
                 self._activate_session(session.id)
-            if assistant_default_notice and self._on_assistant_default_notice is not None:
+            if (
+                assistant_default_notice
+                and self._on_assistant_default_notice is not None
+            ):
                 try:
                     self._on_assistant_default_notice(assistant_default_notice)
                 except Exception:  # noqa: BLE001 - presentation cannot undo a new chat
-                    logger.warning("Workspace default Persona notice could not be shown")
+                    logger.warning(
+                        "Workspace default Persona notice could not be shown"
+                    )
         return session
 
     def _activate_session(self, session_id: str | None) -> None:
@@ -2477,9 +2484,7 @@ class ConsoleChatStore:
         if conversation_id not in self._pending_agent_handoff_clears:
             return
         self._pending_agent_handoff_clears.pop(conversation_id, None)
-        database = (
-            getattr(self.persistence, "db", None) if self.persistence else None
-        )
+        database = getattr(self.persistence, "db", None) if self.persistence else None
         if database is None:
             return
         updater = getattr(database, "update_conversation", None)
@@ -2493,9 +2498,7 @@ class ConsoleChatStore:
             raw_metadata = row.get("metadata") or "{}"
             try:
                 metadata_obj = (
-                    json.loads(raw_metadata)
-                    if isinstance(raw_metadata, str)
-                    else {}
+                    json.loads(raw_metadata) if isinstance(raw_metadata, str) else {}
                 )
             except ValueError:
                 metadata_obj = {}
@@ -2709,11 +2712,15 @@ class ConsoleChatStore:
             raise ValueError("Roleplay authority id must be non-empty text or None.")
         if assistant_kind == "character":
             if not trusted_system_prompt.strip():
-                raise ValueError("Trusted roleplay system prompt must be non-empty text.")
+                raise ValueError(
+                    "Trusted roleplay system prompt must be non-empty text."
+                )
             if type(character_name) is not str or not character_name.strip():
                 raise ValueError("Roleplay character name must be non-empty text.")
             if title != f"Chat with {character_name}":
-                raise ValueError("Roleplay title does not match the character identity.")
+                raise ValueError(
+                    "Roleplay title does not match the character identity."
+                )
             expected_roleplay_settings = replace(
                 canonical_settings,
                 system_prompt=trusted_system_prompt,
@@ -2760,11 +2767,9 @@ class ConsoleChatStore:
             expected_settings=canonical_settings,
         ):
             raise ValueError("Session is no longer pristine.")
-        proposed_binding_revision = (
-            self._advance_console_settings_binding_revision(
-                session_id,
-                session.conversation_binding_revision,
-            )
+        proposed_binding_revision = self._advance_console_settings_binding_revision(
+            session_id,
+            session.conversation_binding_revision,
         )
 
         # All validation, derived values, and stale-eligibility checks are
@@ -2858,8 +2863,7 @@ class ConsoleChatStore:
             session is None
             or session.settings != expected_current_settings
             or session.canonical_settings_baseline != expected_current_settings
-            or session.generation_settings_revision
-            != prior_generation_revision + 1
+            or session.generation_settings_revision != prior_generation_revision + 1
             or not self.is_pristine_session(
                 session_id,
                 expected_settings=expected_current_settings,
@@ -3063,7 +3067,9 @@ class ConsoleChatStore:
                 str(persisted_conversation_id),
             )
             handoff_draft = None
-            database = getattr(self.persistence, "db", None) if self.persistence else None
+            database = (
+                getattr(self.persistence, "db", None) if self.persistence else None
+            )
             reader = getattr(database, "get_conversation_by_id", None)
             if callable(reader):
                 try:
@@ -3105,10 +3111,14 @@ class ConsoleChatStore:
                 self._consume_pending_agent_handoff_clear(session.id)
             with self._progress_identity_lock:
                 sibling = next(
-                    (other for other in self._sessions.values()
-                     if other is not session
-                     and other.persisted_conversation_id == session.persisted_conversation_id
-                     and other._progress_owner_id is not None),
+                    (
+                        other
+                        for other in self._sessions.values()
+                        if other is not session
+                        and other.persisted_conversation_id
+                        == session.persisted_conversation_id
+                        and other._progress_owner_id is not None
+                    ),
                     None,
                 )
                 if sibling is not None:
@@ -3996,8 +4006,7 @@ class ConsoleChatStore:
                 current = self._dispatch_recoveries_by_session.get(session_id)
                 if (
                     current is recovery
-                    and current.kind
-                    is ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
+                    and current.kind is ConsoleDispatchRecoveryKind.EPHEMERAL_ACCEPTED
                     and current.runtime_active
                     and not current.recovery_needed
                     and current.checkpoint is not None
@@ -4056,9 +4065,11 @@ class ConsoleChatStore:
             metadata_json=metadata_json,
             contributions=canvas_contributions,
             on_durable_commit=(
-                lambda: canvas_controller.confirm_exact_settlement(canvas_settlement)
-                if canvas_settlement is not None and terminal_state == "complete"
-                else None
+                lambda: (
+                    canvas_controller.confirm_exact_settlement(canvas_settlement)
+                    if canvas_settlement is not None and terminal_state == "complete"
+                    else None
+                )
             ),
         ):
             raise ConsoleDispatchSettlementError(
@@ -4115,9 +4126,7 @@ class ConsoleChatStore:
 
         message.metadata, message.video_metadata = snapshot
 
-    def _prime_unpersisted_terminal_receipt(
-        self, message: ConsoleChatMessage
-    ) -> None:
+    def _prime_unpersisted_terminal_receipt(self, message: ConsoleChatMessage) -> None:
         """Prevent stream materialization from creating an orphan row first."""
         if (
             self.persistence is None
@@ -6054,6 +6063,7 @@ class ConsoleChatStore:
                     raise RuntimeError("Durable preparation is unavailable.")
                 session = self._sessions[preparation.session_id]
                 from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
                 acceptance = flat_roots.durable_acceptance(
                     acceptance, self._nodes_by_session.get(session.id, {})
                 )
@@ -6727,9 +6737,7 @@ class ConsoleChatStore:
             )
             conversation_id = commit.identity.conversation_id
             if conversation_id not in lifecycle.generation_bases:
-                lifecycle.generation_bases[conversation_id] = (
-                    commit.generation_snapshot
-                )
+                lifecycle.generation_bases[conversation_id] = commit.generation_snapshot
                 generation_base_installed = True
             if conversation_id not in lifecycle.context_bases:
                 lifecycle.context_bases[conversation_id] = (
@@ -6761,7 +6769,10 @@ class ConsoleChatStore:
                 failure = session.settings_persistence_failures.get(
                     ConsoleSettingsComponent.CONTEXT_POLICY
                 )
-                if failure is None or failure.revision <= commit.context_policy_revision:
+                if (
+                    failure is None
+                    or failure.revision <= commit.context_policy_revision
+                ):
                     session.settings_persistence_failures.pop(
                         ConsoleSettingsComponent.CONTEXT_POLICY,
                         None,
@@ -6806,7 +6817,9 @@ class ConsoleChatStore:
             components.add(ConsoleSettingsComponent.GENERATION_SETTINGS)
         if (
             session.context_policy_revision != commit.context_policy_revision
-            and lifecycle.component_revisions.get(ConsoleSettingsComponent.CONTEXT_POLICY)
+            and lifecycle.component_revisions.get(
+                ConsoleSettingsComponent.CONTEXT_POLICY
+            )
             != session.context_policy_revision
         ):
             components.add(ConsoleSettingsComponent.CONTEXT_POLICY)
@@ -7664,9 +7677,7 @@ class ConsoleChatStore:
             ):
                 return False
             current_lineage = self._fork_lineage(session.id, prefix, durable=durable)
-            current_trace_boundary = (
-                None if durable else session.fork_trace_boundary
-            )
+            current_trace_boundary = None if durable else session.fork_trace_boundary
             trace_boundary_reader = getattr(
                 self.persistence,
                 "get_console_trace_fork_boundary",
@@ -8676,7 +8687,9 @@ class ConsoleChatStore:
                 current_settings.system_prompt if current_settings is not None else None
             ),
             pinned_prefill=(
-                current_settings.pinned_prefill if current_settings is not None else None
+                current_settings.pinned_prefill
+                if current_settings is not None
+                else None
             ),
         )
         with self._preparation_lock:
@@ -8804,9 +8817,9 @@ class ConsoleChatStore:
         lifecycle.context_bases[session.persisted_conversation_id] = (
             session.context_policy_durable_revision
         )
-        lifecycle.component_revisions[
-            ConsoleSettingsComponent.CONTEXT_POLICY
-        ] = session.context_policy_revision
+        lifecycle.component_revisions[ConsoleSettingsComponent.CONTEXT_POLICY] = (
+            session.context_policy_revision
+        )
         return session, True
 
     async def persist_console_settings_commit_serialized(
@@ -9049,9 +9062,7 @@ class ConsoleChatStore:
         assert session is not None
         if session.ephemeral or drain.persisted_conversation_id is None:
             if session.context_policy_revision == drain.context_policy_revision:
-                session.staged_context_policy_failure_label = (
-                    drain.policy_failure_label
-                )
+                session.staged_context_policy_failure_label = drain.policy_failure_label
                 session.staged_context_policy_failure_revision = (
                     drain.context_policy_revision
                 )
@@ -9069,12 +9080,9 @@ class ConsoleChatStore:
             )
         ):
             excluded.add(ConsoleSettingsComponent.GENERATION_SETTINGS)
-        if (
-            ConsoleSettingsComponent.CONTEXT_POLICY in drain.initial_components
-            and (
-                session.context_policy_revision != drain.context_policy_revision
-                or drain.context_policy_overrides is None
-            )
+        if ConsoleSettingsComponent.CONTEXT_POLICY in drain.initial_components and (
+            session.context_policy_revision != drain.context_policy_revision
+            or drain.context_policy_overrides is None
         ):
             excluded.add(ConsoleSettingsComponent.CONTEXT_POLICY)
         stale.update(excluded)
@@ -9376,8 +9384,7 @@ class ConsoleChatStore:
         return bool(
             session is not None
             and session.persisted_conversation_id == persisted_conversation_id
-            and session.conversation_binding_revision
-            == conversation_binding_revision
+            and session.conversation_binding_revision == conversation_binding_revision
         )
 
     @staticmethod
@@ -9845,9 +9852,7 @@ class ConsoleChatStore:
             deadline = time.monotonic() + _CAPTURE_QUIESCENCE_DRAIN_TIMEOUT
             while self._capture_exchange_writers.get(session_id):
                 remaining = deadline - time.monotonic()
-                if remaining <= 0 or not self._capture_quiescence_idle.wait(
-                    remaining
-                ):
+                if remaining <= 0 or not self._capture_quiescence_idle.wait(remaining):
                     if self._capture_exchange_writers.get(session_id):
                         self._capture_quiescent_sessions.discard(session_id)
                         logger.bind(session_id=session_id).warning(
@@ -10046,7 +10051,8 @@ class ConsoleChatStore:
             pii_redaction_enabled=session.pii_redaction_enabled_override,
         )
         if (
-            result.status in {
+            result.status
+            in {
                 CapturePolicyWriteStatus.STORED,
                 CapturePolicyWriteStatus.UNCHANGED,
             }
@@ -10684,9 +10690,7 @@ class ConsoleChatStore:
                     prior_revision,
                 )
         for settings_session_id in set(self._sessions) | set(sessions_by_id):
-            self._advance_console_settings_session_incarnation(
-                settings_session_id
-            )
+            self._advance_console_settings_session_incarnation(settings_session_id)
         self._activate_session(None)
         if self.library_policy_coordinator is not None:
             for replaced_session_id in tuple(self._sessions):
@@ -10773,9 +10777,7 @@ class ConsoleChatStore:
                 restored_session.ephemeral
                 and self.canvas_promotion_participant is not None
             ):
-                self.canvas_promotion_participant.activate_session(
-                    restored_session.id
-                )
+                self.canvas_promotion_participant.activate_session(restored_session.id)
             if (
                 restored_session.ephemeral
                 and self.canvas_turn_controller is not None
@@ -10784,10 +10786,14 @@ class ConsoleChatStore:
                 self.canvas_turn_controller.activate_session(restored_session.id)
             with self._progress_identity_lock:
                 sibling = next(
-                    (other for other in self._sessions.values()
-                     if restored_session.persisted_conversation_id is not None
-                     and other.persisted_conversation_id == restored_session.persisted_conversation_id
-                     and other._progress_owner_id is not None),
+                    (
+                        other
+                        for other in self._sessions.values()
+                        if restored_session.persisted_conversation_id is not None
+                        and other.persisted_conversation_id
+                        == restored_session.persisted_conversation_id
+                        and other._progress_owner_id is not None
+                    ),
                     None,
                 )
                 if sibling is not None:
@@ -11047,6 +11053,7 @@ class ConsoleChatStore:
         old_leaf = self._active_leaf_by_session[session_id]
         children = self._children_by_parent.get(session_id)
         from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
         message = ConsoleChatMessage(
             id=message_id or str(uuid4()),
             role=role,
@@ -11213,6 +11220,7 @@ class ConsoleChatStore:
         session = self._sessions[session_id]
         parent_native_id = self._native_parent_by_message.get(anchor_message_id)
         from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
         message = ConsoleChatMessage(
             id=message_id or str(uuid4()),
             role=role,
@@ -12263,7 +12271,9 @@ class ConsoleChatStore:
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
             )
-        if session_id != (self.active_session_id if owner_session_id is None else owner_session_id):
+        if session_id != (
+            self.active_session_id if owner_session_id is None else owner_session_id
+        ):
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
             )
@@ -12274,7 +12284,9 @@ class ConsoleChatStore:
                 ConsoleSpeechSnapshotRejectionCode.MISSING_MESSAGE
             )
         if owner_session_id is not None and session.runtime_backend != "local":
-            raise ConsoleSpeechSnapshotRejected(ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED)
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
+            )
         if message.generation_projection_quarantined:
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
@@ -12363,7 +12375,9 @@ class ConsoleChatStore:
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.MESSAGE_CHANGED
             )
-        if snapshot.session_id != (self.active_session_id if owner_session_id is None else owner_session_id):
+        if snapshot.session_id != (
+            self.active_session_id if owner_session_id is None else owner_session_id
+        ):
             raise ConsoleSpeechSnapshotRejected(
                 ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
             )
@@ -12373,7 +12387,9 @@ class ConsoleChatStore:
                 ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
             )
         if owner_session_id is not None and session.runtime_backend != "local":
-            raise ConsoleSpeechSnapshotRejected(ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED)
+            raise ConsoleSpeechSnapshotRejected(
+                ConsoleSpeechSnapshotRejectionCode.SESSION_CHANGED
+            )
         owner_session_id = self._message_session_index.get(snapshot.message_id)
         if owner_session_id is None:
             raise ConsoleSpeechSnapshotRejected(
@@ -12632,7 +12648,9 @@ class ConsoleChatStore:
                 and content != previous_content
             ):
                 if not self._persist_active_leaf(session_id, message.id):
-                    raise ValueError("Resolve pending dispatch before editing this message.")
+                    raise ValueError(
+                        "Resolve pending dispatch before editing this message."
+                    )
         if not persisted:
             return self._snapshot(message)
 
@@ -12868,9 +12886,7 @@ class ConsoleChatStore:
                 session_id=session.id,
                 generation=session.identity_revision,
                 persisted_conversation_id=session.persisted_conversation_id,
-                conversation_binding_revision=(
-                    session.conversation_binding_revision
-                ),
+                conversation_binding_revision=(session.conversation_binding_revision),
                 system_prompt_write=None,
                 message_writes=(),
                 context_write=context_write,
@@ -13543,8 +13559,7 @@ class ConsoleChatStore:
         return (
             session is not None
             and session.identity_revision == plan.generation
-            and session.persisted_conversation_id
-            == plan.persisted_conversation_id
+            and session.persisted_conversation_id == plan.persisted_conversation_id
             and session.conversation_binding_revision
             == plan.conversation_binding_revision
         )
@@ -13704,9 +13719,7 @@ class ConsoleChatStore:
                         character_system_template=(
                             context_write.character_system_template
                         ),
-                        character_name_snapshot=(
-                            context_write.character_name_snapshot
-                        ),
+                        character_name_snapshot=(context_write.character_name_snapshot),
                     )
                 )
             except Exception as exc:
@@ -13853,8 +13866,7 @@ class ConsoleChatStore:
         if (
             session is None
             or session.identity_revision != result.generation
-            or session.persisted_conversation_id
-            != result.persisted_conversation_id
+            or session.persisted_conversation_id != result.persisted_conversation_id
             or session.conversation_binding_revision
             != result.conversation_binding_revision
         ):
@@ -13995,8 +14007,12 @@ class ConsoleChatStore:
         nodes = self._nodes_by_session.get(session_id, {})
         if self.persistence is None or message.persisted_message_id is None:
             with self._dispatch_branch_mutation(session_id):
-                if on_active_path and not self._persist_active_leaf(session_id, parent_native_id):
-                    raise ValueError("Resolve pending dispatch before deleting this message.")
+                if on_active_path and not self._persist_active_leaf(
+                    session_id, parent_native_id
+                ):
+                    raise ValueError(
+                        "Resolve pending dispatch before deleting this message."
+                    )
         tombstones: list[dict[str, Any]] = []
         if self.persistence is not None and message.persisted_message_id is not None:
             deleter = getattr(self.persistence, "delete_message_subtree", None)
@@ -14004,12 +14020,18 @@ class ConsoleChatStore:
                 raise RuntimeError("Message deletion could not be persisted.")
             with self._dispatch_branch_mutation(session_id):
                 # The in-memory subtree: flat legacy roots chain only here (TASK-33628.6).
-                saved = [nodes[n].persisted_message_id for n in subtree_ids if n in nodes]
+                saved = [
+                    nodes[n].persisted_message_id for n in subtree_ids if n in nodes
+                ]
                 tombstones = deleter(
                     message_id=message.persisted_message_id, subtree_message_ids=saved
                 )
-                if on_active_path and not self._persist_active_leaf(session_id, parent_native_id):
-                    raise ValueError("Resolve pending dispatch before deleting this message.")
+                if on_active_path and not self._persist_active_leaf(
+                    session_id, parent_native_id
+                ):
+                    raise ValueError(
+                        "Resolve pending dispatch before deleting this message."
+                    )
             self._project_sync_v2_message_deletes(tombstones)
         for node_id in subtree_ids:
             self._invalidate_generation_attempt(node_id)
@@ -15380,9 +15402,7 @@ class ConsoleChatStore:
             # original answer priced by the abandoned regeneration.
             return self._snapshot(message)
         message.usage = usage
-        self._bump_display_projection_revision(
-            self._message_session_index[message.id]
-        )
+        self._bump_display_projection_revision(self._message_session_index[message.id])
         if message.status not in {"pending", "streaming"}:
             self._persist_usage_only(message)
         return self._snapshot(message)
@@ -15600,6 +15620,7 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._reject_quarantined_generation_mutation(message)
         from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
         message.metadata = flat_roots.keep_root_fork(message.metadata, metadata)
         if message.persisted_message_id is not None:
             self._persist_metadata_only(message)
@@ -17197,7 +17218,9 @@ class ConsoleChatStore:
                     # `citation_write` at all. Guarding this flush on one would
                     # leave the durable row empty while the in-memory message
                     # reads complete -- the answer lost, silently.
-                    self._persist_existing_terminal(message, terminal_outcome="complete")
+                    self._persist_existing_terminal(
+                        message, terminal_outcome="complete"
+                    )
                 # A checkpointed row with no sealed citation is complete after
                 # the UPDATE above.  Calling create_message again would try to
                 # insert the same stable id and turn a successful durable
@@ -18696,8 +18719,7 @@ class ConsoleChatStore:
         )
         staged_generation_snapshot = (
             snapshot_from_session_settings(session.settings)
-            if session.settings is not None
-            and session.generation_settings_revision > 0
+            if session.settings is not None and session.generation_settings_revision > 0
             else None
         )
         if staged_generation_snapshot is not None:
@@ -20326,18 +20348,12 @@ class ConsoleChatStore:
             )
         ):
             create_kwargs["metadata_json"] = message.metadata.to_json()
-        if (
-            terminal_receipt_id is not None
-            and self._persistence_accepts_kwarg(
-                self.persistence.create_message, "terminal_receipt_id"
-            )
+        if terminal_receipt_id is not None and self._persistence_accepts_kwarg(
+            self.persistence.create_message, "terminal_receipt_id"
         ):
             create_kwargs["terminal_receipt_id"] = terminal_receipt_id
-        if (
-            terminal_outcome is not None
-            and self._persistence_accepts_kwarg(
-                self.persistence.create_message, "terminal_outcome"
-            )
+        if terminal_outcome is not None and self._persistence_accepts_kwarg(
+            self.persistence.create_message, "terminal_outcome"
         ):
             create_kwargs["terminal_outcome"] = terminal_outcome
         if (
@@ -20359,10 +20375,7 @@ class ConsoleChatStore:
         # ownership is rechecked here so a receipt primed while a deferred
         # worker sat queued can never be bypassed by an unmarked insert.
         with self._pending_row_insert_lock:
-            if (
-                not terminal_persistence
-                and message.persisted_message_id is not None
-            ):
+            if not terminal_persistence and message.persisted_message_id is not None:
                 return True
             if (
                 terminal_receipt_id is None
@@ -20956,20 +20969,14 @@ class ConsoleChatStore:
             ):
                 return False
             update_kwargs["expected_version"] = expected_version
-        if (
-            terminal_receipt_id is not None
-            and self._persistence_accepts_kwarg(
-                self.persistence.update_message_content,
-                "terminal_receipt_id",
-            )
+        if terminal_receipt_id is not None and self._persistence_accepts_kwarg(
+            self.persistence.update_message_content,
+            "terminal_receipt_id",
         ):
             update_kwargs["terminal_receipt_id"] = terminal_receipt_id
-        if (
-            terminal_outcome is not None
-            and self._persistence_accepts_kwarg(
-                self.persistence.update_message_content,
-                "terminal_outcome",
-            )
+        if terminal_outcome is not None and self._persistence_accepts_kwarg(
+            self.persistence.update_message_content,
+            "terminal_outcome",
         ):
             update_kwargs["terminal_outcome"] = terminal_outcome
         if (
@@ -21089,8 +21096,7 @@ class ConsoleChatStore:
                 )
         except Exception:
             logger.warning(
-                "Failed to record Sync v2 version hash after generation "
-                "reconciliation"
+                "Failed to record Sync v2 version hash after generation reconciliation"
             )
 
     def _persist_pending_message_if_ready(
@@ -21600,9 +21606,7 @@ class ConsoleChatStore:
                 enqueue_kwargs["assistant_generation_state"] = (
                     message.assistant_generation_state
                 )
-            result = self.sync_v2_chat_producer.enqueue_chat_message(
-                **enqueue_kwargs
-            )
+            result = self.sync_v2_chat_producer.enqueue_chat_message(**enqueue_kwargs)
             self._record_sync_v2_message_version(stable_key, result)
         except Exception:
             if content_safe_diagnostic:
@@ -22054,10 +22058,14 @@ class ConsoleChatStore:
         cannot find it after a relaunch.
         """
         recovery = self.dispatch_recovery_for_session(session_id)
-        owner_ids = {
-            getattr(recovery, "assistant_message_id", None),
-            getattr(getattr(recovery, "checkpoint", None), "user_message_id", None),
-        } - self._message_session_index.keys() - {None, ""}
+        owner_ids = (
+            {
+                getattr(recovery, "assistant_message_id", None),
+                getattr(getattr(recovery, "checkpoint", None), "user_message_id", None),
+            }
+            - self._message_session_index.keys()
+            - {None, ""}
+        )
         registered: list[ConsoleChatMessage] = []
         persisted_to_native: dict[str, str] = {}
         for node in all_nodes:
@@ -22121,9 +22129,7 @@ class ConsoleChatStore:
         if restore_before_native is not None:
             self._active_leaf_by_session[session_id] = None
             self._recompute_active_path(session_id)
-            self.set_session_draft(
-                session_id, nodes[restore_before_native].content
-            )
+            self.set_session_draft(session_id, nodes[restore_before_native].content)
         else:
             self._active_leaf_by_session[session_id] = leaf_native
             self._recompute_active_path(session_id)
@@ -22367,7 +22373,9 @@ class ConsoleChatStore:
         another connection cannot accept a send between this check and mutation.
         """
         session = self._sessions.get(session_id)
-        conversation_id = session.persisted_conversation_id if session is not None else None
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
         db = getattr(self.persistence, "db", None)
         if conversation_id is None or db is None:
             yield
@@ -22402,7 +22410,9 @@ class ConsoleChatStore:
         the historical in-memory write-through behavior.
         """
         session = self._sessions.get(session_id)
-        conversation_id = session.persisted_conversation_id if session is not None else None
+        conversation_id = (
+            session.persisted_conversation_id if session is not None else None
+        )
         if conversation_id is None:
             return True
         persistence_db = getattr(self.persistence, "db", None)
@@ -22413,7 +22423,9 @@ class ConsoleChatStore:
             node = self._nodes_by_session.get(session_id, {}).get(message_id)
             leaf_persisted_id = node.persisted_message_id if node is not None else None
         try:
-            persistence_db.set_conversation_active_leaf(conversation_id, leaf_persisted_id)
+            persistence_db.set_conversation_active_leaf(
+                conversation_id, leaf_persisted_id
+            )
         except InputError:
             logger.warning("console_cursor_pending_dispatch")
             return False
@@ -22581,9 +22593,7 @@ class ConsoleChatStore:
                 return
             self._persist_pending_message_if_ready(message)
 
-    def _materialize_stream_buffer_deferred(
-        self, message: ConsoleChatMessage
-    ) -> None:
+    def _materialize_stream_buffer_deferred(self, message: ConsoleChatMessage) -> None:
         """Fold buffered chunks inline and persist the pending row off-thread.
 
         task-33081: read paths running on the UI event loop (the 0.2s Console
@@ -22598,9 +22608,7 @@ class ConsoleChatStore:
                 return
             self._defer_pending_message_persistence(message)
 
-    def _defer_pending_message_persistence(
-        self, message: ConsoleChatMessage
-    ) -> None:
+    def _defer_pending_message_persistence(self, message: ConsoleChatMessage) -> None:
         if self.persistence is None:
             return
         with self._stream_persistence_deferred_lock:

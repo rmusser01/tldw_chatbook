@@ -95,7 +95,10 @@ def test_restricted_import_preparation_refuses_an_unknown_table(rule_store, tmp_
         prepare_imported_candidate(candidate, Event())
 
 
-def test_restricted_v75_restore_migrates_only_disposable_copy(rule_store, tmp_path):
+@pytest.mark.parametrize("version", [75, 76])
+def test_restricted_historical_restore_migrates_only_disposable_copy(
+    rule_store, tmp_path, version
+):
     import shutil
 
     from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
@@ -108,7 +111,9 @@ def test_restricted_v75_restore_migrates_only_disposable_copy(rule_store, tmp_pa
     copy_private_sqlite("recovery.core.chachanotes", db.db_path, source)
     with closing(sqlite3.connect(source)) as connection, connection:
         connection.execute("PRAGMA foreign_keys=OFF")
-        connection.execute("DROP TRIGGER console_response_rules_conversation_cleanup")
+        connection.execute(
+            "DROP TRIGGER IF EXISTS console_response_rules_conversation_cleanup"
+        )
         names = [
             r[0]
             for r in connection.execute(
@@ -118,7 +123,8 @@ def test_restricted_v75_restore_migrates_only_disposable_copy(rule_store, tmp_pa
         for name in names:
             connection.execute('DROP TABLE "' + name + '"')
         connection.execute(
-            "UPDATE db_schema_version SET version=75 WHERE schema_name='rag_char_chat_schema'"
+            "UPDATE db_schema_version SET version=? WHERE schema_name='rag_char_chat_schema'",
+            (version,),
         )
     before = source.read_bytes()
     candidate = tmp_path / "working-import.sqlite"
@@ -131,7 +137,7 @@ def test_restricted_v75_restore_migrates_only_disposable_copy(rule_store, tmp_pa
             connection.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()[0]
-            == 76
+            == 77
         )
         assert (
             connection.execute(

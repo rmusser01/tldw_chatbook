@@ -11,6 +11,7 @@ tests has to be edited in a reviewable diff.
 Same split as the PRF precedent (`test_prf_probe.py` next to
 `test_prf_probe_run.py`): mechanism here, meeting-reality there.
 """
+
 from __future__ import annotations
 
 import pytest

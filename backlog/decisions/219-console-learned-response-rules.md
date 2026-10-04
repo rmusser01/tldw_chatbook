@@ -69,3 +69,7 @@ Capacity checks resolve known saved and live scope combinations under the serial
 Global management belongs to the current profile and can be assembled before a Console controller or Chat exists. Later execution binds the real Console controller; Settings does not create a substitute execution owner. Management writes recheck profile/scope ownership inside their worker mutation boundary. Testing edits remains a Chat operation.
 
 Native repair acceptance is explicitly machine initiated for prompt-history exclusion. After reopen, the original task can be reconstructed only from inert host-recorded acceptance ancestry on the actual active branch. Historical receipts do not recreate assessment, queue or execution authority and cause no replay.
+
+## Latest-dev migration integration
+
+The publication branch integrates `origin/dev` at `1b12df2757`. Its installed v75-to-v76 notes FTS repair remains unchanged; native response rules now install in v76-to-v77. Restricted recovery retains exact historical v75 and v76 catalogs plus both guarded dictionary-trigger variants. The complete validated v75 catalog already contains the installed guarded notes trigger, so its restricted v75-to-v76 step advances only the version stamp. The following installed declarations create the v77 local-only records on the disposable candidate. Imported content never supplies migration SQL. Fresh and chain-migrated trigger inventories pin the actual response-rule cleanup body.

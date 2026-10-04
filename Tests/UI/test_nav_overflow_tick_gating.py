@@ -82,8 +82,7 @@ async def test_a_settled_no_op_tick_does_no_measurement_or_toggle_work() -> None
         strip = app.query_one("#nav-destination-strip", Horizontal)
         assert strip.max_scroll_x >= 0  # test premise: strip is measurable
         assert nav._overflow_signature is not None, (
-            "test premise: the strip has produced at least one settled "
-            "signature by now"
+            "test premise: the strip has produced at least one settled signature by now"
         )
 
         spy = MagicMock(wraps=nav._refresh_overflow_hint_visibility)

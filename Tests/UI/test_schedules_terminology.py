@@ -43,9 +43,9 @@ def test_managed_elsewhere_notice_names_the_owning_screen():
     assert _managed_elsewhere_notice(_projection("briefing_job")) == (
         "Managed by Watchlists — edit it there."
     )
-    assert "reminder" not in _managed_elsewhere_notice(
-        _projection("mystery_job")
-    ).lower()
+    assert (
+        "reminder" not in _managed_elsewhere_notice(_projection("mystery_job")).lower()
+    )
 
 
 from Tests.UI.schedules_test_helpers import MockSchedulingServiceMixin
@@ -191,9 +191,7 @@ def _sentence_copy_offenders(module) -> list[tuple[int, str]]:
         # Stylesheet class attributes: selectors, not user-facing copy.
         if isinstance(node, ast.Assign):
             targets = {
-                target.id
-                for target in node.targets
-                if isinstance(target, ast.Name)
+                target.id for target in node.targets if isinstance(target, ast.Name)
             }
             if targets & {"DEFAULT_CSS", "BUNDLED_CSS", "BUNDLED_SCREEN_CSS"}:
                 if isinstance(node.value, ast.Constant) and isinstance(
@@ -248,8 +246,7 @@ def test_timezone_options_labels_the_stored_zone_with_the_calling_surface_noun()
     unknown = "Mars/Olympus"
     task_label = {value: label for label, value in timezone_options(unknown)}[unknown]
     automation_label = {
-        value: label
-        for label, value in timezone_options(unknown, noun="automation")
+        value: label for label, value in timezone_options(unknown, noun="automation")
     }[unknown]
 
     assert task_label == "Mars/Olympus — stored on this task, not recognized here"
@@ -262,7 +259,6 @@ def test_timezone_options_labels_the_stored_zone_with_the_calling_surface_noun()
     # not just the pane's inline editor.
     form = AutomationDefinitionForm.__new__(AutomationDefinitionForm)
     form._definition_row = {"schedule": {"timezone": unknown}}
-    assert (
-        {value: label for label, value in form._timezone_options()}[unknown]
-        == "Mars/Olympus — stored on this automation, not recognized here"
-    )
+    assert {value: label for label, value in form._timezone_options()}[
+        unknown
+    ] == "Mars/Olympus — stored on this automation, not recognized here"

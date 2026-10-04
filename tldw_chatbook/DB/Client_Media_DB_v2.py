@@ -547,10 +547,19 @@ class MediaDatabase:
             "template": {
                 "name": "academic_paper",
                 "preprocessing": [
-                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}},
-                    {"operation": "extract_sections", "config": {"pattern": r"^#+\s+(.+)$"}},
+                    {
+                        "operation": "normalize_whitespace",
+                        "config": {"max_line_breaks": 2},
+                    },
+                    {
+                        "operation": "extract_sections",
+                        "config": {"pattern": r"^#+\s+(.+)$"},
+                    },
                 ],
-                "chunking": {"method": "sentences", "config": {"max_size": 5, "overlap": 1}},
+                "chunking": {
+                    "method": "sentences",
+                    "config": {"max_size": 5, "overlap": 1},
+                },
                 "postprocessing": [
                     {"operation": "filter_empty", "config": {"min_length": 20}},
                     {"operation": "merge_small", "config": {"min_size": 200}},
@@ -589,11 +598,20 @@ class MediaDatabase:
             "template": {
                 "name": "chat_conversation",
                 "preprocessing": [
-                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 1}}
+                    {
+                        "operation": "normalize_whitespace",
+                        "config": {"max_line_breaks": 1},
+                    }
                 ],
-                "chunking": {"method": "sentences", "config": {"max_size": 10, "overlap": 2}},
+                "chunking": {
+                    "method": "sentences",
+                    "config": {"max_size": 10, "overlap": 2},
+                },
                 "postprocessing": [
-                    {"operation": "add_overlap", "config": {"size": 100, "marker": "---"}}
+                    {
+                        "operation": "add_overlap",
+                        "config": {"size": 100, "marker": "---"},
+                    }
                 ],
             },
         },
@@ -605,9 +623,15 @@ class MediaDatabase:
             "template": {
                 "name": "book_chapters",
                 "preprocessing": [
-                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}}
+                    {
+                        "operation": "normalize_whitespace",
+                        "config": {"max_line_breaks": 2},
+                    }
                 ],
-                "chunking": {"method": "ebook_chapters", "config": {"max_size": 1200, "overlap": 100}},
+                "chunking": {
+                    "method": "ebook_chapters",
+                    "config": {"max_size": 1200, "overlap": 100},
+                },
                 "postprocessing": [
                     {"operation": "filter_empty", "config": {"min_length": 50}}
                 ],
@@ -621,9 +645,15 @@ class MediaDatabase:
             "template": {
                 "name": "transcript_dialogue",
                 "preprocessing": [
-                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 1}}
+                    {
+                        "operation": "normalize_whitespace",
+                        "config": {"max_line_breaks": 1},
+                    }
                 ],
-                "chunking": {"method": "sentences", "config": {"max_size": 8, "overlap": 2}},
+                "chunking": {
+                    "method": "sentences",
+                    "config": {"max_size": 8, "overlap": 2},
+                },
                 "postprocessing": [
                     {"operation": "merge_small", "config": {"min_size": 80}}
                 ],
@@ -637,9 +667,15 @@ class MediaDatabase:
             "template": {
                 "name": "legal_document",
                 "preprocessing": [
-                    {"operation": "normalize_whitespace", "config": {"max_line_breaks": 2}}
+                    {
+                        "operation": "normalize_whitespace",
+                        "config": {"max_line_breaks": 2},
+                    }
                 ],
-                "chunking": {"method": "paragraphs", "config": {"max_size": 1, "overlap": 0}},
+                "chunking": {
+                    "method": "paragraphs",
+                    "config": {"max_size": 1, "overlap": 0},
+                },
                 "postprocessing": [
                     {"operation": "filter_empty", "config": {"min_length": 50}}
                 ],
@@ -1380,9 +1416,7 @@ class MediaDatabase:
             raise
 
     @staticmethod
-    def _execute_transactional_script(
-        conn: sqlite3.Connection, script: str
-    ) -> None:
+    def _execute_transactional_script(conn: sqlite3.Connection, script: str) -> None:
         """Execute a multi-statement SQL script without implicit commits.
 
         ``sqlite3.Connection.executescript`` commits a pending transaction
@@ -1399,9 +1433,7 @@ class MediaDatabase:
             sqlite3.Error: If SQLite rejects any complete statement.
         """
         if not conn.in_transaction:
-            raise SchemaError(
-                "Transactional SQL script requires an active transaction"
-            )
+            raise SchemaError("Transactional SQL script requires an active transaction")
         statement = ""
         for character in script:
             statement += character
@@ -1925,8 +1957,7 @@ class MediaDatabase:
                 )
 
                 builtin_names = {
-                    seed["name"]
-                    for seed in self._SERVER_BUILTIN_CHUNKING_TEMPLATES
+                    seed["name"] for seed in self._SERVER_BUILTIN_CHUNKING_TEMPLATES
                 }
                 insert_sql = (
                     "INSERT INTO ChunkingTemplates_v7 "
@@ -1975,8 +2006,7 @@ class MediaDatabase:
                 self._seed_server_builtin_chunking_templates(conn, builtin_names)
 
             logging.info(
-                "[Migration v6->v7] ChunkingTemplates rebuild applied "
-                "successfully."
+                "[Migration v6->v7] ChunkingTemplates rebuild applied successfully."
             )
         except sqlite3.Error as e:
             logging.error(
@@ -2059,9 +2089,7 @@ class MediaDatabase:
             ) from error
 
     @staticmethod
-    def _assert_no_foreign_keys_reference(
-        conn: sqlite3.Connection, table: str
-    ) -> None:
+    def _assert_no_foreign_keys_reference(conn: sqlite3.Connection, table: str) -> None:
         """Guard rebuild DROPs: fail before touching anything if any table
         holds a foreign key targeting ``table``.
 
@@ -2090,8 +2118,7 @@ class MediaDatabase:
                     offenders.append(other)
         if offenders:
             raise SchemaError(
-                f"Cannot rebuild {table}: foreign keys from {offenders} "
-                f"reference it"
+                f"Cannot rebuild {table}: foreign keys from {offenders} reference it"
             )
 
     def _seed_server_builtin_chunking_templates(
@@ -2446,8 +2473,7 @@ class MediaDatabase:
             )
         except sqlite3.Error as e:
             logging.error(
-                "Media FTS mutation operation=delete status=failed count=0 "
-                "category=%s",
+                "Media FTS mutation operation=delete status=failed count=0 category=%s",
                 type(e).__name__,
             )
             raise DatabaseError(
@@ -3086,7 +3112,9 @@ class MediaDatabase:
             ):
                 base_select_parts.append("fts.rank AS relevance_score")
             relevance_column = "fts.rank" if library_summary else "relevance_score"
-            order_by_clause_str = f"ORDER BY {relevance_column} DESC, m.last_modified DESC, m.id DESC"
+            order_by_clause_str = (
+                f"ORDER BY {relevance_column} DESC, m.last_modified DESC, m.id DESC"
+            )
             resolved_sort_by = "relevance"
         else:
             if sort_by == "date_desc":
@@ -3158,12 +3186,12 @@ class MediaDatabase:
                     page_params = tuple(params + [results_per_page, resolved_offset])
                     results_list = [
                         dict(row)
-                        for row in connection.execute(results_sql, page_params).fetchall()
+                        for row in connection.execute(
+                            results_sql, page_params
+                        ).fetchall()
                     ]
         except Exception as error:
-            logger.error(
-                "Media search failed (error_type=%s).", type(error).__name__
-            )
+            logger.error("Media search failed (error_type=%s).", type(error).__name__)
             raise DatabaseError("Media search failed.") from None
 
         if library_summary:
@@ -4955,7 +4983,9 @@ class MediaDatabase:
                                     # already-canonical source url (e.g. the
                                     # https:// the row was first imported
                                     # from).
-                                    update_fields.extend(["is_trash = ?", "trash_date = ?"])
+                                    update_fields.extend(
+                                        ["is_trash = ?", "trash_date = ?"]
+                                    )
                                     update_params.extend([0, None])
                                     if restore_canonicalizes_url:
                                         update_fields.append("url = ?")
@@ -5447,7 +5477,9 @@ class MediaDatabase:
                 )  # Ensure parent active
                 media_info = cursor.fetchone()
                 if not media_info:
-                    raise InputError(f"Parent Media ID {media_id} not found or deleted.")
+                    raise InputError(
+                        f"Parent Media ID {media_id} not found or deleted."
+                    )
                 media_uuid = media_info["uuid"]
 
                 cursor.execute(
@@ -5497,7 +5529,12 @@ class MediaDatabase:
                     )
 
                 self._log_sync_event(
-                    conn, "DocumentVersions", new_uuid, "create", new_version, insert_data
+                    conn,
+                    "DocumentVersions",
+                    new_uuid,
+                    "create",
+                    new_version,
+                    insert_data,
                 )
                 return {
                     "id": version_id,
@@ -9396,47 +9433,7 @@ def get_unprocessed_media(db_instance: MediaDatabase) -> List[Dict]:
         raise DatabaseError("Failed get unprocessed media") from e
 
 
-def mark_media_as_processed(db_instance: MediaDatabase, media_id: int):
-    """
-    Marks a media item's vector processing status as complete (`vector_processing = 1`).
 
-    Important: This function ONLY updates the `vector_processing` flag. It DOES NOT
-    update the `last_modified` timestamp, increment the sync `version`, or log a
-    sync event. It's intended for internal state tracking after a potentially long
-    vector processing task, assuming a separate mechanism handles the main media
-    updates and sync logging if content/vectors were added.
-
-    Args:
-        db_instance (MediaDatabase): An initialized Database instance.
-        media_id (int): The ID of the media item to mark as processed.
-
-    Raises:
-        TypeError: If `db_instance` is not a Database object.
-        DatabaseError: For database query errors.
-    """
-    if not isinstance(db_instance, MediaDatabase):
-        raise TypeError("db_instance required.")
-    logger.debug(
-        f"Marking media {media_id} vector_processing=1 on DB '{db_instance.db_path_str}'."
-    )
-    try:
-        cursor = db_instance.execute_query(
-            "UPDATE Media SET vector_processing = 1 WHERE id = ? AND deleted = 0",
-            (media_id,),
-            commit=True,
-        )
-        if cursor.rowcount == 0:
-            logger.warning(
-                f"Attempted mark media {media_id} processed, but not found/deleted."
-            )
-    except (DatabaseError, sqlite3.Error) as e:
-        logger.error(
-            f"Error marking media {media_id} processed '{db_instance.db_path_str}': {e}"
-        )
-        raise DatabaseError(f"Failed mark media {media_id} processed") from e
-
-
-# Ingestion wrappers call instance methods
 def ingest_article_to_db_new(
     db_instance: MediaDatabase,
     *,
@@ -10166,15 +10163,12 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
     """
     if not isinstance(db_instance, MediaDatabase):
         raise TypeError("db_instance required.")
-    logger.warning(
-        "Media mutation operation=permanent_delete status=started count=1"
-    )
+    logger.warning("Media mutation operation=permanent_delete status=started count=1")
     try:
         with db_instance.transaction(immediate=True) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "DELETE FROM Media "
-                "WHERE id = ? AND deleted = 0 AND is_trash = 1",
+                "DELETE FROM Media WHERE id = ? AND deleted = 0 AND is_trash = 1",
                 (media_id,),
             )
             deleted_count = cursor.rowcount
@@ -10182,8 +10176,7 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
                 cursor.execute("SELECT 1 FROM Media WHERE id = ?", (media_id,))
                 status = "not_in_trash" if cursor.fetchone() else "not_found"
                 logger.warning(
-                    "Media mutation operation=permanent_delete "
-                    "status={} count=0",
+                    "Media mutation operation=permanent_delete status={} count=0",
                     status,
                 )
                 return False
@@ -10191,14 +10184,12 @@ def permanently_delete_item(db_instance: MediaDatabase, media_id: int) -> bool:
             db_instance._delete_fts_media(conn, media_id)
         if deleted_count > 0:
             logger.info(
-                "Media mutation operation=permanent_delete "
-                "status=committed count=1"
+                "Media mutation operation=permanent_delete status=committed count=1"
             )
             return True
         else:
             logger.error(
-                "Media mutation operation=permanent_delete "
-                "status=no_rows count=0"
+                "Media mutation operation=permanent_delete status=no_rows count=0"
             )
             return False
     except sqlite3.Error as e:

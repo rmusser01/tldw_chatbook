@@ -1,4 +1,5 @@
 """Tests for the app-wide TLS trust policy (Utils/tls_trust.py) + config template."""
+
 import ssl as _ssl
 import tomllib
 from pathlib import Path
@@ -51,9 +52,9 @@ def _set_ssl_config(monkeypatch):
         ("OFF", False),
         ("", True),
         ("   ", True),
-        (5, True),          # unsupported type -> fail safe
-        (None, True),       # unsupported type -> fail safe
-        (["x"], True),      # unsupported type -> fail safe
+        (5, True),  # unsupported type -> fail safe
+        (None, True),  # unsupported type -> fail safe
+        (["x"], True),  # unsupported type -> fail safe
     ],
 )
 def test_tls_verify_setting_coercion(_set_ssl_config, raw, expected):
@@ -138,17 +139,13 @@ def test_ssl_context_off_returns_unverified_context(_set_ssl_config):
     assert ctx.verify_mode == _ssl.CERT_NONE
 
 
-def test_ssl_context_additive_contains_certifi_plus_custom(
-    tmp_path, _set_ssl_config
-):
+def test_ssl_context_additive_contains_certifi_plus_custom(tmp_path, _set_ssl_config):
     ca = tmp_path / "corp.pem"
     ca.write_text(_CUSTOM_PEM)
     _set_ssl_config(str(ca))
     ctx = tls_trust.ssl_context_for_transport()
     assert isinstance(ctx, _ssl.SSLContext)
-    certifi_only = _context_certs(
-        _ssl.create_default_context(cafile=certifi.where())
-    )
+    certifi_only = _context_certs(_ssl.create_default_context(cafile=certifi.where()))
     merged = _context_certs(ctx)
     assert certifi_only < merged  # strictly more certs than certifi alone
 
@@ -175,9 +172,7 @@ def test_requests_verify_custom_ca_yields_merged_bundle(
     ca = tmp_path / "corp.pem"
     ca.write_text(_CUSTOM_PEM)
     _set_ssl_config(str(ca))
-    monkeypatch.setattr(
-        tls_trust, "get_user_data_dir", lambda: tmp_path / "user_data"
-    )
+    monkeypatch.setattr(tls_trust, "get_user_data_dir", lambda: tmp_path / "user_data")
     merged_path = tls_trust.requests_verify()
     assert isinstance(merged_path, str)
     body = Path(merged_path).read_text()
@@ -208,9 +203,7 @@ def test_merged_bundle_reused_when_sources_unchanged(
     ca = tmp_path / "corp.pem"
     ca.write_text(_CUSTOM_PEM)
     _set_ssl_config(str(ca))
-    monkeypatch.setattr(
-        tls_trust, "get_user_data_dir", lambda: tmp_path / "user_data"
-    )
+    monkeypatch.setattr(tls_trust, "get_user_data_dir", lambda: tmp_path / "user_data")
     first = Path(tls_trust.requests_verify())
     first_mtime = first.stat().st_mtime_ns
     second = Path(tls_trust.requests_verify())

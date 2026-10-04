@@ -66,8 +66,7 @@ def test_check_encryption_needed_detects_real_plaintext_provider_key(
     names detect_api_keys() used to match exactly."""
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
-        '[SearchEngines]\n'
-        'bing_search_api_key = "bing-real-plaintext-secret"\n'
+        '[SearchEngines]\nbing_search_api_key = "bing-real-plaintext-secret"\n'
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(cfg_path))
     cfg._CONFIG_CACHE = None

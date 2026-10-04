@@ -666,10 +666,17 @@ async def test_raw_cli_completed_prefix_survives_focus_detour() -> None:
 
 
 @pytest.mark.asyncio
-async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry() -> (
-    None
-):
+# TASK-27018: the raw-CLI danger foreground is $ds-status-error-readable,
+# which task-31264 (1a1b5c19e0) redefined from the dark-canvas-only literal
+# #ff8fa3 to Textual's theme-generated $text-error. The pin follows the
+# harness theme instead of the retired literal; the distinctness assertions
+# below still catch a CSS regression that drops the danger styling.
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry(
+    theme: str,
+) -> None:
     host = _RawCliComposerHarness()
+    host.theme = theme
 
     async with host.run_test(size=(120, 20)) as pilot:
         composer = host.query_one("#console-native-composer", ConsoleComposerBar)
@@ -692,8 +699,9 @@ async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry
         semantic_error_color = composer.query_one(
             "#console-raw-cli-status", Static
         ).styles.color
-        # Production $ds-status-error-readable resolves to this AA-safe foreground.
-        readable_error_color = Color.parse("#ff8fa3")
+        # Production $ds-status-error-readable resolves to the theme's
+        # polarity-aware readable error foreground ($text-error).
+        readable_error_color = Color.parse(host.get_css_variables()["text-error"])
         assert semantic_error_color == readable_error_color
         assert semantic_error_color != ordinary_presentation[0]
 
@@ -768,6 +776,28 @@ async def _spy_submit_draft(console) -> AsyncMock:
     spy = AsyncMock(wraps=controller.submit_draft)
     controller.submit_draft = spy
     return spy
+
+
+async def _wait_for_gateway_row(pilot, gateway, expected_content: str) -> None:
+    """Poll until the capturing gateway has received a row with this content.
+
+    TASK-27018: the transcript's "accepted" marker appears when the submit is
+    admitted; the provider dispatch happens asynchronously after that (about
+    a second under load), so reading ``sent_messages`` immediately after the
+    marker races. Bounded to ~5 s, matching the other poll helpers here.
+    """
+    for _ in range(100):
+        if any(
+            row.get("content") == expected_content
+            for message in gateway.sent_messages
+            for row in message
+        ):
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"gateway never received {expected_content!r}: "
+        f"{[message[-1].get('content') for message in gateway.sent_messages]}"
+    )
 
 
 @pytest.mark.asyncio
@@ -893,7 +923,7 @@ async def test_console_unknown_command_second_unmodified_enter_sends_as_text(tmp
             while not case.requests or case.controller._submit_tasks_for_session(
                 case.session_id
             ):
-                await pilot.pause(0.02)
+                await asyncio.sleep(0.02)
         submit_spy.assert_awaited_once()
         args, kwargs = submit_spy.await_args
         assert args == ("/nope x",)
@@ -1026,7 +1056,7 @@ async def test_console_collapsed_paste_starting_with_slash_sends_normally(tmp_pa
             while not case.requests or case.controller._submit_tasks_for_session(
                 case.session_id
             ):
-                await pilot.pause(0.02)
+                await asyncio.sleep(0.02)
         submit_spy.assert_awaited_once()
         args, kwargs = submit_spy.await_args
         assert args == (pasted_text,)

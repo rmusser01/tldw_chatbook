@@ -200,16 +200,16 @@ def _boot_parsed_css_segment_census() -> dict[str, int]:
         labels = ["(header)"] + [m.group("label").strip() for m in matches]
         for label, start, end in zip(labels, boundaries[:-1], boundaries[1:]):
             key = f"{name}::{label}"
-            segments[key] = segments.get(key, 0) + len(
-                text[start:end].encode("utf-8")
-            )
+            segments[key] = segments.get(key, 0) + len(text[start:end].encode("utf-8"))
     return segments
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 @private_profile_test
-def test_boot_parsed_css_bytes_stay_within_budget(ratchet, request: pytest.FixtureRequest) -> None:
+def test_boot_parsed_css_bytes_stay_within_budget(
+    ratchet, request: pytest.FixtureRequest
+) -> None:
     """Total bytes of boot-parsed CSS stay within the pinned budget.
 
     Args:

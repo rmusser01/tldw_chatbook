@@ -28,7 +28,7 @@ The work runs in waves:
 - Wave B, after .1 merges: .6 provider step, .7 model step, .8 voice step, .13 full-track steps.
 - Wave C: .9 honest status, .10 setup session, .11 input policy, .12 terminal frame, .14 downloads.
 - Wave D: .15 setup registry and docs.
-- After that, the approved .17 spec is implemented as follow-up tasks.
+- After that, the approved .17 spec (approved 2026-10-03, with the keychain made optional) is implemented as follow-up tasks TASK-34100.18-.34, in the order of the spec's §10 (Docs/superpowers/specs/2026-10-03-first-run-setup-shape-design.md).
 
 The owner has made three decisions. Merge each group when it is green. Verify against a real llama.cpp server and real cloud providers, never mock servers. Any redesign that changes the wizard's shape is written as a spec first and needs the owner's approval. group-assignment.json in the report folder maps every issue id to its subtask, and §5.6 lists the existing tasks that each subtask absorbs or updates.
 <!-- SECTION:DESCRIPTION:END -->
@@ -56,4 +56,5 @@ The owner has made three decisions. Merge each group when it is green. Verify ag
 - [ ] #19 Setting a key-encryption password and relaunching through tldw-cli and python -m both open the app
 - [ ] #20 No Next in the wizard is a dead end
 - [ ] #21 Every review issue id in group-assignment.json is resolved or explicitly re-scoped with the owner's agreement
+- [ ] #22 The approved setup-shape spec's follow-up tasks, TASK-34100.18-.34, are Done or explicitly re-scoped with the owner's agreement
 <!-- AC:END -->

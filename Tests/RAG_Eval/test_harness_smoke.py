@@ -13,6 +13,7 @@ It is skipped unless `RAG_EVAL=1` *and* the embeddings extras are installed
 `Tests/RAG_Eval/harness/environment.py` for the exact gate. The always-on
 Task 2/3/4 modules in this directory carry no such gate.
 """
+
 from __future__ import annotations
 
 from Tests.RAG_Eval.harness.environment import harness_gate

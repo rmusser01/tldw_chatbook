@@ -67,6 +67,7 @@ from tldw_chatbook.Chat.console_message_actions import (
     ConsoleMessageActionService,
     ConsoleSpeechPresentationState,
     action_row_guide,
+    resend_target_id,
     resolve_console_header_speech,
 )
 from tldw_chatbook.Chat.console_onboarding_state import (
@@ -400,6 +401,8 @@ def derive_console_memory_banner_presentation(
         render_index=next_user_index,
         end_message_id=memory.boundary_message_id,
     )
+
+
 _ACTION_TOOLTIPS = {
     "copy": "Copy this message to the clipboard.",
     "speak": "Speak this message aloud using text-to-speech.",
@@ -1354,7 +1357,11 @@ def _assistant_markdown_header(
             )
     elif message.status in {"stopped", "failed"}:
         suffix = f"  {_MESSAGE_STATUS_LINES[message.status]}"
-    if suffix and message.live_activity_action and suffix.endswith(message.live_activity):
+    if (
+        suffix
+        and message.live_activity_action
+        and suffix.endswith(message.live_activity)
+    ):
         # task-31386: a click on the affordance runs the screen action that
         # abandons the primary's current tool call; the turn continues.
         # A Style carries the action (not markup), so the line's text --
@@ -3060,9 +3067,7 @@ class ConsoleTranscript(VerticalScroll):
         #: TASK-575: one immutable, content-free banner projection. It is
         #: replaced wholesale by the screen sync path and never mutates the
         #: message list, active tree, selection, or persistence state.
-        self.memory_banner_presentation: ConsoleMemoryBannerPresentation | None = (
-            None
-        )
+        self.memory_banner_presentation: ConsoleMemoryBannerPresentation | None = None
         self._follow_intent_time = 0.0
         self._user_scroll_time = 0.0
         #: TASK-16851: when the last ``scroll_end`` (the End key) was issued.
@@ -3273,7 +3278,9 @@ class ConsoleTranscript(VerticalScroll):
             yield widget
         self._voice_preview_widget = None
         if self._voice_preview_projection is not None:
-            from tldw_chatbook.Widgets.Console.console_voice_preview import ConsoleVoicePreview
+            from tldw_chatbook.Widgets.Console.console_voice_preview import (
+                ConsoleVoicePreview,
+            )
 
             self._voice_preview_widget = ConsoleVoicePreview(
                 self._voice_preview_projection,
@@ -3330,7 +3337,9 @@ class ConsoleTranscript(VerticalScroll):
             self._voice_preview_widget = ConsoleVoicePreview(
                 projection, id="console-voice-preview"
             )
-            self.mount(self._voice_preview_widget, before="#console-transcript-jump-pill")
+            self.mount(
+                self._voice_preview_widget, before="#console-transcript-jump-pill"
+            )
         else:
             self._voice_preview_widget.set_projection(projection)
 
@@ -4687,9 +4696,7 @@ class ConsoleTranscript(VerticalScroll):
             and count > 0
         }
 
-    def set_annotation_previews(
-        self, previews: Mapping[str, tuple[str, ...]]
-    ) -> None:
+    def set_annotation_previews(self, previews: Mapping[str, tuple[str, ...]]) -> None:
         """Replace screen-owned review-note previews keyed by native message ID.
 
         task-17169 slice 2: the screen's sync loop pushes this every tick
@@ -4798,7 +4805,10 @@ class ConsoleTranscript(VerticalScroll):
                     continue
                 if child.parent is not turn.adjunct_stack or not child.is_attached:
                     continue
-                if getattr(getattr(child, "spec", None), "message_id", None) != message_id:
+                if (
+                    getattr(getattr(child, "spec", None), "message_id", None)
+                    != message_id
+                ):
                     continue
                 if child.children and all(
                     nested.parent is child and nested.is_attached
@@ -5413,8 +5423,7 @@ class ConsoleTranscript(VerticalScroll):
             body = _message_body(message, presentation)
             lines.append(body)
             lines.extend(
-                f"Canvas · {card.label}"
-                for card in canvas_card_presentations(message)
+                f"Canvas · {card.label}" for card in canvas_card_presentations(message)
             )
             _append_status_and_actions(message, body)
         if self._messages:
@@ -6643,7 +6652,10 @@ class ConsoleTranscript(VerticalScroll):
 
     def _flat_transcript_rows(self) -> list[_TranscriptRow]:
         """Plan the legacy per-message rows reused by standalone and nested UI."""
-        if self._delete_scope and self._delete_scope.message_id != self.selected_message_id:
+        if (
+            self._delete_scope
+            and self._delete_scope.message_id != self.selected_message_id
+        ):
             self._delete_scope = None  # moving the selection away cancels it
         rows: list[_TranscriptRow] = []
         banner = self.memory_banner_presentation
@@ -6845,10 +6857,16 @@ class ConsoleTranscript(VerticalScroll):
                         _TranscriptRow(
                             key=f"image:{message.id}",
                             kind="image",
-                            signature=("image", message.id, image_spec.mode) + (
-                                (image_spec.recovered_status, image_spec.recovered_key,
-                                 image_spec.pil is not None or image_spec.pixels is not None)
-                                if image_spec.recovered_status is not None else ()
+                            signature=("image", message.id, image_spec.mode)
+                            + (
+                                (
+                                    image_spec.recovered_status,
+                                    image_spec.recovered_key,
+                                    image_spec.pil is not None
+                                    or image_spec.pixels is not None,
+                                )
+                                if image_spec.recovered_status is not None
+                                else ()
                             ),
                             message=message,
                             image_spec=image_spec,
@@ -7120,7 +7138,9 @@ class ConsoleTranscript(VerticalScroll):
                 await self._sync_assistant_turn_widget(widget, row)
                 self._row_signatures[row.key] = row.signature
                 continue
-            updated_widget = self._update_row_widget(widget, row, turn_file_cards=turn_file_cards)
+            updated_widget = self._update_row_widget(
+                widget, row, turn_file_cards=turn_file_cards
+            )
             if updated_widget is widget:
                 self._row_signatures[row.key] = row.signature
                 continue
@@ -7730,8 +7750,15 @@ class ConsoleTranscript(VerticalScroll):
     def _image_row_widget(self, spec: ConsoleImageRowSpec) -> Widget:
         """Build the mounted widget for one inline-image row."""
         if spec.recovered_status in {"missing", "deleted", "failed"}:
-            return Static(spec.recovered_status.capitalize() + " recovered media", classes="console-transcript-image")
-        if spec.recovered_status == "ready" and spec.pil is None and spec.pixels is None:
+            return Static(
+                spec.recovered_status.capitalize() + " recovered media",
+                classes="console-transcript-image",
+            )
+        if (
+            spec.recovered_status == "ready"
+            and spec.pil is None
+            and spec.pixels is None
+        ):
             return Static("Loading recovered media", classes="console-transcript-image")
         widget: Widget | None = None
         if spec.mode == "graphics" and spec.pil is not None:
@@ -7749,10 +7776,14 @@ class ConsoleTranscript(VerticalScroll):
                 w_cells, h_cells = fit_image_cell_size(
                     spec.pil.width, spec.pil.height, PIXELS_MAX_COLS, PIXELS_MAX_LINES
                 )
-                widget.remove_class(*(name for name in widget.classes if name.startswith("w-")))
+                widget.remove_class(
+                    *(name for name in widget.classes if name.startswith("w-"))
+                )
                 # ds-runtime: Decoded image aspect ratio determines the fitted terminal-cell size.
                 widget.set_styles(width=w_cells)
-                widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+                widget.remove_class(
+                    *(name for name in widget.classes if name.startswith("h-"))
+                )
                 # ds-runtime: Decoded image aspect ratio determines the fitted terminal-cell size.
                 widget.set_styles(height=h_cells)
             except Exception:
@@ -7822,7 +7853,9 @@ class ConsoleTranscript(VerticalScroll):
             ):
                 widget.update_selected(row.selected)
                 return widget
-            return self._build_row_widget(row, track=True, turn_file_cards=turn_file_cards)
+            return self._build_row_widget(
+                row, track=True, turn_file_cards=turn_file_cards
+            )
         if (
             row.kind == "message"
             and row.message is not None
@@ -8260,7 +8293,6 @@ class ConsoleTranscript(VerticalScroll):
         return kwargs
 
     def _action_groups(self, message: ConsoleChatMessage):
-        from tldw_chatbook.Chat.console_turn_resend import resend_target_id  # boot census
         return self._canvas_action_service().action_groups(
             message,
             speaking_message_id=self._console_tts_speaking_message_id(),

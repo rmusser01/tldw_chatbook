@@ -174,3 +174,99 @@ async def test_trace_refusal_copy_survives_transcript_sync_and_is_painted() -> N
             "Trace&#160;storage&#160;is&#160;not&#160;writable."
             in app.export_screenshot()
         )
+
+
+# --- TASK-34350: the same card holds a send at the compaction threshold ---
+
+
+class _HoldController:
+    def __init__(self) -> None:
+        self.actions: list[tuple[str, str]] = []
+
+    async def compact_and_send(self, preparation_id: str) -> object:
+        self.actions.append(("compact_and_send", preparation_id))
+        return object()
+
+    async def send_without_compacting(self, preparation_id: str) -> object:
+        self.actions.append(("send_without_compacting", preparation_id))
+        return object()
+
+    def cancel_library_preparation(self, preparation_id: str) -> object:
+        self.actions.append(("cancel", preparation_id))
+        return object()
+
+
+class _HoldApp(ConsolidatedCSSApp):
+    def __init__(self, controller: _HoldController, *, estimated: bool) -> None:
+        super().__init__()
+        self.controller = controller
+        self.estimated = estimated
+
+    def compose(self) -> ComposeResult:
+        from tldw_chatbook.Chat.console_turn_preparation import ContextCompactionHold
+
+        yield TraceCallRecoveryCallout(
+            state=TraceCallRecoveryState(
+                "preparation-1",
+                context_hold=ContextCompactionHold(
+                    session_id="session-1",
+                    used_tokens=1_650,
+                    trigger_tokens=1_440,
+                    budget_tokens=1_800,
+                    estimated=self.estimated,
+                ),
+            ),
+            on_action=lambda action, preparation_id: (
+                dispatch_trace_call_recovery_action(
+                    self.controller, action, preparation_id
+                )
+            ),
+        )
+
+
+def _painted(app) -> str:
+    return "\n".join(
+        str(widget.render())
+        for widget in app.screen.query("TraceCallRecoveryCallout *")
+        if hasattr(widget, "render") and widget.display
+    )
+
+
+async def test_a_compaction_hold_shows_its_numbers_and_three_choices() -> None:
+    app = _HoldApp(_HoldController(), estimated=False)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        painted = _painted(app)
+        assert "1,650 of 1,800 tokens" in painted
+        assert "Nothing was sent" in painted
+        visible = {
+            str(button.label)
+            for button in app.screen.query(Button)
+            if button.display
+        }
+        assert visible == {"Compact and send", "Send without compacting", "Cancel send"}
+        assert "Problem:" not in painted
+        assert "estimate" not in painted
+
+
+async def test_a_compaction_hold_on_an_estimated_window_says_so() -> None:
+    app = _HoldApp(_HoldController(), estimated=True)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        assert "F4 Settings > Providers & Models" in _painted(app)
+
+
+async def test_each_compaction_hold_button_reaches_its_controller_action() -> None:
+    for button_id, action in (
+        ("#console-trace-compact-send", "compact_and_send"),
+        ("#console-trace-send-uncompacted", "send_without_compacting"),
+        ("#console-trace-cancel", "cancel"),
+    ):
+        controller = _HoldController()
+        app = _HoldApp(controller, estimated=False)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            app.screen.query_one(button_id, Button).press()
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+        assert controller.actions == [(action, "preparation-1")]

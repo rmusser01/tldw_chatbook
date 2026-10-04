@@ -63,7 +63,9 @@ class TestSpeechLanguageOptions:
         assert english.model_id == policy.parakeet_v2_model_id
         assert english.display_name == "English"
 
-    def test_v3_languages_present_but_not_selectable_without_a_curated_v3_descriptor(self):
+    def test_v3_languages_present_but_not_selectable_without_a_curated_v3_descriptor(
+        self,
+    ):
         policy = routing_policy()
         options = speech_language_options(
             curated_model_ids=frozenset({policy.parakeet_v2_model_id})
@@ -202,11 +204,14 @@ class TestResolveSpeechSelection:
     def test_nothing_selected_falls_back_to_recommended(self):
         """No live radio pressed yet (e.g. the step never mounted, or
         commit() runs before on_show()) -- skip-safe fallback."""
-        assert resolve_speech_selection(
-            selected_language="",
-            selected_precision="",
-            curated_selections=frozenset(),
-        ) == recommended_speech_selection()
+        assert (
+            resolve_speech_selection(
+                selected_language="",
+                selected_precision="",
+                curated_selections=frozenset(),
+            )
+            == recommended_speech_selection()
+        )
 
     def test_non_english_f32_maps_to_exact_v3_artifact(self):
         policy = routing_policy()
@@ -226,11 +231,14 @@ class TestResolveSpeechSelection:
     def test_unavailable_exact_pair_is_not_resolved(self):
         policy = routing_policy()
         language = sorted(policy.validated_v3_languages)[0]
-        assert resolve_speech_selection(
-            selected_language=language,
-            selected_precision="f32",
-            curated_selections=frozenset({(policy.parakeet_v3_model_id, "int8")}),
-        ) is None
+        assert (
+            resolve_speech_selection(
+                selected_language=language,
+                selected_precision="f32",
+                curated_selections=frozenset({(policy.parakeet_v3_model_id, "int8")}),
+            )
+            is None
+        )
 
     def test_todays_only_selectable_combo_is_byte_identical_to_recommended(self):
         """The BYTE-IDENTICAL pin: pressing the one combination that is

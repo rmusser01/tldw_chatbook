@@ -82,8 +82,10 @@ def _finite_number(name: str, value: object, *, positive: bool) -> float:
             numeric_value = float(value)
         except (OverflowError, ValueError):
             pass
-    if numeric_value is None or not math.isfinite(numeric_value) or (
-        numeric_value <= 0 if positive else numeric_value < 0
+    if (
+        numeric_value is None
+        or not math.isfinite(numeric_value)
+        or (numeric_value <= 0 if positive else numeric_value < 0)
     ):
         qualifier = "positive" if positive else "non-negative"
         raise ValueError(f"{name} must be a {qualifier} finite number")
@@ -2692,10 +2694,7 @@ class EvalRunner:
                 "dialogue_generation",
             ]:
                 self.runner = CreativeEvaluationRunner(task_config, effective_config)
-            elif (
-                category == "research"
-                or task_config.task_type == "research_report"
-            ):
+            elif category == "research" or task_config.task_type == "research_report":
                 # task-16327: deterministic scoring of stored verification
                 # payloads; see Evals/research_report_scorer.py.
                 self.runner = ResearchReportRunner(task_config, effective_config)
@@ -2752,9 +2751,7 @@ class EvalRunner:
                 except asyncio.CancelledError:
                     raise
                 except Exception as error:
-                    logger.error(
-                        f"Fatal error processing sample {sample.id}: {error}"
-                    )
+                    logger.error(f"Fatal error processing sample {sample.id}: {error}")
                     result = EvalSampleResult(
                         sample_id=sample.id,
                         input_text=sample.input_text,
@@ -2798,9 +2795,7 @@ class EvalRunner:
                 )
 
                 if completed % 10 == 0:
-                    success_rate = (
-                        (completed - error_count) / completed
-                    ) * 100
+                    success_rate = ((completed - error_count) / completed) * 100
                     logger.info(
                         f"Processed {completed}/{len(samples)} samples | "
                         f"Success rate: {success_rate:.1f}% | "

@@ -491,7 +491,9 @@ def test_catalog_schema_tokens_measures_one_complete_native_schema_set(monkeypat
 
     monkeypatch.setattr(agent_service, "estimate_tokens", estimate)
     monkeypatch.setattr(
-        agent_service, "provider_supports_native_tools", lambda _endpoint, **_kwargs: True
+        agent_service,
+        "provider_supports_native_tools",
+        lambda _endpoint, **_kwargs: True,
     )
 
     assert (
@@ -673,6 +675,7 @@ def test_first_request_plan_defers_large_or_history_cramped_catalog(monkeypatch)
     )
     monkeypatch.setattr(agent_service, "get_model_token_limit", lambda *_a: 10_000)
     monkeypatch.setattr(agent_service, "catalog_schema_tokens", lambda *_a, **_k: 900)
+
     def count(messages, *_args, **_kwargs):
         system = str(messages[0].get("content", ""))
         return 9_000 if FIND_TOOLS_NAME in system else 9_901
@@ -872,7 +875,9 @@ def test_first_request_plan_invalid_model_limit_fails_into_discovery(
 
     monkeypatch.setattr(agent_service, "get_model_token_limit", model_limit)
     config = AgentConfig(
-        model="m", system_prompt="direct", allowed_tools=allowed,
+        model="m",
+        system_prompt="direct",
+        allowed_tools=allowed,
         budget=RunBudget(max_subagents=0),
     )
 
@@ -1553,12 +1558,9 @@ def test_managed_skill_proposal_schema_and_callback_are_primary_only(db):
     join_fleet_children(service)
 
     assert outcome.status == RUN_DONE
-    primary_names = {
-        row["function"]["name"] for row in chat.parent_calls[0]["tools"]
-    }
+    primary_names = {row["function"]["name"] for row in chat.parent_calls[0]["tools"]}
     child_names = {
-        row["function"]["name"]
-        for row in chat.child_calls["inspect only"][0]["tools"]
+        row["function"]["name"] for row in chat.child_calls["inspect only"][0]["tools"]
     }
     assert PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME in primary_names
     assert PREPARE_MANAGED_SKILL_PROMOTION_TOOL_NAME not in child_names
@@ -1816,12 +1818,17 @@ def test_inline_spawn_capture_failure_never_links_child_to_absent_step(db, monke
     rows = db.list_runs("inline-spawn-capture", include_superseded=True)
     parent = next(row for row in rows if row["id"] == parent_id)
     child = next(row for row in rows if row["agent_kind"] == "subagent")
-    diagnostic = next(step for step in parent["steps"] if step["kind"] == "capture_failed")
+    diagnostic = next(
+        step for step in parent["steps"] if step["kind"] == "capture_failed"
+    )
     diagnostic_id = f"agent-step:{parent_id}:{diagnostic['index']}"
     assert child["spawn_event_id"] == diagnostic_id
-    assert next(
-        step for step in child["steps"] if step["kind"] == "agent_run_reserved"
-    )["parent_event_id"] == diagnostic_id
+    assert (
+        next(step for step in child["steps"] if step["kind"] == "agent_run_reserved")[
+            "parent_event_id"
+        ]
+        == diagnostic_id
+    )
 
 
 def test_spawn_propagates_workspace_note_to_child_prompt(db):
@@ -2126,9 +2133,9 @@ def test_agent_lifecycle_capture_failure_uses_actual_diagnostic_cause_after_relo
         diagnostic = diagnostics[0]
         assert failed_kind not in [step["kind"] for step in steps]
         assert diagnostic["field_states"][failed_kind] == "not_observed"
-    event_ids = {
-        f"agent-step:{run_id}:{step['index']}" for step in steps
-    } | {f"agent-run:{run_id}"}
+    event_ids = {f"agent-step:{run_id}:{step['index']}" for step in steps} | {
+        f"agent-run:{run_id}"
+    }
     for step in steps:
         assert step["parent_event_id"] in event_ids
         assert step["source_event_id"] is None or step["source_event_id"] in event_ids
@@ -2151,8 +2158,7 @@ def test_runtime_observation_and_concurrent_cancellation_share_owner_sequence(
     def block_model_request_once(run_id, indexed_steps):
         nonlocal blocked
         if not blocked and any(
-            step["kind"] == "model_request_started"
-            for _index, step in indexed_steps
+            step["kind"] == "model_request_started" for _index, step in indexed_steps
         ):
             blocked = True
             runtime_waiting.set()
@@ -2186,9 +2192,7 @@ def test_runtime_observation_and_concurrent_cancellation_share_owner_sequence(
     reopened = AgentRunsDB(path, client_id="owner-seq-race-reload")
     row = reopened.get_run(run_id)
     owner_sequences = [
-        step["owner_seq"]
-        for step in row["steps"]
-        if step["owner_seq"] is not None
+        step["owner_seq"] for step in row["steps"] if step["owner_seq"] is not None
     ]
     assert len(owner_sequences) == len(set(owner_sequences))
     assert sorted(owner_sequences) == list(
@@ -2261,9 +2265,7 @@ def test_transient_control_capture_recovery_has_unique_owner_sequence(db, monkey
         and f"failed_tool_call_{original['index']}" in step["field_states"]
     )
     owner_sequences = [
-        step["owner_seq"]
-        for step in row["steps"]
-        if step["owner_seq"] is not None
+        step["owner_seq"] for step in row["steps"] if step["owner_seq"] is not None
     ]
     assert diagnostic["owner_seq"] > original["owner_seq"]
     assert len(owner_sequences) == len(set(owner_sequences))
@@ -2304,9 +2306,7 @@ def test_terminal_recovery_does_not_duplicate_lifecycle_transition(db):
     assert len(completed) == 1
 
 
-def test_project_instruction_service_error_has_durable_causal_identity(
-    db, monkeypatch
-):
+def test_project_instruction_service_error_has_durable_causal_identity(db, monkeypatch):
     def fail_before_runtime(*_args, **_kwargs):
         raise agent_service._ProjectInstructionPayloadError("delivery failed")
 
@@ -2364,9 +2364,7 @@ def test_project_instruction_service_error_has_durable_causal_identity(
     reopened.close()
 
 
-def test_service_error_capture_recovers_once_before_failed_lifecycle(
-    db, monkeypatch
-):
+def test_service_error_capture_recovers_once_before_failed_lifecycle(db, monkeypatch):
     original_insert = db.insert_steps_at_indices
     failed_once = False
     attempts = 0
@@ -2443,9 +2441,9 @@ def test_persistent_service_error_capture_is_diagnosed_without_dangling_links(
     assert not any(step["kind"] == "error" for step in row["steps"])
     assert not any(step["kind"] == "agent_run_failed" for step in row["steps"])
     diagnostic = next(step for step in row["steps"] if step["kind"] == "capture_failed")
-    event_ids = {
-        f"agent-step:{run_id}:{step['index']}" for step in row["steps"]
-    } | {f"agent-run:{run_id}"}
+    event_ids = {f"agent-step:{run_id}:{step['index']}" for step in row["steps"]} | {
+        f"agent-run:{run_id}"
+    }
     assert diagnostic["status"] == "incomplete"
     assert diagnostic["field_states"]["payload"] == "capture_failed"
     for step in row["steps"]:
@@ -3104,9 +3102,7 @@ def test_load_tools_adds_canvas_guidance_on_the_next_budgeted_request(db, native
     assert post_load_system.count(CANVAS_OFFER_POLICY) == 1
 
 
-def test_protocol_rerenders_when_replacement_changes_same_named_schema(
-    db, monkeypatch
-):
+def test_protocol_rerenders_when_replacement_changes_same_named_schema(db, monkeypatch):
     """Replacing a tool definition under the same name invalidates the fence."""
 
     class MutableSchemaProvider:
@@ -3299,9 +3295,10 @@ def test_usage_total_tokens_reads_total():
 
 
 def test_usage_total_tokens_sums_prompt_and_completion():
-    assert _usage_total_tokens(
-        {"usage": {"prompt_tokens": 100, "completion_tokens": 50}}
-    ) == 150
+    assert (
+        _usage_total_tokens({"usage": {"prompt_tokens": 100, "completion_tokens": 50}})
+        == 150
+    )
 
 
 def test_usage_total_tokens_none_when_absent_or_malformed():
@@ -3313,19 +3310,23 @@ def test_usage_total_tokens_none_when_absent_or_malformed():
     assert _usage_total_tokens({"usage": {"total_tokens": True}}) is None  # bool
     assert _usage_total_tokens({"usage": {"total_tokens": 0}}) is None
     assert _usage_total_tokens({"usage": {"total_tokens": -7}}) is None
-    assert _usage_total_tokens(
-        {"usage": {"prompt_tokens": -5, "completion_tokens": 10}}
-    ) is None
-    assert _usage_total_tokens(
-        {"usage": {"prompt_tokens": False, "completion_tokens": 5}}
-    ) is None
-    assert _usage_total_tokens(
-        {"usage": {"prompt_tokens": 0, "completion_tokens": 0}}
-    ) is None
+    assert (
+        _usage_total_tokens({"usage": {"prompt_tokens": -5, "completion_tokens": 10}})
+        is None
+    )
+    assert (
+        _usage_total_tokens({"usage": {"prompt_tokens": False, "completion_tokens": 5}})
+        is None
+    )
+    assert (
+        _usage_total_tokens({"usage": {"prompt_tokens": 0, "completion_tokens": 0}})
+        is None
+    )
     # Valid non-negative sum still works.
-    assert _usage_total_tokens(
-        {"usage": {"prompt_tokens": 0, "completion_tokens": 5}}
-    ) == 5
+    assert (
+        _usage_total_tokens({"usage": {"prompt_tokens": 0, "completion_tokens": 5}})
+        == 5
+    )
 
 
 def _service_with_chat(db, chat_call):
@@ -3340,6 +3341,7 @@ def test_call_model_uses_real_provider_usage(db):
             "choices": [{"message": {"content": "hello there"}}],
             "usage": {"total_tokens": 150},
         }
+
     service = _service_with_chat(db, chat)
     cfg = AgentConfig(model="gpt-4o", system_prompt="s", native_tools=False)
     call_model = service._make_call_model(cfg, "openai", [])
@@ -3350,6 +3352,7 @@ def test_call_model_uses_real_provider_usage(db):
 def test_call_model_estimates_when_no_usage(db):
     def chat(**kwargs):
         return {"choices": [{"message": {"content": "hello there world"}}]}
+
     service = _service_with_chat(db, chat)
     cfg = AgentConfig(model="gpt-4o", system_prompt="s", native_tools=False)
     call_model = service._make_call_model(cfg, "openai", [])
@@ -3364,15 +3367,18 @@ def test_call_model_estimate_strips_provider_prefix(db):
     # model. (Qodo review: prefixed models otherwise undercount.)
     def chat(**kwargs):
         return {"choices": [{"message": {"content": "hello there world"}}]}
+
     service = _service_with_chat(db, chat)
     msgs = [{"role": "user", "content": "count these tokens please"}]
     prefixed = service._make_call_model(
         AgentConfig(model="openai/gpt-4o-mini", system_prompt="s", native_tools=False),
-        "openai", [],
+        "openai",
+        [],
     )(msgs, ())
     bare = service._make_call_model(
         AgentConfig(model="gpt-4o-mini", system_prompt="s", native_tools=False),
-        "openai", [],
+        "openai",
+        [],
     )(msgs, ())
     assert prefixed.tokens == bare.tokens
     assert prefixed.tokens > 0
@@ -3389,7 +3395,9 @@ def test_call_model_native_path_reports_provider_tokens(db):
                 {
                     "message": {
                         "content": None,
-                        "tool_calls": [native_call("calculator", {"expression": "2+2"})],
+                        "tool_calls": [
+                            native_call("calculator", {"expression": "2+2"})
+                        ],
                     }
                 }
             ],
@@ -3470,7 +3478,9 @@ def test_service_native_turn_reaches_batch_barrier_only_with_exact_raw_arguments
     assert any(isinstance(event, ToolBatchReady) for event in events) is (
         canonical_raw == raw_arguments
     )
-    assert outcome.status == ("cancelled" if canonical_raw == raw_arguments else "error")
+    assert outcome.status == (
+        "cancelled" if canonical_raw == raw_arguments else "error"
+    )
 
 
 # task-327 (AC#4): per-tool-call timeout, enforced entirely in this impure
@@ -3480,7 +3490,9 @@ def test_service_native_turn_reaches_batch_barrier_only_with_exact_raw_arguments
 
 
 def test_call_with_timeout_returns_result_when_fast():
-    out = _call_with_timeout(lambda: ToolResult(ok=True, content="hi"), 5.0, "fast_tool")
+    out = _call_with_timeout(
+        lambda: ToolResult(ok=True, content="hi"), 5.0, "fast_tool"
+    )
     assert out.ok and out.content == "hi"
 
 
@@ -3488,6 +3500,7 @@ def test_call_with_timeout_trips_on_slow_call():
     def slow():
         time.sleep(2.0)
         return ToolResult(ok=True, content="late")
+
     t0 = time.monotonic()
     out = _call_with_timeout(slow, 0.2, "slow_tool")
     # Bounds the wrapper's own wall-clock: a future "cleanup" that added a
@@ -3501,6 +3514,7 @@ def test_call_with_timeout_trips_on_slow_call():
 def test_call_with_timeout_wraps_exception():
     def boom():
         raise ValueError("kaboom")
+
     out = _call_with_timeout(boom, 5.0, "bad_tool")
     assert out.ok is False and "kaboom" in out.error
 
@@ -3511,8 +3525,10 @@ def test_call_with_timeout_wraps_base_exception():
     asyncio.run() and any tool wrapping argparse) left neither box key set,
     so `return box["result"]` raised KeyError out of invoke_tool into the
     pure loop instead of returning a failed ToolResult. Must not regress."""
+
     def boom():
         raise SystemExit("bye")
+
     out = _call_with_timeout(boom, 5.0, "exiting_tool")
     assert out.ok is False and "bye" in out.error
 
@@ -3524,6 +3540,7 @@ def test_call_with_timeout_polls_cancellation_promptly():
     that can observe a Stop until the call finishes or times out, so it must
     poll should_cancel() itself rather than a single blocking join(seconds).
     """
+
     def slow():
         time.sleep(2.0)
         return ToolResult(ok=True, content="too late")
@@ -3595,6 +3612,7 @@ def test_make_invoke_tool_bypasses_wrapper_when_unlimited(db, monkeypatch):
     test would pass identically whether or not the wrapper is used, since a
     fast call looks the same either way -- the monkeypatch makes it actually
     prove the bypass by failing loudly if the wrapper is invoked at all."""
+
     def chat(**kwargs):  # pragma: no cover - unused by this test
         return {"choices": [{"message": {"content": "unused"}}]}
 
@@ -3614,14 +3632,13 @@ def test_make_invoke_tool_bypasses_wrapper_when_unlimited(db, monkeypatch):
         cfg, disclosed_names={"calculator"}, run_id="run-1"
     )
     from tldw_chatbook.Agents.agent_models import ToolCall
+
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     assert result.ok is True
     assert json.loads(result.content)["result"] == 4
 
 
-def test_make_invoke_tool_binds_exact_subagent_actor_on_timeout_thread(
-    db, monkeypatch
-):
+def test_make_invoke_tool_binds_exact_subagent_actor_on_timeout_thread(db, monkeypatch):
     """Provider capture sees child and parent identity on the actual tool thread."""
     from tldw_chatbook.Agents.agent_models import ToolCall
     from tldw_chatbook.Agents.run_context import (
@@ -3679,9 +3696,7 @@ def test_primary_and_threaded_child_keep_exact_actor_at_review_and_tool_boundari
                 {
                     "content": None,
                     "tool_calls": [
-                        native_call(
-                            "calculator", {"expression": "6*7"}, "child-calc"
-                        )
+                        native_call("calculator", {"expression": "6*7"}, "child-calc")
                     ],
                 },
                 "child done",
@@ -3702,9 +3717,7 @@ def test_primary_and_threaded_child_keep_exact_actor_at_review_and_tool_boundari
     original_invoke = registry.invoke_by_name
 
     def invoke_by_name(name, args):
-        tool_seen.append(
-            (current_run_actor(), name, threading.current_thread().name)
-        )
+        tool_seen.append((current_run_actor(), name, threading.current_thread().name))
         return original_invoke(name, args)
 
     monkeypatch.setattr(registry, "invoke_by_name", invoke_by_name)
@@ -3732,8 +3745,7 @@ def test_primary_and_threaded_child_keep_exact_actor_at_review_and_tool_boundari
     assert all(actor is not None for actor, _run_id, _thread in review_seen)
     assert all(actor is not None for actor, _name, _thread in tool_seen)
     review_by_kind = {
-        actor.kind: (actor, run_id, thread)
-        for actor, run_id, thread in review_seen
+        actor.kind: (actor, run_id, thread) for actor, run_id, thread in review_seen
     }
     tool_by_kind = {
         actor.kind: (actor, name, thread) for actor, name, thread in tool_seen
@@ -3793,6 +3805,7 @@ def test_make_invoke_tool_binds_native_call_id_on_tool_thread(db, monkeypatch):
 def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
     """A blocking custom tool provider must not wedge the run past
     max_tool_call_seconds -- the boundary this task exists to add."""
+
     def chat(**kwargs):  # pragma: no cover - unused by this test
         return {"choices": [{"message": {"content": "unused"}}]}
 
@@ -3813,14 +3826,13 @@ def test_make_invoke_tool_wraps_slow_custom_tool_in_timeout(db, monkeypatch):
         cfg, disclosed_names={"calculator"}, run_id="run-1"
     )
     from tldw_chatbook.Agents.agent_models import ToolCall
+
     result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
     assert result.ok is False
     assert "timed out" in result.error and "calculator" in result.error
 
 
-def test_make_invoke_tool_waits_for_definitive_watchlists_mutation(
-    db, tmp_path
-):
+def test_make_invoke_tool_waits_for_definitive_watchlists_mutation(db, tmp_path):
     """Once an approved definitive mutation starts, neither a tiny runtime
     budget nor cancellation may return before its transaction outcome."""
     from tldw_chatbook.Agents.agent_models import ToolCall
@@ -3848,6 +3860,7 @@ def test_make_invoke_tool_waits_for_definitive_watchlists_mutation(
 
     def unavailable(*_args, **_kwargs):
         return None
+
     commands = WatchlistsCommandService(
         runtime_source_loader=lambda: "local",
         create_sources_batch=unavailable,
@@ -4258,9 +4271,7 @@ def test_starter_preset_spawn_respects_parent_tool_authority(
 def test_named_spawn_model_override_same_endpoint(db):
     _seed_definition(
         db,
-        AgentDefinition(
-            name="cheap", instructions="Do it.", model="tiny-model"
-        ),
+        AgentDefinition(name="cheap", instructions="Do it.", model="tiny-model"),
     )
     # PR2a Task 6.5: addressed script (the child is on its own thread).
     chat = FleetChat(
@@ -4318,9 +4329,7 @@ def test_unknown_agent_refused_without_burning_budget(db):
     # own second turn, addressed rather than counted (`calls[1]` may now be
     # a child's).
     refusal = chat.parent_calls[1]["messages_payload"]
-    assert any(
-        "unknown agent 'nope'" in str(m.get("content", "")) for m in refusal
-    )
+    assert any("unknown agent 'nope'" in str(m.get("content", "")) for m in refusal)
 
 
 # Real config getters retain the collection-time source authority.
@@ -4341,13 +4350,9 @@ def test_named_spawn_records_audit_fields(db):
         api_endpoint="llama_cpp",
     )
     join_fleet_children(service)  # PR3a-1 Task 2: the child outlives the turn
-    child = next(
-        r for r in db.list_runs("c") if r["agent_kind"] == "subagent"
-    )
+    child = next(r for r in db.list_runs("c") if r["agent_kind"] == "subagent")
     assert child["agent_definition"] == "researcher"
-    assert child["definition_fingerprint"] == definition_fingerprint(
-        RESEARCHER_DEFN
-    )
+    assert child["definition_fingerprint"] == definition_fingerprint(RESEARCHER_DEFN)
 
 
 # Real config getters retain the collection-time source authority.
@@ -4397,6 +4402,7 @@ def test_call_with_timeout_pauses_deadline_while_predicate_holds():
     spent waiting on a human decision inside ``fn`` does not consume the
     tool's execution budget. The 0.3s ceiling would abandon this 1.0s
     call without the pause."""
+
     def fn():
         time.sleep(1.0)
         return ToolResult(ok=True, content="worth the wait")
@@ -4416,6 +4422,7 @@ def test_call_with_timeout_deadline_resumes_after_pause_ends():
     predicate goes False the armed deadline applies again, so a call that
     keeps hanging AFTER its human decision still trips the ceiling
     promptly instead of riding a frozen clock forever."""
+
     def fn():
         time.sleep(3.0)
         return ToolResult(ok=True, content="too late")
@@ -4438,6 +4445,7 @@ def test_make_invoke_tool_pauses_deadline_during_human_input_wait(db, monkeypatc
     ``human_input_wait_active(run_id)`` into the wrapper, so a registry
     tool blocked on a human decision (marked from ANY thread via
     ``use_human_input_wait``) outlives max_tool_call_seconds."""
+
     def chat(**kwargs):  # pragma: no cover - unused by this test
         return {"choices": [{"message": {"content": "unused"}}]}
 

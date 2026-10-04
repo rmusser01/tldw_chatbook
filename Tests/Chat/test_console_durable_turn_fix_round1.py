@@ -16,6 +16,7 @@ from Tests.Chat.test_console_automatic_library_preparation import (
     _StreamingFence,
     _capture_staged_evidence,
     _real_retrieval_controller_for_launch,
+    _retrieval_evidence_owner,
     _staged_evidence_launch,
 )
 from Tests.Chat.test_console_durable_turn_acceptance import (
@@ -348,8 +349,10 @@ async def test_explicit_frozen_evidence_makes_checkpoint_unreconstructable(
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
-        rag_capture_provider=retrieval._capture_console_staged_rag,
-        staged_evidence_provider=lambda _session_id: state["launch"] is not None,
+        **_retrieval_evidence_owner(
+            retrieval,
+            staged_evidence_provider=lambda _session_id: state["launch"] is not None,
+        ),
     )
 
     result = await controller.submit_draft("explicit evidence", session_id=session.id)

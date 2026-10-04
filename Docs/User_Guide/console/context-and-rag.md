@@ -38,7 +38,7 @@ Where this page's controls live:
   panel](#the-environment-panel-environment-tasks-agents) below), the
   "Sources — next send" tray, the Library search controls, the
   retrieval-scope row, the "Prefill" rows when one is armed, the
-  run/readiness groups, the "Selected turn" block, "Session Settings", the
+  run/readiness groups, the "Selected turn" block, "Chat settings", the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
   blocks at the bottom. Press **Alt+I**
   to open the rail and put the caret on the send summary; press it again to
@@ -88,6 +88,43 @@ Applying settings preserves the values shown for the conversation, including
 previous edits. Making a new default also saves that profile for subsequent
 chats; changing only Streaming does not reset other fields.
 
+### When a chat reaches its context limit
+
+What happens depends on **When limit nears** in Conversation settings >
+Context and memory:
+
+- **Ask** (the default). When a message you send would take the chat past its
+  compaction threshold, the message is held before anything is sent or saved.
+  A card above the transcript shows how many tokens the chat uses out of its
+  budget, and offers three choices:
+  - **Compact and send** summarizes older turns, then sends your message. The
+    summary is one extra model call and may be billed. If it fails, the card
+    stays, says why, and your message is still held.
+  - **Send without compacting** sends this one message as it is. Older turns
+    that do not fit the model's context window are left out of the request.
+  - **Cancel send** sends nothing and compacts nothing; your message goes back
+    to the composer.
+- **Automatic** compacts and sends without asking.
+- **Off** never compacts.
+
+A send that cannot show the card (a queued prompt, Retry or Regenerate) stops
+with a note instead: use **Compact now** in Conversation settings > Context
+and memory, then send again.
+
+When compacting cannot make enough room, the message is not sent and the note
+says what fills the window and what to change:
+
+- **Max tokens** (Conversation settings > Model and generation) plus the
+  safety margin already use the whole window: lower Max tokens.
+- The system prompt, tools and attached context need more than the window
+  leaves: remove attached sources or tools, or lower Max tokens.
+- The message does not fit and there are no older complete turns to compact:
+  shorten it or its attachments, lower Max tokens, or start a new chat.
+
+If the model's context window is an estimate (shown as "Model window (est.)"),
+the card and the note say so. Set the real value in **F4 Settings > Providers
+& Models**.
+
 ### Per-turn micro-compaction
 
 With compaction mode **Automatic**, setting `[console]
@@ -117,7 +154,7 @@ yet" instead.
 
 A note that held your message, or that reports a failed **Compact now**, also
 gives a next step. "Nothing to compact yet" is not a failure and gives none.
-In **Conversation settings > Context and memory** you can raise
+In **Chat settings > Context and memory** you can raise
 **Conversation max tokens**, set **If compaction fails** to **Omit older
 context** (the message is then sent without compacting), or set **When limit
 nears** to **Off**. You can also start a new chat. In a saved chat, the
@@ -579,7 +616,7 @@ cannot return through a delayed load or export.
 
 ### Thinking history replay
 
-Open the current conversation's Console settings and find **Thinking history
+Open the current conversation's Chat settings and find **Thinking history
 replay**. Its saved policy belongs to the conversation and affects future
 provider requests, not whether Thinking rows are visible:
 
@@ -944,7 +981,7 @@ visit. Whatever is currently staged, the strip's count, the tray's
 "Sources N" count, and the Inspector's Source Readiness line ("Evidence:
 N/N available") always agree on the same number.
 
-Staged evidence also counts toward the Console Settings context estimate
+Staged evidence also counts toward the Chat settings context estimate
 and the running-session cost chip — it used to report zero for anything
 staged but not yet sent. The estimate counts the staged snippets as
 they'll actually be sent (each capped at 4,000 characters, the same cap

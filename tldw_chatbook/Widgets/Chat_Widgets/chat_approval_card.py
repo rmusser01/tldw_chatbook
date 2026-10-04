@@ -40,6 +40,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.events import Resize
 from textual.message import Message
 from textual.timer import Timer
 from textual.widgets import Button, Collapsible, Input, Select, Static, TextArea
@@ -53,9 +54,8 @@ _DENY_LABEL = "Deny"
 _RAW_APPROVE_ONCE_LABEL = "Run once"
 _FAST_APPROVE_CLASS = "approval-row-fast-approve"
 _FAST_DENY_CLASS = "approval-row-fast-deny"
-_FAST_APPROVE_TOOLTIP = (
-    "Approve once and resume immediately (skips Select + Submit)."
-)
+_COMPACT_APPROVAL_CLASS = "approval-compact"
+_FAST_APPROVE_TOOLTIP = "Approve once and resume immediately (skips Select + Submit)."
 _FAST_DENY_TOOLTIP = "Deny and resume immediately (skips Select + Submit)."
 
 #: Per-row decision options, in display order. Values are the exact
@@ -112,6 +112,7 @@ def _is_raw_shell_row(call: Mapping[str, Any]) -> bool:
         call.get("server_key") == _RAW_SHELL_SERVER_KEY
         and call.get("tool_name") == _RAW_SHELL_TOOL_NAME
     )
+
 
 _EFFECT_LABELS: dict[str, str] = {
     "private_read": "may read private local data",
@@ -405,12 +406,32 @@ _ARGS_MIN_VALUE_LIMIT = 10
 #: `urinal` is not a URL.
 _DESTINATION_TOKENS: frozenset[str] = frozenset(
     {
-        "path", "paths", "filepath", "file", "files", "filename",
-        "dir", "dirs", "directory", "folder",
-        "dest", "destination", "target", "output", "out",
-        "src", "source", "input",
-        "url", "uri", "endpoint", "host", "hostname",
-        "cmd", "command", "script",
+        "path",
+        "paths",
+        "filepath",
+        "file",
+        "files",
+        "filename",
+        "dir",
+        "dirs",
+        "directory",
+        "folder",
+        "dest",
+        "destination",
+        "target",
+        "output",
+        "out",
+        "src",
+        "source",
+        "input",
+        "url",
+        "uri",
+        "endpoint",
+        "host",
+        "hostname",
+        "cmd",
+        "command",
+        "script",
     }
 )
 
@@ -788,6 +809,42 @@ class ChatApprovalCard(Container):
                     tooltip="Set every pending tool call's decision to Deny.",
                 )
 
+    def on_resize(self, event: Resize) -> None:
+        """Reflow existing decision controls when the card changes size.
+
+        Args:
+            event: Textual's notification that the card's size changed.
+
+        """
+        self._sync_control_layout()
+
+    def _sync_control_layout(self) -> None:
+        # The existing inline controls need 27 + 14 + 14 cells. Reflow
+        # inside the card, so Inspect stays open and controls keep focus.
+        # Reuse the shell's short-height mode to save vertical chrome too.
+        compact = self.content_size.width < 55 or any(
+            node.has_class("-console-compact") for node in self.ancestors
+        )
+        if compact == self.has_class(_COMPACT_APPROVAL_CLASS):
+            return
+        try:
+            actions = self.query_one("#approval-batch-actions", Horizontal)
+            approve = actions.query_one("#approval-approve-all", Button)
+            deny = actions.query_one("#approval-deny-all", Button)
+            submit = actions.query_one("#approval-submit", Button)
+        except NoMatches:
+            # Screen resize can arrive before this card finishes composing.
+            return
+        self.set_class(compact, _COMPACT_APPROVAL_CLASS)
+        if compact:
+            actions.move_child(deny, before=approve)
+        else:
+            actions.move_child(deny, after=submit)
+        for button in actions.query(Button):
+            button.compact = compact
+        for select in self._batch_selects:
+            select.compact = compact
+
     # -- batch-approval API (task-5) -----------------------------------------
 
     def set_batch(
@@ -967,6 +1024,7 @@ class ChatApprovalCard(Container):
                 allow_blank=False,
                 id=f"approval-row-decision-{generation}-{index}",
                 classes="approval-row-decision",
+                compact=self.has_class(_COMPACT_APPROVAL_CLASS),
             )
             select.disabled = finishing
             selects.append(select)
@@ -1290,6 +1348,7 @@ class ChatApprovalCard(Container):
             allow_blank=False,
             id=f"approval-row-decision-{generation}-0",
             classes="approval-row-decision",
+            compact=self.has_class(_COMPACT_APPROVAL_CLASS),
         )
         select.disabled = finishing
         base_header = _format_row_header(entry)
@@ -1375,9 +1434,7 @@ class ChatApprovalCard(Container):
             return
         text = self._batch_summary or ""
         if text:
-            summary.update(
-                f"[dim italic]{SUMMARY_LABEL} {escape(text)}[/dim italic]"
-            )
+            summary.update(f"[dim italic]{SUMMARY_LABEL} {escape(text)}[/dim italic]")
             summary.display = True
         else:
             summary.update("")

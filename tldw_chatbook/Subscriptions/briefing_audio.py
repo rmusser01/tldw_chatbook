@@ -198,7 +198,9 @@ from typing import Any, Callable, Collection, Iterator
 from loguru import logger
 
 from tldw_chatbook.config import get_user_data_dir
-from tldw_chatbook.Subscriptions.briefing_cast import STATUS_COMPLETE as _SCRIPT_STATUS_COMPLETE
+from tldw_chatbook.Subscriptions.briefing_cast import (
+    STATUS_COMPLETE as _SCRIPT_STATUS_COMPLETE,
+)
 from tldw_chatbook.Subscriptions.briefing_service import GenerationInFlightError
 from tldw_chatbook.Subscriptions.briefing_voices import (
     VoiceResolutionError,
@@ -889,7 +891,11 @@ def _parse_turns(turns_json: str | None) -> list[dict[str, str]]:
     for index, item in enumerate(payload):
         speaker = item.get("speaker") if isinstance(item, Mapping) else None
         text = item.get("text") if isinstance(item, Mapping) else None
-        if not isinstance(speaker, str) or not speaker.strip() or not isinstance(text, str):
+        if (
+            not isinstance(speaker, str)
+            or not speaker.strip()
+            or not isinstance(text, str)
+        ):
             raise AudioGenerationError(f"script turn {index} is malformed")
         turns.append({"speaker": speaker.strip(), "text": text})
     return turns
@@ -914,7 +920,9 @@ def _parse_roster_snapshot(roster_snapshot_json: str | None) -> list[dict[str, A
         payload = json.loads(roster_snapshot_json or "[]")
     except (ValueError, TypeError) as exc:
         raise AudioGenerationError("script roster snapshot is not valid JSON") from exc
-    if not isinstance(payload, list) or not all(isinstance(item, Mapping) for item in payload):
+    if not isinstance(payload, list) or not all(
+        isinstance(item, Mapping) for item in payload
+    ):
         raise AudioGenerationError(
             "script roster snapshot must be an array of speaker objects"
         )
@@ -957,7 +965,9 @@ def _load_script_for_audio(
     return script, turns, roster_snapshot
 
 
-def _record_voice_resolution_failure(db: Any, script_id: int, message: str) -> dict[str, Any]:
+def _record_voice_resolution_failure(
+    db: Any, script_id: int, message: str
+) -> dict[str, Any]:
     """Write a `failed` `briefing_audio` row for a voice resolution failure.
 
     `resolve_roster_voices` must succeed before `generate_script_audio` has
@@ -1359,7 +1369,9 @@ async def generate_script_audio(
             # pre-flight refusals above (script missing/not complete/no turns)
             # still raise with no row at all; from here on, a `briefing_audio`
             # row always exists for this attempt.
-            logger.warning(f"script {script_id}: pydub is not installed; audio cannot be synthesized")
+            logger.warning(
+                f"script {script_id}: pydub is not installed; audio cannot be synthesized"
+            )
             return await asyncio.to_thread(_record_missing_pydub_failure, db, script_id)
 
         try:
@@ -1370,7 +1382,9 @@ async def generate_script_audio(
             # No message content logged: see the module docstring's egress
             # note -- a `VoiceResolutionError`'s own message names the speaker
             # (and, for a deleted profile, its id).
-            logger.warning(f"script {script_id}: voice resolution failed: {type(exc).__name__}")
+            logger.warning(
+                f"script {script_id}: voice resolution failed: {type(exc).__name__}"
+            )
             return await asyncio.to_thread(
                 _record_voice_resolution_failure, db, script_id, _error_text(exc)
             )
@@ -1413,7 +1427,9 @@ async def generate_script_audio(
                     raise AudioGenerationError(
                         f"turn {index}: no voice assigned for speaker {speaker!r}"
                     )
-                segment = await synthesize(tts_service, selection, turn["text"], turn_index=index)
+                segment = await synthesize(
+                    tts_service, selection, turn["text"], turn_index=index
+                )
                 segments.append(segment)
             payload = concat_wav_segments(segments)
         except Exception as exc:  # noqa: BLE001 - every synthesis failure is a row
@@ -1423,7 +1439,9 @@ async def generate_script_audio(
             logger.warning(
                 f"script {script_id} audio {audio_id}: synthesis failed: {type(exc).__name__}"
             )
-            return await asyncio.to_thread(_finish_audio_failure, db, audio_id, _error_text(exc))
+            return await asyncio.to_thread(
+                _finish_audio_failure, db, audio_id, _error_text(exc)
+            )
 
         directory = await asyncio.to_thread(briefing_audio_dir)
         path = directory / f"script-{script_id}-audio-{audio_id}.wav"
@@ -1438,7 +1456,9 @@ async def generate_script_audio(
             logger.warning(
                 f"script {script_id} audio {audio_id}: audio write failed: {type(exc).__name__}"
             )
-            return await asyncio.to_thread(_finish_audio_failure, db, audio_id, _error_text(exc))
+            return await asyncio.to_thread(
+                _finish_audio_failure, db, audio_id, _error_text(exc)
+            )
 
         try:
             duration = wav_duration_seconds(payload)
@@ -1447,7 +1467,9 @@ async def generate_script_audio(
                 f"script {script_id} audio {audio_id}: duration read failed: {type(exc).__name__}"
             )
             await asyncio.to_thread(_remove_file_quietly, path)
-            return await asyncio.to_thread(_finish_audio_failure, db, audio_id, _error_text(exc))
+            return await asyncio.to_thread(
+                _finish_audio_failure, db, audio_id, _error_text(exc)
+            )
 
         try:
             return await asyncio.to_thread(

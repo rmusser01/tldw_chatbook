@@ -134,9 +134,7 @@ def test_query_keeps_nonmatching_rows_from_the_supplied_service_page():
 
 
 def test_query_with_no_matches_returns_empty_copy_and_zero_status_copy():
-    state = build_library_conversations_state(
-        [], query="zzz", total_count=0, now=NOW
-    )
+    state = build_library_conversations_state([], query="zzz", total_count=0, now=NOW)
 
     assert state.rows == ()
     assert state.status_copy == "0 matches for 'zzz'"
@@ -268,10 +266,7 @@ def test_id_title_count_key_fallbacks_using_conversation_id_and_messages_total()
 
 
 def test_final_page_disables_next_without_dropping_supplied_rows():
-    records = [
-        {"id": f"conv-{index}", "title": f"Chat {index}"}
-        for index in range(7)
-    ]
+    records = [{"id": f"conv-{index}", "title": f"Chat {index}"} for index in range(7)]
 
     state = build_library_conversations_state(
         records,

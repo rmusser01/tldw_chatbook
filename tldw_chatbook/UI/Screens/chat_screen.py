@@ -21,6 +21,7 @@ from uuid import uuid4
 import toml
 from loguru import logger
 from tldw_chatbook.Utils.input_validation import escape_markup
+
 # The narrow rich escape is kept for the call sites below whose value
 # reaches a markup-OFF sink, where any escape shows the reader a literal
 # backslash. Escaping there at all is the bug, and TASK-32802.4 owns it;
@@ -724,7 +725,7 @@ logger = logger.bind(module="ChatScreen")
 
 
 def _conversation_settings_modal_module():
-    """Load the Conversation Settings modal only when its workflow starts."""
+    """Load the Chat settings modal only when its workflow starts."""
     from ...Widgets.Console import console_settings_modal
 
     return console_settings_modal
@@ -1380,6 +1381,7 @@ CONSOLE_DECISION_CARD_SELECTORS: tuple[str, ...] = (
     "#chat-question-card",
     "#chat-skill-install-card",
     "#chat-skill-script-card",
+    "#chat-create-card",
 )
 
 
@@ -2352,7 +2354,9 @@ class ChatScreen(BaseAppScreen):
             next_sibling = siblings[siblings.index(current) + 1]
         except (IndexError, ValueError):
             return
-        replacement.remove_class(*(name for name in replacement.classes if name.startswith("w-")))
+        replacement.remove_class(
+            *(name for name in replacement.classes if name.startswith("w-"))
+        )
         # ds-runtime: The replacement preserves the existing mounted region width during a context swap.
         replacement.set_styles(width=current.styles.width)
         replacement.styles.min_width = current.styles.min_width
@@ -3351,12 +3355,8 @@ class ChatScreen(BaseAppScreen):
         active_provider = settings.provider
         active_model = settings.model
         if suspended_draft is not None:
-            raw_provider = suspended_draft.raw_values.get("console-settings-provider")
-            if type(raw_provider) is str:
-                active_provider = raw_provider
             active_model = suspended_draft.provider_model_drafts.get(
-                active_provider,
-                settings.model if active_provider == settings.provider else None,
+                active_provider, active_model
             )
         effective_thinking_policy = (
             await controller.effective_thinking_history_policy_for_session(session_id)
@@ -3378,9 +3378,15 @@ class ChatScreen(BaseAppScreen):
         active_run = self._console_run_active()
 
         modal_contract = _conversation_settings_modal_module()
+        from ..Console_Modules.model_switcher import open_model_picker
+
         modal = modal_contract.ConsoleSettingsModal(
             open_response_rules=lambda: self._response_rules_ui.open_manager(
                 self._console_runtime().ensure_response_rules().scopes(session_id)[0]
+            ),
+            model_picker=partial(open_model_picker, self),
+            chat_title=next(
+                (s.title for s in store.sessions() if s.id == session_id), ""
             ),
             settings=store.session_settings(session_id)
             or settings,  # committed: unsaved-edits baseline
@@ -3692,8 +3698,10 @@ class ChatScreen(BaseAppScreen):
     def apply_navigation_context(self, context: Mapping[str, object]) -> None:
         """Capture a saved-chat resume or claim a typed Settings return."""
 
-        if (CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET in context
-                or CHARACTER_NAV_CONTEXT_RETURN_FOCUS in context):
+        if (
+            CONSOLE_NAV_CONTEXT_CHARACTER_CONVERSATION_TARGET in context
+            or CHARACTER_NAV_CONTEXT_RETURN_FOCUS in context
+        ):
             self._workspace.apply_character_navigation_context(context)
 
         resume_value = context.get(CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID)
@@ -3736,14 +3744,14 @@ class ChatScreen(BaseAppScreen):
             if self._clear_conversation_settings_return_target(target):
                 self._notify_conversation_settings_return(
                     "This return was superseded by a newer request. "
-                    "Open Conversation settings again."
+                    "Open Chat settings again."
                 )
             return False
         if revision_status == "settled":
             self._discard_conversation_settings_return(
                 target,
-                "Conversation settings return is no longer available. "
-                "Open Conversation settings again.",
+                "Chat settings return is no longer available. "
+                "Open Chat settings again.",
             )
             return False
         claim = handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
@@ -3757,7 +3765,7 @@ class ChatScreen(BaseAppScreen):
             if self._clear_conversation_settings_return_target(target):
                 self._notify_conversation_settings_return(
                     "This return was superseded by a newer request. "
-                    "Open Conversation settings again."
+                    "Open Chat settings again."
                 )
             return False
         intent = claim.value
@@ -3771,7 +3779,7 @@ class ChatScreen(BaseAppScreen):
                 handoffs,
                 claim,
                 target,
-                "Conversation settings return was stale. The draft was not restored.",
+                "Chat settings return was stale. The draft was not restored.",
             )
             return False
         rejection_copy = self._conversation_settings_return_rejection_copy(target)
@@ -3797,19 +3805,19 @@ class ChatScreen(BaseAppScreen):
             if store.session_is_ephemeral(target.session_id):
                 return (
                     "The temporary conversation is no longer available. Its "
-                    "Conversation settings draft was not restored."
+                    "Chat settings draft was not restored."
                 )
             if (
                 store.session_settings_revision(target.session_id)
                 != target.settings_revision
             ):
                 return (
-                    "Conversation settings changed while credentials were open. "
+                    "Chat settings changed while credentials were open. "
                     "The earlier draft was not restored."
                 )
         except KeyError:
             return (
-                "The original conversation closed. Its Conversation settings draft "
+                "The original conversation closed. Its Chat settings draft "
                 "was not restored."
             )
         snapshot = getattr(self, "_suspended_conversation_settings", None)
@@ -3824,7 +3832,7 @@ class ChatScreen(BaseAppScreen):
             and snapshot.active_view == target.active_view
             and snapshot.focus_control_id == target.focus_control_id
         ):
-            return "Conversation settings return was stale. The draft was not restored."
+            return "Chat settings return was stale. The draft was not restored."
         return None
 
     def _notify_conversation_settings_return(self, message: str) -> None:
@@ -3979,7 +3987,7 @@ class ChatScreen(BaseAppScreen):
                 if self._clear_conversation_settings_return_target(target):
                     self._notify_conversation_settings_return(
                         "This return was superseded by a newer request. "
-                        "Open Conversation settings again."
+                        "Open Chat settings again."
                     )
                 return
             rejection_copy = self._conversation_settings_return_rejection_copy(target)
@@ -4004,7 +4012,7 @@ class ChatScreen(BaseAppScreen):
                     handoffs,
                     claim,
                     target,
-                    "Conversation settings return was stale. The draft was not restored.",
+                    "Chat settings return was stale. The draft was not restored.",
                 )
                 return
             store = self._ensure_console_chat_store()
@@ -4017,7 +4025,7 @@ class ChatScreen(BaseAppScreen):
                         handoffs,
                         claim,
                         target,
-                        "The original conversation closed. Its Conversation settings "
+                        "The original conversation closed. Its Chat settings "
                         "draft was not restored.",
                     )
                     return
@@ -4820,8 +4828,8 @@ class ChatScreen(BaseAppScreen):
             self._set_console_rail_preference(
                 left_open=preference_changes["left_open"],
                 right_open=preference_changes.get("right_open"),
-                    # Derived conflict resolution, not an Inspector gesture.
-                    explicit_right_toggle=False,
+                # Derived conflict resolution, not an Inspector gesture.
+                explicit_right_toggle=False,
             )
         elif action_id == "run-library-rag":
             self._open_console_library_search()
@@ -4840,9 +4848,7 @@ class ChatScreen(BaseAppScreen):
             # -- same destination as the command-palette "new_note" quick
             # action.
             self.post_message(
-                NavigateToScreen(
-                    TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True}
-                )
+                NavigateToScreen(TAB_LIBRARY, {LIBRARY_NAV_CONTEXT_NOTES_CREATE: True})
             )
 
     async def action_show_workbench_help(self) -> None:
@@ -4877,7 +4883,10 @@ class ChatScreen(BaseAppScreen):
             )
             if authority_summary is not None:
                 authority_rows = tuple(
-                    (_escape_for_markup_off_sink(label), _escape_for_markup_off_sink(value))
+                    (
+                        _escape_for_markup_off_sink(label),
+                        _escape_for_markup_off_sink(value),
+                    )
                     for label, value in authority_summary.contextual_help_rows()
                 )
                 shortcut_groups = (
@@ -5304,12 +5313,9 @@ class ChatScreen(BaseAppScreen):
             cancellation: asyncio.Event,
         ) -> "ConsoleConversationActivationResult":
             def complete(result: "ConsoleConversationActivationResult") -> bool:
-                return (
-                    self._workspace._character_conversation_target_ready(request)
-                    and modal.complete_character_activation(
-                        request, result, console=self
-                    )
-                )
+                return self._workspace._character_conversation_target_ready(
+                    request
+                ) and modal.complete_character_activation(request, result, console=self)
 
             owner = presentation_owner(request)
             owner.set_result(complete)
@@ -5500,7 +5506,9 @@ class ChatScreen(BaseAppScreen):
 
         await open_model_switcher(self, query)
 
-    def on_console_workspace_details_tray_default_persona_requested(self, event) -> None:
+    def on_console_workspace_details_tray_default_persona_requested(
+        self, event
+    ) -> None:
         """Route the workspace details action to its explicit workspace owner."""
         event.stop()
         self._workspace._open_workspace_persona_default(event.workspace_id)
@@ -6099,28 +6107,26 @@ class ChatScreen(BaseAppScreen):
     def action_open_console_new_endpoint(self) -> None:
         """Open the endpoint-template creation flow on top of session settings.
 
-        ``/endpoint`` (H6): the same flow the Conversation-settings provider
-        list's "New custom endpoint…" sentinel row opens. The settings modal
-        is pushed first so the created entry lands as its selected provider
-        (``EndpointCreated`` is announced to the opener screen).
+        ``/endpoint`` (H6): the same flow as Chat settings' New endpoint….
+        The settings modal is pushed first and receives the created entry,
+        which it lands on a pair through pick mode (TASK-33006.4).
         """
         if self._console_setup_modal_blocking():
             return
         self.run_worker(self._open_console_new_endpoint(), exclusive=False)
 
     async def _open_console_new_endpoint(self) -> None:
-        """Push Conversation settings, then its endpoint template modal.
+        """Push Chat settings, then its endpoint template modal.
 
         PR-2646 review: the template must layer on the *exact* settings
-        modal this flow opened -- ``EndpointCreated`` is delivered to the
-        screen directly beneath the template (``screen_stack[-2]``), so a
-        template that lands over ChatScreen would orphan the creation (no
-        provider selection, no model discovery). The exact modal is retained
-        through ``_pushed_modal_sink``, its already-resolved provider models
-        and app config are reused (no second async resolution window while
-        the user could dismiss settings), and the stack is rechecked
-        immediately before the push: abort if the modal was dismissed or
-        covered by an unrelated screen.
+        modal this flow opened -- its result goes to that modal's
+        ``pick_created_endpoint`` (TASK-33006.4), which lists the entry's
+        models and opens pick mode on it, so the creation is never orphaned.
+        The exact modal is retained through ``_pushed_modal_sink``, its
+        already-resolved provider models and app config are reused (no
+        second async resolution window while the user could dismiss
+        settings), and the stack is rechecked immediately before the push:
+        abort if the modal was dismissed or covered by an unrelated screen.
         """
         retained: list["ConsoleSettingsModal"] = []
 
@@ -6140,25 +6146,22 @@ class ChatScreen(BaseAppScreen):
         )
 
         try:
-            settings_directly_beneath = (
-                self.app.screen_stack[-1] is settings_modal
-            )
+            settings_directly_beneath = self.app.screen_stack[-1] is settings_modal
         except Exception:
             settings_directly_beneath = False
         if not settings_directly_beneath:
-            # Dismissed (or covered by an unrelated screen) between the
-            # settings push settling and now: layering the template here
-            # would deliver EndpointCreated to whatever currently sits
-            # beneath it, so abort the flow instead.
+            # Dismissed or covered between the settings push settling and
+            # now: the created entry would land on no Chat settings, so abort.
             return
         self.app.push_screen(
             ConsoleEndpointTemplateModal(
-                # The sentinel-flow seam: seed from the exact settings
-                # modal's own resolved inputs rather than re-resolving.
+                # Seed from the settings modal's own resolved inputs; the
+                # created entry then lands on a pair through pick mode.
                 app_config=settings_modal._app_config,
                 providers_models=settings_modal._providers_models,
                 template_provider=settings_modal._active_provider or None,
-            )
+            ),
+            callback=settings_modal.pick_created_endpoint,
         )
 
     def action_open_console_prompt_insert(self) -> None:
@@ -8465,8 +8468,10 @@ class ChatScreen(BaseAppScreen):
                 marshal_to_ui=lambda fn, *args: self.app.call_from_thread(fn, *args),
                 workspace_root_accessor=self._console_environment_root,
                 rail_open_accessor=(
-                    lambda: self._is_active_console_screen()
-                    and self._is_console_widget_displayed("console-right-rail")
+                    lambda: (
+                        self._is_active_console_screen()
+                        and self._is_console_widget_displayed("console-right-rail")
+                    )
                 ),
                 on_snapshot=self._land_console_environment,
             )
@@ -8526,7 +8531,9 @@ class ChatScreen(BaseAppScreen):
         from datetime import datetime as _datetime
         from datetime import timezone as _timezone
 
-        from tldw_chatbook.Chat.console_environment_state import project_environment_section
+        from tldw_chatbook.Chat.console_environment_state import (
+            project_environment_section,
+        )
 
         return project_environment_section(
             self._console_environment_snapshot(),
@@ -8697,9 +8704,7 @@ class ChatScreen(BaseAppScreen):
         # plus that section's pre-sync rows/summary (M5: skip a no-op
         # sync) and row_id order (M4: the nearest-survivor search below
         # needs the OLD order, not just the OLD row_id).
-        captured: dict[
-            str, tuple[str, tuple[str, ...], tuple[object, ...], str]
-        ] = {}
+        captured: dict[str, tuple[str, tuple[str, ...], tuple[object, ...], str]] = {}
         for section_id, section, _state in sections:
             row_id = self._console_environment_focused_row_in_section(section_id)
             if row_id is not None:
@@ -8768,8 +8773,7 @@ class ChatScreen(BaseAppScreen):
         """
         focused = self.focused
         return (
-            isinstance(focused, ConsoleInspectorSectionRow)
-            and focused.row_id == row_id
+            isinstance(focused, ConsoleInspectorSectionRow) and focused.row_id == row_id
         )
 
     def _request_console_environment_row_focus(
@@ -8909,7 +8913,9 @@ class ChatScreen(BaseAppScreen):
             section, nearest_row_id
         ):
             return
-        self._focus_console_environment_visible_toggle(section)  # I1 (round-2: visible chain)
+        self._focus_console_environment_visible_toggle(
+            section
+        )  # I1 (round-2: visible chain)
 
     def _console_environment_focus_moved_by_user(
         self, origin_section: ConsoleInspectorSection
@@ -9478,7 +9484,9 @@ class ChatScreen(BaseAppScreen):
             fleet_previous_summary = fleet_section.summary
             fleet_section.sync_state(fleet_section_state)
             fleet_section.styles.display = (
-                "block" if fleet_section_state.rows or fleet_section_state.summary else "none"
+                "block"
+                if fleet_section_state.rows or fleet_section_state.summary
+                else "none"
             )
             if fleet_focus_row_id is not None and (
                 tuple(fleet_section_state.rows) != tuple(fleet_previous_rows)
@@ -11471,7 +11479,8 @@ class ChatScreen(BaseAppScreen):
         provider, model, settings = self._active_console_provider_model_display()
         active_session = self._session._active_native_console_session()
         return ConsoleControlState.from_values(
-            provider=provider, app_config=self._provider_readiness_app_config(),
+            provider=provider,
+            app_config=self._provider_readiness_app_config(),
             model=model,
             # The AI side of the conversation: whatever character this session is
             # actually roleplaying, so the chip stops being a constant. The
@@ -11862,9 +11871,15 @@ class ChatScreen(BaseAppScreen):
         with self._console_derivation_scope():
             # TASK-33005.2/.5: a test settled on any surface refreshes once. Read
             # before the build: a switcher probe settles off-thread mid-build.
-            version = getattr(shared_connection_evidence(lambda: self.app), "version", 0)
+            version = getattr(
+                shared_connection_evidence(lambda: self.app), "version", 0
+            )
             _settings, readiness = self._active_console_settings_readiness()
-            snapshot = (subscription_readiness_revision(), readiness.subscription_status, version)
+            snapshot = (
+                subscription_readiness_revision(),
+                readiness.subscription_status,
+                version,
+            )
             if snapshot == self._console_credential_snapshot:
                 return
             self._console_credential_snapshot = snapshot
@@ -12651,10 +12666,14 @@ class ChatScreen(BaseAppScreen):
                 # (2026-08-29 UX audit). Stay mounted so the id keeps
                 # resolving, but paint nothing.
                 blank = Static("", id="console-character-avatar-empty")
-                blank.remove_class(*(name for name in blank.classes if name.startswith("w-")))
+                blank.remove_class(
+                    *(name for name in blank.classes if name.startswith("w-"))
+                )
                 blank.set_styles(width=None)
                 blank.add_class("w-0")
-                blank.remove_class(*(name for name in blank.classes if name.startswith("h-")))
+                blank.remove_class(
+                    *(name for name in blank.classes if name.startswith("h-"))
+                )
                 blank.set_styles(height=None)
                 blank.add_class("h-0")
                 blank.styles.display = "none"
@@ -12664,16 +12683,22 @@ class ChatScreen(BaseAppScreen):
             # an auto container resolves to 0x0 under Textual 8.x -- the
             # placeholder would mount but paint nothing (task-3793).
             placeholder = Static("no avatar", id="console-character-avatar-empty")
-            placeholder.remove_class(*(name for name in placeholder.classes if name.startswith("w-")))
+            placeholder.remove_class(
+                *(name for name in placeholder.classes if name.startswith("w-"))
+            )
             placeholder.set_styles(width=None)
             placeholder.add_class("w-auto")
             return placeholder
         if box == (0, 0):
             hidden = Static("", id="console-character-avatar-image")
-            hidden.remove_class(*(name for name in hidden.classes if name.startswith("w-")))
+            hidden.remove_class(
+                *(name for name in hidden.classes if name.startswith("w-"))
+            )
             hidden.set_styles(width=None)
             hidden.add_class("w-0")
-            hidden.remove_class(*(name for name in hidden.classes if name.startswith("h-")))
+            hidden.remove_class(
+                *(name for name in hidden.classes if name.startswith("h-"))
+            )
             hidden.set_styles(height=None)
             hidden.add_class("h-0")
             hidden.styles.display = "none"
@@ -12705,10 +12730,14 @@ class ChatScreen(BaseAppScreen):
                     box_cols,
                     box_lines,
                 )
-                widget.remove_class(*(name for name in widget.classes if name.startswith("w-")))
+                widget.remove_class(
+                    *(name for name in widget.classes if name.startswith("w-"))
+                )
                 # ds-runtime: The image aspect ratio is fitted to the measured available avatar cell box.
                 widget.set_styles(width=w)
-                widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+                widget.remove_class(
+                    *(name for name in widget.classes if name.startswith("h-"))
+                )
                 # ds-runtime: The fitted image aspect ratio determines its terminal row count.
                 widget.set_styles(height=h)
                 return widget
@@ -12746,15 +12775,23 @@ class ChatScreen(BaseAppScreen):
             # which is sized for the box anyway.
             grid_size = explicit_cell_size(pixels)
             if grid_size is not None:
-                widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
-                widget.remove_class(*(name for name in widget.classes if name.startswith("w-")))
+                widget.remove_class(
+                    *(name for name in widget.classes if name.startswith("h-"))
+                )
+                widget.remove_class(
+                    *(name for name in widget.classes if name.startswith("w-"))
+                )
                 # ds-runtime: The image aspect ratio is fitted to the measured available avatar cell box.
                 widget.set_styles(width=grid_size[0], height=grid_size[1])
             else:
-                widget.remove_class(*(name for name in widget.classes if name.startswith("w-")))
+                widget.remove_class(
+                    *(name for name in widget.classes if name.startswith("w-"))
+                )
                 # ds-runtime: The image aspect ratio is fitted to the measured available avatar cell box.
                 widget.set_styles(width=box_cols)
-                widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+                widget.remove_class(
+                    *(name for name in widget.classes if name.startswith("h-"))
+                )
                 # ds-runtime: The avatar fallback uses the image-fitted cell box row count.
                 widget.set_styles(height=box_lines)
             widget.styles.max_width = box_cols
@@ -12763,7 +12800,9 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             logger.opt(exception=True).debug("avatar: pixels build failed")
             placeholder = Static("no avatar", id="console-character-avatar-empty")
-            placeholder.remove_class(*(name for name in placeholder.classes if name.startswith("w-")))
+            placeholder.remove_class(
+                *(name for name in placeholder.classes if name.startswith("w-"))
+            )
             placeholder.set_styles(width=None)
             placeholder.add_class("w-auto")
             return placeholder
@@ -13100,7 +13139,9 @@ class ChatScreen(BaseAppScreen):
 
             with operation_owned_connection(db):
                 while True:
-                    rows = db.list_all_active_conversations(limit=page_size, offset=offset)
+                    rows = db.list_all_active_conversations(
+                        limit=page_size, offset=offset
+                    )
                     live.update(str(row["id"]) for row in rows if row.get("id"))
                     if len(rows) < page_size:
                         break
@@ -13871,7 +13912,11 @@ class ChatScreen(BaseAppScreen):
         explicit_right_toggle: bool = True,
     ) -> ConsoleRailState:
         """Persist requested Console rail preference changes and return new state."""
-        if left_open is not None or right_open is not None or "character" in (section_updates or {}):
+        if (
+            left_open is not None
+            or right_open is not None
+            or "character" in (section_updates or {})
+        ):
             self._character_context.return_reveal = False
         workspace_context = self._workspace._current_console_workspace_context()
         workspace_key = build_console_rail_preference_key(
@@ -14164,6 +14209,26 @@ class ChatScreen(BaseAppScreen):
         return source in {"artifacts", "chatbooks"} and ":chatbook:" in target_id
 
     def _console_pending_approval_count(self) -> int:
+        controller = self._console_chat_controller
+        count = getattr(controller, "pending_round_count", None)
+        store = self._console_chat_store
+        if callable(count) and store is not None:
+            registered = count(store.active_session_id or "")
+            if registered:
+                return registered
+            # Legacy unscoped tool rounds can mount without a kind-registry entry.
+            task_approval = self._task_resume_state.pending_approval
+            if not task_approval or (
+                isinstance(task_approval, dict)
+                and task_approval.get("phase") == "finishing"
+            ):
+                return 0
+            if isinstance(task_approval, dict):
+                owner = task_approval.get("session_id")
+                if owner and owner != store.active_session_id:
+                    return 0
+            return 1
+
         explicit_count = getattr(
             self.app_instance, "console_pending_approval_count", None
         )
@@ -14275,7 +14340,16 @@ class ChatScreen(BaseAppScreen):
         run_controller = self._console_chat_controller
         run_state = getattr(run_controller, "run_state", None)
         run_failed = getattr(run_state, "status", None) is ConsoleRunStatus.FAILED
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else ""
+        has_pending = getattr(run_controller, "has_pending_approval_round", None)
+        pending_copy = (
+            console_pending_round_copy_for(run_controller, session_id or "")
+            if callable(has_pending) and has_pending(session_id or "")
+            else ""
+        )
         inspector_state = ConsoleInspectorState.from_values(
+            pending_interrupt_copy=pending_copy,
             live_work_title=pending_launch.title if pending_launch else None,
             run_active=self._console_run_active(),
             run_failed=run_failed,
@@ -14866,7 +14940,9 @@ class ChatScreen(BaseAppScreen):
             id=card_state.container_id,
             classes=card_state.container_classes,
         )
-        container.remove_class(*(name for name in container.classes if name.startswith("h-")))
+        container.remove_class(
+            *(name for name in container.classes if name.startswith("h-"))
+        )
         container.set_styles(height=None)
         container.add_class("h-auto")
         container.styles.min_height = 0
@@ -15016,7 +15092,8 @@ class ChatScreen(BaseAppScreen):
     def _console_provider_blocker_copy(
         self,
         *,
-        settings_readiness: tuple[ConsoleSessionSettings, ConsoleSettingsReadiness] | None = None,
+        settings_readiness: tuple[ConsoleSessionSettings, ConsoleSettingsReadiness]
+        | None = None,
     ) -> str:
         """Return concise Console recovery copy for provider/model setup gaps.
 
@@ -15106,7 +15183,7 @@ class ChatScreen(BaseAppScreen):
             # lifecycle with a second, permanently-blocked gate.
             return ""
         if readiness.recovery_action == "select_model":
-            return "Choose a model in Console Settings before sending."
+            return "Choose a model in Chat settings before sending."
         if readiness.recovery_action == "configure_credential":
             if readiness.subscription_status == "pending":
                 return "Checking Claude subscription credential."
@@ -15114,7 +15191,7 @@ class ChatScreen(BaseAppScreen):
                 return "Log in with Claude Code to refresh the subscription credential."
             return "Add API key in Settings > Providers & Models before sending."
         if readiness.recovery_action == "save_endpoint":
-            return "Save provider endpoint in Conversation settings before sending."
+            return "Save provider endpoint in Chat settings before sending."
         if readiness.recovery_action == "retry_connection":
             return "Provider unreachable. Retry connection before sending."
         return "Finish provider setup before sending."
@@ -15131,7 +15208,8 @@ class ChatScreen(BaseAppScreen):
     def _console_provider_recovery_action(
         self,
         *,
-        settings_readiness: tuple[ConsoleSessionSettings, ConsoleSettingsReadiness] | None = None,
+        settings_readiness: tuple[ConsoleSessionSettings, ConsoleSettingsReadiness]
+        | None = None,
     ) -> tuple[str, str, str]:
         """Return the label, target, and tooltip for Console provider recovery."""
         _settings, readiness = (
@@ -15143,14 +15221,18 @@ class ChatScreen(BaseAppScreen):
             return ("Open Settings", "hidden", "Open provider settings")
         presentation = build_console_readiness_presentation(readiness)
         label = presentation.action_label
-        if readiness.recovery_action == "configure_credential" and readiness.subscription_status is None:
+        if (
+            readiness.recovery_action == "configure_credential"
+            and readiness.subscription_status is None
+        ):
             label = CONSOLE_PROVIDER_CONFIGURE_API_KEY_LABEL
         return label, presentation.action_target, presentation.action_tooltip
 
     def _build_console_setup_card_state(
         self,
         *,
-        settings_readiness: tuple[ConsoleSessionSettings, ConsoleSettingsReadiness] | None = None,
+        settings_readiness: tuple[ConsoleSessionSettings, ConsoleSettingsReadiness]
+        | None = None,
     ) -> ConsoleSetupCardState:
         """Build the empty-transcript onboarding state from current readiness."""
         settings, readiness = (
@@ -15208,14 +15290,18 @@ class ChatScreen(BaseAppScreen):
         if should_show:
             row_count = copy.count("\n") + 1
             widget.styles.display = "block"
-            widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+            widget.remove_class(
+                *(name for name in widget.classes if name.startswith("h-"))
+            )
             # ds-runtime: Recovery copy line count determines its visible row count.
             widget.set_styles(height=row_count)
             widget.styles.min_height = row_count
             widget.styles.max_height = row_count
         else:
             widget.styles.display = "none"
-            widget.remove_class(*(name for name in widget.classes if name.startswith("h-")))
+            widget.remove_class(
+                *(name for name in widget.classes if name.startswith("h-"))
+            )
             widget.set_styles(height=None)
             widget.add_class("h-0")
             widget.styles.min_height = 0
@@ -15232,7 +15318,9 @@ class ChatScreen(BaseAppScreen):
             settings_readiness=settings_readiness
         )
         action_label, _action_target, action_tooltip = (
-            self._console_provider_recovery_action(settings_readiness=settings_readiness)
+            self._console_provider_recovery_action(
+                settings_readiness=settings_readiness
+            )
         )
         if blocker_copy:
             empty_action_label, empty_action_tooltip = (
@@ -15284,7 +15372,9 @@ class ChatScreen(BaseAppScreen):
         # TASK-2154.10 (AC-04): vestibular-accessible static backdrop when the
         # user opts into reduced motion; refreshed with every guidance sync.
         modal.reduced_motion = bool(
-            self.app_instance.app_config.get("appearance", {}).get("reduce_motion", False)
+            self.app_instance.app_config.get("appearance", {}).get(
+                "reduce_motion", False
+            )
         )
         modal.sync_card_state(
             card_state,
@@ -15694,7 +15784,9 @@ class ChatScreen(BaseAppScreen):
             id="console-library-search-region",
             classes="console-inspector-context-section",
         )
-        container.remove_class(*(name for name in container.classes if name.startswith("h-")))
+        container.remove_class(
+            *(name for name in container.classes if name.startswith("h-"))
+        )
         container.set_styles(height=None)
         container.add_class("h-auto")
         container.styles.min_height = 0
@@ -15746,7 +15838,9 @@ class ChatScreen(BaseAppScreen):
             id=readiness.container_id,
             classes=readiness.container_classes,
         )
-        container.remove_class(*(name for name in container.classes if name.startswith("h-")))
+        container.remove_class(
+            *(name for name in container.classes if name.startswith("h-"))
+        )
         container.set_styles(height=None)
         container.add_class("h-auto")
         container.styles.min_height = 0
@@ -16025,6 +16119,55 @@ class ChatScreen(BaseAppScreen):
             # failure here (worst case a claim supersedes the result).
             return False
 
+    async def _dispatch_console_trace_recovery(
+        self, action: str, preparation_id: str
+    ) -> object:
+        """Route a pre-dispatch card action; a cancelled hold refills the composer."""
+
+        controller = self._ensure_console_chat_controller()
+        held = controller.trace_call_recovery_preparation()
+        # TASK-34350: read the held text BEFORE the action: the UI sync that
+        # follows it mirrors the (empty) composer back into the session draft.
+        held_text = (
+            held.executed_draft
+            if held is not None
+            and held.preparation_id == preparation_id
+            and controller.context_compaction_hold(preparation_id) is not None
+            else ""
+        )
+        result = await dispatch_trace_call_recovery_action(
+            controller,
+            action,
+            preparation_id,
+            on_started=self._start_console_transcript_sync_timer,
+            on_finished=self._sync_native_console_chat_ui,
+        )
+        composer = self._console_composer_or_none()
+        if (
+            action == "cancel"
+            and held_text
+            and controller.context_compaction_hold(preparation_id) is None
+            and composer is not None
+            and not composer.draft_text().strip()
+        ):
+            # Cancel puts the held message back where it came from.
+            composer.load_draft(held_text)
+        return result
+
+    def _console_trace_recovery_state(self) -> Any:
+        """Project the active pre-dispatch pause, with a context hold's numbers."""
+
+        controller = self._ensure_console_chat_controller()
+        preparation = controller.trace_call_recovery_preparation()
+        return trace_call_recovery_state(
+            preparation,
+            context_hold=(
+                controller.context_compaction_hold(preparation.preparation_id)
+                if preparation is not None
+                else None
+            ),
+        )
+
     def _build_console_center(self) -> Widget:
         """Build the current center without changing any surrounding shell chrome."""
         if self._console_terminal_open:
@@ -16051,17 +16194,8 @@ class ChatScreen(BaseAppScreen):
                     )
                 )
             ),
-            trace_recovery_state_builder=(
-                lambda: trace_call_recovery_state(
-                    self._ensure_console_chat_controller().trace_call_recovery_preparation()
-                )
-            ),
-            on_trace_recovery_action=partial(
-                dispatch_trace_call_recovery_action,
-                self._ensure_console_chat_controller(),
-                on_started=self._start_console_transcript_sync_timer,
-                on_finished=self._sync_native_console_chat_ui,
-            ),
+            trace_recovery_state_builder=self._console_trace_recovery_state,
+            on_trace_recovery_action=self._dispatch_console_trace_recovery,
         )
 
     def _open_console_prompt_queue(self, session_id: str, revision: int) -> Any:
@@ -16198,7 +16332,9 @@ class ChatScreen(BaseAppScreen):
                 left_handle_width = (
                     ConsoleRailHandle.VERTICAL_WIDTH if stack_rail_labels else 13
                 )
-                left_handle.remove_class(*(name for name in left_handle.classes if name.startswith("w-")))
+                left_handle.remove_class(
+                    *(name for name in left_handle.classes if name.startswith("w-"))
+                )
                 left_handle.set_styles(width=None)
                 left_handle.add_class("w-3" if stack_rail_labels else "w-13")
                 left_handle.styles.min_width = left_handle_width
@@ -16324,7 +16460,9 @@ class ChatScreen(BaseAppScreen):
                     ),
                     open_agent_progress=lambda: self._agent.open_fleet_progress(),
                     agent_progress_state=lambda: self._agent.progress_state(),
-                    refresh_progress_navigation=lambda: self._sync_console_workspace_context(),
+                    refresh_progress_navigation=lambda: (
+                        self._sync_console_workspace_context()
+                    ),
                     show_character_section=show_character_avatar,
                     character_context_controller=self._character_context,
                     character_avatar_widget_builder=character_avatar_widget_builder,
@@ -16349,7 +16487,9 @@ class ChatScreen(BaseAppScreen):
                     default_durability_state=(self._console_default_durability_state()),
                 )
                 left_rail.can_focus = True
-                left_rail.remove_class(*(name for name in left_rail.classes if name.startswith("w-")))
+                left_rail.remove_class(
+                    *(name for name in left_rail.classes if name.startswith("w-"))
+                )
                 left_rail.set_styles(width=None)
                 left_rail.add_class("w-3fr")
                 # TASK-19639 (formerly TASK-18913) compact contract: at exactly 100 columns the
@@ -16373,7 +16513,9 @@ class ChatScreen(BaseAppScreen):
                 # sizing stays here because it describes this pane among its
                 # rail siblings (3fr / 13fr / 4fr).
                 main_column = self._build_console_center()
-                main_column.remove_class(*(name for name in main_column.classes if name.startswith("w-")))
+                main_column.remove_class(
+                    *(name for name in main_column.classes if name.startswith("w-"))
+                )
                 main_column.set_styles(width=None)
                 main_column.add_class("w-13fr")
                 # TASK-2154.1 (LY-09): below 84 the handles hide and the main
@@ -16464,7 +16606,9 @@ class ChatScreen(BaseAppScreen):
                     agent_fleet_section_state=agent_fleet_section_state,
                 )
                 right_rail.can_focus = True
-                right_rail.remove_class(*(name for name in right_rail.classes if name.startswith("w-")))
+                right_rail.remove_class(
+                    *(name for name in right_rail.classes if name.startswith("w-"))
+                )
                 right_rail.set_styles(width=None)
                 right_rail.add_class("w-4fr")
                 right_rail.styles.min_width = 34
@@ -16484,7 +16628,9 @@ class ChatScreen(BaseAppScreen):
                 right_handle_width = (
                     ConsoleRailHandle.VERTICAL_WIDTH if stack_rail_labels else 11
                 )
-                right_handle.remove_class(*(name for name in right_handle.classes if name.startswith("w-")))
+                right_handle.remove_class(
+                    *(name for name in right_handle.classes if name.startswith("w-"))
+                )
                 right_handle.set_styles(width=None)
                 right_handle.add_class("w-3" if stack_rail_labels else "w-11")
                 right_handle.styles.min_width = right_handle_width
@@ -16765,28 +16911,46 @@ class ChatScreen(BaseAppScreen):
                 ),
             )
         if self._resume_navigation_startup_in_progress:
-            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._start_resume_navigation_startup)
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self._start_resume_navigation_startup,
+            )
         else:
-            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_chat_handoff)
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_chat_handoff
+            )
             self.set_timer(
                 self.CONSUMER_SETTLE_HEDGE_SECONDS,
                 self._consume_pending_conversation_resume,
             )
-            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_console_roleplay_repair)
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self._consume_pending_console_roleplay_repair,
+            )
             # Mirrors the handoff timer above: the native composer is not
             # guaranteed to exist in the DOM yet at this exact point (it can
             # still be settling in immediately after mount, same reason every
             # composer-touching test here awaits `_wait_for_selector` first) --
             # a failed early attempt releases its claim for this screen's
             # existing resume/user-triggered retry paths.
-            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_console_prompt_insert)
-            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_conversation_settings_return)
-            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS, self.consume_pending_vllm_console_intent)
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self._consume_pending_console_prompt_insert,
+            )
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self._consume_pending_conversation_settings_return,
+            )
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self.consume_pending_vllm_console_intent,
+            )
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
             # link (staged while Console was not mounted) and switch to the
             # settled conversation's session. Same 0.15s settle hedge as the
             # surrounding handoff timers.
-            self.set_timer(self.CONSUMER_SETTLE_HEDGE_SECONDS,
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
                 self._fleet.consume_pending_console_fleet_completion,
             )
         if self._pending_character_return_focus_id is not None:
@@ -16860,9 +17024,13 @@ class ChatScreen(BaseAppScreen):
             if inspect.isawaitable(fleet_result):
                 await fleet_result
             if typed_target is not None:
-                opened = await self._workspace.open_character_navigation_target(typed_target)
+                opened = await self._workspace.open_character_navigation_target(
+                    typed_target
+                )
             else:
-                opened = await self._workspace.open_console_workspace_conversation(target)
+                opened = await self._workspace.open_console_workspace_conversation(
+                    target
+                )
         finally:
             self._resume_navigation_startup_in_progress = False
         await self._consume_pending_conversation_resume()
@@ -16950,8 +17118,7 @@ class ChatScreen(BaseAppScreen):
             checker = getattr(screen, "has_unsaved_edit", None)
             if callable(checker) and checker():
                 self.notify(
-                    "Unsaved queue edit -- save or cancel it before "
-                    "leaving Console.",
+                    "Unsaved queue edit -- save or cancel it before leaving Console.",
                     severity="warning",
                 )
                 return False
@@ -17452,9 +17619,12 @@ class ChatScreen(BaseAppScreen):
     async def _consume_pending_conversation_resume(self) -> None:
         """Consume recovery only while Console owns the visible screen."""
         handoffs = self.app_instance.pending_handoffs
-        if self.app.screen is not self or not handoffs.has_pending(HandoffChannel.CONSOLE_CONVERSATION_RESUME):
+        if self.app.screen is not self or not handoffs.has_pending(
+            HandoffChannel.CONSOLE_CONVERSATION_RESUME
+        ):
             return
         from ..Console_Modules.archive import consume_conversation_resume
+
         await consume_conversation_resume(self)
 
     @on(Button.Pressed, "#console-archive-chat")
@@ -18094,9 +18264,7 @@ class ChatScreen(BaseAppScreen):
                         (
                             getattr(variant, "id", None),
                             getattr(variant, "content", ""),
-                            _thinking_signature(
-                                getattr(variant, "thinking", None)
-                            ),
+                            _thinking_signature(getattr(variant, "thinking", None)),
                         )
                         for variant in (getattr(variants, "variants", None) or ())
                     ),
@@ -18458,21 +18626,8 @@ class ChatScreen(BaseAppScreen):
             return rule_status(rule_state)
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
             return rule_status(rule_state) if rule_state is not None else ""
-        # `has_pending_approval_round` reads the controller's round
-        # registry, which `run_round` (console_interrupt_rounds.py) feeds
-        # for ALL FIVE interrupt-round kinds -- approval, skill_install,
-        # skill_script, worktree_merge, and question -- not just MCP
-        # approvals. `_console_pending_approval_count` / `ConsoleInspector
-        # State.pending_approval_count` (console_display_state.py) instead
-        # count the viewed session's mounted APPROVAL card only.
-        #
-        # Qodo #4 (the rider this comment used to describe, now done): that
-        # generic predicate answers "is anything waiting" -- right for the
-        # gate above, wrong for the copy -- so a question card used to
-        # render "Waiting for your approval" while the inspector correctly
-        # showed zero pending approvals. The KIND now picks the sentence;
-        # an approval among the outstanding rounds still wins, which is
-        # what keeps this and the inspector's count agreeing.
+        # Every interrupt kind owns its waiting copy; approval takes priority.
+        # The Inspector counts approval rounds from the same session registry.
         if controller.has_pending_approval_round(session_id or ""):
             return f"{console_pending_round_copy_for(controller, session_id or '')}."
         return run_state.visible_copy or run_state.status.value
@@ -18779,7 +18934,8 @@ class ChatScreen(BaseAppScreen):
             controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
             or controller.in_flight_run_count() > 0
             or self._console_runtime().has_custodied_turns()
-            or wake_delivering or review_pending
+            or wake_delivering
+            or review_pending
         )
 
     def _start_console_transcript_sync_timer(self) -> None:
@@ -20827,14 +20983,14 @@ class ChatScreen(BaseAppScreen):
         ``handle_console_inspector_review_approval`` verbatim so a third
         (or fourth) caller cannot drift from it.
 
-        Qodo #5: that ``◆`` marker is worn for ALL FIVE interrupt-round
-        kinds (``console_interrupt_rounds.KIND_SETTER_ATTRS``), but this
+        Qodo #5: that ``◆`` marker is worn for every interrupt-round kind,
+        including standalone chat creation, but this
         knew only approvals and questions -- a pending skill-install or
         skill-script confirm reached the "no approval" warning instead of
         its own mounted card. The scan now walks every decision card in the
         same kind precedence the copy uses (approval first, then question,
-        then the confirmations), so it cannot disagree with what the run
-        chip is telling the user is waiting.
+        then the confirmations). Queued approvals still contribute to the
+        waiting copy and count, while focus reaches the card on screen.
 
         Args:
             notify_missing: Whether to warn when nothing is focusable. The
@@ -20845,23 +21001,13 @@ class ChatScreen(BaseAppScreen):
         Returns:
             Whether a card was found and focused.
         """
-        if self._console_pending_approval_count() > 0:
-            card = self._first_displayed_console_decision_card(
-                "#chat-approval-card"
-            )
+        # Registered approvals can be queued behind a visible confirmation.
+        # Route to painted cards in priority order, independently of that count.
+        for selector in CONSOLE_DECISION_CARD_SELECTORS:
+            card = self._first_displayed_console_decision_card(selector)
             if card is not None:
                 self._focus_console_decision_card(card)
                 return True
-        else:
-            # PRD A4: this focus action is how keyboard-only users reach a
-            # question card that deliberately never steals focus -- and,
-            # since Qodo #5, the skill/merge confirms that never had a
-            # route at all.
-            for selector in CONSOLE_DECISION_CARD_SELECTORS:
-                card = self._first_displayed_console_decision_card(selector)
-                if card is not None:
-                    self._focus_console_decision_card(card)
-                    return True
         if notify_missing:
             self.app_instance.notify(
                 CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning"
@@ -20881,7 +21027,7 @@ class ChatScreen(BaseAppScreen):
         `ChatApprovalCard` owns `focus_first_decision` (``set_batch``, the
         card's sole production entry point, is the only body it ever
         renders, so a displayed card's action is always its "Submit"
-        button). The other four kinds have no such method, so their first
+        button). The other cards have no such method, so their first
         interactive control is focused directly -- Buttons included, which
         is what a confirm card's Approve/Deny pair is made of.
         """
@@ -21011,11 +21157,7 @@ class ChatScreen(BaseAppScreen):
                 raise RuntimeError("Canvas repair target is unavailable")
             repair_text = repair
         composer = self._console_composer_or_none()
-        if (
-            session_id is None
-            or composer is None
-            or not isinstance(repair_text, str)
-        ):
+        if session_id is None or composer is None or not isinstance(repair_text, str):
             raise RuntimeError("Canvas repair composer is unavailable")
         composer.load_draft(repair_text)
         store.set_session_draft(session_id, repair_text)
@@ -21056,14 +21198,20 @@ class ChatScreen(BaseAppScreen):
             current = self._console_composer_or_none()
             current_store = self._ensure_console_chat_store()
             live_session = next(
-                (item for item in current_store.sessions() if item.id == target.session_id),
+                (
+                    item
+                    for item in current_store.sessions()
+                    if item.id == target.session_id
+                ),
                 None,
             )
             live_ids = tuple(
                 (message.persisted_message_id or message.id)
                 for message in (
                     current_store.get_message(native_id)
-                    for native_id in current_store.active_path_message_ids(target.session_id)
+                    for native_id in current_store.active_path_message_ids(
+                        target.session_id
+                    )
                 )
             )
             if (
@@ -21260,7 +21408,9 @@ class ChatScreen(BaseAppScreen):
         served_client = getattr(self.app_instance, "served_canvas_control", None)
         served_handler = getattr(self.app_instance, "served_canvas_handler", None)
         served_available = served_client is not None and served_handler is not None
-        browser_id = served_client.child_id if served_available else f"browser-{session_id}"
+        browser_id = (
+            served_client.child_id if served_available else f"browser-{session_id}"
+        )
         scope = authority.gateway_scope(
             session_id=session_id,
             browser_session_id=browser_id,
@@ -21622,7 +21772,9 @@ class ChatScreen(BaseAppScreen):
             self._console_control_bar_replay_whole_sync = False
             self._console_sync_requested = False
             self.run_worker(
-                self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
+                self._sync_native_console_chat_ui(),
+                exclusive=True,
+                group="console-sync",
             )
         else:
             self._sync_console_control_bar()
@@ -22351,6 +22503,8 @@ class ChatScreen(BaseAppScreen):
             return
         compact = event.size.height < CONSOLE_COMPACT_HEIGHT_ROWS
         shell.set_class(compact, "-console-compact")
+        for card in self.query(ChatApprovalCard):
+            card._sync_control_layout()
         self._request_console_context_allocation_reconcile()
 
     @on(Resize)
@@ -23512,7 +23666,9 @@ class ChatScreen(BaseAppScreen):
         if runtime.view is self and runtime._attached_generation == generation:
             controller = self._console_chat_controller
             if controller is not None and controller.store.active_session_id:
-                controller.set_answerable_decision(controller.store.active_session_id, None)
+                controller.set_answerable_decision(
+                    controller.store.active_session_id, None
+                )
             runtime._pause_project_instruction_generation(generation)
             runtime._reconciled_view = None
             self._console_attach_reconciled = False
@@ -23607,7 +23763,8 @@ class ChatScreen(BaseAppScreen):
         runtime = self._console_runtime()
         if (
             runtime.view is self
-            and runtime._attached_generation == self._console_runtime_attachment_generation
+            and runtime._attached_generation
+            == self._console_runtime_attachment_generation
             and runtime.has_answerable_view()
         ):
             runtime._rearm_delivery_ui_hook()
@@ -24138,6 +24295,7 @@ class ChatScreen(BaseAppScreen):
                 ),
             )
         )
+
     def _park_console_approval(self, session_id: str) -> None:
         """PA-T9 (parked background approvals): badge a NON-viewed session's
         pending approval round without mounting the (singleton) approval
@@ -25164,9 +25322,7 @@ class ChatScreen(BaseAppScreen):
                 # than warning "No approval is pending" at someone who just
                 # clicked a tab; activating the session (above) already did
                 # the normal thing for a non-viewed one.
-                if not self._route_console_pending_approval_focus(
-                    notify_missing=False
-                ):
+                if not self._route_console_pending_approval_focus(notify_missing=False):
                     if was_active:
                         await self._session._handle_console_session_tab_press(
                             session_id

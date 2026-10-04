@@ -326,9 +326,7 @@ class LibraryRagToolProvider(_BuiltinLibraryAuthorityIssuer):
             return self._refuse({}, "arguments must be a JSON object")
         unknown = sorted(set(args) - _ARGUMENT_KEYS)
         if unknown:
-            return self._refuse(
-                args, f"unsupported argument(s): {', '.join(unknown)}"
-            )
+            return self._refuse(args, f"unsupported argument(s): {', '.join(unknown)}")
 
         query = args.get("query")
         if not isinstance(query, str) or not query.strip():
@@ -343,9 +341,7 @@ class LibraryRagToolProvider(_BuiltinLibraryAuthorityIssuer):
         if isinstance(top_k, bool) or not isinstance(top_k, int):
             return self._refuse(args, "top_k must be an integer")
         if not 1 <= top_k <= _MAX_TOP_K:
-            return self._refuse(
-                args, f"top_k must be between 1 and {_MAX_TOP_K}"
-            )
+            return self._refuse(args, f"top_k must be between 1 and {_MAX_TOP_K}")
 
         source_types = args.get("source_types")
         if source_types is None:
@@ -373,9 +369,7 @@ class LibraryRagToolProvider(_BuiltinLibraryAuthorityIssuer):
             return outcome
         return self._success_result(outcome, query, selected)
 
-    def _run_search(
-        self, query: str, source_types: tuple[str, ...], top_k: int
-    ) -> Any:
+    def _run_search(self, query: str, source_types: tuple[str, ...], top_k: int) -> Any:
         """Run the retrieval request; map setup/retrieval failures to a result."""
         search = getattr(self._rag_service, "search", None)
         if not callable(search):
@@ -519,7 +513,9 @@ class LibraryRagToolProvider(_BuiltinLibraryAuthorityIssuer):
         score = getattr(row, "score", None)
         snippet = str(getattr(row, "snippet", "") or "")
         projected = {
-            "result_id": str(getattr(row, "result_id", "") or "")[:_MAX_RESULT_ID_CHARS],
+            "result_id": str(getattr(row, "result_id", "") or "")[
+                :_MAX_RESULT_ID_CHARS
+            ],
             "title": str(getattr(row, "title", "") or "")[:_MAX_TITLE_CHARS],
             "snippet": snippet[:_MAX_SNIPPET_CHARS],
             "score": score if isinstance(score, (int, float)) else None,

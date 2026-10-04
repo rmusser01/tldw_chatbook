@@ -108,6 +108,7 @@ def _switcher_icon_prefix(entry: ConsoleSwitcherActiveResult) -> str:
         return f"[{color}]{escaped}[/] "
     return f"{escaped} "
 
+
 SEARCH_DEBOUNCE_SECONDS = 0.2
 ACTIVE_PROJECTION_POLL_SECONDS = 0.2
 RESULT_DISAPPEARED_COPY = (
@@ -487,18 +488,26 @@ class ConsoleSessionSwitcherModal(
         self._compact_layout = viewport_height <= 20 or viewport_width <= 52
         modal.styles.max_height = min(35, viewport_height)
         if self._compact_layout:
-            modal.remove_class(*(name for name in modal.classes if name.startswith("w-")))
+            modal.remove_class(
+                *(name for name in modal.classes if name.startswith("w-"))
+            )
             # ds-runtime: Measured terminal viewport and visible result-row count bound the modal geometry.
             modal.set_styles(width=min(52, viewport_width))
-            modal.remove_class(*(name for name in modal.classes if name.startswith("h-")))
+            modal.remove_class(
+                *(name for name in modal.classes if name.startswith("h-"))
+            )
             # ds-runtime: Measured terminal viewport and visible result-row count bound the modal geometry.
             modal.set_styles(height=viewport_height)
-            results.remove_class(*(name for name in results.classes if name.startswith("h-")))
+            results.remove_class(
+                *(name for name in results.classes if name.startswith("h-"))
+            )
             # ds-runtime: Measured terminal viewport and visible result-row count bound the modal geometry.
             results.set_styles(height=max(2, viewport_height - chrome_rows))
             results.styles.max_height = max(2, viewport_height - chrome_rows)
         else:
-            modal.remove_class(*(name for name in modal.classes if name.startswith("w-")))
+            modal.remove_class(
+                *(name for name in modal.classes if name.startswith("w-"))
+            )
             # ds-runtime: Measured terminal viewport and visible result-row count bound the modal geometry.
             modal.set_styles(width=min(76, viewport_width))
             section_count = len(
@@ -507,13 +516,17 @@ class ConsoleSessionSwitcherModal(
             result_rows = min(22, (2 * len(self._entries)) + section_count)
             estimated_rows = chrome_rows + result_rows
             modal_height = min(35, viewport_height, max(14, estimated_rows))
-            modal.remove_class(*(name for name in modal.classes if name.startswith("h-")))
+            modal.remove_class(
+                *(name for name in modal.classes if name.startswith("h-"))
+            )
             # ds-runtime: Measured terminal viewport and visible result-row count bound the modal geometry.
             modal.set_styles(height=modal_height)
             visible_result_rows = max(
                 2, min(22, result_rows, modal_height - chrome_rows)
             )
-            results.remove_class(*(name for name in results.classes if name.startswith("h-")))
+            results.remove_class(
+                *(name for name in results.classes if name.startswith("h-"))
+            )
             # ds-runtime: Measured terminal viewport and visible result-row count bound the modal geometry.
             results.set_styles(height=visible_result_rows)
             results.styles.max_height = visible_result_rows
@@ -1972,7 +1985,9 @@ class ConsoleSessionSwitcherModal(
         )
         for control in (active, history, character):
             control.disabled = self._activation_in_flight
-        for control in self.query("#console-switcher-full-search, #console-switcher-archive"):
+        for control in self.query(
+            "#console-switcher-full-search, #console-switcher-archive"
+        ):
             control.disabled = self._activation_in_flight
 
     def _update_page_controls(
@@ -2361,7 +2376,9 @@ class ConsoleSessionSwitcherModal(
             self._sync_candidate_labels()
             self._request_generation += 1
             self._cancel_query_debounce()
-            self.dismiss_safe_once(None)
+            # Covered (Ctrl+Q's quit-anyway question), the close is kept for
+            # when this modal is on top again (TASK-33622.15).
+            self.dismiss_safe_once_when_on_top(None)
             return
         if result.kind is ConsoleActivationResultKind.CANCELLED_PRECOMMIT:
             self._activation_phase = ConsoleActivationPhase.IDLE
@@ -2515,7 +2532,7 @@ class ConsoleSessionSwitcherModal(
         if not visit_is_current():
             return
         if accepted:
-            self.dismiss_safe_once(None)
+            self.dismiss_safe_once_when_on_top(None)  # kept while covered
             return
         self.query_one("#console-switcher-recovery", Button).disabled = False
         self._show_activation_failure(ConsoleActivationResultKind.CHARACTER_UNAVAILABLE)
@@ -2533,6 +2550,20 @@ class ConsoleSessionSwitcherModal(
         self._request_generation += 1
         self._cancel_query_debounce()
         self.dismiss_safe_once(None)
+
+    async def confirm_quit(self) -> bool:
+        """Stay while a chat opening commits, as Escape does (TASK-33622.15).
+
+        Before the commit, quitting is fine: Escape cancels that opening too.
+
+        Returns:
+            refuse_quit_while_working's answer while committing; else True.
+        """
+        if self._activation_phase is not ConsoleActivationPhase.COMMITTING:
+            return True
+        from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
+
+        return await refuse_quit_while_working(self, "The chat is still being opened.")
 
     @on(Button.Pressed, "#console-switcher-cancel")
     async def _cancel(self, event: Button.Pressed) -> None:

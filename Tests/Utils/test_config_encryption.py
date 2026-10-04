@@ -514,13 +514,13 @@ class TestDetectApiKeysRealProviderNames:
 
     def test_detects_tts_fallback_key_family(self, encryptor):
         fallback_key_names = [
-            key
-            for key in DEFAULT_APP_TTS_CONFIG
-            if "api_key" in key.lower()
+            key for key in DEFAULT_APP_TTS_CONFIG if "api_key" in key.lower()
         ]
         assert fallback_key_names, "expected the *_fallback API key family to exist"
         config = {
-            "app_tts": {name: "fallback-plaintext-secret" for name in fallback_key_names}
+            "app_tts": {
+                name: "fallback-plaintext-secret" for name in fallback_key_names
+            }
         }
         assert encryptor.detect_api_keys(config) is True
 

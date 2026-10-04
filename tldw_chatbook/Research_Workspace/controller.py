@@ -647,9 +647,7 @@ class ResearchWorkspaceController:
             return False
         ordered[index], ordered[target] = ordered[target], ordered[index]
         requested = tuple(ordered)
-        rows = tuple(
-            await port.reorder_sources(capture.context.ref, requested)
-        )
+        rows = tuple(await port.reorder_sources(capture.context.ref, requested))
         self._validate_result_refs(rows, capture.context.ref)
         if tuple(source.source_id for source in rows) != requested:
             raise ValueError("Source reorder did not return the requested exact order")

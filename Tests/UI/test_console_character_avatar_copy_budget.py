@@ -78,9 +78,7 @@ def _streaming_store() -> tuple[ConsoleChatStore, str]:
 
     store = ConsoleChatStore()
     session = store.ensure_session(title="Chat 1")
-    store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="hello"
-    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="hello")
     message = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content=""
     )

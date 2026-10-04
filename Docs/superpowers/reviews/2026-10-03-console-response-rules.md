@@ -2,7 +2,29 @@
 
 ## Scope and authority
 
-Implementation follows the approved [design](../specs/2026-10-03-console-response-rules-design.md), [plan](../plans/2026-10-03-console-response-rules.md) and [ADR-219](../../../backlog/decisions/219-console-learned-response-rules.md). Product base: `74fffc99f99cf47a39c1e67e0011768e57a55587`. Native execution uses one isolated managed worktree. No merge, push or publication is included.
+Implementation follows the approved [design](../specs/2026-10-03-console-response-rules-design.md), [plan](../plans/2026-10-03-console-response-rules.md) and [ADR-219](../../../backlog/decisions/219-console-learned-response-rules.md). Initial product base: `74fffc99f99cf47a39c1e67e0011768e57a55587`. Native execution uses one isolated managed worktree. The subsequent user request authorizes publication as a PR against `dev`; the publication integration below records its current evidence.
+
+## Latest-dev publication evidence, 2026-10-04
+
+The publication branch integrates `origin/dev` at `1b12df2757f901e5c8e7a1e8946ad98f315eb8f9`. Incoming model-picker, Chat Settings, waiting-status and quit behavior are retained. Dev's installed v75-to-v76 notes FTS migration remains intact; response rules move to the unpublished v76-to-v77 migration. Restricted recovery validates exact historical v75/v76 catalogs and installed statements before importing disabled rules. ADR-219 records this integration; no additional architectural decision is introduced.
+
+Fresh targeted runs on the integrated tree:
+
+| Gate | Observed result | Interpretation |
+| --- | --- | --- |
+| The 17 explicitly selected feature files listed below | 232 passed, 3 UI send timeouts in 1071.27s | Three initial-send waits failed before learning; the full combined run is not claimed green. |
+| Migration, exact-schema/recovery/trigger and prompt-history/Save/grammar/suggestions/cost owners, plus the two literal-send UI cases | 222 passed, 2 UI send timeouts, 2 deselected in 281.74s | All selected non-UI cases passed. Both UI waits later passed in the focused final gate. |
+| All four HTTP learn/repair/reopen/exclude cases at 80x24 and 120x35, plus both literal-send command cases | **6 passed in 501.32s** | Fresh passing evidence after correcting test synchronization. |
+| Design-token, component-pattern and generated-bundle governance | 29 passed, 2 failed in 392.15s | Both failed ratchets identify unchanged dev sources; no floor was relaxed. |
+| Scoped static checks | Passed | Ruff E9/F63/F7/F82 on 70 changed Python files; Black on 34 authored files plus changed ranges of three legacy owners; mypy on 12 domain files; final test-file formatting/lint and diff checks. |
+
+The owner invocation selects `Tests/DB/test_response_rules_migration.py`, `Tests/Backup_Recovery/test_response_rules_restore.py`, `test_core_owners.py`, `Tests/ChaChaNotesDB/test_trigger_census.py`, `Tests/Chat/test_prompt_history.py`, `test_console_chat_store_atomic_promotion.py`, `test_console_command_grammar.py`, `test_console_command_suggestions.py`, `test_console_cost_tracker.py`, and the two `Tests/UI/test_console_command_composer.py` cases `test_console_unknown_command_second_unmodified_enter_sends_as_text` and `test_console_collapsed_paste_starting_with_slash_sends_normally`, with `-q -k 'not test_scope_is_directional_revocable_and_cannot_be_copied_or_cross_thread and not test_promotion_persists_sparse_context_policy_inside_the_bundle'`. Complete initial attempts retained those failures: Windows lacks the symlink privilege, and the sparse-context-policy Save assertion reproduces when loading the exact current-dev ConsoleChatStore into a private pytest process after profile bootstrap. This owner-source comparison does not claim a full clean-dev run.
+
+An isolated six-case UI attempt still failed five sends. Polling a domain predicate with `pilot.pause()` awaited the whole mounted UI on every iteration rather than observing the condition promptly. The test now polls with `asyncio.sleep(0.02)` under the same 30-second deadline, then settles the current frame once before the next real click. A sleep-only probe reached exclusion but found its dialog unpainted; the single frame settlement fixed that test synchronization boundary. Both old literal-send tests use the same domain-only polling. All six final cases passed with unchanged behavior assertions and domain deadlines. No product execution, privacy or permission guard changed for this correction.
+
+The two governance failures are `test_dimension_literal_ratchet` (unchanged `_agentic_terminal.tcss`, `_settings_splash_theme.tcss`, `_workflows.tcss`) and `test_python_style_ratchet` (unchanged `Widgets/Library/library_skill_work_pane.py:170`). Their sources were compared directly with current dev. Generated CSS was rebuilt from source. Formatting of the three legacy owners preserved their full Python ASTs.
+
+These runs provide passing witnesses for the targeted feature and selected owner cases across runs, while retaining the failed combined attempts. They do not establish a full repository pass. Private scratch logs under `test-logs/console-response-rules-pr/` are ignored rather than published. TASK-34362 remains In Progress and the PR remains a draft until live provider, visible native-terminal and mixed native/external-hook transport qualification is available. Earlier evidence below records the pre-integration implementation and review; its counts are historical.
 
 ## Recorded evidence
 
@@ -36,7 +58,7 @@ The reviewer declined to grade existing saved-message Undo tombstones, whole tem
 
 The additional prompt-history/temporary-save/deletion/close owner attempt passed 62 cases and failed `Tests/Chat/test_console_chat_store_atomic_promotion.py::test_promotion_persists_sparse_context_policy_inside_the_bundle`. Loading the exact product-base ConsoleChatStore in a private test process reproduced its `postcommit context-policy write` assertion. The existing path and assertion are unchanged; this remains a separate release prerequisite. The fresh focused owner gate passed **62 cases, one deselected, in 57.49 seconds**.
 
-## Final verification commands
+## Pre-integration verification commands
 
 The feature gate was `python -m pytest` with these explicit files and `-q`: `Tests/Chat/test_response_rules_models.py`, `test_response_rules_resolution.py`, `test_response_rules_deterministic.py`, `test_response_rules_store.py`, `test_response_rules_resources.py`, `test_response_rules_evidence.py`, `test_response_rules_semantic.py`, `test_response_rules_builder.py`, `test_response_rules_behavior_cases.py`, `test_response_rule_corrections.py`, `test_response_rules_runtime.py`, `test_response_rules_review_regressions.py`; `Tests/DB/test_response_rules_migration.py`; `Tests/Backup_Recovery/test_response_rules_restore.py`; and `Tests/UI/test_console_response_rules.py`, `test_response_rules_modal.py`, `test_response_rules_end_to_end.py`.
 

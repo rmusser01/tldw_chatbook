@@ -107,6 +107,11 @@ class LibraryIngestJobsDB(BaseDB):
                 conn.execute("PRAGMA journal_mode=WAL")
                 # NORMAL is safe under WAL and avoids an fsync per commit.
                 conn.execute("PRAGMA synchronous=NORMAL")
+                # task-19566 F11: no FKs are declared today, but per-connection
+                # enforcement is off by default -- enable it so the NEXT schema
+                # change that declares one is actually enforced instead of
+                # silently inert.
+                conn.execute("PRAGMA foreign_keys = ON")
                 conn.isolation_level = None
                 _core_access(self)
             except BaseException:

@@ -884,14 +884,14 @@ def test_build_warning_lines_includes_the_install_command():
 
 
 def test_human_size_tb_midrange():
-    assert _human_size(1024 ** 4 * 512) == "512.0 TB"
+    assert _human_size(1024**4 * 512) == "512.0 TB"
 
 
 def test_human_size_pb_boundary():
     # 1024**5 bytes == 1 PB; the original bug reported the value in TB while
     # labeling it PB. After the fix it must read "1.0 PB".
-    assert _human_size(1024 ** 5) == "1.0 PB"
-    assert _human_size(1024 ** 6) == "1024.0 PB"
+    assert _human_size(1024**5) == "1.0 PB"
+    assert _human_size(1024**6) == "1024.0 PB"
 
 
 # --- canvas state pre-flight fields ----------------------------------------
@@ -900,15 +900,15 @@ def test_human_size_pb_boundary():
 def test_canvas_state_preflight_fields_populated_from_parameter():
     preflight = PreflightResult(
         type_groups={"pdf": ["/tmp/a.pdf", "/tmp/b.pdf"]},
-        warnings=[
-            {"feature": "pdf_processing", "label": "PDF", "hint": "missing"}
-        ],
+        warnings=[{"feature": "pdf_processing", "label": "PDF", "hint": "missing"}],
         errors=["Path not found"],
         total_size=2048,
         truncated=False,
         total_files=2,
     )
-    state = build_library_ingest_state((), form=LibraryIngestFormState(), preflight=preflight)
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(), preflight=preflight
+    )
     # (task-2015) With errors present, the breakdown/estimate are suppressed
     # -- an estimate parked under an error is noise. Warnings still render.
     assert state.type_breakdown_line == ""
@@ -953,17 +953,13 @@ def test_canvas_state_preflight_parameter_overrides_form():
         total_files=1,
     )
     form = LibraryIngestFormState(preflight=form_preflight)
-    state = build_library_ingest_state(
-        (), form=form, preflight=param_preflight
-    )
+    state = build_library_ingest_state((), form=form, preflight=param_preflight)
     assert state.type_breakdown_line == "1 PDF document"
 
 
 def test_canvas_state_preflight_checking_parameter_overrides_form():
     form = LibraryIngestFormState(preflight_checking=True)
-    state = build_library_ingest_state(
-        (), form=form, preflight_checking=False
-    )
+    state = build_library_ingest_state((), form=form, preflight_checking=False)
     # Explicit ``False`` parameter wins over form flag.
     assert state.preflight_checking is False
 
@@ -980,7 +976,9 @@ def test_canvas_state_separates_unsupported_files():
         truncated=False,
         total_files=3,
     )
-    state = build_library_ingest_state((), form=LibraryIngestFormState(), preflight=preflight)
+    state = build_library_ingest_state(
+        (), form=LibraryIngestFormState(), preflight=preflight
+    )
     assert state.type_groups == ["pdf", "generic"]
     assert state.type_breakdown_line == "1 PDF document"
     assert state.unsupported_files == ["/tmp/b.xyz", "/tmp/c.abc"]
@@ -1006,8 +1004,20 @@ def test_canvas_state_expanded_type_groups_copied_from_form():
 
 
 def test_recent_jobs_includes_done_and_failed():
-    done = _job(job_id="ingest-job-1", state=IngestJobState.DONE, started_at=1.0, finished_at=2.0, media_id=1)
-    failed = _job(job_id="ingest-job-2", state=IngestJobState.FAILED, started_at=1.0, finished_at=2.0, error="boom")
+    done = _job(
+        job_id="ingest-job-1",
+        state=IngestJobState.DONE,
+        started_at=1.0,
+        finished_at=2.0,
+        media_id=1,
+    )
+    failed = _job(
+        job_id="ingest-job-2",
+        state=IngestJobState.FAILED,
+        started_at=1.0,
+        finished_at=2.0,
+        error="boom",
+    )
     queued = _job(job_id="ingest-job-3", state=IngestJobState.QUEUED)
     state = build_library_ingest_state(
         (done, failed, queued), form=LibraryIngestFormState()
@@ -1106,22 +1116,31 @@ def test_format_ingest_progress_line(progress, state, expected):
 )
 def test_format_ingest_progress_line_omits_invalid_percentages(percent) -> None:
     """Clamping invalid values would turn broken telemetry into false precision."""
-    assert format_ingest_progress_line(
-        {"phase": "extracting", "percent": percent},
-        state=IngestJobState.PARSING,
-    ) == "Extracting"
+    assert (
+        format_ingest_progress_line(
+            {"phase": "extracting", "percent": percent},
+            state=IngestJobState.PARSING,
+        )
+        == "Extracting"
+    )
 
 
 def test_format_ingest_progress_line_does_not_round_incomplete_work_to_100() -> None:
     """A fractional measurement below 100 must not look complete."""
-    assert format_ingest_progress_line(
-        {"phase": "extracting", "percent": 99.5},
-        state=IngestJobState.PARSING,
-    ) == "99% · Extracting"
-    assert format_ingest_progress_line(
-        {"phase": "extracting", "percent": 100.0},
-        state=IngestJobState.PARSING,
-    ) == "100% · Extracting"
+    assert (
+        format_ingest_progress_line(
+            {"phase": "extracting", "percent": 99.5},
+            state=IngestJobState.PARSING,
+        )
+        == "99% · Extracting"
+    )
+    assert (
+        format_ingest_progress_line(
+            {"phase": "extracting", "percent": 100.0},
+            state=IngestJobState.PARSING,
+        )
+        == "100% · Extracting"
+    )
 
 
 def test_format_ingest_progress_line_normalizes_and_bounds_message() -> None:
@@ -1138,10 +1157,13 @@ def test_format_ingest_progress_line_normalizes_and_bounds_message() -> None:
 
 def test_format_ingest_progress_line_omits_enormous_integer_percent() -> None:
     """Converting invalid giant telemetry to float must not crash formatting."""
-    assert format_ingest_progress_line(
-        {"phase": "extracting", "percent": 10**400},
-        state=IngestJobState.PARSING,
-    ) == "Extracting"
+    assert (
+        format_ingest_progress_line(
+            {"phase": "extracting", "percent": 10**400},
+            state=IngestJobState.PARSING,
+        )
+        == "Extracting"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1596,11 +1618,13 @@ def test_the_view_on_server_action_cannot_be_caught_by_the_local_open_handler():
     # Check the id CONSTRUCTIONS, not the raw source: the comment above that
     # button deliberately names the colliding form to explain why it is avoided.
     ids = re.findall(r'id=f"([a-z-]+)\{row\.job_id\}"', source)
-    assert not [i for i in ids if i.startswith("library-ingest-open-") and i != "library-ingest-open-"], (
-        f"an action id shadows the local open prefix: {ids}"
-    )
+    assert not [
+        i
+        for i in ids
+        if i.startswith("library-ingest-open-") and i != "library-ingest-open-"
+    ], f"an action id shadows the local open prefix: {ids}"
     # The class the local handler selects on must not be on the server button.
-    server_button = source[source.index('"View on server"'):]
+    server_button = source[source.index('"View on server"') :]
     server_button = server_button[: server_button.index("compact=True")]
     assert "library-ingest-view-server" in server_button
     assert "library-ingest-open " not in server_button
@@ -1613,8 +1637,7 @@ def test_short_ingest_error_collapses_nested_failed_to_prefixes():
     """(task-2015) Wrapper-on-wrapper copy like the PDF failure chain must
     collapse to a single 'Failed to …' prefix on the queue-row surface."""
     nested = (
-        "Failed to ingest pdf file: Failed to process pdf file: "
-        "PDF Extraction Error."
+        "Failed to ingest pdf file: Failed to process pdf file: PDF Extraction Error."
     )
     assert (
         short_ingest_error(nested)
@@ -1666,9 +1689,7 @@ def test_short_ingest_error_maps_egress_block_under_pipeline_wrappers():
     'Failed to … file:' layers; the mapping keys on the egress marker, not
     on position."""
     wrapped = f"Failed to ingest web file: {_EGRESS_RAW_ERROR}"
-    assert short_ingest_error(wrapped) == short_ingest_error(
-        _EGRESS_RAW_ERROR
-    )
+    assert short_ingest_error(wrapped) == short_ingest_error(_EGRESS_RAW_ERROR)
     assert "http://127.0.0.1:8000" in short_ingest_error(wrapped)
 
 
@@ -1804,8 +1825,7 @@ def test_unwrap_ingest_error_collapses_chain_keeping_tail():
     from tldw_chatbook.Library.library_ingest_state import unwrap_ingest_error
 
     nested = (
-        "Failed to ingest pdf file: Failed to process pdf file: "
-        "PDF Extraction Error."
+        "Failed to ingest pdf file: Failed to process pdf file: PDF Extraction Error."
     )
     assert (
         unwrap_ingest_error(nested)
@@ -1844,9 +1864,9 @@ def test_expanded_details_render_unwrapped_lines_and_retry_hint():
     # (task-14821) ...and no raw internal token either: the reason reads
     # as a sentence, not as the pipeline's own category name.
     assert row.detail_lines[0] == "Reason: The file couldn't be read."
-    assert not any(
-        line.startswith("Details:") for line in row.detail_lines
-    ), "a Details line that repeats the summary is the round-4 P1"
+    assert not any(line.startswith("Details:") for line in row.detail_lines), (
+        "a Details line that repeats the summary is the round-4 P1"
+    )
     # (task-2140) Parse errors get corrupt-file advice, never network talk.
     assert any("repair or re-export" in line for line in row.detail_lines)
     assert not any("network" in line for line in row.detail_lines)
@@ -1879,17 +1899,9 @@ def test_expanded_details_surface_chain_and_name_missing_dependency():
     )
     row = state.queue_rows[0]
     assert "Details: Text extraction failed at page 3." in row.detail_lines
-    assert (
-        "Underlying: ImportError: No module named 'pymupdf'"
-        in row.detail_lines
-    )
-    assert (
-        "Underlying: OSError: cannot open shared object" in row.detail_lines
-    )
-    assert (
-        "Missing dependency: pymupdf. Install it, then Retry."
-        in row.detail_lines
-    )
+    assert "Underlying: ImportError: No module named 'pymupdf'" in row.detail_lines
+    assert "Underlying: OSError: cannot open shared object" in row.detail_lines
+    assert "Missing dependency: pymupdf. Install it, then Retry." in row.detail_lines
 
     collapsed = build_library_ingest_state((job,), form=LibraryIngestFormState())
     assert collapsed.queue_rows[0].details_expanded is False
@@ -1970,9 +1982,7 @@ def test_unsupported_line_names_files_and_matches_gate():
             total_files=2,
         ),
     )
-    assert mixed.unsupported_line == (
-        "1 unsupported file will be skipped: x.json."
-    )
+    assert mixed.unsupported_line == ("1 unsupported file will be skipped: x.json.")
 
     blocked = build_library_ingest_state(
         (),
@@ -2023,8 +2033,7 @@ def test_invalid_option_values_gate_start_with_text_message():
         state.option_errors
     )
     assert state.start_quiet_line == (
-        "Fix the highlighted options to start: "
-        "Chunk size must be a whole number."
+        "Fix the highlighted options to start: Chunk size must be a whole number."
     )
 
     form.type_options["generic"] = {"chunk_size": "0"}
@@ -2090,9 +2099,7 @@ def test_queue_counts_line_shows_in_flight_batch_work():
         _job(job_id="ingest-job-4", state=IngestJobState.QUEUED),
     )
     state = build_library_ingest_state(jobs, form=LibraryIngestFormState())
-    assert state.queue_counts_line == (
-        "This queue: 1 parsing · 2 queued · 1 done"
-    )
+    assert state.queue_counts_line == ("This queue: 1 parsing · 2 queued · 1 done")
 
 
 def test_capped_duplicate_forecast_says_at_least():
@@ -2134,8 +2141,17 @@ def test_trim_time_validation_accepts_ffmpeg_forms_and_rejects_garbage():
     start_field = fields["start_time"]
     end_field = fields["end_time"]
 
-    for good in ("", "  ", "90", "90.5", "0:30", "1:30", "01:02:03",
-                 "1:02:03.5", "10:5"):
+    for good in (
+        "",
+        "  ",
+        "90",
+        "90.5",
+        "0:30",
+        "1:30",
+        "01:02:03",
+        "1:02:03.5",
+        "10:5",
+    ):
         assert validate_ingest_option_value(start_field, good) == "", good
         assert validate_ingest_option_value(end_field, good) == "", good
 
@@ -2221,8 +2237,7 @@ def test_underlying_lines_skip_prefixed_restatements_of_the_row_error():
     )
     row = state.queue_rows[0]
     assert not any(
-        "FileIngestionError: Failed to process" in line
-        for line in row.detail_lines
+        "FileIngestionError: Failed to process" in line for line in row.detail_lines
     ), "prefixed restatement of the row error leaked into the details"
     assert "Underlying: ValueError: startxref not found" in row.detail_lines
 
@@ -2284,9 +2299,7 @@ def test_armed_clear_label_names_failed_rows():
         form=LibraryIngestFormState(),
         clear_finished_armed=True,
     )
-    assert done_only.queue_clear_finished_label == (
-        "Press again to clear 1 finished"
-    )
+    assert done_only.queue_clear_finished_label == ("Press again to clear 1 finished")
 
 
 def test_all_match_selection_gets_consent_line_and_stays_enabled():
@@ -2337,9 +2350,7 @@ def test_skipped_jobs_render_neutral_and_count_separately():
     assert row.can_retry is False
     assert row.can_dismiss is True
     assert state.queue_counts_line == "This queue: 1 done · 1 skipped"
-    assert state.queue_clear_finished_label == (
-        "Press again to clear 2 finished"
-    )
+    assert state.queue_clear_finished_label == ("Press again to clear 2 finished")
     assert [j.job_id for j in state.recent_jobs] == [
         "ingest-job-1",
         "ingest-job-2",
@@ -2365,9 +2376,7 @@ def test_commit_summary_splits_skip_from_fail():
             empty_files=("/tmp/zero.txt",),
         ),
     )
-    assert state.commit_summary_line == (
-        "2 will import · 1 will skip · 1 will fail"
-    )
+    assert state.commit_summary_line == ("2 will import · 1 will skip · 1 will fail")
     assert "will be skipped: pic.srt." in state.unsupported_line
 
 
@@ -2406,9 +2415,7 @@ def test_queue_groups_batches_with_headers_and_latest_line():
         batch_id="local-aaa",
         submitted_at=101.0,
     )
-    state = build_library_ingest_state(
-        (single, b1, b2), form=LibraryIngestFormState()
-    )
+    state = build_library_ingest_state((single, b1, b2), form=LibraryIngestFormState())
     assert len(state.queue_groups) == 2
     bare, headed = state.queue_groups
     assert bare.header_line == ""
@@ -2528,8 +2535,7 @@ def test_unresolvable_path_gates_start_with_an_explanation() -> None:
     )
     assert not state.start_enabled
     assert state.start_quiet_line == (
-        "Can't find that path — check it, or use Browse… to pick a file "
-        "or folder."
+        "Can't find that path — check it, or use Browse… to pick a file or folder."
     )
 
 
@@ -2618,7 +2624,7 @@ def test_active_rows_show_the_attempt_number_after_a_retry() -> None:
 
 
 def test_consent_line_requires_every_importable_file_to_match() -> None:
-    """"Everything here" only renders when it is true.
+    """ "Everything here" only renders when it is true.
 
     (task-2837) The line rendered on a selection where only some files
     were predicted matches.
@@ -2757,7 +2763,9 @@ def _skipped_job(**overrides) -> LibraryIngestJob:
     through the real function closes that gap.
     """
     source_path = overrides.get("source_path", "/tmp/notes.txt")
-    progress = overrides.pop("progress", None) or app_module._library_ingest_done_progress(
+    progress = overrides.pop(
+        "progress", None
+    ) or app_module._library_ingest_done_progress(
         source_path,
         was_duplicate=False,
         payload={"analysis_skipped_reason": "no analysis provider is configured"},
@@ -3049,7 +3057,8 @@ def test_estimate_line_omitted_for_url_sources():
         source_is_url=True,
     )
     state = build_library_ingest_state(
-        (), form=LibraryIngestFormState(path="https://example.com/article"),
+        (),
+        form=LibraryIngestFormState(path="https://example.com/article"),
         preflight=preflight,
     )
     assert state.estimate_line == ""
@@ -3080,9 +3089,7 @@ def test_failed_row_detail_without_basename_echo_passes_through():
         error="PDF Extraction Error.",
     )
     state = build_library_ingest_state((job,), form=LibraryIngestFormState())
-    assert state.queue_rows[0].line == (
-        "✗ failed · broken.pdf · PDF Extraction Error."
-    )
+    assert state.queue_rows[0].line == ("✗ failed · broken.pdf · PDF Extraction Error.")
 
 
 # --- task-3308: .xml defers honestly (owner ruling in task-3310's notes) -----
@@ -3132,9 +3139,7 @@ def test_xml_in_a_mixed_selection_renders_the_will_skip_line():
         form=LibraryIngestFormState(path="/tmp", preflight=preflight),
     )
     assert state.start_enabled is True
-    assert state.unsupported_line == (
-        "1 unsupported file will be skipped: feed.xml."
-    )
+    assert state.unsupported_line == ("1 unsupported file will be skipped: feed.xml.")
     assert "1 will skip" in state.commit_summary_line
 
 
@@ -3146,8 +3151,7 @@ def test_breakdown_line_counts_images_task_3307():
 
     assert build_type_breakdown_line({"image": ["/tmp/a.png"]}) == "1 image"
     assert (
-        build_type_breakdown_line({"image": ["/tmp/a.png", "/tmp/b.jpg"]})
-        == "2 images"
+        build_type_breakdown_line({"image": ["/tmp/a.png", "/tmp/b.jpg"]}) == "2 images"
     )
 
 
@@ -3651,8 +3655,7 @@ def test_server_forecast_line_claims_only_what_it_can_know():
     )
     assert "will fail" not in line, line
     assert line == (
-        "5 will be sent to the server · server tooling isn't checked "
-        "from here"
+        "5 will be sent to the server · server tooling isn't checked from here"
     ), line
 
 
@@ -3693,9 +3696,7 @@ def test_local_mode_state_keeps_the_tooling_failure_forecast():
     """Guard for the same builder path in local mode."""
     state = build_library_ingest_state(
         (),
-        form=LibraryIngestFormState(
-            path="/tmp/podcasts", preflight=_audio_preflight()
-        ),
+        form=LibraryIngestFormState(path="/tmp/podcasts", preflight=_audio_preflight()),
     )
     assert state.ingest_backend == "local"
     assert "5 will fail (need tooling)" in state.commit_summary_line
@@ -3835,8 +3836,7 @@ def test_a_folder_whose_entries_are_all_skipped_is_not_called_empty(tmp_path):
     )
 
     assert "This folder is empty" not in state.start_quiet_line, (
-        f"a folder holding 2 entries was called empty: "
-        f"{state.start_quiet_line!r}"
+        f"a folder holding 2 entries was called empty: {state.start_quiet_line!r}"
     )
     assert "2 entries" in state.start_quiet_line, state.start_quiet_line
     # The gate is honest only because the SUBMIT path walks the folder with
@@ -3871,10 +3871,7 @@ def test_a_transient_pool_teardown_is_not_told_it_will_always_fail():
     unavailable.")`` — a pool-teardown that clears on the next attempt —
     and answered it with "Retrying now will fail the same way — install the
     tooling named above first", naming no tooling anywhere."""
-    message = (
-        "Failed to ingest audio file: The shared local executor is "
-        "unavailable."
-    )
+    message = "Failed to ingest audio file: The shared local executor is unavailable."
     lines = _expanded_detail_lines(
         source_path="/tmp/talk.mp3",
         category="parse_error",
@@ -3947,8 +3944,7 @@ def test_missing_dependency_name_does_not_keep_the_sentence_period():
     tldw_chatbook[pdf]..". Verbatim shape of the real chain captured from
     ``run_parse_job`` on this install."""
     message = (
-        "Failed to ingest pdf file: 'NoneType' object has no attribute "
-        "'FileDataError'"
+        "Failed to ingest pdf file: 'NoneType' object has no attribute 'FileDataError'"
     )
     lines = _expanded_detail_lines(
         source_path="/tmp/doc.pdf",
@@ -4049,9 +4045,7 @@ def test_server_forecast_counts_a_refused_file_as_a_failure_not_a_skip():
     receipt the same way task-14820 existed to stop."""
     from tldw_chatbook.Library.library_ingest_state import build_ingest_forecast
 
-    forecast = build_ingest_forecast(
-        _mixed_server_preflight(), targets_server=True
-    )
+    forecast = build_ingest_forecast(_mixed_server_preflight(), targets_server=True)
     assert forecast is not None
     assert forecast.will_skip == 0, (
         "the server path skips nothing -- every source it cannot map is "
@@ -4134,9 +4128,9 @@ def test_server_mode_names_refused_files_as_failing_not_skipped():
     )
     assert state.ingest_backend == "server"
     assert "skipped" not in state.unsupported_line, state.unsupported_line
-    assert state.unsupported_line == (
-        "1 unsupported file will fail: weird.xyz."
-    ), state.unsupported_line
+    assert state.unsupported_line == ("1 unsupported file will fail: weird.xyz."), (
+        state.unsupported_line
+    )
 
 
 def test_local_mode_keeps_the_skipped_wording_for_unsupported_files():
@@ -4174,9 +4168,7 @@ def test_local_mode_keeps_the_tooling_wall():
     warning wall and its install command."""
     state = build_library_ingest_state(
         (),
-        form=LibraryIngestFormState(
-            path="/tmp/podcasts", preflight=_audio_preflight()
-        ),
+        form=LibraryIngestFormState(path="/tmp/podcasts", preflight=_audio_preflight()),
     )
     assert state.warning_lines
     assert state.warning_commands == ('pip install -e ".[audio]"',)
@@ -4256,9 +4248,7 @@ def test_the_server_gate_names_the_backend_that_is_refusing():
         "the local gate sentence claims nothing can read these files; they "
         f"import fine on this machine: {line!r}"
     )
-    assert "on this machine" in line, (
-        f"the gate stated no way forward: {line!r}"
-    )
+    assert "on this machine" in line, f"the gate stated no way forward: {line!r}"
 
 
 def test_the_same_selection_is_untouched_in_local_mode():
@@ -4286,9 +4276,9 @@ def test_the_server_gate_counts_come_from_the_forecast():
     state = _server_gate_state(_images_only_preflight(count=7))
 
     assert state.forecast is not None
-    assert f"{state.forecast.will_fail_refused} files" in (
+    assert f"{state.forecast.will_fail_refused} files" in (state.start_quiet_line), (
         state.start_quiet_line
-    ), state.start_quiet_line
+    )
     assert f"{state.forecast.will_fail}" in state.commit_summary_line
 
 
@@ -4413,7 +4403,9 @@ def _failed_row(
 
 def test_identical_failures_group_into_one_row():
     rows = tuple(
-        _failed_row(f"job-{n}", basename=f"note{n}.md", reason="Parse pool could not start")
+        _failed_row(
+            f"job-{n}", basename=f"note{n}.md", reason="Parse pool could not start"
+        )
         for n in range(4)
     )
     groups = group_ingest_queue_rows(rows)
@@ -4570,9 +4562,7 @@ def test_identical_successes_never_collapse():
     assert all(row.reason == "" for row in state.queue_rows)
     groups = group_ingest_queue_rows(state.queue_rows)
     assert len(groups) == 4, [group.line for group in groups]
-    assert [group.line for group in groups] == [
-        row.line for row in state.queue_rows
-    ]
+    assert [group.line for group in groups] == [row.line for row in state.queue_rows]
 
 
 def test_two_batches_with_identical_failures_stay_two_rows():

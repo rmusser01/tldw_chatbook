@@ -290,13 +290,13 @@ async def test_skills_canvas_suppresses_single_page_chrome_and_keeps_the_trust_c
         assert str(pilot.app.query_one("#library-skills-range").renderable) == (
             "1-2 of 2"
         )
-        assert not pilot.app.query(
-            "#library-skills-page"
-        ), "Page 1 of 1 has nowhere to page to"
+        assert not pilot.app.query("#library-skills-page"), (
+            "Page 1 of 1 has nowhere to page to"
+        )
         assert not pilot.app.query("#library-skills-pager-status")
-        assert not pilot.app.query(
-            f"#{LIBRARY_SKILLS_PAGE_PREVIOUS_ID}"
-        ), "no dead Previous/Next"
+        assert not pilot.app.query(f"#{LIBRARY_SKILLS_PAGE_PREVIOUS_ID}"), (
+            "no dead Previous/Next"
+        )
         assert not pilot.app.query(f"#{LIBRARY_SKILLS_PAGE_NEXT_ID}")
 
 
@@ -1335,7 +1335,9 @@ async def test_handle_library_skill_row_vetoed_while_dirty():
     new fetch."""
     veto_notices: list[bool] = []
     fake = SimpleNamespace(
-        _skills_state=SimpleNamespace(selected_skill_name="already-open", view="editor"),
+        _skills_state=SimpleNamespace(
+            selected_skill_name="already-open", view="editor"
+        ),
         _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
         _flush_library_skill_save=AsyncMock(return_value=False),
         # task-449: the veto is no longer silent -- the handler reports it.
@@ -2425,16 +2427,11 @@ async def test_skill_editor_tool_filter_toggles_and_discard_are_genuinely_presse
         assert screen._skills_state.dirty is True
 
         # handle_library_skill_disable_model_toggle
-        disable_model_button = screen.query_one(
-            "#library-skill-disable-model", Button
-        )
+        disable_model_button = screen.query_one("#library-skill-disable-model", Button)
         before = screen._skills_state.editor_state.disable_model_invocation
         disable_model_button.press()
         await pilot.pause()
-        assert (
-            screen._skills_state.editor_state.disable_model_invocation
-            is not before
-        )
+        assert screen._skills_state.editor_state.disable_model_invocation is not before
         assert screen._skills_state.dirty is True
 
         # handle_library_skill_discard: the dirty edit from the two toggles
@@ -3174,7 +3171,12 @@ async def test_approve_failure_discards_stale_review():
         refresh_calls.append(True)
 
     fake = SimpleNamespace(
-        _skills_state=SimpleNamespace(view="editor", active_review={"review_id": "r1"}, selected_skill_name="code-review", detail_generation=3),
+        _skills_state=SimpleNamespace(
+            view="editor",
+            active_review={"review_id": "r1"},
+            selected_skill_name="code-review",
+            detail_generation=3,
+        ),
         _library_skill_detail_request_is_current=(
             lambda *, skill_name, generation: (
                 skill_name == "code-review" and generation == 3
@@ -3243,7 +3245,13 @@ async def test_handle_library_skill_delete_enters_confirm_state():
     worker_calls: list[dict] = []
     sync_calls: list[bool] = []
     fake = SimpleNamespace(
-        _skills_state=SimpleNamespace(view="editor", selected_skill_name="code-review", confirming_delete=False, editor_state=_editor_state(), editor_armed=True),
+        _skills_state=SimpleNamespace(
+            view="editor",
+            selected_skill_name="code-review",
+            confirming_delete=False,
+            editor_state=_editor_state(),
+            editor_armed=True,
+        ),
         _snapshot_library_skill_live_fields=lambda: None,
         _sync_library_skill_lifecycle_actions=lambda: sync_calls.append(True),
         query_one=lambda selector: SimpleNamespace(scroll_visible=lambda: None),
@@ -3261,7 +3269,13 @@ async def test_handle_library_skill_delete_enters_confirm_state():
 async def test_handle_library_skill_delete_confirm_kicks_delete_worker():
     worker_calls: list[dict] = []
     fake = SimpleNamespace(
-        _skills_state=SimpleNamespace(view="editor", selected_skill_name="code-review", confirming_delete=True, mutation_in_flight=False, detail_generation=3),
+        _skills_state=SimpleNamespace(
+            view="editor",
+            selected_skill_name="code-review",
+            confirming_delete=True,
+            mutation_in_flight=False,
+            detail_generation=3,
+        ),
         _delete_library_skill=lambda name: None,
         _run_library_skill_delete=lambda name, generation: None,
         _sync_library_skill_lifecycle_actions=lambda: None,
@@ -3277,7 +3291,12 @@ async def test_handle_library_skill_delete_confirm_kicks_delete_worker():
 async def test_handle_library_skill_delete_cancel_leaves_confirm_state():
     sync_calls: list[bool] = []
     fake = SimpleNamespace(
-        _skills_state=SimpleNamespace(view="editor", confirming_delete=True, scroll_pending=False, editor_armed=True),
+        _skills_state=SimpleNamespace(
+            view="editor",
+            confirming_delete=True,
+            scroll_pending=False,
+            editor_armed=True,
+        ),
         # Cancel now re-snapshots live fields (review finding) so an edit
         # typed during the confirmation survives.
         _snapshot_library_skill_live_fields=lambda: None,
@@ -3727,7 +3746,19 @@ async def test_skills_import_row_renders_folder_browse_button():
 def test_reset_skill_editor_state_preserves_import_receipt():
     """Ordinary editor cleanup cannot dismiss an import receipt."""
     fake = SimpleNamespace(
-        _skills_state=SimpleNamespace(view="editor", detail={}, original_name="", editor_state=None, dirty=True, status="x", conflict=False, active_review=None, confirming_delete=False, scroll_pending=False, editor_armed=True),
+        _skills_state=SimpleNamespace(
+            view="editor",
+            detail={},
+            original_name="",
+            editor_state=None,
+            dirty=True,
+            status="x",
+            conflict=False,
+            active_review=None,
+            confirming_delete=False,
+            scroll_pending=False,
+            editor_armed=True,
+        ),
         _library_skills_import_open=True,
         _library_skills_import_path="/stale",
         _library_skills_import_status="Please enter a file or folder path.",
@@ -3737,10 +3768,7 @@ def test_reset_skill_editor_state_preserves_import_receipt():
     LibraryScreen._reset_library_skill_editor_state(fake)
     assert fake._library_skills_import_open is True
     assert fake._library_skills_import_path == "/stale"
-    assert (
-        fake._library_skills_import_status
-        == "Please enter a file or folder path."
-    )
+    assert fake._library_skills_import_status == "Please enter a file or folder path."
     assert fake._library_skills_import_review_name == "stale-skill"
 
 
@@ -3751,7 +3779,20 @@ def test_reset_skill_editor_state_clears_trust_reset_confirm_flag():
     confirm-gated Reset row could then reappear unprompted in another view.
     Mirrors ``test_reset_skill_editor_state_preserves_import_receipt`` above."""
     fake = SimpleNamespace(
-        _skills_state=SimpleNamespace(view="editor", detail={}, original_name="", editor_state=None, dirty=True, status="x", conflict=False, active_review=None, confirming_delete=False, scroll_pending=False, editor_armed=True, trust_confirming_reset=True),
+        _skills_state=SimpleNamespace(
+            view="editor",
+            detail={},
+            original_name="",
+            editor_state=None,
+            dirty=True,
+            status="x",
+            conflict=False,
+            active_review=None,
+            confirming_delete=False,
+            scroll_pending=False,
+            editor_armed=True,
+            trust_confirming_reset=True,
+        ),
         _library_skills_import_open=False,
         _library_skills_import_path="",
         _library_skills_import_status="",
@@ -3847,7 +3888,14 @@ def test_check_action_gates_skill_editor_keys_to_editor():
     assert LibraryScreen.check_action(fake, "library_skill_save", ()) is False
     fake_editor = _bind_editor_active(
         SimpleNamespace(
-            _skills_state=SimpleNamespace(view="editor", dirty=True, selected_skill_name="demo", conflict=False, confirming_delete=False, mutation_in_flight=False),
+            _skills_state=SimpleNamespace(
+                view="editor",
+                dirty=True,
+                selected_skill_name="demo",
+                conflict=False,
+                confirming_delete=False,
+                mutation_in_flight=False,
+            ),
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
         )
     )
@@ -3867,7 +3915,14 @@ def test_action_library_skill_save_kicks_save_worker():
     worker_calls: list[dict] = []
     fake = _bind_editor_active(
         SimpleNamespace(
-            _skills_state=SimpleNamespace(view="editor", conflict=False, confirming_delete=False, mutation_in_flight=False, dirty=True, selected_skill_name="demo"),
+            _skills_state=SimpleNamespace(
+                view="editor",
+                conflict=False,
+                confirming_delete=False,
+                mutation_in_flight=False,
+                dirty=True,
+                selected_skill_name="demo",
+            ),
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
             _snapshot_library_skill_live_fields=lambda: None,
             _sync_library_skill_lifecycle_actions=lambda: None,
@@ -3929,7 +3984,9 @@ async def test_action_library_skill_back_honors_dirty_guard():
             _library_pending_list_entry_media_return=None,
             _library_list_entry_focus_generation=0,
             _focus_library_list_entry=lambda: None,
-            call_after_refresh=lambda callback, *args: focus_calls.append((callback, args)),
+            call_after_refresh=lambda callback, *args: focus_calls.append(
+                (callback, args)
+            ),
             # ``_arm_library_list_entry_focus`` also arms a settle-window
             # timer (task-2856) -- a real ``set_timer`` needs a widget
             # actually mounted in a running App, which this bare fake
@@ -4037,7 +4094,12 @@ def test_delete_arm_patches_actions_and_scrolls_confirm_copy():
     scrolls: list[bool] = []
     syncs: list[bool] = []
     fake = SimpleNamespace(
-        _skills_state=SimpleNamespace(view="editor", selected_skill_name="x", confirming_delete=False, editor_armed=True),
+        _skills_state=SimpleNamespace(
+            view="editor",
+            selected_skill_name="x",
+            confirming_delete=False,
+            editor_armed=True,
+        ),
         _snapshot_library_skill_live_fields=lambda: None,
         _sync_library_skill_lifecycle_actions=lambda: syncs.append(True),
         query_one=lambda selector: SimpleNamespace(
@@ -4096,7 +4158,9 @@ def test_ctrl_s_does_not_save_during_delete_confirm():
     worker_calls: list[dict] = []
     fake = _bind_editor_active(
         SimpleNamespace(
-            _skills_state=SimpleNamespace(view="editor", conflict=False, confirming_delete=True),
+            _skills_state=SimpleNamespace(
+                view="editor", conflict=False, confirming_delete=True
+            ),
             _library_selected_row_id=LIBRARY_ROW_BROWSE_SKILLS,
             _save_library_skill=lambda: None,
             run_worker=lambda coro, **kwargs: worker_calls.append(kwargs),

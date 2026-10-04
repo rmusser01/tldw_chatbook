@@ -131,6 +131,7 @@ from uuid import uuid4
 from loguru import logger
 
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
     ConsoleLifecycleRevisionChanged,
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
@@ -2637,10 +2638,19 @@ class ConsoleRuntime:
                 initial_turn=submit,
             )
         )
+        held_preparation_id = getattr(result, "preparation_id", None)
         if (
             not bool(getattr(result, "accepted", False))
             and not record.inputs.durable_accepted
             and raise_on_refusal
+            # TASK-34350: a send held at the compaction threshold is waiting
+            # on the user's answer in its own card, not refused; recording it
+            # as a turn recovery too showed one send on two surfaces.
+            and not (
+                held_preparation_id is not None
+                and controller.context_compaction_hold(held_preparation_id)
+                is not None
+            )
         ):
             raise RuntimeError("Console turn was refused before durable acceptance.")
         run_state_for = getattr(controller, "run_state_for", None)
@@ -4241,9 +4251,10 @@ class ConsoleRuntime:
             world_info_applier=functools.partial(
                 _apply_world_info_for_app, self._app
             ),
-            # The LIVE seam (two arguments). Frozen captures arrive per turn
-            # as ``staged_evidence_capture`` and fall back to this owner's
-            # ``_capture_frozen_console_staged_rag`` (TASK-33940.4).
+            # The LIVE seam (two arguments). Every turn this runtime admits
+            # carries its frozen capture and release explicitly
+            # (``staged_evidence_capture`` / ``staged_evidence_release``);
+            # the controller no longer looks for them by name (TASK-34352).
             rag_capture_provider=self._capture_console_staged_rag,
             staged_evidence_provider=self._has_staged_evidence,
             default_session_settings=functools.partial(
@@ -4811,8 +4822,27 @@ class ConsoleRuntime:
         expected_revision: int,
         timeout_seconds: float = CONSOLE_SESSION_CLOSE_GRACE_SECONDS,
     ) -> Any | None:
-        """Drain already-claimed voice publication before closing its session."""
+        """Drain already-claimed voice publication before closing its session.
 
+        Args:
+            session_id: Exact Console session to close.
+            expected_revision: Revision from the caller's lifecycle impact snapshot.
+            timeout_seconds: Grace period for bounded publication and turn drains.
+
+        Returns:
+            The removed session, or None if claimed voice publication does not
+            drain within its grace period.
+
+        Raises:
+            RuntimeError: Recovery retains a session admission fence, a voice
+                close is already active, or the runtime/controller cannot
+                accept closure.
+        """
+
+        # A recreated store row cannot retire this app-lifetime close fence.
+        # Refuse before taking any new voice-close ownership.
+        if session_id in self._admission_fenced_sessions:
+            raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
         owner = self._voice_promotion_owner
         if owner is None:
             if session_id in self._voice_promotion_pending_closes:

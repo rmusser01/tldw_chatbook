@@ -772,6 +772,9 @@ async def _census_idle_and_visit(
     maintenance = LegacyTraceMaintenance(
         database, normalizer=normalizer_factory(), provider_active=lambda: False
     )
+    # Capturing the scheduler leaves the fresh migration pending. Finish its
+    # one-time write before measuring the settled idle completion checks.
+    assert (await run_owned_db_call(database, maintenance.run_batch)).logical_complete
 
     async def trace_ticks() -> None:
         for _ in range(IDLE_TICKS):

@@ -346,3 +346,19 @@ class TestRAGIndexingDB:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestForeignKeyEnforcement:
+    def test_connections_enable_foreign_key_enforcement(self, tmp_path):
+        """task-19566 F11: the per-connection FK pragma is ON (inert today --
+        the schema declares no FKs -- so the next one that appears is
+        enforced)."""
+        db = RAGIndexingDB(str(tmp_path / "rag_indexing.db"))
+        try:
+            with db.connection() as conn:
+                state = conn.execute("PRAGMA foreign_keys").fetchone()[0]
+                assert state == 1, (
+                    f"foreign_keys pragma is {state}, expected 1 (ON)"
+                )
+        finally:
+            db.close()

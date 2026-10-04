@@ -109,9 +109,7 @@ class _StallingWakeGateway:
             # generic "Provider destination is incomplete." copy. Derive it
             # through the production classifier the real gateway uses rather
             # than hand-building one, so this double cannot drift from it.
-            resolution.resolved_destination = resolve_console_destination(
-                resolution
-            )
+            resolution.resolved_destination = resolve_console_destination(resolution)
         return resolution
 
     async def stream_chat(self, resolution, messages, **kwargs):
@@ -135,6 +133,7 @@ def _drain_from_child_thread(wake, drain) -> None:
 def _terminal_survivor_run(runs_db, conversation_id, *, result=CHILD_RESULT):
     """A sub-agent run that finished AFTER its (terminal) parent turn."""
     from uuid import uuid4
+
     chain_id = runs_db.automatic_work.create_chain(
         conversation_id, root_submission_id=uuid4().hex
     )
@@ -150,7 +149,6 @@ def _terminal_survivor_run(runs_db, conversation_id, *, result=CHILD_RESULT):
     )
     runs_db.set_status(run_id, "done", result)
     return run_id
-
 
 
 async def _navigate(
@@ -173,7 +171,9 @@ async def _navigate(
             if not allow_confirmation:
                 screen.query_one("#cancel-button", Button).press()
                 await pilot.pause()
-                raise AssertionError("ordinary Console navigation asked for confirmation")
+                raise AssertionError(
+                    "ordinary Console navigation asked for confirmation"
+                )
             try:
                 screen.query_one("#confirm-button", Button).press()
             except Exception:  # noqa: BLE001 -- the dialog may still be settling

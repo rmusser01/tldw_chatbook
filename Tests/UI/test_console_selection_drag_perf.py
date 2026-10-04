@@ -25,9 +25,7 @@ from tldw_chatbook.Widgets.Console.console_transcript import (
 )
 
 #: ~20 KB multi-line body (28 paragraphs that each wrap over several lines).
-_BIG_BODY = (
-    "lorem ipsum dolor sit amet consectetur adipiscing elit " * 13 + "\n"
-) * 28
+_BIG_BODY = ("lorem ipsum dolor sit amet consectetur adipiscing elit " * 13 + "\n") * 28
 assert 18_000 < len(_BIG_BODY) < 24_000
 
 
@@ -233,7 +231,10 @@ async def test_arm_time_sweep_still_clears_a_stale_highlight():
         )
         transcript.on_mouse_up(
             _mouse_event(
-                MouseUp, transcript, screen_x=body_a.region.x + 6, screen_y=body_a.region.y
+                MouseUp,
+                transcript,
+                screen_x=body_a.region.x + 6,
+                screen_y=body_a.region.y,
             )
         )
         await pilot.pause()
@@ -247,7 +248,10 @@ async def test_arm_time_sweep_still_clears_a_stale_highlight():
         assert row_a.get_selection_text() == ""
         transcript.on_mouse_up(
             _mouse_event(
-                MouseUp, transcript, screen_x=body_b.region.x + 2, screen_y=body_b.region.y
+                MouseUp,
+                transcript,
+                screen_x=body_b.region.x + 2,
+                screen_y=body_b.region.y,
             )
         )
         await pilot.pause()

@@ -46,7 +46,12 @@ def test_public_url_allowed():
 
 
 def test_non_http_schemes_blocked():
-    for url in ("file:///etc/passwd", "ftp://example.com/x", "gopher://x", "data:text/html,hi"):
+    for url in (
+        "file:///etc/passwd",
+        "ftp://example.com/x",
+        "gopher://x",
+        "data:text/html,hi",
+    ):
         d = evaluate_url_policy(url)
         assert not d.allowed and d.reason == "scheme", url
 
@@ -77,6 +82,121 @@ def test_ipv6_ula_and_mapped_blocked(monkeypatch):
 def test_cgnat_blocked(monkeypatch):
     _resolve_to(monkeypatch, ["100.64.0.7"])
     assert not evaluate_url_policy("http://h.example/").allowed
+
+
+# ---------------------------------------------------------------------------
+# One shared address-classification predicate (task-609)
+# ---------------------------------------------------------------------------
+
+#: Addresses every fetch layer must accept: ordinary public v4/v6, the two
+#: IANA globally-reachable anycast entries (192.0.0.9/.10), and a public
+#: IPv4 address in either IPv6 wrapper (v4-mapped, NAT64 well-known prefix).
+_FETCHABLE_PUBLIC = (
+    "93.184.216.34",
+    "1.1.1.1",
+    "2606:4700::6810:85e5",
+    "192.0.0.9",
+    "192.0.0.10",
+    "::ffff:93.184.216.34",
+    "64:ff9b::5db8:d822",
+    "64:ff9b::1.2.3.4",
+)
+
+#: One representative of every rejected address category, from the task-609
+#: delta matrix computed against both layers: RFC1918/ULA private, loopback,
+#: link-local, unspecified, multicast, RFC 6598 CGNAT (not is_private on
+#: Python 3.12 -- caught only by the is_global floor, task-610), cloud
+#: metadata endpoints, documentation ranges, reserved v4, the non-anycast
+#: part of 192.0.0.0/24, and v4-mapped or NAT64-wrapped private/CGNAT/
+#: loopback/metadata addresses (the wrappers get the verdict of the IPv4
+#: they embed -- see the NAT64 test below).
+_NOT_FETCHABLE = (
+    "10.0.0.5",
+    "192.168.1.1",
+    "fd00::1",
+    "127.0.0.1",
+    "::1",
+    "169.254.1.1",
+    "fe80::1",
+    "0.0.0.0",
+    "::",
+    "224.0.0.1",
+    "ff02::1",
+    "100.64.0.1",
+    "100.100.100.200",
+    "169.254.169.254",
+    "fd00:ec2::254",
+    "2001:db8::1",
+    "192.0.2.5",
+    "250.1.2.3",
+    "192.0.0.100",
+    "::ffff:10.0.0.1",
+    "::ffff:100.64.0.1",
+    "64:ff9b::7f00:1",
+    "64:ff9b::c0a8:101",
+    "64:ff9b::6440:1",
+    "64:ff9b::a9fe:a9fe",
+    "64:ff9b:1::5db8:d822",
+)
+
+
+def test_address_is_fetchable_shared_floor():
+    """The one per-address predicate both SSRF layers route through (task-609).
+
+    Utils/egress's own policy pipeline and skill_remote_fetch's per-hop
+    revalidation must not be able to drift on which address categories are
+    rejected; this sweep pins the shared verdict for every category in the
+    delta matrix.
+    """
+    for ip in _FETCHABLE_PUBLIC:
+        assert egress.address_is_fetchable(ip), ip
+    for ip in _NOT_FETCHABLE:
+        assert not egress.address_is_fetchable(ip), ip
+    # Fail closed on unparseable input.
+    assert not egress.address_is_fetchable("not-an-ip")
+
+
+def test_nat64_well_known_prefix_gets_its_embedded_ipv4_verdict(monkeypatch):
+    """task-609 reconciliation, as amended in PR #2993 review.
+
+    ``64:ff9b::/96`` is the one category the two layers disagreed on:
+    ``is_global`` is True (so egress's old classification said "public")
+    while ``is_reserved`` is True (so the skill layer rejected the whole
+    prefix). The prefix embeds IPv4 -- ``64:ff9b::7f00:1`` IS ``127.0.0.1``
+    -- so "public" was a rebinding-shaped hole; but on an IPv6-only network
+    with DNS64 every IPv4-only host resolves into the prefix, so refusing
+    it wholesale refuses every such fetch. Both layers now give the address
+    the verdict of the IPv4 it embeds.
+    """
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import RemoteSkillError
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import _assert_host_allowed
+
+    # Embedded loopback: refused by every layer.
+    assert not egress.address_is_fetchable("64:ff9b::7f00:1")
+    _resolve_to(monkeypatch, ["64:ff9b::7f00:1"])
+    d = evaluate_url_policy("https://h.example/")
+    assert not d.allowed and d.reason == "private"
+    # ... through the strict pre-fetch guard, which ignores all trust config,
+    assert not egress.is_public_http_url("https://[64:ff9b::7f00:1]/x.zip")
+    # ... and through the skill layer's per-hop check.
+    with pytest.raises(RemoteSkillError, match="not reachable"):
+        _assert_host_allowed("nat64.example", lambda h: ["64:ff9b::7f00:1"])
+
+    # Embedded metadata endpoint (169.254.169.254): refused as metadata.
+    _resolve_to(monkeypatch, ["64:ff9b::a9fe:a9fe"])
+    d = evaluate_url_policy("https://h.example/")
+    assert not d.allowed and d.reason == "metadata"
+
+    # ``Petdex/network.py`` gates on ``_classify_ip`` directly.
+    assert egress._classify_ip("64:ff9b::c0a8:101") == "private"
+
+    # Embedded public address (93.184.216.34), the DNS64 answer for an
+    # ordinary IPv4-only site: fetchable through every layer.
+    assert egress.address_is_fetchable("64:ff9b::5db8:d822")
+    _resolve_to(monkeypatch, ["64:ff9b::5db8:d822"])
+    assert evaluate_url_policy("https://h.example/").allowed
+    assert egress.is_public_http_url("https://[64:ff9b::5db8:d822]/x.zip")
+    _assert_host_allowed("nat64.example", lambda h: ["64:ff9b::5db8:d822"])
 
 
 def test_metadata_ip_blocked_even_when_trusted(monkeypatch):
@@ -154,9 +274,9 @@ def test_allowlist_overrides_metadata(monkeypatch):
     monkeypatch.setattr(
         egress,
         "get_cli_setting",
-        lambda s, k=None, d=None: ["metadata.google.internal"]
-        if k == "allowed_hosts"
-        else d,
+        lambda s, k=None, d=None: (
+            ["metadata.google.internal"] if k == "allowed_hosts" else d
+        ),
     )
     d = evaluate_url_policy("http://metadata.google.internal/")
     assert d.allowed
@@ -229,6 +349,7 @@ def test_disabled_egress_log_redacts_url_credentials(monkeypatch):
 # ---------------------------------------------------------------------------
 # _log_origin: credential-free URL label for transport logs (TASK-1722)
 # ---------------------------------------------------------------------------
+
 
 def test_log_origin_strips_userinfo_query_and_fragment():
     """_log_origin renders scheme://host[:port] only -- no userinfo/path/query/fragment."""
@@ -342,6 +463,7 @@ def test_check_url_or_raise_raises_with_remedy(monkeypatch):
 # message is redacted.
 # ---------------------------------------------------------------------------
 
+
 def test_egress_blocked_error_message_omits_query_marker():
     marker = "SECRET-TOKEN-MARKER"
     url = f"https://user:pw@example.test:8443/models/f.gguf?sig={marker}#frag"
@@ -389,6 +511,7 @@ async def test_async_variant_same_policy(monkeypatch):
 # ---------------------------------------------------------------------------
 # Safe host extraction helpers
 # ---------------------------------------------------------------------------
+
 
 def test_host_of_valid_url():
     """host_of returns lowercase hostname for a valid URL."""
@@ -542,7 +665,13 @@ def _transport(routes, seen):
 
 def test_httpx_basic_fetch_returns_guarded_response():
     seen = []
-    routes = {"https://example.com/": (200, {"content-type": "text/html; charset=utf-8"}, b"<html>ok</html>")}
+    routes = {
+        "https://example.com/": (
+            200,
+            {"content-type": "text/html; charset=utf-8"},
+            b"<html>ok</html>",
+        )
+    }
     with httpx.Client(transport=_transport(routes, seen)) as client:
         resp = guarded_fetch_httpx(
             "https://example.com/page", client=client, max_bytes=1024
@@ -732,14 +861,18 @@ def test_httpx_byte_cap_aborts():
     routes = {"https://example.com/": (200, {}, b"x" * 2048)}
     with httpx.Client(transport=_transport(routes, seen)) as client:
         with pytest.raises(EgressFetchError, match="exceeds"):
-            guarded_fetch_httpx("https://example.com/big", client=client, max_bytes=1024)
+            guarded_fetch_httpx(
+                "https://example.com/big", client=client, max_bytes=1024
+            )
 
 
 def test_httpx_304_passes_through_without_raise():
     seen = []
     routes = {"https://example.com/": (304, {"etag": "abc"}, b"")}
     with httpx.Client(transport=_transport(routes, seen)) as client:
-        resp = guarded_fetch_httpx("https://example.com/feed", client=client, max_bytes=64)
+        resp = guarded_fetch_httpx(
+            "https://example.com/feed", client=client, max_bytes=64
+        )
     assert resp.status_code == 304
 
 
@@ -872,9 +1005,7 @@ def test_requests_basic_fetch_preloads_content():
     sess, adapter = _session_with(
         {"https://example.com/": (200, {"content-type": "text/html"}, b"<p>hi</p>")}
     )
-    resp = guarded_fetch_requests(
-        "https://example.com/p", session=sess, max_bytes=1024
-    )
+    resp = guarded_fetch_requests("https://example.com/p", session=sess, max_bytes=1024)
     assert resp.status_code == 200
     assert resp.content == b"<p>hi</p>"
     assert resp.text == "<p>hi</p>"
@@ -928,14 +1059,16 @@ def test_requests_session_auth_suppressed_same_host_different_port():
     (task-568)."""
     sess, adapter = _session_with(
         {
-            "http://h.example:8000/": (302, {"location": "http://h.example:9000/n"}, b""),
+            "http://h.example:8000/": (
+                302,
+                {"location": "http://h.example:9000/n"},
+                b"",
+            ),
             "http://h.example:9000/": (200, {}, b"fin"),
         }
     )
     sess.auth = ("user", "pw")
-    resp = guarded_fetch_requests(
-        "http://h.example:8000/s", session=sess, max_bytes=64
-    )
+    resp = guarded_fetch_requests("http://h.example:8000/s", session=sess, max_bytes=64)
     assert resp.content == b"fin"
     assert "Authorization" in adapter.seen[0].headers
     assert "Authorization" not in adapter.seen[1].headers
@@ -1200,7 +1333,9 @@ async def test_aiohttp_basic_fetch_capped():
 
     big = _FakeAiohttpSession({"https://example.com/": (200, {}, b"q" * 4096)})
     with pytest.raises(EgressFetchError, match="exceeds"):
-        await guarded_fetch_aiohttp("https://example.com/b", session=big, max_bytes=1024)
+        await guarded_fetch_aiohttp(
+            "https://example.com/b", session=big, max_bytes=1024
+        )
 
 
 @pytest.mark.asyncio
@@ -1215,7 +1350,13 @@ async def test_aiohttp_headers_case_insensitive_access():
 
     # Create a session with lowercase content-type header (mimicking real aiohttp)
     # We construct the fake response with CIMultiDict to mimic real aiohttp behavior
-    routes = {"https://example.com/": (200, CIMultiDict({"content-type": "text/html; charset=utf-8"}), b"<html>test</html>")}
+    routes = {
+        "https://example.com/": (
+            200,
+            CIMultiDict({"content-type": "text/html; charset=utf-8"}),
+            b"<html>test</html>",
+        )
+    }
     session = _FakeAiohttpSession(routes)
 
     resp = await guarded_fetch_aiohttp(
@@ -1260,9 +1401,7 @@ def test_validate_navigation_chain_blocks_internal_hop(monkeypatch):
 
     monkeypatch.setattr(egress, "_resolve", fake_resolve)
     with pytest.raises(EgressBlockedError):
-        validate_navigation_chain(
-            ["https://ok.example/", "http://meta.example/x"]
-        )
+        validate_navigation_chain(["https://ok.example/", "http://meta.example/x"])
     validate_navigation_chain(["https://ok.example/"])  # no raise
 
 
@@ -1315,18 +1454,28 @@ def test_hop_headers_keeps_x_goog_api_key_same_origin():
 # (the autouse fixture above neutralizes both anyway). Used by the deep-search
 # relevance phase to refuse pre-fetch before Playwright ever navigates.
 
+
 def test_is_public_http_url_blocks_private_and_metadata(monkeypatch):
     from tldw_chatbook.Utils import egress
-    for bad in ("http://127.0.0.1/", "http://10.0.0.5/x", "http://169.254.169.254/latest",
-                "http://[::1]/", "ftp://x/", "not a url"):
+
+    for bad in (
+        "http://127.0.0.1/",
+        "http://10.0.0.5/x",
+        "http://169.254.169.254/latest",
+        "http://[::1]/",
+        "ftp://x/",
+        "not a url",
+    ):
         assert egress.is_public_http_url(bad) is False
 
 
 def test_is_public_http_url_allows_public(monkeypatch):
     import socket
     from tldw_chatbook.Utils import egress
-    monkeypatch.setattr(socket, "getaddrinfo",
-                        lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))])
+
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))]
+    )
     assert egress.is_public_http_url("https://example.com/page") is True
 
 
@@ -1336,5 +1485,20 @@ def test_is_public_http_url_blocks_multicast(monkeypatch):
     # through both _classify_ip's public/private split and this function.
     # 239.255.255.250 is a real SSDP/UPnP discovery address.
     from tldw_chatbook.Utils import egress
+
     for bad in ("http://224.0.0.1/", "http://239.255.255.250:1900/description.xml"):
         assert egress.is_public_http_url(bad) is False, bad
+
+
+@pytest.mark.parametrize(
+    "helper",
+    [
+        egress.guarded_fetch_httpx,
+        egress.guarded_fetch_httpx_async,
+        egress.guarded_fetch_requests,
+        egress.guarded_fetch_aiohttp,
+    ],
+)
+def test_guarded_fetch_helpers_keep_their_docstrings(helper):
+    """A ``'''...''' + CONSTANT`` first statement silently drops ``__doc__``."""
+    assert "Credential contract" in (helper.__doc__ or "")

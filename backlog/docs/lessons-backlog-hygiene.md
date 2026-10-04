@@ -21,6 +21,31 @@ recovery. A directory path alone does not prove which repository Git will mutate
 
 ---
 
+## A stale premise can be fixed by a predecessor while its enumerated tests re-break for newer reasons (TASK-22280, 2026-10-02)
+
+**Incident.** TASK-22280 was filed 2026-08-24 against dev `983aa5878` for 12
+red migration tests caused by `add_message` writing v48's
+`assistant_generation_state` into pre-v48 historical-bootstrap fixtures. The
+next day TASK-21441 (PR #2082) landed the per-schema
+`_messages_insert_statement` fix and measured those files red-to-green. Five
+weeks later, verifying the task at dev `e92b01515f` found 8 of them red again
+— every failure traced to LATER drift, none to the filed mechanism: seeding
+now died in `soft_delete_message`/`update_message` on the v56
+`console_trace_graph_epoch` table, and the hot-writer interleave/static-guard
+tests went blind after `add_message` became a thin wrapper. Both successor
+defects were already filed (TASK-33371, TASK-33621.36). Fixing either under
+TASK-22280 would have put three tasks' hands on the same reds.
+
+**What to do.** When a task's named cause no longer reproduces at your base,
+attribute EACH enumerated red to a mechanism before designing anything: a red
+test is not evidence the filed bug is alive. Sweep the board for the defects
+you do find — if later drift already has an owner, close your task with the
+attribution and the measured timeline instead of re-fixing under a dead
+premise; the AC's "tests pass" clause gets annotated with when it was true and
+who owns the re-breakage, not silently re-ticked or left as a zombie.
+
+---
+
 ## Task IDs collide constantly — sweep every remote, not just dev
 
 **What happened.** This has recurred **ten-plus times**. Most recently, in one session:
@@ -1177,3 +1202,28 @@ been copied into the repo.
 `${var:?}` (for example `rm -rf "${S:?}/${dir:?}"`) so an empty value aborts instead of
 widening the target. Do not rely on word splitting in the Bash tool, which is zsh:
 split explicitly with `${=pair}` or `read -r a b <<< "$pair"`, or use a literal list.
+
+**Recurrence (Roleplay frame B0, 2026-10-02): the empty value was a filter, not a
+path.** A CI cleanup loop had the same shape:
+`for pair in "<PR> <branch>" …; do set -- $pair; gh run list --branch "$2" … | … gh run cancel`.
+It ran in the Bash tool (zsh), so `$2` was empty again. `gh run list --branch ""` does not
+fail; it applies no branch filter and lists the repository's recent runs. The loop
+cancelled 8 in-flight CI runs on the branches of 5 other sessions. All 8 were re-run,
+but each lost its place in the queue. The `rm -rf` rule above did not help, because
+nothing here was a path. An empty argument to a *filter* widens the selection just as
+an empty path segment widens a delete.
+
+**What to do (any loop whose action is destructive or shared: cancel, delete, close,
+merge, force-push):**
+- Write it as an explicit `bash` script (`bash <<'EOF' … EOF`, or a file run with
+  `bash`) with `set -u` at the top.
+- Refuse empty arguments: `[ -n "$branch" ] || { echo "empty branch"; exit 1; }`, or
+  `${branch:?}`.
+- Cross-check the pairing at the source: the PR's `headRefName`
+  (`gh pr view <n> --json headRefName -q .headRefName`) must equal the branch you are
+  about to act on.
+- Filter twice: once in the API call (`--branch "$branch"`) and once on the result
+  (`--json databaseId,headBranch` piped to `jq 'select(.headBranch == $b)'`). Then an
+  ignored or empty server-side filter still selects nothing.
+- Dry-run first: print the run ids and their `headBranch` values, read them, and only
+  then cancel.

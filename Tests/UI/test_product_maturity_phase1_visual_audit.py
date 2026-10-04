@@ -209,7 +209,9 @@ async def _assert_visual_snapshot_is_healthy(
     app: "TldwCli", destination_id: str, size_label: str, pilot
 ) -> None:
     nav_bar = app.screen.query_one(MainNavigationBar)
-    nav_ids = tuple(button.id.removeprefix("nav-") for button in nav_bar.query(".nav-button"))
+    nav_ids = tuple(
+        button.id.removeprefix("nav-") for button in nav_bar.query(".nav-button")
+    )
     assert nav_ids == TOP_LEVEL_DESTINATION_IDS
     assert nav_bar.query_one(f"#nav-{destination_id}", Button).has_class("is-active")
     overflow_hint = app.screen.query_one("#nav-overflow-hint", Button)

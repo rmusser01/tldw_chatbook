@@ -9,6 +9,7 @@ pass the `not in` check before either stored its instance -- each
 constructs its own `MediaDatabase`, and the loser's instance (and its open
 sqlite connection) is simply overwritten in the dict and leaked.
 """
+
 import threading
 import time
 

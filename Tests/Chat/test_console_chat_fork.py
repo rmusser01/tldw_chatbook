@@ -402,6 +402,19 @@ def test_fork_configuration_fingerprint_includes_normalized_thinking_policy() ->
         )
 
 
+def test_fork_configuration_accepts_a_sampler_the_provider_drops() -> None:
+    """Qodo #2992: Custom OpenAI 2 has no Top P, so Apply commits it blank;
+    forking that chat must keep the blank, not refuse it as a malformed type."""
+    configuration = _configuration_snapshot()
+    settings = replace(
+        configuration.settings, provider="custom-openai-api-2", top_p=None
+    )
+
+    assert console_chat_fork.fingerprint_console_fork_configuration(
+        replace(configuration, settings=settings)
+    )
+
+
 def _image_selection(
     message,
     *,

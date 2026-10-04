@@ -33,7 +33,6 @@ from ...Video_Generation.video_store import (
     VideoStore,
     VideoStoreSaveError,
 )
-from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console.console_video_capacity_modal import ConsoleVideoCapacityModal
 from ...Widgets.Console.console_video_card import ConsoleVideoCardSpec
 
@@ -788,18 +787,31 @@ class ConsoleVideoController:
     async def _save_pending_console_video_external(
         self, artifact: PendingVideoArtifact
     ) -> Path | Literal[False] | None:
-        """Choose and atomically write an external path, retaining on failure."""
-        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileSave
+        """Choose and atomically write an external path, retaining on failure.
+
+        Returns:
+            The saved path; False to go back to the storage choice with the
+            video kept (a failed save, or the picker cancelled -- TASK-33622.17:
+            only an explicit discard may throw a generated video away); None
+            once this screen no longer owns the video.
+        """
+        # TASK-33622.15: these screens ask before Ctrl+Q discards the video.
+        from tldw_chatbook.Widgets.Console.console_video_save_screens import (
+            GeneratedVideoConfirmation,
+            GeneratedVideoFileSave,
+        )
 
         while self._owns_pending_console_video(artifact):
             selected = await self._wait_for_console_screen_result(
-                EnhancedFileSave(
+                GeneratedVideoFileSave(
                     title="Save generated video",
                     default_filename=f"{artifact.slug}.{artifact.extension}",
                 )
             )
-            if not self._owns_pending_console_video(artifact) or not selected:
+            if not self._owns_pending_console_video(artifact):
                 return None
+            if not selected:
+                return False
             try:
                 target = ConsoleVideoController._normalize_pending_video_target(
                     Path(selected).expanduser(), artifact.extension
@@ -837,7 +849,7 @@ class ConsoleVideoController:
 
                 if identity is None and reconfirmation_required:
                     confirmed = await self._wait_for_console_screen_result(
-                        ConfirmationDialog(
+                        GeneratedVideoConfirmation(
                             title="Destination changed",
                             message=(
                                 "The file previously confirmed at "
@@ -856,7 +868,7 @@ class ConsoleVideoController:
                     confirmed_identity = None
                 elif identity is not None and identity != confirmed_identity:
                     confirmed = await self._wait_for_console_screen_result(
-                        ConfirmationDialog(
+                        GeneratedVideoConfirmation(
                             title="Replace existing file?",
                             message=(
                                 "A file already exists at "

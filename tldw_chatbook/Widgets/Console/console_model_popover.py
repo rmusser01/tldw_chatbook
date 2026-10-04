@@ -260,7 +260,16 @@ def _fit(text: str, width: int) -> str:
     return text if len(text) <= width else f"{text[: width - 4]}…{text[-3:]}"
 
 
-def _context_copy(tokens: int, verified: bool) -> str:
+def context_copy(tokens: int, verified: bool) -> str:
+    """Return a context window's short size, e.g. ``"200k"`` or ``"~32k"``.
+
+    Args:
+        tokens: The window size in tokens.
+        verified: Whether the size is known; an estimate starts with ``~``.
+
+    Returns:
+        The size in ``k`` or ``M`` units.
+    """
     if tokens >= 1_000_000:
         size = f"{round(tokens / 1_000_000, 1):g}M"
     elif tokens >= 1_000:
@@ -460,6 +469,7 @@ class ConsoleModelPopover(
         pick_only: bool = False,
         query: str = "",
         connection_prober: ConnectionProber | None = None,
+        served_models: Mapping[str, Sequence[str]] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize one exact-origin Switch model transaction.
@@ -492,6 +502,8 @@ class ConsoleModelPopover(
                 is highlighted, and nothing applies until Enter.
             connection_prober: The screen's local-server probe, run once per
                 listed provider per open; this widget calls no network.
+            served_models: Models a Chat settings listing found per provider,
+                listed beside the saved ones (a new entry's, TASK-33006.4).
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -514,6 +526,7 @@ class ConsoleModelPopover(
         self._setup_opener = setup_opener
         self._pick_only = pick_only
         self._connection_prober = connection_prober
+        self._served = {provider_key(p): m for p, m in (served_models or {}).items()}
         self._probes_offered: set[str] = set()
         settings = initial_draft.settings
         self._chat_settings = settings
@@ -958,7 +971,9 @@ class ConsoleModelPopover(
         self._sync_find_placeholder()
 
     def _saved_models(self, key: str) -> tuple[str, ...]:
-        """The provider's saved model list (a registry entry's own list)."""
+        """The provider's saved models (a registry entry's own list), then
+        the ones a Chat settings listing found it serving (``served_models``).
+        """
         cached = self._saved.get(key)
         if cached is not None:
             return cached
@@ -975,6 +990,7 @@ class ConsoleModelPopover(
                 and not isinstance(models, (str, bytes))
                 for model in models
             ]
+        listed += self._served.get(key, ())
         cached = tuple(
             dict.fromkeys(model for model in map(normalize_model_id, listed) if model)
         )
@@ -1314,7 +1330,7 @@ class ConsoleModelPopover(
 
             try:
                 window = resolve_context_window(provider, model)
-                label = _context_copy(window.tokens, window.verified)
+                label = context_copy(window.tokens, window.verified)
             except Exception:  # noqa: BLE001 - an unknown size is shown, not raised
                 label = "?"
             self._context_labels[cache_key] = label
@@ -1937,6 +1953,24 @@ class ConsoleModelPopover(
         # Focus leaves Find, so Enter and d reach the guard, not the query.
         guard.focus()
         self.call_after_refresh(self._sync_list_height)
+
+    async def confirm_quit(self) -> bool:
+        """Ask before Ctrl+Q drops edits that Esc would ask about (TASK-33622.15).
+
+        Returns:
+            True to let the quit proceed; False to keep editing.
+        """
+        labels = () if self._pick_only else self._edited_labels()
+        if not labels:
+            return True
+        from tldw_chatbook.Widgets.confirmation_dialog import (
+            confirm_quit_discarding_edits,
+        )
+        from tldw_chatbook.Widgets.Console.console_settings_unsaved import (
+            unsaved_summary_copy,
+        )
+
+        return await confirm_quit_discarding_edits(self, unsaved_summary_copy(labels))
 
     def _hide_guard(self) -> None:
         self.query_one("#console-popover-guard", UnsavedEditsGuard).display = False

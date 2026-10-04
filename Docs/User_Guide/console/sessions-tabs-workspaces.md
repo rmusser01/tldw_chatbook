@@ -122,9 +122,11 @@ On a local-only setup the server lines collapse into one line:
 | "New tab" (strip or control bar) / Ctrl+T | Opens a fresh chat tab |
 | Click a tab | Switches to it; a second click on the active tab opens "Rename Chat Tab" |
 | Middle-click a tab | Closes it, exactly like its "✕", without switching to it first |
-| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, a live agent run, delegated sub-agents, queued prompts), the "Close Console session?" dialog first shows what closing would discard: "Close" closes the tab, "Stay" keeps it |
+| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, a live agent run, delegated sub-agents, queued prompts), a dialog naming the tab first shows only what closing would discard or cancel, including pending approvals, questions, chat-creation confirmations, skill confirmations and worktree-merge confirmations: "Close" closes the tab, "Stay" keeps it |
 | Alt+1 … Alt+9 | Jumps straight to tab 1–9 |
 | Marker glyph (● ◆ ✓ ✗) | That tab's agent-run status — clears when you visit the tab |
+
+Once a tab starts closing, pending requests to create another chat are declined, and previously confirmed requests cannot start from that tab. A creation still in progress cannot open a new tab after its source closes.
 
 Each tab keeps its own unsent draft: switch tabs mid-thought and the
 half-typed message is still in the composer when you come back.
@@ -503,7 +505,12 @@ in a full accent box.
 - If a tab cannot be closed, it stays open and an error toast names it and
   gives the reason — for example `Couldn't close tab "Weekly notes": The
   close did not finish. Try again in a moment.` A Temporary chat with a
-  pending turn cannot close until you finish or discard that turn.
+  pending turn cannot close until you finish or discard that turn. The dialog
+  closes so you can resolve the pending work. A temporary cleanup failure offers
+  a fresh dialog; another Close click is required to retry.
+  When earlier Close cleanup needs recovery, the tab stays open
+  and shows `Close cleanup needs recovery. Restart the app before closing this
+  tab.` The confirmation flow ends instead of repeatedly asking to retry.
 - If the tab closed but the Console could not finish updating afterwards, a
   warning says so (`Closed tab "Weekly notes", but the Console did not
   finish updating`). Should the closed tab still be drawn, clicking its "✕"
@@ -604,5 +611,12 @@ conversations remain in Library, with the workspace marked archived. This is
 separate from individually archiving a conversation.
 
 Closing a tab removes the open session. Saved history stays in Library; the
-close dialog separately lists unsaved messages, drafts, attachments and live or
-queued work that closing would discard or cancel.
+close dialog names the tab and lists only the consequences that apply: unsaved
+messages, drafts, attachments, live or queued work, and pending human decisions.
+The dialog keeps both actions visible when the terminal is short. Press Shift+Tab
+from **Stay** to focus the scrollable consequences, then use arrows, Home or End
+to read them. Tab returns to **Stay**. Resizing keeps the same controls and decision.
+Closing denies pending tool approvals, cancels unanswered questions and declines
+skill, chat-creation and worktree-merge confirmations, cancelling the owning work
+without affecting other tabs. Declining chat creation creates no chat. Declining
+a merge or discard confirmation performs neither action.

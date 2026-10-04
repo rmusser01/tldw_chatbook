@@ -121,7 +121,9 @@ class LocalNoteFolderRepository:
         normalized_path: str | None = None
 
         try:
-            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            transaction = (
+                nullcontext(cursor) if cursor is not None else self.db.transaction()
+            )
             with transaction as cursor:
                 parent_path = ""
                 parent_normalized_path = ""
@@ -247,9 +249,7 @@ class LocalNoteFolderRepository:
         self, *, parent_id: str | None, limit: int, offset: int
     ) -> NoteFolderPage:
         """Return a bounded page of active direct children."""
-        _validate_int_bound(
-            "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
-        )
+        _validate_int_bound("limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE)
         _validate_int_bound("offset", offset, minimum=0)
         if parent_id is not None:
             _validate_folder_id(parent_id, field="parent_id")
@@ -300,9 +300,7 @@ class LocalNoteFolderRepository:
         Raises:
             FolderValidationError: If an identifier or page bound is invalid.
         """
-        _validate_int_bound(
-            "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
-        )
+        _validate_int_bound("limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE)
         _validate_int_bound("offset", offset, minimum=0)
         if parent_id is not None:
             _validate_folder_id(parent_id, field="parent_id")
@@ -378,9 +376,7 @@ class LocalNoteFolderRepository:
             FolderValidationError: If an identifier, page bound or order is
                 invalid.
         """
-        _validate_int_bound(
-            "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
-        )
+        _validate_int_bound("limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE)
         _validate_int_bound("offset", offset, minimum=0)
         order = _validate_placement_order(order)
         if parent_id is not None:
@@ -801,9 +797,7 @@ class LocalNoteFolderRepository:
             FolderValidationError: If the query or page bounds are invalid.
         """
         normalized_query = _normalize_folder_search_query(query)
-        _validate_int_bound(
-            "limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE
-        )
+        _validate_int_bound("limit", limit, minimum=1, maximum=_MAX_NOTE_TREE_PAGE_SIZE)
         _validate_int_bound("offset", offset, minimum=0)
         fts_query = build_phrase_match_query(query)
 
@@ -1099,9 +1093,7 @@ class LocalNoteFolderRepository:
             )
 
             total_memberships = (
-                int(membership_rows[0]["_total_memberships"])
-                if membership_rows
-                else 0
+                int(membership_rows[0]["_total_memberships"]) if membership_rows else 0
             )
             if (
                 expanded_ids
@@ -1117,9 +1109,7 @@ class LocalNoteFolderRepository:
                     ).fetchone()["total"]
                 )
 
-            total_folders = (
-                int(folder_rows[0]["_total_folders"]) if folder_rows else 0
-            )
+            total_folders = int(folder_rows[0]["_total_folders"]) if folder_rows else 0
             if not folder_rows and folder_offset:
                 if expanded_ids:
                     total_folders = int(
@@ -1199,9 +1189,7 @@ class LocalNoteFolderRepository:
             managed_folder_ids=managed_folder_ids,
             inactive_managed_folder_ids=inactive_managed_folder_ids,
             unfiled_note_ids=(
-                tuple(str(row["id"]) for row in note_rows)
-                if not expanded_ids
-                else ()
+                tuple(str(row["id"]) for row in note_rows) if not expanded_ids else ()
             ),
         )
 
@@ -1219,7 +1207,9 @@ class LocalNoteFolderRepository:
         if expected_note_version is not None:
             _validate_expected_version(expected_note_version)
         try:
-            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            transaction = (
+                nullcontext(cursor) if cursor is not None else self.db.transaction()
+            )
             with transaction as owner_cursor:
                 return self._attach_manual_with_cursor(
                     owner_cursor,
@@ -1295,9 +1285,7 @@ class LocalNoteFolderRepository:
                     raise FolderValidationError(
                         "Folder search has too many notes; narrow the search."
                     )
-            selected_note_ids = tuple(
-                sorted({*normalized_note_ids, *path_note_ids})
-            )
+            selected_note_ids = tuple(sorted({*normalized_note_ids, *path_note_ids}))
             if len(selected_note_ids) > _TREE_SEARCH_NOTE_LIMIT:
                 raise FolderValidationError(
                     "Folder search has too many notes; narrow the search."
@@ -1316,9 +1304,7 @@ class LocalNoteFolderRepository:
             membership_parameters: list[str] = []
             if normalized_note_ids:
                 content_placeholders = _placeholders(len(normalized_note_ids))
-                membership_predicates.append(
-                    f"m.note_id IN ({content_placeholders})"
-                )
+                membership_predicates.append(f"m.note_id IN ({content_placeholders})")
                 membership_parameters.extend(normalized_note_ids)
             if normalized_folder_query:
                 membership_predicates.append("instr(f.normalized_path, ?) > 0")
@@ -1353,7 +1339,7 @@ class LocalNoteFolderRepository:
             ).fetchall()
             membership_rows = cursor.execute(
                 f"""
-                SELECT m.{_MEMBERSHIP_COLUMNS.replace(', ', ', m.')}
+                SELECT m.{_MEMBERSHIP_COLUMNS.replace(", ", ", m.")}
                 FROM note_folder_memberships AS m
                 JOIN note_folders AS f ON f.id = m.folder_id
                 WHERE m.deleted = 0 AND f.deleted = 0
@@ -1366,7 +1352,7 @@ class LocalNoteFolderRepository:
             selected_placeholders = _placeholders(len(selected_note_ids))
             note_rows = cursor.execute(
                 f"""
-                SELECT n.{_NOTE_COLUMNS.replace(', ', ', n.')},
+                SELECT n.{_NOTE_COLUMNS.replace(", ", ", n.")},
                        NOT EXISTS (
                            SELECT 1
                            FROM note_folder_memberships AS m
@@ -1428,7 +1414,9 @@ class LocalNoteFolderRepository:
         _validate_folder_id(note_id, field="note_id")
         _validate_expected_version(expected_version)
         try:
-            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            transaction = (
+                nullcontext(cursor) if cursor is not None else self.db.transaction()
+            )
             with transaction as cursor, _mutation_savepoint(cursor):
                 row = cursor.execute(
                     "SELECT id, version FROM note_folder_memberships "
@@ -1566,7 +1554,9 @@ class LocalNoteFolderRepository:
         desired_pairs = _normalize_desired_memberships(desired)
         desired_set = set(desired_pairs)
         try:
-            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            transaction = (
+                nullcontext(cursor) if cursor is not None else self.db.transaction()
+            )
             with transaction as cursor, _mutation_savepoint(cursor):
                 _require_active_membership_targets(
                     cursor,
@@ -1662,7 +1652,9 @@ class LocalNoteFolderRepository:
         """Convert one owner's active managed placements to manual placements."""
         _validate_owner_id(owner_id)
         try:
-            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            transaction = (
+                nullcontext(cursor) if cursor is not None else self.db.transaction()
+            )
             with transaction as cursor, _mutation_savepoint(cursor):
                 managed_rows = cursor.execute(
                     "SELECT id, folder_id, note_id, version "
@@ -1704,7 +1696,9 @@ class LocalNoteFolderRepository:
         """Soft-delete only one owner's active managed placements."""
         _validate_owner_id(owner_id)
         try:
-            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            transaction = (
+                nullcontext(cursor) if cursor is not None else self.db.transaction()
+            )
             with transaction as cursor, _mutation_savepoint(cursor):
                 rows = cursor.execute(
                     "SELECT id, version FROM note_folder_memberships "
@@ -1732,9 +1726,7 @@ class LocalNoteFolderRepository:
         except CharactersRAGDBError as exc:
             _raise_wrapped_repository_error(exc)
 
-    def mark_unknown_owners_inactive(
-        self, *, active_owner_ids: Iterable[str]
-    ) -> int:
+    def mark_unknown_owners_inactive(self, *, active_owner_ids: Iterable[str]) -> int:
         """Converge restored managed-owner flags against the known owner set."""
         known_owners = set(_normalize_owner_ids(active_owner_ids))
         try:
@@ -1781,12 +1773,16 @@ class LocalNoteFolderRepository:
         self,
     ) -> tuple[RestoredManagedMembershipReview, ...]:
         """Group inactive active managed placements by restored owner."""
-        rows = self.db.get_connection().execute(
-            "SELECT id, owner_id, note_id, folder_id "
-            "FROM note_folder_memberships WHERE ownership = 'managed' "
-            "AND deleted = 0 AND owner_active = 0 "
-            "ORDER BY owner_id, id"
-        ).fetchall()
+        rows = (
+            self.db.get_connection()
+            .execute(
+                "SELECT id, owner_id, note_id, folder_id "
+                "FROM note_folder_memberships WHERE ownership = 'managed' "
+                "AND deleted = 0 AND owner_active = 0 "
+                "ORDER BY owner_id, id"
+            )
+            .fetchall()
+        )
         grouped: dict[str, dict[str, set[str]]] = {}
         for row in rows:
             owner = str(row["owner_id"])
@@ -1819,7 +1815,9 @@ class LocalNoteFolderRepository:
         _validate_expected_version(expected_version)
         normalized = normalize_folder_name(name)
         try:
-            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            transaction = (
+                nullcontext(cursor) if cursor is not None else self.db.transaction()
+            )
             with transaction as cursor, _mutation_savepoint(cursor):
                 target = _require_target(
                     cursor,
@@ -1829,16 +1827,12 @@ class LocalNoteFolderRepository:
                 )
                 _require_manual_folder_subtree(cursor, folder_id)
                 subtree = _load_subtree(cursor, target, deleted=False)
-                parent = _load_destination_parent(
-                    cursor, parent_id=target["parent_id"]
-                )
+                parent = _load_destination_parent(cursor, parent_id=target["parent_id"])
                 parent_path = str(parent["path"]) if parent is not None else ""
                 parent_normalized_path = (
                     str(parent["normalized_path"]) if parent is not None else ""
                 )
-                target_path = _join_display_folder_path(
-                    parent_path, normalized.display
-                )
+                target_path = _join_display_folder_path(parent_path, normalized.display)
                 target_normalized_path = join_normalized_folder_path(
                     parent_normalized_path, normalized.key
                 )
@@ -1896,7 +1890,9 @@ class LocalNoteFolderRepository:
             _validate_folder_id(parent_id, field="parent_id")
         _validate_expected_version(expected_version)
         try:
-            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            transaction = (
+                nullcontext(cursor) if cursor is not None else self.db.transaction()
+            )
             with transaction as cursor, _mutation_savepoint(cursor):
                 target = _require_target(
                     cursor,
@@ -1975,7 +1971,9 @@ class LocalNoteFolderRepository:
         _validate_folder_id(folder_id, field="folder_id")
         _validate_expected_version(expected_version)
         try:
-            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            transaction = (
+                nullcontext(cursor) if cursor is not None else self.db.transaction()
+            )
             with transaction as cursor, _mutation_savepoint(cursor):
                 target = _require_target(
                     cursor,
@@ -2013,7 +2011,9 @@ class LocalNoteFolderRepository:
         _validate_folder_id(folder_id, field="folder_id")
         _validate_expected_version(expected_version)
         try:
-            transaction = nullcontext(cursor) if cursor is not None else self.db.transaction()
+            transaction = (
+                nullcontext(cursor) if cursor is not None else self.db.transaction()
+            )
             with transaction as cursor, _mutation_savepoint(cursor):
                 target = _require_target(
                     cursor,
@@ -2041,9 +2041,7 @@ class LocalNoteFolderRepository:
                         f"AND id IN ({placeholders})",
                         tuple(sorted(external_parent_ids)),
                     ).fetchall()
-                    active_parent_ids = {
-                        str(row["id"]) for row in active_parent_rows
-                    }
+                    active_parent_ids = {str(row["id"]) for row in active_parent_rows}
                     if active_parent_ids != external_parent_ids:
                         raise FolderValidationError(
                             "A restored folder's external parent is missing "
@@ -2067,13 +2065,10 @@ class LocalNoteFolderRepository:
                             "A restored folder's external parent is unavailable."
                         )
                     parent_path = str(external_parent["path"])
-                    parent_normalized_path = str(
-                        external_parent["normalized_path"]
-                    )
+                    parent_normalized_path = str(external_parent["normalized_path"])
                 target_name = normalize_folder_name(str(target["name"]))
-                if (
-                    target_name.display != str(target["name"])
-                    or target_name.key != str(target["normalized_name"])
+                if target_name.display != str(target["name"]) or target_name.key != str(
+                    target["normalized_name"]
                 ):
                     raise FolderValidationError(
                         "Restored folder name normalization is inconsistent."
@@ -2118,25 +2113,28 @@ class LocalNoteFolderRepository:
 
 
 def _utc_timestamp() -> str:
-    return datetime.now(UTC).isoformat(timespec="milliseconds").replace(
-        "+00:00", "Z"
-    )
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _unique_deleted_folder_timestamp(cursor: sqlite3.Cursor) -> str:
     """Return a millisecond UTC deletion marker unused by folder tombstones."""
     candidate = _utc_timestamp()
-    while cursor.execute(
-        "SELECT 1 FROM note_folders WHERE deleted = 1 AND modified_at = ? LIMIT 1",
-        (candidate,),
-    ).fetchone() is not None:
+    while (
+        cursor.execute(
+            "SELECT 1 FROM note_folders WHERE deleted = 1 AND modified_at = ? LIMIT 1",
+            (candidate,),
+        ).fetchone()
+        is not None
+    ):
         normalized_candidate = (
             f"{candidate[:-1]}+00:00" if candidate.endswith("Z") else candidate
         )
         parsed = datetime.fromisoformat(normalized_candidate)
-        candidate = (parsed + timedelta(milliseconds=1)).isoformat(
-            timespec="milliseconds"
-        ).replace("+00:00", "Z")
+        candidate = (
+            (parsed + timedelta(milliseconds=1))
+            .isoformat(timespec="milliseconds")
+            .replace("+00:00", "Z")
+        )
     return candidate
 
 
@@ -2180,22 +2178,17 @@ def _load_destination_parent(
         return None
     _validate_folder_id(parent_id, field="parent_id")
     row = cursor.execute(
-        f"SELECT {_FOLDER_COLUMNS} FROM note_folders "
-        "WHERE id = ? AND deleted = 0",
+        f"SELECT {_FOLDER_COLUMNS} FROM note_folders WHERE id = ? AND deleted = 0",
         (parent_id,),
     ).fetchone()
     if row is None:
-        raise FolderValidationError(
-            "Destination parent does not exist or is inactive."
-        )
+        raise FolderValidationError("Destination parent does not exist or is inactive.")
     _validate_absolute_display_path(str(row["path"]))
     _validate_absolute_normalized_path(str(row["normalized_path"]))
     return row
 
 
-def _has_ancestor(
-    cursor: sqlite3.Cursor, *, folder_id: str, ancestor_id: str
-) -> bool:
+def _has_ancestor(cursor: sqlite3.Cursor, *, folder_id: str, ancestor_id: str) -> bool:
     """Return whether an active folder's parent-ID chain reaches an ancestor."""
     row = cursor.execute(
         """
@@ -2358,7 +2351,7 @@ def _replace_subtree_prefix(value: str, old_prefix: str, new_prefix: str) -> str
         raise FolderValidationError(
             "A descendant path does not share the target folder prefix."
         )
-    return f"{new_prefix}{value[len(old_prefix):]}"
+    return f"{new_prefix}{value[len(old_prefix) :]}"
 
 
 def _validate_rewritten_paths(
@@ -2381,9 +2374,7 @@ def _preflight_active_paths(
 ) -> None:
     _validate_rewritten_paths(rewritten)
     subtree_ids = {str(row["id"]) for row, _path, _normalized in rewritten}
-    desired_paths = tuple(
-        sorted({normalized for _row, _path, normalized in rewritten})
-    )
+    desired_paths = tuple(sorted({normalized for _row, _path, normalized in rewritten}))
     for start in range(0, len(desired_paths), _COLLISION_PREFLIGHT_CHUNK_SIZE):
         chunk = desired_paths[start : start + _COLLISION_PREFLIGHT_CHUNK_SIZE]
         placeholders = _placeholders(len(chunk))
@@ -2481,9 +2472,7 @@ def _insert_membership(
             if not _is_membership_id_collision(exc):
                 raise
             if attempt == _MEMBERSHIP_ID_INSERT_ATTEMPTS - 1:
-                raise FolderValidationError(
-                    "Membership ID allocation failed."
-                ) from exc
+                raise FolderValidationError("Membership ID allocation failed.") from exc
     row = cursor.execute(
         f"SELECT {_MEMBERSHIP_COLUMNS} FROM note_folder_memberships WHERE id = ?",
         (membership_id,),
@@ -2605,9 +2594,7 @@ def _require_active_ids(
         ).fetchall()
         found.update(str(row["id"]) for row in rows)
     if len(found) != len(ids):
-        raise FolderValidationError(
-            f"Every desired {field} must exist and be active."
-        )
+        raise FolderValidationError(f"Every desired {field} must exist and be active.")
 
 
 def _raise_mutation_integrity_error(exc: sqlite3.IntegrityError) -> NoReturn:
@@ -2627,10 +2614,10 @@ def _raise_membership_integrity_error(exc: sqlite3.IntegrityError) -> NoReturn:
 
 
 def _is_membership_id_collision(exc: sqlite3.IntegrityError) -> bool:
-    return (
-        getattr(exc, "sqlite_errorcode", None)
-        == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY
-        and "note_folder_memberships.id" in str(exc)
+    return getattr(
+        exc, "sqlite_errorcode", None
+    ) == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY and "note_folder_memberships.id" in str(
+        exc
     )
 
 
@@ -2682,9 +2669,7 @@ def _raise_wrapped_repository_error(exc: CharactersRAGDBError) -> NoReturn:
     raise exc
 
 
-def _require_manual_folder_subtree(
-    cursor: sqlite3.Cursor, folder_id: str
-) -> None:
+def _require_manual_folder_subtree(cursor: sqlite3.Cursor, folder_id: str) -> None:
     """Reject direct folder mutations that would alter a sync-owned subtree."""
     managed = cursor.execute(
         """

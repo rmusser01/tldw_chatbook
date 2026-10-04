@@ -68,6 +68,23 @@ class ConsolePreparationPauseKind(str, Enum):
     TRACE_PROVENANCE = "trace_provenance"
     TRACE_CALL = "trace_call"
     TEMPORARY_CAPTURE = "temporary_capture"
+    #: TASK-34350: the send reached the compaction threshold under Ask.
+    CONTEXT_COMPACTION = "context_compaction"
+
+
+@dataclass(frozen=True, slots=True)
+class ContextCompactionHold:
+    """Why one send is held at the compaction threshold (TASK-34350).
+
+    Content-free: token counts and whether they rest on an estimated
+    context window, for the hold card's copy.
+    """
+
+    session_id: str
+    used_tokens: int
+    trigger_tokens: int
+    budget_tokens: int
+    estimated: bool
 
 
 PAUSE_ACTIONS: Mapping[ConsolePreparationPauseKind, tuple[str, ...]] = MappingProxyType(
@@ -88,6 +105,11 @@ PAUSE_ACTIONS: Mapping[ConsolePreparationPauseKind, tuple[str, ...]] = MappingPr
         ConsolePreparationPauseKind.TEMPORARY_CAPTURE: (
             "save_and_send",
             "send_without_capture",
+            "cancel",
+        ),
+        ConsolePreparationPauseKind.CONTEXT_COMPACTION: (
+            "compact_and_send",
+            "send_without_compacting",
             "cancel",
         ),
     }
@@ -514,6 +536,7 @@ def _transition_is_legal(
                 ConsolePreparationPauseKind.PERSISTENCE,
                 ConsolePreparationPauseKind.DESTINATION_CHANGED,
                 ConsolePreparationPauseKind.TRACE_PROVENANCE,
+                ConsolePreparationPauseKind.CONTEXT_COMPACTION,
             }
         if current in {
             ConsoleTurnPreparationState.ACCEPTED,
@@ -557,6 +580,13 @@ def _transition_is_legal(
         if pause is ConsolePreparationPauseKind.TRACE_CALL:
             return (
                 new is ConsoleTurnPreparationState.ACCEPTED
+                and transition.new_attempt_id is None
+            )
+        if pause is ConsolePreparationPauseKind.CONTEXT_COMPACTION:
+            # TASK-34350: nothing was committed, so an answered hold re-enters
+            # the send exactly where it stopped -- READY, before commit.
+            return (
+                new is ConsoleTurnPreparationState.READY
                 and transition.new_attempt_id is None
             )
         return False

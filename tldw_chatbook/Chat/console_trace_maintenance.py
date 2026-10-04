@@ -280,12 +280,8 @@ class PhysicalTraceCompactor:
     def _refresh_storage_observation(self, result: TraceGCResult) -> TraceGCResult:
         with self.db.transaction() as cursor:
             page_size = int(cursor.execute("PRAGMA page_size").fetchone()[0])
-            allocated_pages = int(
-                cursor.execute("PRAGMA page_count").fetchone()[0]
-            )
-            freelist_pages = int(
-                cursor.execute("PRAGMA freelist_count").fetchone()[0]
-            )
+            allocated_pages = int(cursor.execute("PRAGMA page_count").fetchone()[0])
+            freelist_pages = int(cursor.execute("PRAGMA freelist_count").fetchone()[0])
         wal_path = Path(f"{self.db.db_path_str}-wal")
         try:
             wal_bytes = max(0, wal_path.stat().st_size)
@@ -349,7 +345,11 @@ class PhysicalTraceCompactor:
     ) -> TraceCompactionOutcome:
         reason: str | None = None
         failure_recorded = False
-        after = (result.allocated_bytes_after, result.freelist_bytes_after, result.wal_bytes)
+        after = (
+            result.allocated_bytes_after,
+            result.freelist_bytes_after,
+            result.wal_bytes,
+        )
         try:
             with self.db.quiesce_connections(
                 timeout_seconds=self.policy.quiesce_timeout_seconds
@@ -856,7 +856,9 @@ class LegacyTraceMaintenance:
                             cursor,
                             row,
                             max_decoded_bytes=remaining_bytes,
-                            oversized_policy=("omit" if not processed_rows else "defer"),
+                            oversized_policy=(
+                                "omit" if not processed_rows else "defer"
+                            ),
                         )
                     except LegacyDecodedByteLimitError:
                         break
@@ -1281,9 +1283,7 @@ class TraceGarbageCollector:
         retain_until: str,
         reason_code: str,
     ) -> str:
-        TraceGarbageCollector._validate_utc_timestamp(
-            retain_until, "retain_until"
-        )
+        TraceGarbageCollector._validate_utc_timestamp(retain_until, "retain_until")
         if type(reason_code) is not str or not 1 <= len(reason_code) <= 128:
             raise ValueError("reason_code")
         existing = cursor.execute(
@@ -1446,9 +1446,7 @@ class TraceGarbageCollector:
             "console_trace_redaction_spans": "span_id",
             "console_trace_request_headers": "header_id",
             "console_trace_response_links": "response_link_id",
-            "console_trace_revision_bindings": (
-                "revision_id || char(31) || policy_id"
-            ),
+            "console_trace_revision_bindings": ("revision_id || char(31) || policy_id"),
             "console_trace_segments": "segment_id",
             "console_trace_semantic_revisions": "revision_id",
             "console_trace_surface_nodes": "node_id",
@@ -1463,9 +1461,7 @@ class TraceGarbageCollector:
                 f"SELECT {identity} AS entity_id FROM {table}",
             )
 
-    def _mark_reachable_rows(
-        self, cursor: object, request_id: str, epoch: int
-    ) -> None:
+    def _mark_reachable_rows(self, cursor: object, request_id: str, epoch: int) -> None:
         cursor.execute(
             """WITH RECURSIVE roots(segment_id, through_sequence) AS (
                    SELECT owner.root_segment_id, NULL
@@ -1634,9 +1630,7 @@ class TraceGarbageCollector:
         )
         self._mark_revisions_policies_artifacts(cursor, request_id, epoch)
 
-    def _mark_surface_nodes(
-        self, cursor: object, request_id: str, epoch: int
-    ) -> None:
+    def _mark_surface_nodes(self, cursor: object, request_id: str, epoch: int) -> None:
         self._mark_sql(
             cursor,
             request_id,
@@ -1841,9 +1835,7 @@ class TraceGarbageCollector:
         return tuple(str(item[0]) for item in rows)
 
     @staticmethod
-    def _sweep_unmarked(
-        cursor: sqlite3.Cursor, request_id: str
-    ) -> dict[str, int]:
+    def _sweep_unmarked(cursor: sqlite3.Cursor, request_id: str) -> dict[str, int]:
         statements = (
             ("console_trace_redaction_spans", "span_id"),
             ("console_trace_response_links", "response_link_id"),
@@ -1932,7 +1924,9 @@ class TraceGarbageCollector:
     @staticmethod
     def _decode_result(value: str) -> TraceGCResult:
         payload = json.loads(value)
-        deleted = {str(key): int(count) for key, count in payload["deleted_rows"].items()}
+        deleted = {
+            str(key): int(count) for key, count in payload["deleted_rows"].items()
+        }
         page_size = int(payload.get("page_size_bytes", 0))
         free_before = int(payload["freelist_pages_before"])
         free_after = int(payload["freelist_pages_after"])

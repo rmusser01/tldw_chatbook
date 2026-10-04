@@ -769,8 +769,9 @@ def fingerprint_console_fork_configuration(
             "provider": (str,),
             "model": (str, type(None)),
             "base_url": (str, type(None)),
-            "temperature": (int, float),
-            "top_p": (int, float),
+            # Blank when the provider drops it (Custom OpenAI 2 has no Top P).
+            "temperature": (int, float, type(None)),
+            "top_p": (int, float, type(None)),
             "min_p": (int, float, type(None)),
             "top_k": (int, type(None)),
             "max_tokens": (int, type(None)),

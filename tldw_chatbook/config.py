@@ -70,6 +70,7 @@ from tldw_chatbook.Canvas.limits import CanvasLimits
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 from tldw_chatbook.DB.Prompts_DB import PromptsDatabase
+
 if TYPE_CHECKING:
     from tldw_chatbook.Canvas.web_auth import WebAuthPolicy
     from tldw_chatbook.Chat.console_exchange_capture import CaptureDetail
@@ -85,6 +86,7 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
 from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.startup_errors import private_path_repair_hint
 from tldw_chatbook.Utils.private_paths import (
@@ -312,9 +314,7 @@ def _canvas_remote_access_status(
             port=port,
             access_token=credential,
             public_url=public_url,
-            allow_insecure_remote_http=(
-                web.get("allow_insecure_remote_http") is True
-            ),
+            allow_insecure_remote_http=(web.get("allow_insecure_remote_http") is True),
             trusted_proxy_addresses=tuple(str(value) for value in proxies),
             direct_tls=bool(certificate and private_key),
         )
@@ -503,7 +503,9 @@ def get_console_ssh_settings() -> ConsoleSshSettings:
         enable_multiplexing=enable_multiplexing,
         connect_timeout_s=coerce_int_setting(
             get_cli_setting(
-                "console_ssh", "connect_timeout_s", DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S
+                "console_ssh",
+                "connect_timeout_s",
+                DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S,
             ),
             DEFAULT_CONSOLE_SSH_CONNECT_TIMEOUT_S,
             minimum=1,
@@ -518,6 +520,8 @@ def get_console_ssh_settings() -> ConsoleSshSettings:
             minimum=1,
         ),
     )
+
+
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
 from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id
@@ -598,7 +602,9 @@ def _default_stt_provider_for_platform() -> str:
 def application_owned_config_directory(config_path: Path) -> Path | None:
     """Return the app-owned default config parent, never a custom parent."""
 
-    if _config_participants.verified_companion_parent(sys.modules[__name__], config_path):
+    if _config_participants.verified_companion_parent(
+        sys.modules[__name__], config_path
+    ):
         return None
     if os.environ.get("TLDW_CONFIG_PATH"):
         return None
@@ -622,7 +628,31 @@ def _report_config_path_posture(
 
 
 # --- Encryption support ---
-_ENCRYPTION_PASSWORD = None  # Cached password for the session
+
+
+def _take_startup_unlock() -> tuple[Optional[str], bool]:
+    """The startup unlock's outcome, if it is running (TASK-34100.4 round 2).
+
+    `Backup_Recovery.launcher.startup_unlock` imports this module only after
+    the master password was typed; taking it here, before the module-level
+    load below, means that load decrypts instead of warning "no password is
+    set" right after the right password. Read through ``sys.modules`` so
+    config never imports the launcher itself.
+
+    Returns:
+        ``(password, pending)`` from ``launcher.take_startup_unlock()``, or
+        ``(None, False)`` when no startup unlock is in progress.
+    """
+    launcher = sys.modules.get("tldw_chatbook.Backup_Recovery.launcher")
+    take = getattr(launcher, "take_startup_unlock", None)
+    if not callable(take):
+        return None, False
+    return take()
+
+
+# Cached password for the session; True while a startup reset or re-key is
+# about to finish the unlock (the locked import-time load is then expected).
+_ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING = _take_startup_unlock()
 _ENCRYPTION_MODULE = None  # Lazily loaded encryption module
 _CONFIG_GENERATION = 0
 _CONFIG_PERSISTENCE_ERROR = None
@@ -1013,7 +1043,9 @@ def set_encryption_password(password: str):
     re-decrypted on the next load.
     """
     global _ENCRYPTION_PASSWORD, _SETTINGS_CACHE, _CONFIG_CACHE
+    global _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = password
+    _STARTUP_UNLOCK_PENDING = False
     _SETTINGS_CACHE = None
     _CONFIG_CACHE = None
     logger.info("Encryption password set for current session")
@@ -1026,8 +1058,9 @@ def get_encryption_password() -> Optional[str]:
 
 def clear_encryption_password():
     """Clear the encryption password from memory."""
-    global _ENCRYPTION_PASSWORD
+    global _ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = None
+    _STARTUP_UNLOCK_PENDING = False
     logger.info("Encryption password cleared from memory")
 
 
@@ -1047,9 +1080,15 @@ def _decrypt_config_section_with_status(
 
     password = get_encryption_password()
     if not password:
-        logger.warning(
-            "Encryption is enabled but no password is set. Cannot decrypt config."
-        )
+        if _STARTUP_UNLOCK_PENDING:
+            # A startup reset or re-key installs its outcome right after this
+            # import; a locked load now is expected, not a problem to report
+            # under the prompt (TASK-34100.4 review round 2).
+            logger.debug("Encrypted config loaded before the startup unlock finished.")
+        else:
+            logger.warning(
+                "Encryption is enabled but no password is set. Cannot decrypt config."
+            )
         return _ConfigDecryptionResult(config_data, True)
 
     try:
@@ -1539,13 +1578,53 @@ PROVIDER_API_KEY_PLACEHOLDERS = frozenset(
 )
 
 
+#: The prefix `Utils/config_encryption.ConfigEncryption` writes on every
+#: encrypted config value (pinned equal by
+#: Tests/test_config_encryption_lifecycle.py). Kept as a literal here so the
+#: key resolver below never imports the encryption engine.
+ENCRYPTED_CONFIG_VALUE_PREFIX = "enc:"
+
+
+def is_encrypted_config_value(value: object) -> bool:
+    """Whether ``value`` is still-encrypted ``enc:`` config ciphertext.
+
+    TASK-34100.4 (new-protect-summary-03): ciphertext is never a credential.
+    A locked session (encryption on, no password) or a value that did not
+    decrypt keeps its ``enc:`` form in the loaded config, so every code path
+    that reads a key straight from config must treat it as unusable.
+    """
+    return isinstance(value, str) and value.strip().startswith(
+        ENCRYPTED_CONFIG_VALUE_PREFIX
+    )
+
+
+def without_ciphertext(value: Any, absent: Any = None) -> Any:
+    """Return ``value`` unchanged, or ``absent`` when it is ``enc:`` ciphertext.
+
+    For key reads that must keep their own blank/placeholder semantics (the
+    summarizers distinguish a configured-blank key from a missing one) but
+    must never send ciphertext. Provider handlers use
+    `resolve_provider_api_key` instead.
+    """
+    return absent if is_encrypted_config_value(value) else value
+
+
 def resolve_provider_api_key(value: object) -> Optional[str]:
     """Return `value` stripped, or `None` if it is not a usable provider API
-    key (not a string, blank, or one of `PROVIDER_API_KEY_PLACEHOLDERS`)."""
+    key (not a string, blank, one of `PROVIDER_API_KEY_PLACEHOLDERS`, or
+    still-encrypted `enc:` ciphertext).
+
+    TASK-34100.4 (new-protect-summary-03): ciphertext reads as ABSENT. A
+    locked session (encryption on, no password) or a value that did not
+    decrypt keeps its `enc:` form in the loaded config; accepting it made
+    readiness report Ready and sent the ciphertext as a bearer token.
+    """
     if not isinstance(value, str):
         return None
     stripped = value.strip()
     if stripped in PROVIDER_API_KEY_PLACEHOLDERS:
+        return None
+    if is_encrypted_config_value(stripped):
         return None
     return stripped or None
 
@@ -2238,9 +2317,7 @@ def _load_settings_uncached(
     )
     from tldw_chatbook.Utils.reasoning_config import resolve_console_reasoning_config
 
-    reasoning_resolution = resolve_console_reasoning_config(
-        final_console_settings_cli
-    )
+    reasoning_resolution = resolve_console_reasoning_config(final_console_settings_cli)
     for diagnostic in reasoning_resolution.diagnostics:
         logger.warning("Invalid Console reasoning configuration: {}", diagnostic)
     final_console_settings_cli.update(reasoning_resolution.settings.model_dump())
@@ -3479,7 +3556,10 @@ def _load_settings_uncached(
             ),
             "bing_search_api_key": _get_typed_value(
                 search_engines_section, "bing_search_api_key", ""
-            ) or _get_typed_value(search_engines_section, "search_engine_api_key_bing", ""),
+            )
+            or _get_typed_value(
+                search_engines_section, "search_engine_api_key_bing", ""
+            ),
             "brave_search_api_key": _get_typed_value(
                 search_engines_section, "brave_search_api_key", ""
             ),
@@ -3497,7 +3577,8 @@ def _load_settings_uncached(
             ),
             "searx_search_api_url": _get_typed_value(
                 search_engines_section, "searx_search_api_url", ""
-            ) or _get_typed_value(search_engines_section, "search_engine_searx_api", ""),
+            )
+            or _get_typed_value(search_engines_section, "search_engine_searx_api", ""),
             "tavily_search_api_key": _get_typed_value(
                 search_engines_section, "tavily_search_api_key", ""
             ),
@@ -3694,7 +3775,8 @@ def _load_settings_uncached(
     from .Utils.paths import get_user_data_dir
 
     chat_dicts_folder = (
-        get_user_data_dir() if bootstrap.succeeded
+        get_user_data_dir()
+        if bootstrap.succeeded
         else profile_paths.user_data_dir(toml_config_data)
     ) / "chat_dicts"
     config_dict["chat_dictionaries"]["chat_dicts_folder"] = str(chat_dicts_folder)
@@ -3705,7 +3787,11 @@ def _load_settings_uncached(
     # 0700 and hardens an existing 0775 instance in place.
     try:
         if bootstrap.succeeded:
-            with _config_participants.operation(sys.modules[__name__], route="config_chat_dicts", target=chat_dicts_folder):
+            with _config_participants.operation(
+                sys.modules[__name__],
+                route="config_chat_dicts",
+                target=chat_dicts_folder,
+            ):
                 secure_private_directory(
                     chat_dicts_folder, create=True, application_owned=True
                 )
@@ -6483,19 +6569,19 @@ def first_profile_created_this_session() -> bool:
 #: -- only genuinely dynamic-keyed sections -- so real typos elsewhere still
 #: surface. Each entry is a tuple path prefix.
 _FREEFORM_CONFIG_PREFIXES: tuple[tuple[str, ...], ...] = (
-    ("agents",),                # deliberately EMPTY in the default shape: the
-                                # authoritative defaults live in
-                                # Agents/agent_service.py (two-homes drift),
-                                # so documented overrides here would all flag
-                                # as unknown (Qodo #13, PR #2301)
+    ("agents",),  # deliberately EMPTY in the default shape: the
+    # authoritative defaults live in
+    # Agents/agent_service.py (two-homes drift),
+    # so documented overrides here would all flag
+    # as unknown (Qodo #13, PR #2301)
     ("console", "reasoning_history_overrides"),
     ("console", "reasoning_native_tool_overrides"),
-    ("api_settings",),          # provider configs incl. user-added custom providers
-    ("providers",),             # provider display sections + model lists
-    ("model_capabilities", "models"),    # arbitrary model names
+    ("api_settings",),  # provider configs incl. user-added custom providers
+    ("providers",),  # provider display sections + model lists
+    ("model_capabilities", "models"),  # arbitrary model names
     ("model_capabilities", "patterns"),  # arbitrary model-name patterns
-    ("SearchEngines",),         # per-engine configs
-    ("Prompts",),               # user prompt content
+    ("SearchEngines",),  # per-engine configs
+    ("Prompts",),  # user prompt content
     ("prompts",),
 )
 
@@ -6514,8 +6600,8 @@ _DEPRECATED_CONFIG_KEYS: Dict[str, str] = {
 class ConfigKeyFinding:
     """One advisory config-key finding."""
 
-    path: str                       # dotted path, e.g. "general.focus_mdoe"
-    kind: str                       # "unknown" | "deprecated"
+    path: str  # dotted path, e.g. "general.focus_mdoe"
+    kind: str  # "unknown" | "deprecated"
     suggestion: Optional[str] = None  # near-miss key or replacement path
 
 
@@ -6558,7 +6644,9 @@ def validate_config_keys(
             here = (*path, key)
             replacement = _deprecated_config_replacement(here)
             if replacement is not None:
-                findings.append(ConfigKeyFinding(".".join(here), "deprecated", replacement))
+                findings.append(
+                    ConfigKeyFinding(".".join(here), "deprecated", replacement)
+                )
                 continue
             if key in ref:
                 ref_value = ref[key]
@@ -6748,9 +6836,7 @@ def _preserve_corrupt_config_aside(config_path: Path) -> Optional[Path]:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
         aside = source.with_name(f"{source.name}.corrupt-{stamp}")
         shutil.copy2(source, aside)
-        logger.warning(
-            f"Preserved unparseable config {source} at {aside}"
-        )
+        logger.warning(f"Preserved unparseable config {source} at {aside}")
         _LAST_PRESERVED_CORRUPT_KEY = key
         _LAST_PRESERVED_CORRUPT_ASIDE = aside
         return aside
@@ -7115,11 +7201,16 @@ def _config_interprocess_lock(config_path: Path) -> Iterator[None]:
         locked = False
         try:
             from tldw_chatbook.Backup_Recovery import raw_participants
+
             operation = raw_participants._runtime_operation(config_path)
             while True:
                 _config_participants.check_lock_wait(sys.modules[__name__], operation)
                 try:
-                    portalocker.lock(stream, portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING)
+                    portalocker.lock(
+                        stream,
+                        portalocker.LockFlags.EXCLUSIVE
+                        | portalocker.LockFlags.NON_BLOCKING,
+                    )
                     locked = True
                     break
                 except portalocker.exceptions.AlreadyLocked:
@@ -7386,9 +7477,31 @@ def _write_raw_cli_config_unlocked(
             f"Refusing to write {config_path}: the serialized configuration "
             f"does not parse back as valid TOML ({exc})"
         ) from exc
+    _commit_serialized_cli_config_unlocked(
+        config_path, serialized, application_directory
+    )
+    return parsed_back
+
+
+def _commit_serialized_cli_config_unlocked(
+    config_path: Path,
+    serialized: str,
+    application_directory: Path | None,
+) -> None:
+    """Atomically commit exact serialized config text while the lock is held.
+
+    Shared by `_write_raw_cli_config_unlocked` and the encryption lifecycle's
+    byte-exact rollback (TASK-34100.4), so a restore advances an owned
+    recovery binding exactly like an ordinary write does. Not itself
+    `_config_participants.guarded` (that allowlist is closed): every caller
+    already runs inside `_config_write_lock`'s participant operation.
+    """
+
     from .Backup_Recovery.config_binding import preserve_owned_binding
 
-    with preserve_owned_binding(sys.modules[__name__], config_path, serialized) as precondition:
+    with preserve_owned_binding(
+        sys.modules[__name__], config_path, serialized
+    ) as precondition:
         result = atomic_private_write_text(
             config_path,
             serialized,
@@ -7397,7 +7510,6 @@ def _write_raw_cli_config_unlocked(
         )
     _report_config_path_posture(result)
     _invalidate_config_caches()
-    return parsed_back
 
 
 def _install_bootstrap_cache_from_raw(
@@ -7885,12 +7997,18 @@ def _write_serialized_config_artifact_unlocked(
         route, target = "config", config_path
     else:
         prefix, suffix = "config_backup_", ".toml"
-        if path.parent != config_path.parent or not path.name.startswith(prefix) or not path.name.endswith(suffix):
+        if (
+            path.parent != config_path.parent
+            or not path.name.startswith(prefix)
+            or not path.name.endswith(suffix)
+        ):
             raise ValueError("invalid_config_snapshot_target")
-        route, target = "config_snapshot", path.name[len(prefix):-len(suffix)]
+        route, target = "config_snapshot", path.name[len(prefix) : -len(suffix)]
         if _config_snapshot_path(config_path, target) != path:
             raise ValueError("invalid_config_snapshot_target")
-    with _config_participants.operation(sys.modules[__name__], route=route, target=target):
+    with _config_participants.operation(
+        sys.modules[__name__], route=route, target=target
+    ):
         application_directory = _prepare_config_parent(config_path)
         result = atomic_private_write_text(
             path,
@@ -8102,7 +8220,11 @@ def replace_cli_config(config_data: Mapping[str, Any]) -> Dict[str, Any]:
 
 def _config_snapshot_path(config_path: Path, timestamp: str) -> Path:
     """Select one config-owned snapshot basename before any filesystem effect."""
-    if not isinstance(timestamp, str) or not timestamp or any(char in timestamp for char in ("/", "\\", "\x00")):
+    if (
+        not isinstance(timestamp, str)
+        or not timestamp
+        or any(char in timestamp for char in ("/", "\\", "\x00"))
+    ):
         raise ValueError("invalid_config_snapshot_target")
     return config_path.parent / f"config_backup_{timestamp}.toml"
 
@@ -8115,7 +8237,12 @@ def export_cli_config_snapshot(
     """Create an owner-only snapshot beside the effective config file."""
 
     snapshot_timestamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
-    with _config_participants.operation(sys.modules[__name__], route="config_snapshot", target=snapshot_timestamp), _config_file_lock():
+    with (
+        _config_participants.operation(
+            sys.modules[__name__], route="config_snapshot", target=snapshot_timestamp
+        ),
+        _config_file_lock(),
+    ):
         config_path = get_cli_config_path()
         snapshot_path = _config_snapshot_path(config_path, snapshot_timestamp)
         serialized = _try_read_cli_config_serialized_unlocked(config_path)
@@ -8420,7 +8547,9 @@ def _validate_literal_config_mutation_targets(
             raise TypeError("Literal configuration delete keys must be collections")
         for key in keys:
             if type(key) is not str or not key:
-                raise TypeError("Literal configuration delete keys must be non-empty strings")
+                raise TypeError(
+                    "Literal configuration delete keys must be non-empty strings"
+                )
             delete_targets.add((path, key))
 
     if set_targets.intersection(delete_targets):
@@ -8584,9 +8713,7 @@ def _apply_literal_settings_transaction_locked(
                     "(phase=precondition, error_type={}).",
                     type(error).__name__,
                 )
-                return LiteralConfigMutationResult(
-                    False, False, None, "before_replace"
-                )
+                return LiteralConfigMutationResult(False, False, None, "before_replace")
 
         try:
             effective_values = _atomic_config_values_from_raw(config_data)
@@ -8610,8 +8737,7 @@ def _apply_literal_settings_transaction_locked(
                 _validate_literal_config_mutation_targets(mutation)
             logged_sets, logged_deletes = _literal_mutation_log_shape(mutation)
             logger.info(
-                "Attempting to apply literal settings mutation: "
-                "sets={}, deletes={}",
+                "Attempting to apply literal settings mutation: sets={}, deletes={}",
                 logged_sets,
                 logged_deletes,
             )
@@ -8664,9 +8790,7 @@ def _apply_literal_settings_transaction_locked(
                     config_path,
                     type(error).__name__,
                 )
-                return LiteralConfigMutationResult(
-                    False, False, None, "before_replace"
-                )
+                return LiteralConfigMutationResult(False, False, None, "before_replace")
             logger.success(f"Successfully replaced settings file at {config_path}")
         else:
             _invalidate_config_caches()
@@ -9185,7 +9309,9 @@ def apply_console_capture_settings(
         if pii_redaction_enabled is None
         else pii_redaction_enabled
     )
-    resolved_viewer = current.viewer_profile if viewer_profile is None else viewer_profile
+    resolved_viewer = (
+        current.viewer_profile if viewer_profile is None else viewer_profile
+    )
 
     def generation_is_current(snapshot: AtomicConfigSnapshot) -> bool:
         return snapshot.generation == expected_generation
@@ -9224,10 +9350,7 @@ def apply_console_capture_settings(
 
     more_revealing = (
         (enabled and not current.enabled)
-        or (
-            detail is CaptureDetail.FULL
-            and current.detail is CaptureDetail.SAFE
-        )
+        or (detail is CaptureDetail.FULL and current.detail is CaptureDetail.SAFE)
         or (not resolved_pii and current.pii_redaction_enabled)
         or (resolved_viewer == "full" and current.viewer_profile == "safe")
     )
@@ -9715,36 +9838,422 @@ def get_detected_api_providers() -> List[str]:
     return providers
 
 
+# --- Config key-encryption lifecycle (TASK-34100.4) ---------------------------
+#
+# One owner for the four states (off / on / locked / unlocked). Every change
+# below follows the same contract, because a mistake here locks people out of
+# their own app (first-run review 2026-10-02, protect-summary-04):
+#
+# * validate BEFORE writing -- the replacement document must strict-decrypt
+#   with the password the session will hold afterwards, and must not leave a
+#   plaintext secret behind in an encrypted file;
+# * if anything fails after the write (the runtime publish, a binding check),
+#   restore the previous file bytes -- or remove a file this call created --
+#   and the previous in-process password, so a failure never leaves the disk
+#   changed while the caller is told nothing happened;
+# * never decrypt non-strictly: a file whose keys do not match its verifier is
+#   refused untouched instead of having its ciphertext written back as values.
+
+
+def _set_session_encryption_password(password: Optional[str]) -> None:
+    """Install (or clear) the in-process password and drop stale caches."""
+
+    global _SETTINGS_CACHE, _CONFIG_CACHE
+    if password is None:
+        clear_encryption_password()
+        _SETTINGS_CACHE = None
+        _CONFIG_CACHE = None
+        return
+    set_encryption_password(password)
+
+
+def _parse_raw_cli_config_text(serialized: Optional[str]) -> Dict[str, Any]:
+    if serialized is None:
+        return {}
+    loaded = tomllib.loads(serialized)
+    if not isinstance(loaded, dict):
+        raise TypeError("The CLI config must contain a top-level table")
+    return loaded
+
+
+def _password_verifier(config_data: Mapping[str, Any]) -> Optional[str]:
+    encryption = config_data.get("encryption", {})
+    if not isinstance(encryption, Mapping):
+        return None
+    verifier = encryption.get("password_verifier")
+    return verifier if isinstance(verifier, str) and verifier else None
+
+
+def _validate_encrypted_document(
+    document: Mapping[str, Any],
+    password: str,
+) -> None:
+    """Raise unless ``document`` is a safe encrypted config for ``password``.
+
+    The check mirrors what the next publish and the next startup do: the
+    merged view must strict-decrypt, and no sensitive value may stay plain.
+    """
+
+    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(document))
+    get_encryption_module().decrypt_config_strict(merged, password)
+    if _contains_unencrypted_sensitive_value(document):
+        raise ValueError("An encrypted config would keep a plaintext secret")
+
+
+def _strip_encrypted_values(config_data: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return a copy with every ``enc:`` string value removed, in every table.
+
+    Arrays are walked too (Qodo round, PR #3000): an ``enc:`` element is
+    dropped from its array and a table inside an array is stripped like any
+    other, so a reset never leaves ciphertext behind in a TOML array.
+    """
+
+    stripped: Dict[str, Any] = {}
+    for key, value in config_data.items():
+        if is_encrypted_config_value(value):
+            continue
+        stripped[key] = _strip_encrypted_item(value)
+    return stripped
+
+
+def _strip_encrypted_item(value: Any) -> Any:
+    """Strip ``enc:`` strings from one table or array value (copied)."""
+
+    if isinstance(value, Mapping):
+        return _strip_encrypted_values(value)
+    if isinstance(value, list):
+        return [
+            _strip_encrypted_item(item)
+            for item in value
+            if not is_encrypted_config_value(item)
+        ]
+    return copy.deepcopy(value)
+
+
+def _encrypted_value_paths(
+    config_data: Mapping[str, Any], prefix: tuple[str, ...] = ()
+) -> list[str]:
+    """Dotted paths of every ``enc:`` value outside the ``[encryption]`` table."""
+
+    paths: list[str] = []
+    for key, value in config_data.items():
+        if not prefix and key == "encryption":
+            continue
+        if isinstance(value, Mapping):
+            paths.extend(_encrypted_value_paths(value, prefix + (str(key),)))
+        elif is_encrypted_config_value(value):
+            paths.append(".".join(prefix + (str(key),)))
+    return paths
+
+
+def _contains_encrypted_value(config_data: Mapping[str, Any]) -> bool:
+    return bool(_encrypted_value_paths(config_data))
+
+
+def _already_encrypted_with(config_data: Mapping[str, Any], password: str) -> bool:
+    """Whether an encryption-on file is already exactly what enabling with
+    ``password`` would produce: the verifier accepts it, every saved value
+    strict-decrypts with it, and no sensitive value is left in plain text."""
+
+    verifier = _password_verifier(config_data)
+    if verifier is None:
+        return False
+    if not get_encryption_module().verify_password(password, verifier):
+        return False
+    try:
+        _validate_encrypted_document(config_data, password)
+    except ValueError:
+        return False
+    return True
+
+
+def _restore_previous_config_unlocked(
+    config_path: Path,
+    previous_serialized: Optional[str],
+) -> None:
+    """Put the exact previous bytes back (or remove a file this call created).
+
+    Args:
+        config_path: The selected config file the failed change wrote.
+        previous_serialized: The file's exact text before the change, or
+            None when the change created the file.
+
+    Raises:
+        ValueError: The path fails ``validate_path_simple``; nothing is
+            removed.
+        OSError: Reading, removing or rewriting the file failed.
+    """
+
+    current = _try_read_cli_config_serialized_unlocked(config_path)
+    if current == previous_serialized:
+        return
+    if previous_serialized is None:
+        # The only raw filesystem call here; the restore write below goes
+        # through the private atomic writer. Same validation as the hooks
+        # snapshot's lock target: the path only reaches unlink(), never a
+        # shell, and unlink() removes a link itself, not what it points to.
+        removable = validate_path_simple(
+            config_path,
+            require_exists=False,
+            probe_existing=False,
+            reject_shell_metacharacters=False,
+        )
+        removable.unlink(missing_ok=True)
+        _invalidate_config_caches()
+        return
+    _commit_serialized_cli_config_unlocked(
+        config_path,
+        previous_serialized,
+        _prepare_config_parent(config_path),
+    )
+
+
+def _unlock_session_with_password_unlocked(config_path: Path, password: str) -> bool:
+    """Install ``password`` for an unchanged file and republish settings.
+
+    The same-password enable writes nothing, but a session that loaded the
+    file without the password published its ciphertext in ``settings``;
+    installing the password alone left every reader of that global on the
+    locked view (Qodo round, PR #3000). Callers hold the write lock and have
+    already checked that ``password`` reads the file.
+
+    Args:
+        config_path: The selected config file (used for log context only).
+        password: The master password the file is encrypted under.
+
+    Returns:
+        True when the session holds ``password`` and the published settings
+        are decrypted with it; False when the publish failed, in which case
+        the previous session password is put back.
+    """
+
+    previous_password = get_encryption_password()
+    _set_session_encryption_password(password)
+    try:
+        _publish_runtime_config_unlocked()
+        return True
+    except Exception as error:
+        logger.error(
+            "Publishing the unlocked config failed; the session was left as "
+            "it was (action=enable, config_path={}, error_type={}).",
+            redact_user_paths(str(config_path)),
+            type(error).__name__,
+        )
+    _set_session_encryption_password(previous_password)
+    return False
+
+
+def _session_password_for_file(
+    config_path: Path,
+    previous_serialized: Optional[str],
+    *,
+    previous_password: Optional[str],
+    written_password: Optional[str],
+) -> Optional[str]:
+    """The password that reads the file as it is after a rollback attempt."""
+
+    try:
+        current = _try_read_cli_config_serialized_unlocked(config_path)
+    except Exception:
+        return None
+    if current == previous_serialized:
+        return previous_password
+    return written_password
+
+
+def _commit_encryption_change_unlocked(
+    config_path: Path,
+    document: Mapping[str, Any],
+    previous_serialized: Optional[str],
+    *,
+    session_password: Optional[str],
+    action: str,
+) -> bool:
+    """Write ``document``, install ``session_password`` and publish -- or roll back.
+
+    Callers hold the write lock and have already validated ``document``.
+    """
+
+    previous_password = get_encryption_password()
+    try:
+        raw_written = _write_raw_cli_config_unlocked(config_path, document)
+        _set_session_encryption_password(session_password)
+        _publish_runtime_config_unlocked(raw_config=raw_written)
+        return True
+    except Exception as error:
+        logger.error(
+            "Config encryption change failed; restoring the previous config "
+            "(action={}, error_type={}).",
+            action,
+            type(error).__name__,
+        )
+    try:
+        _restore_previous_config_unlocked(config_path, previous_serialized)
+    except Exception as restore_error:
+        logger.error(
+            "Restoring the previous config after a failed encryption change "
+            "failed (action={}, error_type={}).",
+            action,
+            type(restore_error).__name__,
+        )
+    # The session password must match what the file holds NOW (review round
+    # 1, F7): the previous one after a restore, the new one when the restore
+    # failed and the new document stayed. Reverting it then would encrypt the
+    # next save under the old password beside the new verifier -- the
+    # stranded state. An unreadable file locks the session rather than guess.
+    _set_session_encryption_password(
+        _session_password_for_file(
+            config_path,
+            previous_serialized,
+            previous_password=previous_password,
+            written_password=session_password,
+        )
+    )
+    try:
+        _publish_runtime_config_unlocked()
+    except Exception as publish_error:
+        logger.warning(
+            "Republishing the restored config failed (action={}, error_type={}).",
+            action,
+            type(publish_error).__name__,
+        )
+    return False
+
+
+def config_encryption_enabled_on_disk() -> Optional[bool]:
+    """Whether the selected config file currently has encryption turned on.
+
+    Returns:
+        True or False from the file, or None when it could not be read (the
+        caller keeps whatever state it already showed).
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        return _encryption_enabled(_parse_raw_cli_config_text(serialized))
+    except Exception as error:
+        logger.warning(
+            "Reading the config encryption state failed (error_type={}).",
+            type(error).__name__,
+        )
+        return None
+
+
+def encrypted_value_paths_on_disk() -> list[str]:
+    """Dotted paths of the ``enc:`` values in the selected config file.
+
+    Used to name a value that is still encrypted under an earlier password
+    when encrypting is refused over it. Empty when there are none or the file
+    cannot be read.
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        return _encrypted_value_paths(_parse_raw_cli_config_text(serialized))
+    except Exception as error:
+        logger.warning(
+            "Listing encrypted config values failed (error_type={}).",
+            type(error).__name__,
+        )
+        return []
+
+
+def verify_config_encryption_password(password: str) -> bool:
+    """Whether ``password`` matches the saved master-password verifier.
+
+    Returns False when encryption is off or the verifier is missing. Runs
+    scrypt, so call it off the UI thread.
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        config_data = _parse_raw_cli_config_text(serialized)
+        verifier = _password_verifier(config_data)
+        if not _encryption_enabled(config_data) or verifier is None:
+            return False
+        return bool(get_encryption_module().verify_password(password, verifier))
+    except Exception as error:
+        logger.warning(
+            "Checking the master password failed (error_type={}).",
+            type(error).__name__,
+        )
+        return False
+
+
 def enable_config_encryption(password: str) -> bool:
     """
     Enable encryption for the config file and encrypt existing API keys.
+
+    Refuses (returns False without writing) when encryption is already on
+    with a different password: re-running enable used to rewrite the
+    verifier over keys still encrypted under the first password. Use
+    `change_encryption_password` to rotate. Enabling again with the SAME
+    password, on a file that is already fully encrypted under it, writes
+    nothing and returns True (review round 2, R2-F4); when this session did
+    not hold that password it is installed and the runtime settings are
+    republished, so a locked session is fully unlocked (Qodo round).
 
     Args:
         password: The master password to use for encryption
 
     Returns:
-        True if encryption was enabled successfully
+        True if encryption was enabled successfully, or already was with
+        this password
     """
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
-            config_data = _read_raw_cli_config_unlocked(config_path)
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if _encryption_enabled(config_data):
+                if _already_encrypted_with(config_data, password):
+                    if get_encryption_password() != password and not (
+                        _unlock_session_with_password_unlocked(config_path, password)
+                    ):
+                        return False
+                    logger.info(
+                        "Config encryption is already enabled with this "
+                        "password; nothing was changed."
+                    )
+                    return True
+                logger.warning(
+                    "Config encryption is already enabled; refusing to enable "
+                    "it again. Change the master password instead."
+                )
+                return False
             encrypted_config = encrypt_api_keys_in_config(config_data, password)
-            raw_written = _write_raw_cli_config_unlocked(config_path, encrypted_config)
-            set_encryption_password(password)
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _validate_encrypted_document(encrypted_config, password)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                encrypted_config,
+                previous,
+                session_password=password,
+                action="enable",
+            ):
+                return False
 
         logger.success("Config encryption enabled successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to enable config encryption: {e}")
+        logger.error(
+            "Failed to enable config encryption (error_type={}).", type(e).__name__
+        )
         return False
 
 
 def disable_config_encryption(password: str) -> bool:
     """
     Disable encryption for the config file and decrypt all values.
+
+    Every saved value must decrypt with ``password`` (strict); otherwise the
+    file is left untouched and False is returned.
 
     Args:
         password: The master password to verify before disabling
@@ -9755,36 +10264,68 @@ def disable_config_encryption(password: str) -> bool:
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
-            config_data = _read_raw_cli_config_unlocked(config_path)
-            encryption_config = config_data.get("encryption", {})
-            if encryption_config.get("enabled", False):
-                enc_module = get_encryption_module()
-                password_verifier = encryption_config.get("password_verifier", "")
-                if not password_verifier:
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if _encryption_enabled(config_data):
+                verifier = _password_verifier(config_data)
+                if verifier is None:
                     logger.error("No password verifier found in encryption config")
                     return False
-                if not enc_module.verify_password(password, password_verifier):
+                enc_module = get_encryption_module()
+                if not enc_module.verify_password(password, verifier):
                     logger.error("Invalid password provided")
                     return False
-
-            set_encryption_password(password)
-            decrypted_config = decrypt_config_section(config_data)
+                try:
+                    decrypted_config = enc_module.decrypt_config_strict(
+                        config_data, password
+                    )
+                except ValueError:
+                    logger.error(
+                        "Some saved values do not decrypt with this password; "
+                        "encryption was left on (action=disable, config_path={}).",
+                        redact_user_paths(str(config_path)),
+                    )
+                    return False
+            elif "encryption" in config_data:
+                decrypted_config = copy.deepcopy(config_data)
+            else:
+                _set_session_encryption_password(None)
+                logger.info("Config encryption is already disabled")
+                return True
             decrypted_config.pop("encryption", None)
-            raw_written = _write_raw_cli_config_unlocked(config_path, decrypted_config)
-            clear_encryption_password()
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            if _contains_encrypted_value(decrypted_config):
+                logger.error(
+                    "Encrypted values would remain after disabling encryption; "
+                    "encryption was left on (action=disable, config_path={}).",
+                    redact_user_paths(str(config_path)),
+                )
+                return False
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                decrypted_config,
+                previous,
+                session_password=None,
+                action="disable",
+            ):
+                return False
 
         logger.success("Config encryption disabled successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to disable config encryption: {e}")
+        logger.error(
+            "Failed to disable config encryption (error_type={}).", type(e).__name__
+        )
         return False
 
 
 def change_encryption_password(old_password: str, new_password: str) -> bool:
     """
     Change the encryption password.
+
+    Every saved value must decrypt with ``old_password`` (strict), and the
+    re-encrypted document must decrypt with ``new_password`` before it is
+    written; otherwise the file is left untouched.
 
     Args:
         old_password: The current password
@@ -9796,36 +10337,155 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
-            config_data = _read_raw_cli_config_unlocked(config_path)
-            encryption_config = config_data.get("encryption", {})
-            if not encryption_config.get("enabled", False):
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if not _encryption_enabled(config_data):
                 logger.error("Encryption is not enabled")
                 return False
 
             enc_module = get_encryption_module()
-            password_verifier = encryption_config.get("password_verifier", "")
-            if not password_verifier:
+            verifier = _password_verifier(config_data)
+            if verifier is None:
                 logger.error("No password verifier found in encryption config")
                 return False
-            if not enc_module.verify_password(old_password, password_verifier):
+            if not enc_module.verify_password(old_password, verifier):
                 logger.error("Invalid current password provided")
                 return False
-
-            set_encryption_password(old_password)
-            decrypted_config = decrypt_config_section(config_data)
+            try:
+                decrypted_config = enc_module.decrypt_config_strict(
+                    config_data, old_password
+                )
+            except ValueError:
+                logger.error(
+                    "Some saved values do not decrypt with the current password; "
+                    "the password was not changed (action=change, config_path={}).",
+                    redact_user_paths(str(config_path)),
+                )
+                return False
             encrypted_config = encrypt_api_keys_in_config(
                 decrypted_config,
                 new_password,
             )
-            raw_written = _write_raw_cli_config_unlocked(config_path, encrypted_config)
-            set_encryption_password(new_password)
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _validate_encrypted_document(encrypted_config, new_password)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                encrypted_config,
+                previous,
+                session_password=new_password,
+                action="change",
+            ):
+                return False
 
         logger.success("Encryption password changed successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to change encryption password: {e}")
+        logger.error(
+            "Failed to change encryption password (error_type={}).",
+            type(e).__name__,
+        )
+        return False
+
+
+def rekey_encryption_verifier(password: str) -> bool:
+    """Make ``password`` the master password again when it reads every key.
+
+    For an encryption-on file whose verifier is missing, or was rewritten
+    for another password while the keys stayed under this one (the stranded
+    state an old second enable left behind). Without this the only way past
+    either was a reset that deleted keys this password still reads (TASK-
+    34100.4 review round 2, R2-F5). Every ``enc:`` value outside
+    ``[encryption]`` must strict-decrypt with ``password``, and there must be
+    at least one -- with none, any guess would "read every key". The file is
+    re-encrypted under ``password`` with a new verifier, through the same
+    validate-then-write and rollback as `change_encryption_password`.
+
+    Args:
+        password: The password the user typed at the startup prompt.
+
+    Returns:
+        True when the file now answers to ``password`` and the session holds
+        it; False (file untouched) otherwise.
+    """
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if not _encryption_enabled(config_data):
+                return False
+            values = {
+                key: value for key, value in config_data.items() if key != "encryption"
+            }
+            if not _contains_encrypted_value(values):
+                return False
+            try:
+                decrypted_config = get_encryption_module().decrypt_config_strict(
+                    values, password, log_failure=False
+                )
+            except ValueError:
+                return False
+            decrypted_config["encryption"] = copy.deepcopy(config_data["encryption"])
+            encrypted_config = encrypt_api_keys_in_config(decrypted_config, password)
+            _validate_encrypted_document(encrypted_config, password)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                encrypted_config,
+                previous,
+                session_password=password,
+                action="rekey",
+            ):
+                return False
+
+        logger.success("The master-password check was repaired")
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Repairing the master-password check failed (error_type={}).",
+            type(e).__name__,
+        )
+        return False
+
+
+def reset_encrypted_config_values() -> bool:
+    """Forgot-password reset: drop every encrypted value and turn encryption off.
+
+    Strips every ``enc:`` value from every table and array (sensitive or
+    not -- none of them can be read without the password) and removes
+    ``[encryption]``. Chats, notes, documents and every plain setting are
+    untouched; the user re-enters API keys afterwards.
+
+    Returns:
+        True when the file now holds no encrypted value and encryption is off.
+    """
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            if previous is None:
+                _set_session_encryption_password(None)
+                return True
+            config_data = _parse_raw_cli_config_text(previous)
+            stripped = _strip_encrypted_values(config_data)
+            stripped.pop("encryption", None)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                stripped,
+                previous,
+                session_password=None,
+                action="reset",
+            ):
+                return False
+
+        logger.success("Encrypted config values were reset")
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Resetting encrypted config values failed (error_type={}).",
+            type(e).__name__,
+        )
         return False
 
 
@@ -9902,7 +10562,9 @@ def _default_data_root_lock() -> Iterator[None]:
                 _config_participants.check_lock_wait(sys.modules[__name__], operation)
                 try:
                     portalocker.lock(
-                        stream, portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING
+                        stream,
+                        portalocker.LockFlags.EXCLUSIVE
+                        | portalocker.LockFlags.NON_BLOCKING,
                     )
                     break
                 except portalocker.exceptions.AlreadyLocked:
@@ -10192,7 +10854,9 @@ def _resolve_user_data_dir() -> Path:
             if configured_data_dir:
                 verify_trusted_directory(base_data_dir, allow_shared_sticky=False)
             return secure_private_directory(
-                user_dir, create=True, application_owned=True,
+                user_dir,
+                create=True,
+                application_owned=True,
             ).lexical_path
 
 
@@ -10242,10 +10906,9 @@ def get_chachanotes_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
-    return (
-        _get_custom_database_path("chachanotes_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
-    )
+    return _get_custom_database_path(
+        "chachanotes_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("chachanotes_db_path")
 
 
 def get_tts_profiles_db_path() -> Path:
@@ -10406,10 +11069,9 @@ def get_prompts_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
-    return (
-        _get_custom_database_path("prompts_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
-    )
+    return _get_custom_database_path(
+        "prompts_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("prompts_db_path")
 
 
 def get_media_db_path(*, ignore_override: bool = False) -> Path:
@@ -10428,16 +11090,16 @@ def get_media_db_path(*, ignore_override: bool = False) -> Path:
     """
     if ignore_override:
         return get_user_data_dir() / profile_paths.database_leaf("media_db_path")
-    return (
-        _get_custom_database_path("media_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("media_db_path")
-    )
+    return _get_custom_database_path(
+        "media_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("media_db_path")
 
 
 def get_library_collections_db_path() -> Path:
-    return (
-        _get_custom_database_path("library_collections_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("library_collections_db_path")
+    return _get_custom_database_path(
+        "library_collections_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf(
+        "library_collections_db_path"
     )
 
 
@@ -10450,54 +11112,49 @@ def get_dreams_db_path() -> Path:
 
 
 def get_library_ingest_jobs_db_path() -> Path:
-    return (
-        _get_custom_database_path("library_ingest_jobs_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("library_ingest_jobs_db_path")
+    return _get_custom_database_path(
+        "library_ingest_jobs_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf(
+        "library_ingest_jobs_db_path"
     )
 
 
 def get_workspaces_db_path() -> Path:
-    return (
-        _get_custom_database_path("workspaces_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("workspaces_db_path")
-    )
+    return _get_custom_database_path(
+        "workspaces_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("workspaces_db_path")
 
 
 def get_subscriptions_db_path() -> Path:
-    return (
-        _get_custom_database_path("subscriptions_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("subscriptions_db_path")
-    )
+    return _get_custom_database_path(
+        "subscriptions_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("subscriptions_db_path")
 
 
 def get_evals_db_path() -> Path:
     """Return the canonical path for the Evals database."""
-    return (
-        _get_custom_database_path("evals_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("evals_db_path")
-    )
+    return _get_custom_database_path(
+        "evals_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("evals_db_path")
 
 
 def get_rag_indexing_db_path() -> Path:
     """Return the canonical path for the RAG indexing-state database."""
-    return (
-        _get_custom_database_path("rag_indexing_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("rag_indexing_db_path")
-    )
+    return _get_custom_database_path(
+        "rag_indexing_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("rag_indexing_db_path")
 
 
 def get_notifications_db_path() -> Path:
-    return (
-        _get_custom_database_path("notifications_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("notifications_db_path")
-    )
+    return _get_custom_database_path(
+        "notifications_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("notifications_db_path")
 
 
 def get_research_db_path() -> Path:
-    return (
-        _get_custom_database_path("research_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("research_db_path")
-    )
+    return _get_custom_database_path(
+        "research_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("research_db_path")
 
 
 def get_workflows_db_path() -> Path:
@@ -10509,20 +11166,16 @@ def get_workflows_db_path() -> Path:
 
 
 def get_writing_db_path() -> Path:
-    return (
-        _get_custom_database_path("writing_db_path")
-        or get_user_data_dir() / profile_paths.database_leaf("writing_db_path")
-    )
+    return _get_custom_database_path(
+        "writing_db_path"
+    ) or get_user_data_dir() / profile_paths.database_leaf("writing_db_path")
 
 
 def get_scheduled_tasks_db_path() -> Path:
-    return (
-        _get_custom_database_path(
-            "scheduled_tasks_db_path",
-            expand_before_validation=False,
-        )
-        or get_user_data_dir() / profile_paths.database_leaf("scheduled_tasks_db_path")
-    )
+    return _get_custom_database_path(
+        "scheduled_tasks_db_path",
+        expand_before_validation=False,
+    ) or get_user_data_dir() / profile_paths.database_leaf("scheduled_tasks_db_path")
 
 
 def get_cli_log_file_path() -> Path:
@@ -10592,7 +11245,9 @@ def get_model_cache_dir() -> Path:
     # an explicitly configured custom directory stays under the user's
     # ownership policy, so only the creation mode is pinned there.
     try:
-        with _config_participants.operation(sys.modules[__name__], route="config_models", target=cache_path):
+        with _config_participants.operation(
+            sys.modules[__name__], route="config_models", target=cache_path
+        ):
             if custom_cache_dir and custom_cache_dir != default_cache_dir:
                 cache_path.mkdir(parents=True, exist_ok=True, mode=0o700)
             else:

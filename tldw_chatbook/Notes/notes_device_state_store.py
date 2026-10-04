@@ -716,8 +716,7 @@ class NotesDeviceStateStore:
                 # held connection under us); that secondary error must not
                 # mask the original one. Type name only: no private values.
                 logger.debug(
-                    "Notes device store rollback failed after a transaction "
-                    "error: {}",
+                    "Notes device store rollback failed after a transaction error: {}",
                     type(rollback_error).__name__,
                 )
             raise
@@ -750,9 +749,7 @@ class NotesDeviceStateStore:
                 # A repeated initialize() keeps its tamper-detection
                 # contract: re-run the census on the held connection.
                 with self.transaction(immediate=True) as connection:
-                    notes_device_state_schema.initialize_notes_device_schema(
-                        connection
-                    )
+                    notes_device_state_schema.initialize_notes_device_schema(connection)
         except notes_device_state_schema.NotesDeviceSchemaError as error:
             message = str(error)
             if message.startswith("Unsupported"):

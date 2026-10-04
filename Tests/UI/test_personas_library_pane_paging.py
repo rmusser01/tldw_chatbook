@@ -29,10 +29,14 @@ class _Host(ConsolidatedCSSApp):
     def compose(self) -> ComposeResult:
         yield PersonasLibraryPane(id="pane")
 
-    def on_persona_sort_cycle_requested(self, message: PersonaSortCycleRequested) -> None:
+    def on_persona_sort_cycle_requested(
+        self, message: PersonaSortCycleRequested
+    ) -> None:
         self.events.append(("sort", None))
 
-    def on_persona_tag_filter_requested(self, message: PersonaTagFilterRequested) -> None:
+    def on_persona_tag_filter_requested(
+        self, message: PersonaTagFilterRequested
+    ) -> None:
         self.events.append(("tag", None))
 
     def on_persona_page_changed(self, message: PersonaPageChanged) -> None:
@@ -126,8 +130,12 @@ async def test_set_sort_label_and_set_tag_label():
         pane = app.query_one(PersonasLibraryPane)
         pane.set_sort_label("Sort: Recent")
         pane.set_tag_label("Tag: villain")
-        assert str(app.query_one("#personas-library-sort", Button).label) == "Sort: Recent"
-        assert str(app.query_one("#personas-library-tag", Button).label) == "Tag: villain"
+        assert (
+            str(app.query_one("#personas-library-sort", Button).label) == "Sort: Recent"
+        )
+        assert (
+            str(app.query_one("#personas-library-tag", Button).label) == "Tag: villain"
+        )
 
 
 async def test_update_rows_without_page_kwargs_keeps_plain_count():

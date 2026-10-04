@@ -1,4 +1,5 @@
 """Handler for character-related operations in the Personas screen."""
+
 import asyncio
 from functools import partial
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
@@ -1033,8 +1034,9 @@ class CCPCharacterHandler:
             filters = Filters(
                 (
                     "Character Cards",
-                    lambda p: p.suffix.lower()
-                    in (".json", ".png", ".webp", ".yaml", ".yml"),
+                    lambda p: (
+                        p.suffix.lower() in (".json", ".png", ".webp", ".yaml", ".yml")
+                    ),
                 ),
                 ("JSON Files", lambda p: p.suffix.lower() == ".json"),
                 (

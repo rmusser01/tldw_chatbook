@@ -71,9 +71,7 @@ def _open_with_backfill_window(
     """
     db = CharactersRAGDB(db_path, client_id=client_id)
     with db.transaction(immediate=True):
-        conversation_id = db.add_conversation(
-            {"title": "pacing", "character_id": 1}
-        )
+        conversation_id = db.add_conversation({"title": "pacing", "character_id": 1})
         for i in range(count):
             db.add_message(
                 {
@@ -89,9 +87,7 @@ def _open_with_backfill_window(
 
 
 def _docsize_count(db: CharactersRAGDB) -> int:
-    return db.execute_query(
-        "SELECT COUNT(*) FROM messages_fts_docsize"
-    ).fetchone()[0]
+    return db.execute_query("SELECT COUNT(*) FROM messages_fts_docsize").fetchone()[0]
 
 
 def _live_count(db: CharactersRAGDB) -> int:
@@ -239,9 +235,7 @@ def test_locked_retries_are_bounded_then_wrapped_with_the_partial_count(
             return original(self, *args, **kwargs)
         raise sqlite3.OperationalError("database is locked")
 
-    with patch.object(
-        CharactersRAGDB, "backfill_messages_fts", locked_after_one_chunk
-    ):
+    with patch.object(CharactersRAGDB, "backfill_messages_fts", locked_after_one_chunk):
         with pytest.raises(ChaChaNotesFTSBackfillError) as excinfo:
             backfill_chachanotes_messages_fts(
                 upgraded_db,
@@ -352,9 +346,7 @@ def test_ui_write_latency_stays_bounded_while_a_backfill_is_in_flight(
 
         def run_backfill() -> None:
             try:
-                backfill_chachanotes_messages_fts(
-                    db, chunk_size=8, pause_seconds=0.05
-                )
+                backfill_chachanotes_messages_fts(db, chunk_size=8, pause_seconds=0.05)
             except BaseException as exc:  # pragma: no cover - failure detail
                 failures.append(exc)
 

@@ -147,7 +147,9 @@ def _probe_listing_widget(probe_set: Optional[ProbeSet], widget_id: str) -> Stat
         return Static("(probe set unavailable)", id=widget_id, markup=False)
     if not probe_set.probes:
         return Static("(no probes yet)", id=widget_id, markup=False)
-    lines = [render_snippet_cell(_probe_preview_text(probe)) for probe in probe_set.probes]
+    lines = [
+        render_snippet_cell(_probe_preview_text(probe)) for probe in probe_set.probes
+    ]
     combined = Text("\n").join(lines)
     return Static(combined, id=widget_id, markup=False)
 
@@ -179,15 +181,15 @@ class CharacterBenchEditor(Vertical):
         **kwargs: Any,
     ) -> None:
         """Args:
-            view_model: The read side for this workbench.
-            bench_id: The ``eval_tasks`` id of the character-probe bench to
-                edit.
-            cards: Already-fetched character-card rows (``EvalsViewModel.
-                character_cards()``'s own shape) for the ``CardPicker`` --
-                this widget never opens ``ChaChaNotes_DB`` itself, mirroring
-                ``CardPicker``'s own "receives already-fetched rows" design
-                (see that module's docstring for why: cards live in a
-                different database from the one ``view_model`` wraps).
+        view_model: The read side for this workbench.
+        bench_id: The ``eval_tasks`` id of the character-probe bench to
+            edit.
+        cards: Already-fetched character-card rows (``EvalsViewModel.
+            character_cards()``'s own shape) for the ``CardPicker`` --
+            this widget never opens ``ChaChaNotes_DB`` itself, mirroring
+            ``CardPicker``'s own "receives already-fetched rows" design
+            (see that module's docstring for why: cards live in a
+            different database from the one ``view_model`` wraps).
         """
         super().__init__(**kwargs)
         self._view_model = view_model
@@ -493,7 +495,9 @@ class CharacterBenchEditor(Vertical):
             Static("Targets", classes="destination-section evals-pane-title")
         ]
         if not config.target_ids:
-            widgets.append(Static("No targets configured yet.", id="evals-cb-targets-empty"))
+            widgets.append(
+                Static("No targets configured yet.", id="evals-cb-targets-empty")
+            )
             return widgets
         rows = []
         for index, target_id in enumerate(config.target_ids):
@@ -695,12 +699,12 @@ class ProbeSetDetail(Vertical):
         self, view_model: EvalsViewModel, dataset: Mapping[str, Any], **kwargs: Any
     ) -> None:
         """Args:
-            view_model: The read side for this workbench -- only ``db``
-                is used here (a plain read: ``load_probe_set``).
-            dataset: The already-fetched ``eval_datasets`` row (``EvalsView
-                Model.dataset_by_id``'s own shape) -- this widget never
-                re-resolves it, mirroring ``CharacterBenchEditor``'s own
-                "receives already-fetched data" convention for cards.
+        view_model: The read side for this workbench -- only ``db``
+            is used here (a plain read: ``load_probe_set``).
+        dataset: The already-fetched ``eval_datasets`` row (``EvalsView
+            Model.dataset_by_id``'s own shape) -- this widget never
+            re-resolves it, mirroring ``CharacterBenchEditor``'s own
+            "receives already-fetched data" convention for cards.
         """
         super().__init__(**kwargs)
         self._view_model = view_model

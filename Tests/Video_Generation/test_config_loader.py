@@ -4,24 +4,33 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset_cache():
     from tldw_chatbook.Video_Generation import config as c
+
     c.reset_video_generation_config_cache()
     yield
     c.reset_video_generation_config_cache()
 
 
-def _load_config_with_section(monkeypatch, section: dict, *, keyring: dict | None = None):
+def _load_config_with_section(
+    monkeypatch, section: dict, *, keyring: dict | None = None
+):
     """Shared helper: monkeypatch the raw [video_generation] TOML section (+
     optional keyring hits), then load. `keyring` maps backend id -> fake
     keyring secret (default: keyring never hits)."""
     from tldw_chatbook.Video_Generation import config as c
-    monkeypatch.setattr(c, "_read_video_generation_toml", lambda: section, raising=False)
+
+    monkeypatch.setattr(
+        c, "_read_video_generation_toml", lambda: section, raising=False
+    )
     kr = keyring or {}
-    monkeypatch.setattr(c, "_keyring_get", lambda backend: kr.get(backend), raising=False)
+    monkeypatch.setattr(
+        c, "_keyring_get", lambda backend: kr.get(backend), raising=False
+    )
     return c.get_video_generation_config(reload=True)
 
 
 def test_defaults_when_unconfigured(monkeypatch):
     from tldw_chatbook.Video_Generation import config as c
+
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
     cfg = _load_config_with_section(monkeypatch, {})
     assert cfg.default_backend == c.DEFAULT_BACKEND
@@ -84,7 +93,10 @@ def test_nested_toml_flattens_to_flat_fields(monkeypatch):
         "enabled_backends": ["minimax", "comfyui"],
         "minimax": {"base_url": "https://example.invalid", "poll_interval_seconds": 3},
         "comfyui": {"default_workflow": "wan22_t2v", "timeout_seconds": 900},
-        "stable_diffusion_cpp": {"binary_path": "/opt/sd/bin/sd-cli", "default_fps": 12},
+        "stable_diffusion_cpp": {
+            "binary_path": "/opt/sd/bin/sd-cli",
+            "default_fps": 12,
+        },
     }
     cfg = _load_config_with_section(monkeypatch, fake)
     assert cfg.default_backend == "minimax"
@@ -107,7 +119,9 @@ def test_secret_precedence_env_over_config(monkeypatch):
 
 def test_secret_from_config_and_keyring_fallback(monkeypatch):
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
-    cfg = _load_config_with_section(monkeypatch, {"minimax": {"api_key": "from-config"}})
+    cfg = _load_config_with_section(
+        monkeypatch, {"minimax": {"api_key": "from-config"}}
+    )
     assert cfg.minimax_video_api_key == "from-config"
     assert cfg.key_sources["minimax"] == "config"
 
@@ -147,10 +161,15 @@ def test_allow_uploads_accepts_a_toml_integer(monkeypatch):
 
 def test_retention_choice_and_clamps(monkeypatch):
     from tldw_chatbook.Video_Generation import config as c
-    cfg = _load_config_with_section(monkeypatch, {"retention": "bogus", "max_store_mb": 0})
+
+    cfg = _load_config_with_section(
+        monkeypatch, {"retention": "bogus", "max_store_mb": 0}
+    )
     assert cfg.retention == c.DEFAULT_RETENTION  # invalid choice falls back
     assert cfg.max_store_mb == 1  # clamped >= 1
-    cfg2 = _load_config_with_section(monkeypatch, {"retention": "TTL", "retention_ttl_hours": 48})
+    cfg2 = _load_config_with_section(
+        monkeypatch, {"retention": "TTL", "retention_ttl_hours": 48}
+    )
     assert cfg2.retention == "ttl"  # normalized lowercase
     assert cfg2.retention_ttl_hours == 48
 
@@ -159,17 +178,21 @@ def _capture_warnings():
     """loguru is this project's logger; caplog does not intercept it -- attach
     a temporary sink and return (messages, sink_id)."""
     from loguru import logger as loguru_logger
+
     messages: list[str] = []
     sink_id = loguru_logger.add(messages.append, level="WARNING", format="{message}")
     return messages, sink_id
 
 
-def test_flat_backend_key_under_video_generation_warns_with_nested_replacement(monkeypatch):
+def test_flat_backend_key_under_video_generation_warns_with_nested_replacement(
+    monkeypatch,
+):
     # Same trap as the image package's task-621: writing the FLAT dataclass
     # field name directly under [video_generation] is silently ignored -- it
     # must log a warning naming the key and the exact nested replacement.
     from loguru import logger as loguru_logger
     from tldw_chatbook.Video_Generation import config as c
+
     fake = {"minimax_video_default_model": "MiniMax-Hailuo-2.3"}
     monkeypatch.setattr(c, "_read_video_generation_toml", lambda: fake, raising=False)
     monkeypatch.setattr(c, "_keyring_get", lambda b: None, raising=False)
@@ -191,6 +214,7 @@ def test_flat_backend_key_under_video_generation_warns_with_nested_replacement(m
 def _load_capturing_warnings(monkeypatch, section: dict):
     """Load the config with a loguru WARNING sink attached; return (cfg, messages)."""
     from loguru import logger as loguru_logger
+
     messages, sink_id = _capture_warnings()
     try:
         cfg = _load_config_with_section(monkeypatch, section)
@@ -203,8 +227,14 @@ def _load_capturing_warnings(monkeypatch, section: dict):
     "section, needle",
     (
         ({"confirm_cost_estimate": "yess"}, "[video_generation] confirm_cost_estimate"),
-        ({"minimax": {"allow_uploads": "yess"}}, "[video_generation.minimax] allow_uploads"),
-        ({"minimax": {"allow_uploads": 2.5}}, "[video_generation.minimax] allow_uploads"),
+        (
+            {"minimax": {"allow_uploads": "yess"}},
+            "[video_generation.minimax] allow_uploads",
+        ),
+        (
+            {"minimax": {"allow_uploads": 2.5}},
+            "[video_generation.minimax] allow_uploads",
+        ),
     ),
 )
 def test_malformed_boolean_flag_is_surfaced_not_swallowed(monkeypatch, section, needle):
@@ -233,16 +263,22 @@ def test_malformed_boolean_flag_is_surfaced_not_swallowed(monkeypatch, section, 
 @pytest.mark.parametrize(
     "section, field, expected",
     (
-        ({}, "confirm_cost_estimate", True),                              # absent -> default
+        ({}, "confirm_cost_estimate", True),  # absent -> default
         ({"confirm_cost_estimate": False}, "confirm_cost_estimate", False),
-        ({"confirm_cost_estimate": 0}, "confirm_cost_estimate", False),    # explicit int 0
+        (
+            {"confirm_cost_estimate": 0},
+            "confirm_cost_estimate",
+            False,
+        ),  # explicit int 0
         ({"confirm_cost_estimate": "off"}, "confirm_cost_estimate", False),
         ({"minimax": {"allow_uploads": 0}}, "minimax_video_allow_uploads", False),
         ({"minimax": {"allow_uploads": False}}, "minimax_video_allow_uploads", False),
         ({"minimax": {"allow_uploads": 1}}, "minimax_video_allow_uploads", True),
     ),
 )
-def test_absent_or_deliberately_set_flag_never_warns(monkeypatch, section, field, expected):
+def test_absent_or_deliberately_set_flag_never_warns(
+    monkeypatch, section, field, expected
+):
     """Negative control: "absent" and "explicitly set" are not malformed.
 
     A guard written as `if not value` would treat `0`/`False`/`""` as absent

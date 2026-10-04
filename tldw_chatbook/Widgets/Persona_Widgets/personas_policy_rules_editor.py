@@ -163,9 +163,7 @@ class PersonasPolicyRulesEditor(Vertical):
         kind = self.query_one("#personas-policy-kind", Input).value.strip()
         name = self.query_one("#personas-policy-name", Input).value.strip()
         if kind not in _VALID_KINDS:
-            self._set_status(
-                f"Invalid kind {kind!r}: must be mcp_tool or skill."
-            )
+            self._set_status(f"Invalid kind {kind!r}: must be mcp_tool or skill.")
             return None
         if not name:
             self._set_status("Rule name is required.")

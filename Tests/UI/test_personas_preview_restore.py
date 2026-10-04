@@ -24,6 +24,7 @@ def _controller_with_mock_pane():
     async def _seed(text):
         # Ordering guard: seeded_for MUST already be set when the first await runs.
         events.append(("seed", text, ctrl.seeded_for))
+
     pane.seed_greeting = AsyncMock(side_effect=_seed)
 
     screen = MagicMock()
@@ -37,7 +38,10 @@ def _controller_with_mock_pane():
 async def test_restore_conversation_seeds_greeting_then_turns_and_sets_seeded_for_first():
     ctrl, events = _controller_with_mock_pane()
     history = [
-        {"role": "assistant", "content": "Greetings."},   # note: greeting is NOT in history
+        {
+            "role": "assistant",
+            "content": "Greetings.",
+        },  # note: greeting is NOT in history
         {"role": "user", "content": "hi"},
         {"role": "assistant", "content": "hello"},
     ]

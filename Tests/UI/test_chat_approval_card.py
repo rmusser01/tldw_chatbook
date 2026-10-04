@@ -9,15 +9,26 @@ falling back to the full set if the request is empty/invalid/unknown.
 
 import pytest
 
-from Tests.app_module_patches import patch_app_global
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     _DECISION_OPTIONS,
+    ChatApprovalCard,
     _default_decision_for_row,
     _format_row_header,
     _is_raw_shell_row,
     _options_for_row,
     format_approval_effects,
 )
+
+# Widget imports bind config at collection; retain that private source.
+pytestmark = pytest.mark.bootstrap_profile
+
+
+def test_card_resize_before_composition_keeps_layout_retryable() -> None:
+    """A premature resize must leave the real card ready for its later reflow."""
+    card = ChatApprovalCard()
+    card._sync_control_layout()
+    assert not card.has_class("approval-compact")
 
 
 def test_fast_decision_control_copy_has_one_named_source():
@@ -345,7 +356,7 @@ def test_tool_trace_is_not_the_faintest_text_on_screen():
     """
     from pathlib import Path
 
-    css = Path("tldw_chatbook/css/components/_agentic_terminal.tcss").read_text()
+    css = Path("tldw_chatbook/css/features/_console.tcss").read_text()
     import re
 
     m = re.search(r"\.console-transcript-message-tool\s*\{([^}]*)\}", css, re.S)
@@ -434,17 +445,18 @@ def _decision_select_width() -> int:
         / "components"
         / "_agentic_terminal.tcss"
     ).read_text()
-    # `;`-anchored so the `width: 1fr` in the BuddyConversationModal
-    # override further down the file cannot match as "1", and the property
-    # name anchored at a line start so `min-width:`/`max-width:` cannot
-    # stand in for the `width` that actually sizes the closed Select.
+    # Only the unscoped wide rule defines this budget; compact and Buddy
+    # overrides do not. Resolve its shipped token rather than a retired literal.
     match = re.search(
-        r"(?<![-\w ])\.approval-row-decision\s*\{[^}]*?^\s*width:\s*(\d+);",
+        r"(?<![-\w ])\.approval-row-decision\s*\{[^}]*?\bwidth:\s*(\$ds-[a-z0-9-]+);",
         source,
-        re.S | re.M,
+        re.S,
     )
-    assert match, "`.approval-row-decision` no longer sets an explicit width"
-    return int(match.group(1))
+    assert match, "`.approval-row-decision` no longer sets a token-backed width"
+    tokens = (Path(__file__).resolve().parents[2] / "tldw_chatbook/css/core/_variables.tcss").read_text()
+    value = re.search(r"^" + re.escape(match.group(1)) + r":\s*(\d+);", tokens, re.M)
+    assert value, "The Select width token must resolve to a cell count"
+    return int(value.group(1))
 
 
 @pytest.mark.unit
@@ -696,7 +708,10 @@ async def test_three_row_approval_card_stays_bounded():
 
 
 @pytest.mark.asyncio
-async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console():
+@private_profile_test
+async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console(
+    request: pytest.FixtureRequest,
+) -> None:
     """AC#2: at 80x24 the Submit button is on screen AND not clipped away.
 
     Region alone is not evidence here: pre-fix the button reported a
@@ -704,44 +719,42 @@ async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console
     share (6 rows) clipped it, so the compositor handed those coordinates
     to the transcript's empty state instead. `get_widget_at` is the check
     that fails on the bug the live pass actually saw.
+
+    Args:
+        request: Pytest fixture used by the private-profile wrapper to select
+            this test and allocate its isolated child process.
     """
     import time
 
     from Tests.UI.app_factory import _build_test_app
+    from Tests.UI.test_console_headless_approval import _arm, _risk_row
+    from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+    from tldw_chatbook.config import save_setting_to_cli_config
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-    from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 
-    def _settings_without_splash(section, key=None, default=None):
-        if section == "splash_screen" and key == "enabled":
-            return False
-        return default
-
+    assert save_setting_to_cli_config("splash_screen", "enabled", False)
     app = _build_test_app()
-    with patch_app_global(
-        "get_cli_setting", side_effect=_settings_without_splash
-    ):
-        async with app.run_test(size=(80, 24)) as pilot:
-            deadline = time.monotonic() + 15.0
-            while time.monotonic() < deadline:
-                screen = app.screen
-                if (
-                    isinstance(screen, ChatScreen)
-                    and screen.is_mounted
-                    and screen.query("#console-task-surface")
-                ):
-                    break
-                await pilot.pause(0.05)
-            else:
-                raise AssertionError("Production Console did not finish mounting")
+    _configure_native_ready_console(app)
+    async with app.run_test(size=(80, 24)) as pilot:
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            screen = app.screen
+            if (
+                app._initial_screen_pushed
+                and isinstance(screen, ChatScreen)
+                and screen.is_mounted
+                and screen.query("#console-task-surface")
+            ):
+                break
+            await pilot.pause(0.05)
+        else:
+            raise AssertionError("Production Console did not finish mounting")
 
-            screen.set_task_resume_state(
-                TaskResumeState(
-                    pending_approval={
-                        "calls": _pending_calls(1),
-                        "timeout_seconds": 45.0,
-                    }
-                )
-            )
+        controller = screen._ensure_console_chat_controller()
+        session_id = controller.store.active_session_id
+        worker, _ = _arm(controller, session_id, call=_risk_row())
+        try:
+
             deadline = time.monotonic() + 8.0
             while time.monotonic() < deadline:
                 cards = screen.query("#chat-approval-card")
@@ -752,13 +765,7 @@ async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console
                 await pilot.pause(0.05)
             else:
                 raise AssertionError("Approval batch did not finish rendering")
-            # An approval can only reach a Console the user has already set
-            # up, so the first-run modal is never up at the same time; left
-            # covering the workbench it would be the widget every hit test
-            # below reported, measuring nothing about the card. `display =
-            # False` is not enough -- the screen re-syncs the modal during
-            # the pause that follows, so it has to go.
-            await screen.query("#console-setup-modal").remove()
+            assert not screen.query_one("#console-setup-modal").display
             await pilot.pause()
 
             submit = screen.query_one("#approval-submit")
@@ -772,6 +779,14 @@ async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console
                 f"{hit.id or type(hit).__name__} instead -- the approval card "
                 "is clipped by its task surface at 80x24"
             )
+        finally:
+            controller.begin_shutdown()
+            for _ in range(40):
+                if not worker.is_alive():
+                    break
+                await pilot.pause(0.05)
+            assert not worker.is_alive()
+            worker.join()
 
 
 @pytest.mark.asyncio

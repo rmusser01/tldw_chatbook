@@ -100,10 +100,13 @@ def _session_tab_tooltip(
     that class of bug even though today's fixed vocabulary (the marker
     meaning, "Click again to rename.") happens to contain no brackets.
     """
-    display_title = sanitize_character_display_label(
-        session.title,
-        max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
-    ) or "Untitled"
+    display_title = (
+        sanitize_character_display_label(
+            session.title,
+            max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
+        )
+        or "Untitled"
+    )
     meaning = CONSOLE_RUN_MARKER_MEANINGS.get(marker, "")
     tail = f" — {meaning}." if meaning else "."
     # DS-04 (TASK-2154.15): the middle-click close accelerator is surfaced
@@ -115,8 +118,7 @@ def _session_tab_tooltip(
         )
     else:
         text = (
-            f"Switch to Console tab: {display_title}{tail}"
-            " Middle-click closes the tab."
+            f"Switch to Console tab: {display_title}{tail} Middle-click closes the tab."
         )
     if session.ephemeral:
         # The ◌ glyph carries no meaning on its own; this is where it is
@@ -293,7 +295,9 @@ class ConsoleSessionSurface(Vertical):
         query keeps resolving.
         """
         tab_strip = ConsoleSessionTabStrip(id="console-native-tab-strip")
-        tab_strip.remove_class(*(name for name in tab_strip.classes if name.startswith("h-")))
+        tab_strip.remove_class(
+            *(name for name in tab_strip.classes if name.startswith("h-"))
+        )
         tab_strip.set_styles(height=None)
         tab_strip.add_class("h-1")
         tab_strip.styles.min_height = 1
@@ -302,14 +306,18 @@ class ConsoleSessionSurface(Vertical):
         # utility overrides the shared `#console-native-tab-strip` rule so a
         # margin never eats the row's single line.
         tab_strip.add_class("m-0")
-        tab_strip.remove_class(*(name for name in tab_strip.classes if name.startswith("w-")))
+        tab_strip.remove_class(
+            *(name for name in tab_strip.classes if name.startswith("w-"))
+        )
         tab_strip.set_styles(width=None)
         tab_strip.add_class("w-fill")
         tab_strip.on_overflow_state_changed = self._sync_tab_overflow_hints
         tab_strip.compose_add_child(self._build_new_tab_button())
 
         strip_row = Horizontal(classes="console-session-tab-strip")
-        strip_row.remove_class(*(name for name in strip_row.classes if name.startswith("h-")))
+        strip_row.remove_class(
+            *(name for name in strip_row.classes if name.startswith("h-"))
+        )
         strip_row.set_styles(height=None)
         strip_row.add_class("h-1")
         strip_row.styles.min_height = 1
@@ -318,9 +326,7 @@ class ConsoleSessionSurface(Vertical):
         # `_build_fleet_coachmark` pattern) because this helper returns the
         # built row rather than yielding through the compose generator.
         strip_row.compose_add_child(
-            self._build_overflow_hint(
-                CONSOLE_TAB_OVERFLOW_LEFT_ID, GLYPH_COLLAPSE_LEFT
-            )
+            self._build_overflow_hint(CONSOLE_TAB_OVERFLOW_LEFT_ID, GLYPH_COLLAPSE_LEFT)
         )
         strip_row.compose_add_child(tab_strip)
         strip_row.compose_add_child(
@@ -403,7 +409,9 @@ class ConsoleSessionSurface(Vertical):
             compact=True,
         )
         dismiss.tooltip = "Dismiss"
-        dismiss.remove_class(*(name for name in dismiss.classes if name.startswith("w-")))
+        dismiss.remove_class(
+            *(name for name in dismiss.classes if name.startswith("w-"))
+        )
         dismiss.set_styles(width=None)
         dismiss.add_class("w-3")
         dismiss.styles.min_width = CONSOLE_FLEET_COACHMARK_DISMISS_WIDTH
@@ -492,10 +500,13 @@ class ConsoleSessionSurface(Vertical):
         title always remains one hover away in the tab's tooltip
         (``_session_tab_tooltip``).
         """
-        normalized_title = sanitize_character_display_label(
-            title,
-            max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
-        ) or "Untitled"
+        normalized_title = (
+            sanitize_character_display_label(
+                title,
+                max_characters=CONSOLE_SESSION_TITLE_MAX_CHARACTERS,
+            )
+            or "Untitled"
+        )
         if len(normalized_title) <= CONSOLE_SESSION_TAB_DISPLAY_CHARS:
             return normalized_title
         keep = CONSOLE_SESSION_TAB_DISPLAY_CHARS - 1  # room for the ellipsis cell
@@ -609,12 +620,16 @@ class ConsoleSessionSurface(Vertical):
             compact=True,
         )
         close_button.tooltip = "Close Console tab"
-        close_button.remove_class(*(name for name in close_button.classes if name.startswith("w-")))
+        close_button.remove_class(
+            *(name for name in close_button.classes if name.startswith("w-"))
+        )
         close_button.set_styles(width=None)
         close_button.add_class("w-3")
         close_button.styles.min_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
         close_button.styles.max_width = CONSOLE_CLOSE_TAB_BUTTON_WIDTH
-        close_button.remove_class(*(name for name in close_button.classes if name.startswith("h-")))
+        close_button.remove_class(
+            *(name for name in close_button.classes if name.startswith("h-"))
+        )
         close_button.set_styles(height=None)
         close_button.add_class("h-1")
         close_button.styles.min_height = CONSOLE_CLOSE_TAB_BUTTON_HEIGHT

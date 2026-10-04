@@ -609,9 +609,7 @@ class AudioBookGenerationWidget(Widget):
 
         notes_scope_service = getattr(self.app, "notes_scope_service", None)
         if notes_scope_service is None:
-            self.app.notify(
-                "Notes are unavailable in this session.", severity="error"
-            )
+            self.app.notify("Notes are unavailable in this session.", severity="error")
             return
 
         user_id = getattr(self.app, "notes_user_id", None) or "default_user"
@@ -688,9 +686,7 @@ class AudioBookGenerationWidget(Widget):
         # used to gate this is gone from the composed UI).
         self._detect_chapters()
 
-        self.app.notify(
-            f"Imported {len(selected_ids)} note(s)", severity="information"
-        )
+        self.app.notify(f"Imported {len(selected_ids)} note(s)", severity="information")
 
     def _import_from_conversation(self) -> None:
         """Import content from a conversation.
@@ -764,9 +760,7 @@ class AudioBookGenerationWidget(Widget):
             )
 
         if not conversations:
-            self.app.notify(
-                "No conversations found in database", severity="warning"
-            )
+            self.app.notify("No conversations found in database", severity="warning")
             return
 
         try:
@@ -806,9 +800,7 @@ class AudioBookGenerationWidget(Widget):
             return
 
         if not messages:
-            self.app.notify(
-                "No messages found in conversation", severity="warning"
-            )
+            self.app.notify("No messages found in conversation", severity="warning")
             return
 
         # Build content based on options
@@ -1031,9 +1023,7 @@ class AudioBookGenerationWidget(Widget):
             )
             return
 
-        self.app.call_from_thread(
-            self._apply_detected_chapters, chapters, generation
-        )
+        self.app.call_from_thread(self._apply_detected_chapters, chapters, generation)
 
     def _apply_detected_chapters(self, chapters: List, generation: int) -> None:
         """Main-thread half of chapter detection: apply results to the UI.
@@ -1247,9 +1237,7 @@ class AudioBookGenerationWidget(Widget):
                 self._last_valid_narrator_voice = event.value
                 return
             prior = self._last_valid_narrator_voice
-            voice_select.value = (
-                prior if prior in available_voice_ids else Select.BLANK
-            )
+            voice_select.value = prior if prior in available_voice_ids else Select.BLANK
 
     def _update_voice_options(self, provider: str) -> None:
         """Update voice options based on provider"""
@@ -1877,15 +1865,13 @@ class STTSWindow(Container):
         ):
             return False
         current_view = self.current_view
-        reset_current_tool = (
-            voice_tool_back_token is None
-            and current_view in {"profiles", "blends"}
-        )
+        reset_current_tool = voice_tool_back_token is None and current_view in {
+            "profiles",
+            "blends",
+        }
         if reset_current_tool:
             self._invalidate_voice_tool_navigation()
-        if current_view == "profiles" and (
-            view != "profiles" or reset_current_tool
-        ):
+        if current_view == "profiles" and (view != "profiles" or reset_current_tool):
             try:
                 content = self.query_one(".stts-content", Container)
             except QueryError:
@@ -2430,8 +2416,7 @@ class STTSWindow(Container):
                 self._voice_tool_back_in_progress = False
                 self._set_voice_tool_back_disabled(False)
             logger.error(
-                "Could not return to the originating Speech view "
-                "(exception_type={})",
+                "Could not return to the originating Speech view (exception_type={})",
                 type(exc).__name__,
             )
             return

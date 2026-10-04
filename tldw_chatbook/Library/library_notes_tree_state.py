@@ -239,9 +239,7 @@ class LibraryNotesFilterState:
             self,
             requested_direction=direction,
             requested_offset=self.requested_offset or 0,
-            requested_limit=(
-                self.requested_limit or LIBRARY_NOTES_TREE_PAGE_SIZE
-            ),
+            requested_limit=(self.requested_limit or LIBRARY_NOTES_TREE_PAGE_SIZE),
             loading=True,
         )
         return fail_library_notes_filter_load(

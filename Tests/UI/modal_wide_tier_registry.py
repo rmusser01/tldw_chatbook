@@ -19,9 +19,9 @@ deliberately absent, as is the Console session switcher: its
 ``_sync_modal_max_height`` sets ``width`` imperatively via
 ``set_styles`` (inline styles outrank every CSS rule), so it joins the
 inventory's imperative-geometry exclusions. The Conversation settings
-modal keeps its own shipped ``196`` cap and Python toggle (PR #2670);
-the Alt+M Switch model popover is a fixed 140-column width token
-(TASK-33004.4 replaced its PR #2672 tier).
+modal and the Alt+M Switch model popover are fixed width tokens (150 and
+140 columns: TASK-33006.1 retired the modal's PR #2670 196-column tier,
+TASK-33004.4 the popover's PR #2672 tier).
 
 Each entry: ``(anchor, cap, owner_module)``.
 
@@ -33,7 +33,7 @@ Each entry: ``(anchor, cap, owner_module)``.
   ``.dialog-container``) from leaking to other widgets.
 * ``cap`` is the ``max-width`` (columns) at the wide tier; base tier
   geometry is untouched. Ladder: base width >= 104 -> 170, 84-96 -> 150,
-  <= 80 -> 120 (settings modal's 196 stays as shipped).
+  <= 80 -> 120.
 * ``owner_module`` is the tldw_chatbook module whose Python (or owning
   sheet) defines the anchor, so the contract can fail loudly when an id
   is renamed without updating the tier.
@@ -62,6 +62,7 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "VoiceBlendDialog": "inventory #74: fixed 15-column slider grid, extra width is dead space",
     "ConfirmationDialog": "inventory #76: tiny-by-design confirm",
     "UnsavedChangesDialog": "tiny-by-design confirm (ConfirmationDialog family)",
+    "GeneratedVideoConfirmation": "tiny-by-design confirm (ConfirmationDialog family)",
     "CancelConfirmationDialog": "inventory #77: tiny-by-design confirm",
     "RecoveryPassphraseDialog": "inventory #78: tiny passphrase entry",
     "RagProfileNameModal": "inventory #79: tiny single-input (settings sheet geometry)",
@@ -74,6 +75,7 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "TagFilterPicker": "inventory #86: tiny tag list",
     # -- inventory section B (special surfaces) + rollout exclusions --------
     "ConsoleModelPopover": "Switch model: fixed 140-column width token (TASK-33004.4)",
+    "ConsoleSettingsModal": "Chat settings: fixed 150x22 width/height tokens (TASK-33006.1)",
     "ConsoleSessionSwitcherModal": "imperative inline width via set_styles outranks every CSS rule",
     "ConsoleImageViewerModal": "content-fit auto geometry, nothing to scale",
     "ProjectInstructionNoticeModal": "notice-style modal, inventory section-B exclusion",
@@ -150,8 +152,6 @@ WIDE_TIER_WIDTH_PERCENT = 85
 #: then anchor, so the generated CSS block and the tables read top-down
 #: from biggest cap to smallest.
 MODAL_WIDE_TIER: tuple[tuple[str, int, str], ...] = (
-    # cap 196 -- the shipped Conversation settings tier, unchanged (PR #2670)
-    ("#console-settings-modal", 196, "Widgets/Console/console_settings_modal.py"),
     # cap 170 -- base width >= 104
     ("#console-hooks-review", 170, "Widgets/Console/console_hooks_review_modal.py"),
     (

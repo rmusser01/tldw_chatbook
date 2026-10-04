@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from textual.widgets import Button, Static
+from textual.widgets import Button, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_provider_apply_defaults_flow import (
@@ -232,7 +232,9 @@ async def test_streaming_control_responds_and_readiness_refreshes_after_slow_rea
             assert readers == [readers[0]]
             assert readers[0] != threading.get_ident()
             initial = modal._build_draft().streaming
-            modal.query_one("#console-settings-streaming", Button).press()
+            # TASK-33006.1: Streaming is an On/Off Select.
+            streaming = modal.query_one("#console-settings-streaming", Select)
+            streaming.value = "off" if streaming.value == "on" else "on"
             await pilot.pause()
             assert modal._build_draft().streaming is not initial
             assert not release.is_set()

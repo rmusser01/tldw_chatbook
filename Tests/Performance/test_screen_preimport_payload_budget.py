@@ -106,7 +106,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: 556 -> 557 on 2026-09-30 after the rebase onto dev 75c06af39a: #2922's
 #: ``settings_screen`` imports ``settings_hooks`` at module level (owner
 #: approved). 557 -> 556 on 2026-10-03: TASK-33642 made it lazy again.
-MAX_PASS_ADDED_MODULES = 556
+#: B0 TASK-33910.1: 556 -> 557 (2026-10-03), owner-approved; ADR-097 ledger.
+MAX_PASS_ADDED_MODULES = 557
 
 #: TASK-31552 pinned 378,740 (363,740 + 15,000 slack). TASK-33260 re-pin:
 #: 410,347 measured + 15,000 standard slack; TASK-33276 pays it down.
@@ -265,9 +266,7 @@ def _snapshot_diff(census: dict, ratchet) -> str:
     live_loc = {r["route"]: r["added_loc"] for r in census["routes"]}
     pinned_loc = {name: row["loc"] for name, row in pinned_routes.items()}
     live_modules = {m for r in census["routes"] for m in r.get("modules", [])}
-    pinned_modules = {
-        m for row in pinned_routes.values() for m in row["modules"]
-    }
+    pinned_modules = {m for row in pinned_routes.values() for m in row["modules"]}
     return (
         "vs pinned snapshot boot_budget_snapshots/preimport_payload.json:\n"
         + ratchet.format_byte_diff(live_loc, pinned_loc, "route")
@@ -277,16 +276,13 @@ def _snapshot_diff(census: dict, ratchet) -> str:
             live_modules,
             pinned_modules,
             "module",
-            added_note="these consumed the headroom; defer them or shed "
-            "elsewhere",
+            added_note="these consumed the headroom; defer them or shed elsewhere",
         )
     )
 
 
 @pytest.mark.integration
-def test_preimport_pass_payload_stays_within_budget(
-    tmp_path: Path, ratchet
-) -> None:
+def test_preimport_pass_payload_stays_within_budget(tmp_path: Path, ratchet) -> None:
     """The registry walk's total marginal payload stays at its pinned size.
 
     Args:

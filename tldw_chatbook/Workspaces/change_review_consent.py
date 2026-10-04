@@ -143,7 +143,9 @@ class ChangeReviewConsentService:
     """
 
     _PREPARING_REASON = "Preparing change history; this turn continues without it."
-    _FAILED_REASON = "Change history preparation failed; this turn continues without it."
+    _FAILED_REASON = (
+        "Change history preparation failed; this turn continues without it."
+    )
     _QUEUE_FULL_REASON = "Change history preparation is busy; retry from Settings."
 
     def __init__(

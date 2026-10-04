@@ -181,7 +181,7 @@ FAILED_MARK = "—"
 
 
 def _join_target_names(names: Sequence[str]) -> str:
-    """"A", "A and B", or an Oxford-commaed "A, B, and C" -- every warned
+    """ "A", "A and B", or an Oxford-commaed "A, B, and C" -- every warned
     target must be individually named (see ``degenerate_canary_text``
     below), never collapsed to "N targets" or "a target", which is not
     actionable when a bench has several.
@@ -283,8 +283,12 @@ def _failure_summary(
     for cap_or_err in cells.values():
         if isinstance(cap_or_err, CellError):
             failed += 1
-            reason_counts[cap_or_err.reason] = reason_counts.get(cap_or_err.reason, 0) + 1
-    dominant_reason = max(reason_counts, key=reason_counts.__getitem__) if reason_counts else None
+            reason_counts[cap_or_err.reason] = (
+                reason_counts.get(cap_or_err.reason, 0) + 1
+            )
+    dominant_reason = (
+        max(reason_counts, key=reason_counts.__getitem__) if reason_counts else None
+    )
     return failed, total, dominant_reason
 
 
@@ -405,7 +409,9 @@ def _probe_observed_in_target(
     """
     for snippet in snippets:
         cap = cells.get((snippet["id"], target_id))
-        if isinstance(cap, CellCapture) and any(tok.token == probe for tok in cap.top_k):
+        if isinstance(cap, CellCapture) and any(
+            tok.token == probe for tok in cap.top_k
+        ):
             return True
     return False
 
@@ -508,8 +514,7 @@ class ResultsGrid(NotifyMixin, Vertical):
             self._grid = load_grid(db, self._run_group_id)
         except ValueError:
             yield Static(
-                "This run's data could not be loaded; it may have been "
-                "deleted.",
+                "This run's data could not be loaded; it may have been deleted.",
                 id="evals-grid-error",
             )
             return
@@ -604,7 +609,9 @@ class ResultsGrid(NotifyMixin, Vertical):
             else:
                 # Partial failure: the run still has usable data, so this
                 # states the fact without prescribing a remedy.
-                failure_text = f"{failed} of {total_cells} cells failed — {dominant_reason}."
+                failure_text = (
+                    f"{failed} of {total_cells} cells failed — {dominant_reason}."
+                )
             yield Static(
                 failure_text,
                 id="evals-grid-failure-callout",
@@ -856,7 +863,9 @@ class ResultsGrid(NotifyMixin, Vertical):
             return
         bench_name = str(self._grid["snapshot"].get("bench_name") or "run")
         safe_name = (
-            "".join(c for c in bench_name if c.isalnum() or c in (" ", "-", "_")).strip()
+            "".join(
+                c for c in bench_name if c.isalnum() or c in (" ", "-", "_")
+            ).strip()
             or "run"
         )
         filters = Filters(
@@ -888,7 +897,9 @@ class ResultsGrid(NotifyMixin, Vertical):
         try:
             validated_path = validate_path_simple(selected_path, require_exists=False)
         except ValueError as exc:
-            logger.warning(f"Rejected results-grid export path {selected_path!r}: {exc}")
+            logger.warning(
+                f"Rejected results-grid export path {selected_path!r}: {exc}"
+            )
             self._notify(f"Rejected export path: {exc}", severity="warning")
             return
 
@@ -986,7 +997,11 @@ class ResultsGrid(NotifyMixin, Vertical):
             probe_readings: dict[str, dict[str, Any]] = {}
             for probe in probes:
                 reading = analysis.resolve_probe(
-                    cap, probe, ever_observed=ever_observed_by_target.get(tid, {}).get(probe, False)
+                    cap,
+                    probe,
+                    ever_observed=ever_observed_by_target.get(tid, {}).get(
+                        probe, False
+                    ),
                 )
                 probe_readings[probe] = {
                     "state": reading.state,
@@ -1176,7 +1191,9 @@ class ResultsGrid(NotifyMixin, Vertical):
                 )
                 row.append(text)
                 if show_delta_extras and divergence_value is not None:
-                    column_group_rows[tid].append((snippet.get("group"), divergence_value))
+                    column_group_rows[tid].append(
+                        (snippet.get("group"), divergence_value)
+                    )
             if show_delta_extras:
                 row_caps = [
                     caps_by_capture.get((sid, target["id"])) for target in targets
@@ -1212,7 +1229,9 @@ class ResultsGrid(NotifyMixin, Vertical):
         re-deriving which cells were real comparisons.
         """
         if lens == "delta":
-            return self._render_delta(sid=sid, tid=tid, cap_or_err=cap_or_err, cells=cells)
+            return self._render_delta(
+                sid=sid, tid=tid, cap_or_err=cap_or_err, cells=cells
+            )
 
         if cap_or_err is None:
             return "", None  # unrun -- never "0"
@@ -1361,7 +1380,9 @@ class ResultsGrid(NotifyMixin, Vertical):
         cap_or_err: CellCapture | CellError | None,
         cells: dict[tuple[str, str], CellCapture | CellError],
     ) -> tuple[str, Optional[float]]:
-        reading = self._delta_reading(sid=sid, tid=tid, cap_or_err=cap_or_err, cells=cells)
+        reading = self._delta_reading(
+            sid=sid, tid=tid, cap_or_err=cap_or_err, cells=cells
+        )
         return reading.text, (reading.jsd if reading.is_real_comparison else None)
 
     def _group_mean_rows(
@@ -1421,10 +1442,7 @@ class ResultsGrid(NotifyMixin, Vertical):
 
         def sort_key(snippet: dict[str, Any]) -> tuple[bool, float]:
             sid = snippet["id"]
-            caps = [
-                cells.get((sid, target["id"]))
-                for target in targets
-            ]
+            caps = [cells.get((sid, target["id"])) for target in targets]
             valid = [c for c in caps if isinstance(c, CellCapture)]
             if len(valid) < 2:
                 # ``is_undefined=True`` sorts after ``False`` regardless of
@@ -1457,7 +1475,9 @@ class ResultsGrid(NotifyMixin, Vertical):
         if probe is None:
             return {}
         return {
-            target["id"]: _probe_observed_in_target(snippets, cells, target["id"], probe)
+            target["id"]: _probe_observed_in_target(
+                snippets, cells, target["id"], probe
+            )
             for target in targets
         }
 
@@ -1501,12 +1521,8 @@ class ResultsGrid(NotifyMixin, Vertical):
             return  # summary row / non-data column: no cell detail to show
 
         snapshot = self._grid["snapshot"]
-        snippet = next(
-            (s for s in snapshot["snippets"] if s["id"] == row_key), None
-        )
-        target = next(
-            (t for t in snapshot["targets"] if t["id"] == column_key), None
-        )
+        snippet = next((s for s in snapshot["snippets"] if s["id"] == row_key), None)
+        target = next((t for t in snapshot["targets"] if t["id"] == column_key), None)
         if snippet is None or target is None:
             return
 

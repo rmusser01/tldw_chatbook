@@ -74,7 +74,7 @@ Top to bottom:
   **Sources**, the retrieval scope row ("Scope: everything" until you
   narrow it), a run status line, groups such as **Run**, **Tools**,
   **Approvals**, and **Artifacts**, the **"Live work sources"** card
-  (ask Library sources before sending), and the **Session Settings**
+  (ask Library sources before sending), and the **Chat settings**
   summary.
 - **Staged-evidence strip** — appears at the top of the control deck,
   directly under the conversation pane and above the status chip strip,
@@ -267,7 +267,7 @@ unlocks after setup". Behind the card, the workbench dims under a still
 field of scattered snow glyphs — a purely decorative backdrop that holds
 one frame (it re-scatters only when the window resizes) and costs nothing
 while the card waits. Its button follows the current step (**Set up
-provider**, then **Choose model**) and opens the Console Settings modal.
+provider**, then **Choose model**) and opens **Chat settings**.
 The composer stays locked until a provider and model are configured; once
 they are, the empty transcript reads "Ready — type a message to begin."
 
@@ -292,7 +292,7 @@ A known connection failure blocks sending too. When a connection test of
 this chat's server — **Test connection & list models** in Chat settings, or
 **Test Provider** in Settings — was refused or timed out, the Console reads,
 for example, "Not ready · refused :9099" (the header badge, the Model
-section, the Conversation settings rows and this card's "Reconnect the
+section, the Chat settings rows and this card's "Reconnect the
 provider server" step), and the composer reads "Send blocked — retry the
 connection to continue". **Retry connection** tests that same server again
 in place; it opens no settings. If the server now answers, the chat is Ready and Send
@@ -337,7 +337,7 @@ composer-level strip below shows once setup completes.
 | Control | What it does |
 |---|---|
 | **New tab** | Creates a Console tab — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
-| **Settings** | Opens the "Console Settings" modal (provider, model, tools, and generation). |
+| **Settings** | Opens **Chat settings** (provider, model, generation, and context and memory). |
 | **Context rail** | Opens the "Console context" rail (source staging is done from Library) — see [Context & RAG](console/context-and-rag.md). |
 | **Search Library** | Runs a user-initiated **Manual Search Library** request before sending; it remains available regardless of the conversation's automatic or assistant policy — see [Context & RAG](console/context-and-rag.md#per-conversation-library-controls). |
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
@@ -452,28 +452,141 @@ during a run); **Esc** expands it and returns the caret to your draft.
 
 ### Session settings & model selection
 
-The **Console Settings** modal (**Chat settings**) is the one place provider,
-model, and generation settings live. Open it with **Ctrl+O** from anywhere in
+**Chat settings** is the one place provider, model, and generation settings
+for one chat live. Open it with **Ctrl+O** from anywhere in
 Console, `/settings`, the palette's "Console: Chat settings…", the control
-bar's **Settings** button, or the **Session Settings** action in the
-Inspector. Inside:
+bar's **Settings** button, or the action on the Inspector's **Chat
+settings** card. Its title names the chat and counts your unsaved edits ("Chat
+settings · Refactor plan · 2 unsaved edits"), and the line under the tabs
+says what it changes: "Applies to this chat only · saved with the
+conversation · defaults live in Settings ▸ Providers & Models (F4)". It is
+150 columns by 22 rows, and the **Model and generation**
+view puts tuning first, so at 211x44 the whole view fits without scrolling:
 
-- A readiness line up top (e.g. "custom is ready. No API key is required.").
-- **Provider and model** — Provider and Model selects, **Custom model** for
-  a name the list doesn't offer, **Discover models** to list what an
-  endpoint serves, and the **Endpoint** field for local/self-hosted servers.
-- **Sampling** (Temperature, Top P, Min P, Top K, Max tokens, Seed, and
-  related knobs), then **Provider-specific**, **Context**, and **Identity**.
-  Each field has the same label as in Settings — for example **Thinking
-  budget**, and **Budget strategy** and **When limit nears** under Context.
-  The modal still shows every sampling field, but a field the selected
-  provider's request does not carry is dropped: for Anthropic, Min P, Seed,
-  Presence penalty and Frequency penalty are accepted without error, never sent, and not
-  written by **Save as model default**. A value saved for such a field earlier
-  stays in `config.toml` untouched.
-- Footer: **Cancel** / **Save as default** / **Save**, under the note "Save
-  applies to this session only. Save as default also writes provider +
-  streaming defaults to config."
+- **Model**: the chat's model and its provider's name, where the pair comes
+  from (*this chat*, or *edited \** once you change it here), the readiness
+  word and the context window (e.g. "claude-sonnet-4-5 · Anthropic  this chat
+  Ready · not tested · 200k context"), then **Change  Alt+M**. A long model
+  id shows whole; only an id wider than the row is shortened in the middle,
+  keeping its start and its end (a GGUF file's quant), and the provider's
+  name is never cut. Below 100 columns the row shows only the pair and
+  Change; the context window still reads in **Request estimate**. Change is
+  the only way to change the model: it opens **Switch model** (below) in pick
+  mode over Chat settings, listing the same provider·model pairs, plus any
+  models a listing here found. **Enter**
+  picks a pair and returns to Chat settings with the draft moved to that
+  exact provider and model; nothing is applied until **Apply**. **Esc** returns
+  with nothing changed and focus on Change. Pick mode shows no values or
+  default actions and cannot pick a NEEDS SETUP row; to use a model the list
+  does not have, type its id in **Find** and pick the **TYPED MODEL ID** row.
+  **Alt+M** works from anywhere in Chat settings, even in a text field; on
+  macOS it needs the Option key set to send Meta, so the **Change** button is
+  there for every keyboard.
+- The core fields: **Temperature**, **Max tokens**, **Streaming** (On or Off)
+  and the reasoning or thinking controls the model takes.
+- Then four closed disclosures, each title one row: **Sampling** (Top P, Min P, Top K,
+  Seed, Presence penalty, Frequency penalty), **Connection**, **Request
+  estimate** and **Your name in this chat**. **Enter** on a title opens it.
+  Each closed title already shows its value:
+  - **Connection** names the server the chat sends to, where the key comes
+    from, and where to change it, for example "Connection ·
+    api.anthropic.com · key from env ANTHROPIC_API_KEY · change it in
+    Settings ▸ Providers & Models". The key part reads *key from env
+    \<variable\>*, *key saved*, *unsaved key* (typed here, not saved yet),
+    *key missing* or *no key needed* (*Claude
+    subscription* for Anthropic's subscription sign-in, and *key not
+    checked* while another problem, such as a missing endpoint, comes
+    first); the key itself is never shown, and neither is a user name or
+    password written into the server address. A very long server name is shortened with "…" so
+    the title stays one row. Typing a new **Endpoint** updates it at once.
+  - **Request estimate** shows the estimate, for example "Request estimate ·
+    10 / 200,000 tokens".
+  - **Your name in this chat** shows the name this chat uses, or the global
+    name with "(global default)" when the field is blank.
+
+  Opened, **Connection** holds the **Endpoint** field (only for providers
+  that take a server address; other providers show no Endpoint label),
+  **Configure credential…** when a key is missing, **Test connection & list
+  models**, the paid generation test with its confirmation step, and the
+  readiness detail. It has no provider or model picker: a provider is never
+  chosen without a model. A models listing reports what the server serves
+  ("2 models listed") but never picks a model, even when it lists only one;
+  **Change** does, and pick mode then lists the served models too. When the chat is not ready (a missing key, an endpoint to
+  set, no model), Chat settings opens with **Connection** already open and
+  the fix focused (**Change** when the model is missing). Help that points at
+  Settings names **F4**, the key that opens it.
+
+Every field row reads the same way: the label, the value, a word saying
+where the value comes from, and one line of help. The words are the ones
+**Switch model** uses: *edited \** (changed in this open), *this chat*,
+*model default*, *Console Behavior*, *provider* and *built-in*. A blank field
+says what a blank sends: "blank = provider default" (nothing is sent, so the
+provider's own default applies), and its word reads *provider*; a blank
+dropdown, such as **Reasoning effort**, shows *default*. A blank **Temperature** or **Top P** shows
+its range instead, because Apply needs a value while the provider accepts the
+field. Labels match Settings, for
+example **Thinking budget**, and **Budget strategy** and **When limit nears**
+under Context.
+
+Fields the selected provider does not accept are hidden, not shown dimmed,
+and the **Sampling** title says so on its one row. When their names fit it
+names them, for example "Sampling · hidden for llama.cpp: Reasoning summary,
+Verbosity, Thinking (this provider does not accept them)"; otherwise it
+counts them, for Anthropic
+"Sampling · Anthropic does not accept 7 fields (open to list them)". Opened,
+**Sampling** lists every hidden field above its rows: "Anthropic does not
+accept: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort,
+Reasoning summary, Verbosity." A saved endpoint is judged
+as the server type it was saved with, so a llama.cpp endpoint hides what
+llama.cpp does not accept. Choosing another model updates the hidden fields,
+the title and the list at once. A hidden field takes no focus,
+is never sent, is cleared from the chat by **Apply**, and is not written by
+**Save as model default**; a value saved for it earlier stays in
+`config.toml` untouched. A cleared **Top P** (Custom OpenAI-compatible #2
+does not accept it) reads *provider* in the chat's settings summary. A reasoning or thinking control whose support for
+this model is not known stays visible, and its help line starts with "Support
+not verified for this model."
+
+Focus opens on **Temperature**. **Tab** walks the core fields, the four
+disclosure titles and the footer to **Apply to this chat**, never into
+a closed disclosure; **Shift+Tab** from Temperature reaches **Change**, then
+the view tabs. A focus target that a credential round trip cannot restore
+lands on **Change**.
+The **Context and memory** view keeps its taller frame and scrolls.
+Switching views opens the other view at its top, however far the one you
+left was scrolled, so **Context and memory** starts at **Model capacity**
+with **Budget strategy** focused, and **Model and generation** starts at the
+**Model** row with **Temperature** focused. A chat that is not ready opens on
+its fix instead, as it does when Chat settings opens: **Change** when no
+model is chosen, or the open **Connection** disclosure's fix (such as
+**Configure credential…**) below the tuning rows. Pressing the tab of the
+view already shown does nothing.
+
+The footer reads, left to right: the Esc hint (below), **Use saved
+defaults**, **Save as model default**, **Default for new chats (Ctrl+N)** and
+**Apply to this chat (Ctrl+Enter)**. Each key works from any field. Only
+**Save as model default** and **Default for new chats** write
+`config.toml`; **Apply to this chat** changes this chat alone and writes no
+configuration. **Save as model default** shows only while the draft differs
+from the saved defaults, the same test that dims **Use saved defaults**, so
+the footer never offers a save beside **Matches saved defaults**. While the
+unsaved-changes prompt shows, **Alt+M** and **Ctrl+N** do nothing. The **Context and memory** view has a **Cancel** button in
+place of the default actions. The line above the footer that names where a
+default goes ("Used by future conversations for Anthropic.") shows only
+beside **Save as model default**, so the **Context and memory** view never
+shows it.
+
+**Use saved defaults** is how a chat that already holds work picks up
+defaults you saved later (a chat nobody has used yet follows them on its
+own). It replaces the draft with exactly what a new chat on the same
+provider and model would start with: the model's saved defaults, then the
+provider's saved Console defaults, then Console Behavior, then the provider's
+settings. Any unapplied edit to a generation field or the endpoint is
+replaced (an edit to **Your name in this chat** is kept), every
+field that now differs from the chat reads *edited \**, and the provider and
+model stay as they are. Nothing changes until you **Apply to this chat**.
+While the draft already equals those defaults, the button is dimmed and reads
+**Matches saved defaults**.
 
 The modal is a dense form: every field, dropdown and button in it (the
 **Model and generation** / **Context and memory** tabs included) is one row
@@ -487,10 +600,10 @@ colour, and a focused **Apply to this chat** keeps its colour instead of
 dimming; a focused plain button always stands out from the panel at least as much as it does unfocused. Each field is as wide as the value it
 holds, not as wide as the window: a number gets 12 columns, a dropdown is as
 wide as its longest choice, and text is capped by what it holds (your name in
-this chat 32, the provider and model 48, an endpoint URL 64). The fields keep
+this chat 32, an endpoint URL 64). The fields keep
 their width on a wider terminal. The reasoning and thinking dropdowns
 (**Reasoning effort**, **Reasoning summary**, **Verbosity**, **Thinking**)
-show their choice, or "Select" when none is set. A value saved earlier that
+show their choice, or "default" when none is set. A value saved earlier that
 the dropdown does not offer is not dropped silently: "Saved value is
 unavailable. Choose one of: …" appears beside the dropdown in the error
 colour, and saving waits until you pick a choice. When the form is taller
@@ -499,19 +612,21 @@ than the window,
 disappears once you have scrolled to the bottom; scroll back up and it
 returns.
 
-Closing never throws edits away without asking. Left of **Cancel**, the
+Closing never throws edits away without asking. At its left, the
 footer reads "Esc close" while nothing is edited, and "Esc close (asks: 2
 unsaved)" once something is, counting edits in both tabs and any carried in
 from the **Alt+M** popover. Changing a value back to what the chat already
-uses is not an edit. Clearing **Temperature** or **Top P** is one, and so is
-moving **Streaming** between Inherit, On and Off, even to the value Inherit
-already gives; switching model can move it to Inherit, which counts too.
+uses is not an edit. Clearing **Temperature** or **Top P** is one. A chat
+whose **Streaming** follows its default shows the value it inherits and where
+it comes from; picking On or Off pins it for this chat, which counts as an
+edit even when it matches the inherited value. Switching model can return it
+to following its default, which counts too.
 With edits, **Esc**, a click outside the modal, and
-**Cancel** open a prompt that names the edited fields ("2 unsaved edits to
+the Context view's **Cancel** open a prompt that names the edited fields ("2 unsaved edits to
 this chat: Temperature, Max tokens.") and offers **Apply to this chat**
 (Enter), **Discard** (d) and **Keep editing** (Esc). Keep editing puts you
 back in the field you were editing. Apply goes through the same path as the
-footer's **Use for this conversation** button, so it writes nothing to
+footer's **Apply to this chat** button, so it writes nothing to
 `config.toml`; if a value is invalid, the modal stays open with the error
 summary. When Apply is unavailable (a run is active, say), the prompt says
 so, shows **Apply to this chat** dimmed, and starts on **Keep editing**. A
@@ -529,10 +644,17 @@ Need another server beyond the built-in providers? **New endpoint…**, next
 to **Endpoint**, creates a named custom endpoint without leaving the modal:
 pick a template (blank OpenAI-compatible, any provider, or an existing named
 entry), adjust family, URL, and models, name it, and **Create**. The entry
-is saved to `config.toml` immediately and becomes selectable here, so unlike
-a typed-in URL it never trips the "Endpoint not saved" block, and
-conversations using it survive restart. Renaming, editing, and deletion
-(with a guard that detaches conversations first) live in **F9 ▸ Providers &
+is saved to `config.toml` immediately. **Create** then lists the models the
+new server serves (the **Connection** status line reads "Listing the models
+<name> serves…" meanwhile; if the listing fails, pick mode still opens) and
+opens Switch model's pick mode with the entry's name
+in **Find**, offering those models beside the ones you named: pick one (or
+type a model id after the name) and the chat moves to that pair, after
+which the new server's connection is tested; **Esc** keeps the chat's pair.
+The `/endpoint` command opens Chat settings with this flow on top and lands
+the entry the same way. Unlike a typed-in URL, an entry never trips the "Endpoint not
+saved" block, and conversations using it survive restart. Renaming, editing, and deletion
+(with a guard that detaches conversations first) live in **F4 ▸ Providers &
 Models ▸ Custom endpoints**.
 
 For a faster switch, **Alt+M** opens **Switch model**, a 140-column list of
@@ -632,7 +754,9 @@ The keys, printed under the values, work while you type in Find:
 - **Ctrl+O** opens Chat settings on the highlighted pair with your
   unapplied edits, without applying or discarding them.
 - **Esc** closes without changing anything. If you edited a value, it asks
-  first: "Enter apply · d discard · Esc keep editing".
+  first: "Enter apply · d discard · Esc keep editing". **Ctrl+Q** with edited
+  values asks **Discard changes and quit?** (**Keep editing** returns to the
+  popover).
 
 Context and compaction settings live in Chat settings only; Apply here
 keeps the chat's compaction setting as it is.

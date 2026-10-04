@@ -34,7 +34,10 @@ from tldw_chatbook.Chat.Chat_Deps import (
     ChatRateLimitError,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import builtin_provider_endpoint
-from tldw_chatbook.config import get_runtime_config_snapshot
+from tldw_chatbook.config import (
+    get_runtime_config_snapshot,
+    resolve_provider_api_key,
+)
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 from tldw_chatbook.LLM_Calls.hosted_chat import (
     HostedChatProtocolError,
@@ -175,7 +178,7 @@ def chat_with_deepseek(
     start_time = time.time()
     cli_api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
     deepseek_config = cli_api_settings.get("deepseek", {})
-    final_api_key = api_key or deepseek_config.get("api_key")
+    final_api_key = api_key or resolve_provider_api_key(deepseek_config.get("api_key"))
     if not final_api_key:
         raise ChatConfigurationError(
             provider="deepseek", message="DeepSeek API Key required."

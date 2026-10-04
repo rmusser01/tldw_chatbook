@@ -330,9 +330,6 @@ $ds-theme-preview-light-ink: #FFFFFF;
 $ds-theme-preview-invalid: #808080;
 
 
-$ds-console-settings-wide-max-width: 196;
-
-
 $ds-inspector-modal-width: 120;
 $ds-inspector-modal-height: 42;
 $ds-inspector-section-width: 28;
@@ -2301,6 +2298,15 @@ FileSave.-compact InputBar Input {
 }
 
 
+ConfirmationDialog .confirmation-scroll {
+    max-height: $ds-height-full;
+}
+
+ConfirmationDialog .confirmation-scroll > .button-container {
+    dock: bottom;
+}
+
+
 MCPRecoveryReviewDialog #confirmation-dialog {
     width: $ds-size-80;
     max-width: $ds-percent-96;
@@ -2479,296 +2485,296 @@ WorkspaceCreateModal #workspace-create-error {
 
 #mcp-inspector-state,
 #mcp-overview-summary {
-    width: $ds-width-fill;
-    height: auto;
-    min-height: $ds-size-1;
+  width: $ds-width-fill;
+  height: auto;
+  min-height: $ds-size-1;
 }
 
 ConsoleSettingsModal {
-    align: center middle;
+  align: center middle;
 }
 
 
 ConsoleSettingsModal Input {
-    width: $ds-width-fill;
-    min-width: $ds-size-0;
-    height: $ds-control-height-compact;
-    min-height: $ds-control-height-compact;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
-    border-left: solid $ds-control-edge;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
+  width: $ds-width-fill;
+  min-width: $ds-size-0;
+  height: $ds-control-height-compact;
+  min-height: $ds-control-height-compact;
+  padding: $ds-space-0 $ds-space-1;
+  border: none;
+  border-left: solid $ds-control-edge;
+  background: $ds-surface-raised;
+  color: $ds-text-primary;
 }
 
 ConsoleSettingsModal Select {
-    width: $ds-width-fill;
-    min-width: $ds-size-0;
-    height: $ds-control-height-compact;
-    min-height: $ds-control-height-compact;
-    border: none;
-    border-left: solid $ds-control-edge;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
+  width: $ds-width-fill;
+  min-width: $ds-size-0;
+  height: $ds-control-height-compact;
+  min-height: $ds-control-height-compact;
+  border: none;
+  border-left: solid $ds-control-edge;
+  background: $ds-surface-raised;
+  color: $ds-text-primary;
 }
 
 ConsoleSettingsModal Checkbox {
-    height: $ds-size-1;
-    min-height: $ds-size-1;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
 }
 
 ConsoleSettingsModal Select > SelectCurrent {
-    width: $ds-width-fill;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    margin: $ds-space-0;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-    content-align: left middle;
+  width: $ds-width-fill;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  margin: $ds-space-0;
+  padding: $ds-space-0 $ds-space-1;
+  border: none;
+  background: $ds-surface-raised;
+  color: $ds-text-primary;
+  content-align: left middle;
 }
 
 ConsoleSettingsModal Select > SelectCurrent Static#label {
-    width: $ds-width-fill;
-    height: $ds-size-1;
-    background: transparent;
-    color: $ds-text-primary;
+  width: $ds-width-fill;
+  height: $ds-size-1;
+  background: transparent;
+  color: $ds-text-primary;
 }
 
 ConsoleSettingsModal Select > SelectCurrent .arrow {
-    background: transparent;
-    color: $ds-text-muted;
+  background: transparent;
+  color: $ds-text-muted;
 }
 
 ConsoleSettingsModal Input:focus {
-    height: $ds-control-height-compact;
-    min-height: $ds-control-height-compact;
-    border: none;
-    border-left: thick $ds-input-focus-accent;
-    outline: none;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    text-style: bold;
+  height: $ds-control-height-compact;
+  min-height: $ds-control-height-compact;
+  border: none;
+  border-left: thick $ds-input-focus-accent;
+  outline: none;
+  background: $ds-input-focus-bg;
+  color: $ds-text-primary;
+  text-style: bold;
 }
 
 ConsoleSettingsModal Input > .input--cursor {
-    background: $ds-input-focus-accent;
-    color: $ds-surface-panel;
+  background: $ds-input-focus-accent;
+  color: $ds-surface-panel;
 }
 
 ConsoleSettingsModal Input > .input--selection {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
 }
 
 ConsoleSettingsModal Select:focus {
-    border: none;
-    border-bottom: none;
-    border-left: thick $ds-input-focus-accent;
+  border: none;
+  border-bottom: none;
+  border-left: thick $ds-input-focus-accent;
 
-    outline: none;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
+  outline: none;
+  background: $ds-input-focus-bg;
+  color: $ds-text-primary;
 }
 
 ConsoleSettingsModal Select:focus > SelectCurrent {
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    text-style: bold;
+  background: $ds-input-focus-bg;
+  color: $ds-text-primary;
+  text-style: bold;
 }
 
 
 ConsoleSettingsModal Select > SelectOverlay {
-    padding: $ds-space-0 $ds-space-1;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
-    background-tint: transparent;
-    color: $ds-text-primary;
-    min-width: $ds-size-30;
+  padding: $ds-space-0 $ds-space-1;
+  border: solid $ds-grid-line;
+  background: $ds-surface-panel;
+  background-tint: transparent;
+  color: $ds-text-primary;
+  min-width: $ds-size-30;
 }
 
 
 
 ConsolePromptPickerModal {
-    align: center middle;
+  align: center middle;
 }
 
 ConsoleStylePickerModal {
-    align: center middle;
+  align: center middle;
 }
 
 ConsoleSystemPromptModal {
-    align: center middle;
+  align: center middle;
 }
 
 
 PromptVariablesDialog {
-    align: center middle;
+  align: center middle;
 }
 
 #prompt-variables-dialog {
-    width: $ds-size-76;
-    max-width: $ds-percent-96;
-    height: $ds-percent-90;
-    max-height: $ds-size-36;
-    min-height: $ds-size-18;
-    padding: $ds-space-1 $ds-space-2;
-    border: round $ds-grid-line;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-    overflow-x: hidden;
-    overflow-y: hidden;
+  width: $ds-size-76;
+  max-width: $ds-percent-96;
+  height: $ds-percent-90;
+  max-height: $ds-size-36;
+  min-height: $ds-size-18;
+  padding: $ds-space-1 $ds-space-2;
+  border: round $ds-grid-line;
+  background: $ds-surface-panel;
+  color: $ds-text-primary;
+  overflow-x: hidden;
+  overflow-y: hidden;
 }
 
 #prompt-variables-destination {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    color: $ds-text-muted;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-1;
+  margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+  color: $ds-text-muted;
 }
 
 #prompt-variables-system-authorization {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-3;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-3;
+  margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+  background: $ds-surface-panel;
+  color: $ds-text-primary;
 }
 
 #prompt-variables-dialog #prompt-variables-apply-system {
-    width: $ds-size-5;
-    min-width: $ds-size-5;
-    max-width: $ds-size-5;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    padding: $ds-space-0;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-    text-overflow: clip;
+  width: $ds-size-5;
+  min-width: $ds-size-5;
+  max-width: $ds-size-5;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
+  padding: $ds-space-0;
+  background: $ds-surface-panel;
+  color: $ds-text-primary;
+  text-overflow: clip;
 }
 
 #prompt-variables-system-state {
-    width: $ds-size-5;
-    min-width: $ds-size-5;
-    max-width: $ds-size-5;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    content-align: center middle;
-    color: $ds-text-primary;
-    text-style: bold;
+  width: $ds-size-5;
+  min-width: $ds-size-5;
+  max-width: $ds-size-5;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
+  content-align: center middle;
+  color: $ds-text-primary;
+  text-style: bold;
 }
 
 #prompt-variables-system-copy {
-    width: $ds-width-fill;
-    min-width: $ds-size-0;
-    height: $ds-size-2;
-    min-height: $ds-size-2;
-    content-align: left top;
-    color: $ds-text-primary;
-    text-wrap: wrap;
-    text-overflow: clip;
+  width: $ds-width-fill;
+  min-width: $ds-size-0;
+  height: $ds-size-2;
+  min-height: $ds-size-2;
+  content-align: left top;
+  color: $ds-text-primary;
+  text-wrap: wrap;
+  text-overflow: clip;
 }
 
 
 #prompt-variables-scroll {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-3;
-    border-top: solid $ds-grid-line;
-    border-bottom: solid $ds-grid-line;
-    background: $ds-surface-panel;
-    overflow-x: hidden;
-    overflow-y: auto;
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-text-muted;
-    scrollbar-color-hover: $ds-text-muted;
-    scrollbar-color-active: $ds-action-focus;
+  width: $ds-width-full;
+  height: $ds-height-fill;
+  min-height: $ds-size-3;
+  border-top: solid $ds-grid-line;
+  border-bottom: solid $ds-grid-line;
+  background: $ds-surface-panel;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-size: 1 1;
+  scrollbar-background: $ds-surface-panel;
+  scrollbar-color: $ds-text-muted;
+  scrollbar-color-hover: $ds-text-muted;
+  scrollbar-color-active: $ds-action-focus;
 }
 
 .prompt-variable-row {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-5;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-5;
+  margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .prompt-variable-label {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    color: $ds-text-muted;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-1;
+  color: $ds-text-muted;
 }
 
 #prompt-variables-dialog .prompt-variable-input {
-    width: $ds-width-full;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    border: none;
-    border-left: solid $ds-grid-line;
-    background: $surface-darken-1;
-    color: $ds-text-primary;
+  width: $ds-width-full;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
+  border: none;
+  border-left: solid $ds-grid-line;
+  background: $surface-darken-1;
+  color: $ds-text-primary;
 }
 
 #prompt-variables-dialog .prompt-variable-input:focus {
-    border-left: thick $ds-action-focus;
-    background: $ds-focus-bg;
-    color: $ds-text-primary;
-    text-style: bold;
+  border-left: thick $ds-action-focus;
+  background: $ds-focus-bg;
+  color: $ds-text-primary;
+  text-style: bold;
 }
 
 #prompt-variables-status {
-    width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    color: $ds-status-warning;
+  width: $ds-width-full;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  color: $ds-status-warning;
 }
 
 #prompt-variables-actions {
-    width: $ds-width-full;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
-    align-horizontal: right;
+  width: $ds-width-full;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
+  margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+  align-horizontal: right;
 }
 
 #prompt-variables-cancel,
 #prompt-variables-original,
 #prompt-variables-apply {
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
-    border: none;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
+  margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+  border: none;
 }
 
 #prompt-variables-cancel,
 #prompt-variables-apply {
-    width: $ds-size-10;
-    min-width: $ds-size-10;
+  width: $ds-size-10;
+  min-width: $ds-size-10;
 }
 
 #prompt-variables-original {
-    width: $ds-agentic-prompt-vars-pane;
-    min-width: $ds-agentic-prompt-vars-pane;
+  width: $ds-agentic-prompt-vars-pane;
+  min-width: $ds-agentic-prompt-vars-pane;
 }
 
 #prompt-variables-actions Button:focus {
-    outline: heavy $ds-action-focus;
+  outline: heavy $ds-action-focus;
 }
 
 #prompt-variables-actions Button:disabled {
-    opacity: 100%;
-    text-opacity: 100%;
-    background: $surface-darken-1;
-    color: $text-muted;
+  opacity: 100%;
+  text-opacity: 100%;
+  background: $surface-darken-1;
+  color: $text-muted;
 }
 
 
 ConsoleRunLogModal {
-    align: center middle;
+  align: center middle;
 }
 
 #home-dashboard,
@@ -2782,8 +2788,8 @@ ConsoleRunLogModal {
 #acp-shell,
 #skills-shell,
 #settings-shell {
-    height: $ds-height-full;
-    min-height: $ds-size-0;
+  height: $ds-height-full;
+  min-height: $ds-size-0;
 }
 
 #home-title,
@@ -2798,11 +2804,11 @@ ConsoleRunLogModal {
 #acp-title,
 #skills-title,
 #settings-title {
-    height: $ds-destination-header-height;
-    min-height: $ds-destination-header-height;
-    padding: $ds-space-0 $ds-space-1;
-    margin: $ds-space-0;
-    border: none;
+  height: $ds-destination-header-height;
+  min-height: $ds-destination-header-height;
+  padding: $ds-space-0 $ds-space-1;
+  margin: $ds-space-0;
+  border: none;
 }
 
 #home-purpose,
@@ -2823,17 +2829,17 @@ ConsoleRunLogModal {
 #acp-mode-strip,
 #skills-mode-strip,
 #settings-category-strip {
-    height: $ds-destination-compact-strip-height;
-    min-height: $ds-destination-compact-strip-height;
-    padding: $ds-space-0 $ds-space-1;
-    margin: $ds-space-0;
-    border: none;
+  height: $ds-destination-compact-strip-height;
+  min-height: $ds-destination-compact-strip-height;
+  padding: $ds-space-0 $ds-space-1;
+  margin: $ds-space-0;
+  border: none;
 }
 
 #watchlists-header-bar {
 
-    height: $ds-size-3;
-    min-height: $ds-size-3;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
 }
 
 .home-dashboard-region,
@@ -2864,31 +2870,31 @@ ConsoleRunLogModal {
 #ccp-character-library-pane,
 #ccp-behavior-detail-pane,
 #ccp-attachment-inspector-pane {
-    width: $ds-width-fill;
-    min-width: $ds-size-0;
-    height: $ds-height-full;
-    min-height: $ds-size-0;
-    padding: $ds-space-1;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
+  width: $ds-width-fill;
+  min-width: $ds-size-0;
+  height: $ds-height-full;
+  min-height: $ds-size-0;
+  padding: $ds-space-1;
+  border: solid $ds-grid-line;
+  background: $ds-surface-panel;
 }
 
 
 LibraryFileNotesWorkspace Button:disabled,
 LibraryFileNotesGitPanel Button:disabled {
-    opacity: 100%;
-    text-opacity: 100%;
-    text-style: none;
-    color: $ds-text-primary;
-    background: $surface-darken-1;
+  opacity: 100%;
+  text-opacity: 100%;
+  text-style: none;
+  color: $ds-text-primary;
+  background: $surface-darken-1;
 }
 
 .file-notes-git-commit-error,
 #file-notes-save-status.-error {
-    opacity: 100%;
-    text-opacity: 100%;
-    color: $ds-status-error-readable;
-    background: $error-darken-3;
+  opacity: 100%;
+  text-opacity: 100%;
+  color: $ds-status-error-readable;
+  background: $error-darken-3;
 }
 
 
@@ -2896,22 +2902,22 @@ LibraryFileNotesGitPanel .file-notes-git-row:focus,
 LibraryFileNotesGitPanel .file-notes-git-row.-highlight,
 LibraryFileNotesGitPanel .file-notes-git-commit-included-row:focus,
 LibraryFileNotesGitPanel .file-notes-git-commit-included-row.-highlight {
-    background: $primary-background;
-    color: $text;
-    text-style: bold underline;
-    outline: none;
+  background: $primary-background;
+  color: $text;
+  text-style: bold underline;
+  outline: none;
 }
 
 LibraryFileNotesGitPanel Button.-style-default:focus {
-    background: $primary-background;
-    color: $text;
-    text-style: bold underline;
-    outline: none;
+  background: $primary-background;
+  color: $text;
+  text-style: bold underline;
+  outline: none;
 }
 
 LibraryFileNotesGitPanel #file-notes-git-push-body:focus,
 LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {
-    outline: heavy $primary;
+  outline: heavy $primary;
 }
 
 
@@ -2919,43 +2925,43 @@ LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {
 #file-notes-git-status,
 #file-notes-git-push-result-reason,
 #file-notes-git-commit-check-again-reason {
-    opacity: 100%;
-    text-opacity: 100%;
-    color: $ds-text-primary;
+  opacity: 100%;
+  text-opacity: 100%;
+  color: $ds-text-primary;
 }
 
 #file-notes-authority {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    max-height: $ds-size-2;
-    color: $ds-text-muted;
-    text-wrap: wrap;
-    overflow: hidden hidden;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-1;
+  max-height: $ds-size-2;
+  color: $ds-text-muted;
+  text-wrap: wrap;
+  overflow: hidden hidden;
 }
 
 ConsoleTerminalWorkspace Button {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    max-height: $ds-size-1;
-    margin: $ds-space-0;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
-    content-align: center middle;
+  width: $ds-width-full;
+  min-width: $ds-size-0;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  max-height: $ds-size-1;
+  margin: $ds-space-0;
+  padding: $ds-space-0 $ds-space-1;
+  border: none;
+  content-align: center middle;
 }
 
 ConsoleTerminalWorkspace Button:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold underline;
 }
 
 
 ConsoleBoundedSection {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 ConsoleAgentHistoryModal { align: center middle; background: $background 60%; }
@@ -2972,58 +2978,58 @@ ConsoleAgentHistoryModal { align: center middle; background: $background 60%; }
 #chat-skill-script-card,
 #skill-install-buttons,
 #skill-script-buttons {
-    height: auto;
+  height: auto;
 }
 
 
 VideoPlayerScreen {
-    align: center middle;
+  align: center middle;
 }
 
 VideoPlayerScreen .video-player-frame {
-    height: auto;
-    max-height: $ds-size-26;
-    padding: $ds-space-0 $ds-space-1;
+  height: auto;
+  max-height: $ds-size-26;
+  padding: $ds-space-0 $ds-space-1;
 }
 
 #video-player-status {
-    color: $ds-text-muted;
-    height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
+  color: $ds-text-muted;
+  height: $ds-size-1;
+  padding: $ds-space-0 $ds-space-1;
 }
 
 #video-player-hints {
-    color: $ds-text-muted;
-    text-style: dim;
-    height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
+  color: $ds-text-muted;
+  text-style: dim;
+  height: $ds-size-1;
+  padding: $ds-space-0 $ds-space-1;
 }
 
 
 ConsoleWorkspaceFilesModal {
-    align: center middle;
+  align: center middle;
 }
 
 ConsoleCitationSourcesModal {
-    align: center middle;
+  align: center middle;
 }
 
 
 ChatScreen.-focus MainNavigationBar {
-    display: none;
+  display: none;
 }
 
 
 
 .meetings-rail-block,
 .meetings-rail-actions {
-    height: auto;
+  height: auto;
 }
 
 
 .meetings-rail-button {
-    width: auto;
-    min-width: $ds-size-0;
+  width: auto;
+  min-width: $ds-size-0;
 }
 
 #artifacts-workbench,
@@ -3036,14 +3042,14 @@ ChatScreen.-focus MainNavigationBar {
 #settings-workbench,
 #evals-workbench,
 #meetings-workbench {
-    height: $ds-height-fill;
+  height: $ds-height-fill;
 
-    min-height: $ds-size-10;
-    padding: $ds-space-1;
-    margin: $ds-space-0;
-    overflow: hidden;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
+  min-height: $ds-size-10;
+  padding: $ds-space-1;
+  margin: $ds-space-0;
+  overflow: hidden;
+  border: solid $ds-grid-line;
+  background: $ds-surface-panel;
 }
 
 #artifacts-list-pane,
@@ -3062,7 +3068,7 @@ ChatScreen.-focus MainNavigationBar {
 #mcp-readiness-pane,
 #acp-list-pane,
 #acp-detail-pane {
-    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+  margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 #artifacts-inspector-pane,
@@ -3071,7 +3077,7 @@ ChatScreen.-focus MainNavigationBar {
 #workflows-inspector-pane,
 #mcp-readiness-pane,
 #acp-inspector-pane {
-    margin: $ds-space-0;
+  margin: $ds-space-0;
 }
 
 #personas-list-pane,
@@ -3088,103 +3094,103 @@ ChatScreen.-focus MainNavigationBar {
 #evals-library-pane,
 #evals-detail-pane,
 #evals-inspector-pane {
-    height: $ds-height-full;
-    min-height: $ds-size-0;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
+  height: $ds-height-full;
+  min-height: $ds-size-0;
+  border: solid $ds-grid-line;
+  background: $ds-surface-panel;
 }
 
 #personas-inspector-pane {
-    width: $ds-fr-2;
-    min-width: $ds-size-30;
-    border: solid $ds-grid-line;
-    padding: $ds-space-1;
+  width: $ds-fr-2;
+  min-width: $ds-size-30;
+  border: solid $ds-grid-line;
+  padding: $ds-space-1;
 }
 
 #personas-readiness-console {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: auto;
-    text-wrap: wrap;
+  width: $ds-width-full;
+  min-width: $ds-size-0;
+  height: auto;
+  text-wrap: wrap;
 }
 
 
 #personas-library-pane {
-    width: $ds-fr-2;
-    min-width: $ds-size-24;
+  width: $ds-fr-2;
+  min-width: $ds-size-24;
 }
 
 #personas-work-area {
-    width: $ds-fr-4;
-    min-width: $ds-size-40;
+  width: $ds-fr-4;
+  min-width: $ds-size-40;
 }
 
 #personas-workbench.personas-workbench-compact {
-    padding: $ds-space-0;
+  padding: $ds-space-0;
 }
 
 #personas-library-pane.personas-workbench-compact-pane {
-    width: $ds-width-fill;
-    min-width: $ds-size-16;
-    padding: $ds-space-0 $ds-space-1;
+  width: $ds-width-fill;
+  min-width: $ds-size-16;
+  padding: $ds-space-0 $ds-space-1;
 }
 
 #personas-work-area.personas-workbench-compact-pane {
-    width: $ds-fr-3;
-    min-width: $ds-size-34;
-    padding: $ds-space-0 $ds-space-1;
+  width: $ds-fr-3;
+  min-width: $ds-size-34;
+  padding: $ds-space-0 $ds-space-1;
 }
 
 #personas-inspector-pane.personas-workbench-compact-pane {
-    width: $ds-width-fill;
-    min-width: $ds-size-22;
-    padding: $ds-space-0 $ds-space-1;
+  width: $ds-width-fill;
+  min-width: $ds-size-22;
+  padding: $ds-space-0 $ds-space-1;
 }
 
 #workflows-list-pane,
 #acp-list-pane {
-    width: $ds-fr-2;
-    min-width: $ds-size-30;
-    border: solid $ds-grid-line;
-    padding: $ds-space-1;
+  width: $ds-fr-2;
+  min-width: $ds-size-30;
+  border: solid $ds-grid-line;
+  padding: $ds-space-1;
 }
 
 #workflows-detail-pane,
 #acp-detail-pane {
-    width: $ds-fr-4;
-    min-width: $ds-size-52;
-    border: solid $ds-grid-line;
-    padding: $ds-space-1;
+  width: $ds-fr-4;
+  min-width: $ds-size-52;
+  border: solid $ds-grid-line;
+  padding: $ds-space-1;
 }
 
 #workflows-inspector-pane,
 #acp-inspector-pane {
-    width: $ds-fr-2;
-    min-width: $ds-size-34;
-    border: solid $ds-grid-line;
-    padding: $ds-space-1;
+  width: $ds-fr-2;
+  min-width: $ds-size-34;
+  border: solid $ds-grid-line;
+  padding: $ds-space-1;
 }
 
 .acp-selected-session-row {
-    width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    padding: $ds-space-0 $ds-space-1;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+  width: $ds-width-full;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+  padding: $ds-space-0 $ds-space-1;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold underline;
 }
 
 .acp-inspector-group-title {
-    width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
-    padding: $ds-space-0 $ds-space-1;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-    text-style: bold;
+  width: $ds-width-full;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+  padding: $ds-space-0 $ds-space-1;
+  background: $ds-surface-raised;
+  color: $ds-text-primary;
+  text-style: bold;
 }
 
 #personas-list-detail-divider,
@@ -3197,7 +3203,7 @@ ChatScreen.-focus MainNavigationBar {
 #workflows-detail-inspector-divider,
 #acp-list-detail-divider,
 #acp-detail-inspector-divider {
-    background: $ds-grid-line;
+  background: $ds-grid-line;
 }
 
 .artifacts-column-title,
@@ -3209,316 +3215,316 @@ ChatScreen.-focus MainNavigationBar {
 .skills-column-title,
 .ccp-column-title,
 .settings-column-title {
-    width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    background: $ds-surface-raised;
+  width: $ds-width-full;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  padding: $ds-space-0 $ds-space-1;
+  margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+  background: $ds-surface-raised;
 
-    color: $accent;
-    text-style: bold;
+  color: $accent;
+  text-style: bold;
 }
 
 RagProfileNameModal,
 RagProfileSwitchConfirmModal {
-    align: center middle;
+  align: center middle;
 }
 
 _CredentialEditorModal,
 _CredentialClearModal {
-    align: center middle;
+  align: center middle;
 }
 
 
 
 .is-active {
-    border: round $ds-action-focus;
-    text-style: bold;
+  border: round $ds-action-focus;
+  text-style: bold;
 }
 
 .personas-mode-chip.is-active {
-    border: none;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+  border: none;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold underline;
 }
 
 .personas-mode-chip.is-active:focus {
-    outline: none;
-    border: none;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+  outline: none;
+  border: none;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold underline;
 }
 
 
 ListItem.personas-library-row.-highlight,
 ListItem.personas-conversation-row.-highlight {
-    background: $ds-grid-line;
-    color: $ds-text-primary;
-    text-style: bold;
+  background: $ds-grid-line;
+  color: $ds-text-primary;
+  text-style: bold;
 }
 
 
 ListItem.personas-library-row.is-active {
-    border: none;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold;
+  border: none;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold;
 }
 
 
 ListItem.personas-library-row.is-active.-highlight {
-    outline: none;
-    border: none;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold;
+  outline: none;
+  border: none;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold;
 }
 
 
 #personas-library-rows:focus {
-    outline: none;
+  outline: none;
 }
 
 .is-disabled {
-    opacity: 0.55;
+  opacity: 0.55;
 }
 
 .is-blocked {
-    border: round $ds-status-error;
-    background: $ds-status-error 10%;
+  border: round $ds-status-error;
+  background: $ds-status-error 10%;
 }
 
 .is-running {
-    border: round $ds-status-running;
+  border: round $ds-status-running;
 }
 
 .is-paused {
-    border: round $ds-status-paused;
+  border: round $ds-status-paused;
 }
 
 .is-unsaved {
-    border: round $ds-status-unsaved;
+  border: round $ds-status-unsaved;
 }
 
 .is-stale {
-    color: $ds-text-muted;
+  color: $ds-text-muted;
 }
 
 .is-conflict {
-    border: thick $ds-status-error;
+  border: thick $ds-status-error;
 }
 
 .needs-approval {
-    border: thick $ds-status-approval-required;
-    background: $ds-status-approval-required 12%;
+  border: thick $ds-status-approval-required;
+  background: $ds-status-approval-required 12%;
 }
 
 .source-local {
-    border: round $ds-authority-local;
+  border: round $ds-authority-local;
 }
 
 .source-server {
-    border: round $ds-authority-server;
+  border: round $ds-authority-server;
 }
 
 .source-workspace {
-    border: round $ds-authority-workspace;
+  border: round $ds-authority-workspace;
 }
 
 .source-remote-only {
-    border: round $ds-authority-remote-only;
+  border: round $ds-authority-remote-only;
 }
 
 .source-dry-run {
-    border: dashed $ds-grid-line;
-    color: $ds-text-muted;
+  border: dashed $ds-grid-line;
+  color: $ds-text-muted;
 }
 
 
 
 #mcp-mode-strip Button.mcp-mode-chip {
-    width: auto;
-    min-width: $ds-size-10;
-    height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
+  width: auto;
+  min-width: $ds-size-10;
+  height: $ds-size-1;
+  padding: $ds-space-0 $ds-space-1;
+  border: none;
 }
 
 #mcp-mode-strip .mcp-mode-chip.is-active {
-    text-style: bold underline;
+  text-style: bold underline;
 }
 
 
 #mcp-mode-strip .mcp-mode-chip:focus,
 #mcp-mode-strip .mcp-mode-chip:hover:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold;
-    outline: none;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold;
+  outline: none;
 }
 
 #mcp-mode-strip .mcp-mode-chip.is-active:focus,
 #mcp-mode-strip .mcp-mode-chip.is-active:hover:focus {
-    background: $ds-surface-raised;
-    color: $ds-text-muted;
-    text-style: bold underline;
-    outline: none;
+  background: $ds-surface-raised;
+  color: $ds-text-muted;
+  text-style: bold underline;
+  outline: none;
 }
 
 
 #lab-mode-strip Button.lab-mode-chip {
-    width: auto;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
+  width: auto;
+  min-width: $ds-size-0;
+  height: $ds-size-1;
+  padding: $ds-space-0 $ds-space-1;
+  border: none;
 }
 
 #lab-mode-strip .lab-mode-chip.is-active {
-    border: none;
-    text-style: bold underline;
+  border: none;
+  text-style: bold underline;
 }
 
 #lab-mode-strip .lab-mode-chip:focus,
 #lab-mode-strip .lab-mode-chip:hover:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold;
-    outline: none;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold;
+  outline: none;
 }
 
 #lab-mode-strip .lab-mode-chip.is-active:focus,
 #lab-mode-strip .lab-mode-chip.is-active:hover:focus {
-    background: $ds-surface-raised;
-    color: $ds-text-muted;
-    text-style: bold underline;
-    outline: none;
+  background: $ds-surface-raised;
+  color: $ds-text-muted;
+  text-style: bold underline;
+  outline: none;
 }
 
 #mcp-hub-rail {
-    width: $ds-fr-3;
-    min-width: $ds-size-24;
+  width: $ds-fr-3;
+  min-width: $ds-size-24;
 }
 
 
 #mcp-hub-rail Button.mcp-rail-row {
-    min-width: $ds-size-0;
-    height: $ds-height-auto;
+  min-width: $ds-size-0;
+  height: $ds-height-auto;
 
-    padding: $ds-space-0;
+  padding: $ds-space-0;
 }
 
 #mcp-hub-rail .mcp-rail-heading {
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    margin-top: $ds-space-1;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  margin-top: $ds-space-1;
 }
 
 
 #mcp-purpose {
-    height: $ds-height-auto;
+  height: $ds-height-auto;
 }
 
 #mcp-hub-grid.mcp-compact #mcp-rail-source > SelectCurrent {
-    padding: $ds-space-0;
+  padding: $ds-space-0;
 }
 
 
 #mcp-hub-rail Button.mcp-rail-row.is-active {
-    border: none;
-    text-style: bold;
+  border: none;
+  text-style: bold;
 }
 
 #mcp-hub-canvas {
-    width: $ds-fr-5;
-    min-width: $ds-size-38;
+  width: $ds-fr-5;
+  min-width: $ds-size-38;
 }
 
 #mcp-hub-inspector {
-    width: $ds-fr-3;
-    min-width: $ds-size-28;
-    height: $ds-height-full;
-    min-height: $ds-size-0;
+  width: $ds-fr-3;
+  min-width: $ds-size-28;
+  height: $ds-height-full;
+  min-height: $ds-size-0;
 }
 
 
 #mcp-hub-inspector .console-action-primary,
 #mcp-hub-inspector .console-action-secondary {
-    min-width: $ds-size-0;
-    max-width: $ds-width-full;
-    height: auto;
-    text-wrap: wrap;
+  min-width: $ds-size-0;
+  max-width: $ds-width-full;
+  height: auto;
+  text-wrap: wrap;
 }
 
 
 #mcp-inspector-test-result-raw > CollapsibleTitle {
-    width: $ds-width-full;
-    height: auto;
-    min-width: $ds-size-0;
+  width: $ds-width-full;
+  height: auto;
+  min-width: $ds-size-0;
 }
 
 #mcp-inspector-test-result-raw > Contents {
-    padding: $ds-space-0;
+  padding: $ds-space-0;
 }
 
 
 .mcp-compact #mcp-inspector-test-result-raw-scroll {
-    height: $ds-size-8;
+  height: $ds-size-8;
 }
 
 
 #mcp-hub-grid.mcp-compact #mcp-hub-rail {
-    width: $ds-fr-2;
-    min-width: $ds-size-16;
+  width: $ds-fr-2;
+  min-width: $ds-size-16;
 }
 
 #mcp-hub-grid.mcp-compact #mcp-hub-canvas {
-    width: $ds-agentic-mcp-compact-canvas-share;
-    min-width: $ds-size-30;
+  width: $ds-agentic-mcp-compact-canvas-share;
+  min-width: $ds-size-30;
 }
 
 #mcp-hub-grid.mcp-compact #mcp-hub-inspector {
-    width: $ds-fr-2;
-    min-width: $ds-size-20;
+  width: $ds-fr-2;
+  min-width: $ds-size-20;
 }
 
 
 #mcp-overview-summary-row {
-    height: auto;
-    min-height: $ds-size-1;
+  height: auto;
+  min-height: $ds-size-1;
 }
 
 #mcp-detail-title {
-    height: $ds-size-1;
-    min-height: $ds-size-1;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
 }
 
 #mcp-overview-callouts .ds-recovery-callout {
-    margin-top: $ds-space-1;
+  margin-top: $ds-space-1;
 }
 
 
 #mcp-hub-inspector Button.mcp-inspector-action:disabled {
-    opacity: 100%;
-    background: $ds-surface-raised;
-    color: $ds-text-muted;
-    text-style: none;
+  opacity: 100%;
+  background: $ds-surface-raised;
+  color: $ds-text-muted;
+  text-style: none;
 }
 
 #mcp-hub-inspector Button.mcp-inspector-action:disabled:hover {
-    opacity: 100%;
-    background: $ds-surface-raised;
-    color: $ds-text-muted;
-    text-style: none;
+  opacity: 100%;
+  background: $ds-surface-raised;
+  color: $ds-text-muted;
+  text-style: none;
 }
 
 
 Button.mcp-inspector-action {
-    text-align: left;
-    content-align: left middle;
+  text-align: left;
+  content-align: left middle;
 }
 
 
@@ -3530,169 +3536,169 @@ Button.mcp-inspector-action {
 .mcp-status-muted { color: $ds-text-muted; }
 
 Button.mcp-callout {
-    width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
+  width: $ds-width-full;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  padding: $ds-space-0 $ds-space-1;
+  border: none;
 
-    text-align: left;
-    content-align: left middle;
+  text-align: left;
+  content-align: left middle;
 }
 
 #mcp-servers-form {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 
 #mcp-servers-table {
-    height: auto;
-    max-height: $ds-agentic-mcp-table-cap;
+  height: auto;
+  max-height: $ds-agentic-mcp-table-cap;
 }
 
 
 #mcp-tools-table {
-    height: auto;
-    max-height: $ds-agentic-mcp-table-cap;
+  height: auto;
+  max-height: $ds-agentic-mcp-table-cap;
 }
 
 
 #mcp-tools-local-enabled,
 #mcp-detail-tool-gates .console-action-secondary {
-    width: $ds-width-full;
-    height: $ds-height-auto;
-    text-wrap: wrap;
+  width: $ds-width-full;
+  height: $ds-height-auto;
+  text-wrap: wrap;
 }
 
 
 .mcp-compact #mcp-tools-filter-bar {
-    layout: vertical;
+  layout: vertical;
 }
 
 .mcp-compact #mcp-tools-filter-text,
 .mcp-compact #mcp-tools-filter-server-slot,
 .mcp-compact #mcp-tools-filter-server {
-    width: $ds-width-full;
+  width: $ds-width-full;
 }
 
 
 #mcp-perm-table {
-    height: auto;
-    max-height: $ds-agentic-mcp-table-cap;
+  height: auto;
+  max-height: $ds-agentic-mcp-table-cap;
 }
 
 
 #mcp-perm-preview {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 
 #mcp-tools-filter-server-slot Select {
-    width: $ds-size-28;
+  width: $ds-size-28;
 }
 
 
 
 
 #mcp-detail-builtin-toggles {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 
 #mcp-detail-tool-gates {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 #mcp-detail-toolbar Button {
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    border: none;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  border: none;
 }
 
 .mcp-compact #mcp-detail-toolbar {
-    layout: grid;
-    grid-size: 2;
-    grid-columns: 1fr 1fr;
-    grid-rows: $ds-size-1;
+  layout: grid;
+  grid-size: 2;
+  grid-columns: 1fr 1fr;
+  grid-rows: $ds-size-1;
 }
 
 .mcp-compact #mcp-detail-toolbar .console-action-primary,
 .mcp-compact #mcp-detail-toolbar .console-action-secondary {
-    width: 1fr;
-    min-width: $ds-size-0;
+  width: 1fr;
+  min-width: $ds-size-0;
 }
 
 
 #mcp-import-list {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 
 #mcp-detail-scroll:focus,
 #mcp-adv-scroll:focus {
-    outline: none;
-    border: none;
-    background: $ds-surface-panel;
+  outline: none;
+  border: none;
+  background: $ds-surface-panel;
 }
 
 
 MCPSchemaForm Checkbox {
-    width: auto;
-    height: auto;
-    min-height: $ds-size-1;
+  width: auto;
+  height: auto;
+  min-height: $ds-size-1;
 }
 MCPSchemaForm Checkbox > .toggle--button {
-    color: $ds-surface-panel;
+  color: $ds-surface-panel;
 }
 MCPSchemaForm Checkbox.-on > .toggle--button {
-    color: $success;
+  color: $success;
 }
 
 
 
 
 #mcp-audit-table {
-    height: auto;
-    max-height: $ds-agentic-mcp-table-cap;
+  height: auto;
+  max-height: $ds-agentic-mcp-table-cap;
 }
 
 
 #mcp-audit-findings-table {
-    height: auto;
-    max-height: $ds-agentic-mcp-table-cap;
+  height: auto;
+  max-height: $ds-agentic-mcp-table-cap;
 }
 
 
 #mcp-audit-subview-strip {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 
 #mcp-audit-filter-text,
 #mcp-audit-filter-decision,
 #mcp-audit-filter-initiator {
-    width: $ds-width-full;
+  width: $ds-width-full;
 }
 
 
 #approval-batch-body,
 #approval-batch-actions {
-    height: auto;
+  height: auto;
 }
 
 
 #approval-batch-rows {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 
-    max-height: $ds-size-15;
-    overflow-y: auto;
+  max-height: $ds-size-15;
+  overflow-y: auto;
 }
 
 .approval-row, .approval-row-controls {height:auto;min-height:$ds-size-1;width:$ds-width-fill;}
@@ -3705,115 +3711,145 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
 
 .approval-row-fast-approve,.approval-row-fast-deny{width:$ds-size-14;min-width:$ds-size-14;}
 
+.approval-compact {
+  padding: $ds-space-0 $ds-space-2;
+}
+.approval-compact #approval-batch-rows {
+  max-height: $ds-size-8;
+}
+.approval-compact .approval-row-controls {
+  layout: grid;
+  grid-size: $ds-size-2;
+  grid-columns: $ds-width-fill $ds-width-fill;
+}
+.approval-compact #approval-batch-actions {
+  layout: grid;
+  grid-size: $ds-size-3;
+  grid-columns: $ds-width-fill $ds-width-fill $ds-width-fill;
+}
+.approval-compact .approval-row-decision {
+  column-span: $ds-size-2;
+  width: $ds-width-fill;
+}
+
+.approval-compact Button#approval-approve-all,
+.approval-compact Button#approval-submit,
+.approval-compact Button#approval-deny-all {
+  width: $ds-width-fill;
+  min-width: $ds-size-0;
+  padding: $ds-space-0;
+}
+
+
 .approval-row.needs-decision {
-    border: solid $ds-status-approval-required;
-    background: $ds-status-approval-required 10%;
+  border: solid $ds-status-approval-required;
+  background: $ds-status-approval-required 10%;
 }
 
 
 ConsoleScopePickerModal {
-    align: center middle;
+  align: center middle;
 }
 
 
 ConsolePromptsModal {
-    align: center middle;
+  align: center middle;
 }
 
 ConsolePromptDraftSaveDialog {
-    align: center middle;
+  align: center middle;
 }
 
 #console-prompt-draft-save-dialog {
-    width: $ds-size-60;
-    max-width: $ds-percent-96;
-    height: auto;
-    padding: $ds-space-1 $ds-space-2;
-    border: round $ds-grid-line;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
+  width: $ds-size-60;
+  max-width: $ds-percent-96;
+  height: auto;
+  padding: $ds-space-1 $ds-space-2;
+  border: round $ds-grid-line;
+  background: $ds-surface-panel;
+  color: $ds-text-primary;
 }
 
 #console-prompt-draft-save-copy {
-    width: $ds-width-full;
-    height: auto;
-    margin-bottom: $ds-space-1;
-    color: $ds-text-muted;
+  width: $ds-width-full;
+  height: auto;
+  margin-bottom: $ds-space-1;
+  color: $ds-text-muted;
 }
 
 #console-prompt-draft-save-actions {
-    width: $ds-width-full;
-    height: auto;
-    align-horizontal: right;
+  width: $ds-width-full;
+  height: auto;
+  align-horizontal: right;
 }
 
 #console-prompt-draft-editor {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-12;
+  width: $ds-width-full;
+  height: $ds-height-fill;
+  min-height: $ds-size-12;
 }
 
 #console-prompt-draft-editor-copy,
 #console-prompt-draft-status,
 #console-prompt-draft-promote-title {
-    width: $ds-width-full;
-    height: auto;
+  width: $ds-width-full;
+  height: auto;
 }
 
 #console-prompt-draft-editor-copy,
 #console-prompt-draft-status {
-    color: $ds-text-muted;
+  color: $ds-text-muted;
 }
 
 #console-prompt-draft-status.error {
-    color: $ds-status-error-readable;
+  color: $ds-status-error-readable;
 }
 
 #console-prompt-draft-content {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-6;
-    margin-top: $ds-space-1;
+  width: $ds-width-full;
+  height: $ds-height-fill;
+  min-height: $ds-size-6;
+  margin-top: $ds-space-1;
 }
 
 #console-prompt-draft-actions,
 #console-prompt-draft-promote-fields {
-    width: $ds-width-full;
-    height: auto;
+  width: $ds-width-full;
+  height: auto;
 }
 
 #console-prompt-draft-promote-title {
-    margin-top: $ds-space-1;
-    text-style: bold;
+  margin-top: $ds-space-1;
+  text-style: bold;
 }
 
 #console-prompt-draft-library-name,
 #console-prompt-draft-library-collection {
-    width: $ds-width-fill;
+  width: $ds-width-fill;
 }
 
 .console-prompts-result.highlighted {
-    border-left: thick $ds-action-focus;
-    background: $ds-focus-bg;
+  border-left: thick $ds-action-focus;
+  background: $ds-focus-bg;
 }
 
 ConsolePromptsModal.-narrow #console-prompt-draft-actions,
 ConsolePromptsModal.-narrow #console-prompt-draft-promote-fields {
-    layout: vertical;
+  layout: vertical;
 }
 
 ConsolePromptsModal.-narrow #console-prompt-draft-actions Button,
 ConsolePromptsModal.-narrow #console-prompt-draft-promote-fields Button,
 ConsolePromptsModal.-narrow #console-prompt-draft-library-name,
 ConsolePromptsModal.-narrow #console-prompt-draft-library-collection {
-    width: $ds-width-full;
+  width: $ds-width-full;
 }
 
 
 PromptBlockEditor #prompt-editor-lane-options Checkbox {
-    width: auto;
-    height: $ds-size-3;
-    margin-bottom: $ds-space-0;
+  width: auto;
+  height: $ds-size-3;
+  margin-bottom: $ds-space-0;
 }
 
 
@@ -3832,247 +3868,247 @@ PromptBlockEditor #prompt-editor-lane-options Checkbox {
 .internal-prompt-editor-actions { align-horizontal: right; height: auto; padding: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0; }
 
 ImageGenSettingsPanel Checkbox > .toggle--button {
-    color: $ds-surface-panel;
+  color: $ds-surface-panel;
 }
 ImageGenSettingsPanel Checkbox.-on > .toggle--button {
-    color: $success;
+  color: $success;
 }
 
 
 LibraryIngestCanvas .type-group-contents {
-    height: auto;
+  height: auto;
 }
 LibraryIngestCanvas .type-group-contents Checkbox {
-    width: auto;
-    max-width: $ds-width-full;
-    height: auto;
-    text-wrap: wrap;
+  width: auto;
+  max-width: $ds-width-full;
+  height: auto;
+  text-wrap: wrap;
 }
 
 LibraryIngestCanvas #opt-audio_video-install-parakeet-v2,
 #library-shell-grid LibraryIngestCanvas #opt-audio_video-install-parakeet-v2 {
-    max-width: $ds-width-full;
-    height: auto;
-    max-height: $ds-height-full;
-    text-wrap: wrap;
+  max-width: $ds-width-full;
+  height: auto;
+  max-height: $ds-height-full;
+  text-wrap: wrap;
 }
 LibraryIngestCanvas .type-group-field-label {
-    color: $text-muted;
-    margin-top: $ds-space-1;
+  color: $text-muted;
+  margin-top: $ds-space-1;
 }
 
 
 LibraryIngestCanvas Input > .input--placeholder,
 LibraryIngestCanvas Input:disabled > .input--placeholder {
-    color: $ds-text-placeholder;
+  color: $ds-text-placeholder;
 }
 
 
 LibraryIngestCanvas Input:focus {
-    outline: heavy $accent;
+  outline: heavy $accent;
 }
 
 LibraryIngestCanvas Button:focus {
-    text-style: bold reverse;
+  text-style: bold reverse;
 }
 LibraryIngestCanvas Checkbox:focus {
-    outline: heavy $accent;
+  outline: heavy $accent;
 }
 
 LibraryIngestCanvas Select:focus {
-    outline: heavy $accent;
+  outline: heavy $accent;
 }
 
 LibraryIngestCanvas Select:focus > SelectCurrent {
-    border: heavy $ds-input-focus-accent;
+  border: heavy $ds-input-focus-accent;
 }
 
 LibraryIngestCanvas CollapsibleTitle:focus {
-    text-style: bold reverse;
+  text-style: bold reverse;
 }
 
 
 
 LibraryIngestCanvas Collapsible > CollapsibleTitle {
-    width: $ds-width-fill;
-    height: $ds-size-1;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
+  width: $ds-width-fill;
+  height: $ds-size-1;
+  text-wrap: nowrap;
+  text-overflow: ellipsis;
 }
 
 
 LibraryIngestCanvas Collapsible {
-    padding-bottom: $ds-space-0;
+  padding-bottom: $ds-space-0;
 }
 LibraryIngestCanvas Collapsible Contents {
-    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-3;
+  padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-3;
 }
 
 
 LibraryIngestCanvas Collapsible > CollapsibleTitle:focus {
-    text-style: bold reverse;
-    outline-left: heavy $ds-focus-accent;
-    outline-right: heavy $ds-focus-accent;
+  text-style: bold reverse;
+  outline-left: heavy $ds-focus-accent;
+  outline-right: heavy $ds-focus-accent;
 }
 
 
 LibraryIngestCanvas .type-group-field-error {
 
-    color: $ds-status-error-readable;
-    height: auto;
-    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-2;
+  color: $ds-status-error-readable;
+  height: auto;
+  padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-2;
 }
 
 
 LibraryIngestCanvas Input.-ingest-option-invalid {
-    border: tall $ds-status-error-readable;
+  border: tall $ds-status-error-readable;
 }
 
 
 LibraryIngestCanvas Button:disabled {
 
-    opacity: 100%;
-    text-opacity: 100%;
-    color: $text-muted;
-    background: $surface-darken-1;
+  opacity: 100%;
+  text-opacity: 100%;
+  color: $text-muted;
+  background: $surface-darken-1;
 }
 
 
 LibraryIngestCanvas Input:disabled,
 LibraryIngestCanvas Select:disabled,
 LibraryIngestCanvas Checkbox:disabled {
-    opacity: 100%;
-    text-opacity: 100%;
-    color: $text-muted;
-    background: $surface-darken-1;
+  opacity: 100%;
+  text-opacity: 100%;
+  color: $text-muted;
+  background: $surface-darken-1;
 }
 
 LibraryIngestCanvas Select:disabled SelectCurrent {
-    background: $surface-darken-1;
-    color: $text-muted;
+  background: $surface-darken-1;
+  color: $text-muted;
 }
 LibraryIngestCanvas Select:disabled SelectCurrent Static#label {
-    color: $text-muted;
+  color: $text-muted;
 }
 
 
 Toast {
-    margin-bottom: $ds-space-2;
+  margin-bottom: $ds-space-2;
 }
 
 
 LibraryIngestCanvas:focus {
-    border: none;
-    outline: none;
+  border: none;
+  outline: none;
 }
 LibraryIngestCanvas:focus-within {
-    border: none;
-    outline: none;
+  border: none;
+  outline: none;
 }
 
 #notes-sync-body,
 #notes-sync-roots-body {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    scrollbar-gutter: stable;
+  width: $ds-width-full;
+  height: $ds-height-fill;
+  min-height: $ds-size-0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 #notes-sync-pinned-actions,
 #notes-sync-roots-pinned-actions {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    max-height: $ds-size-3;
-    background: $surface-darken-1;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-1;
+  max-height: $ds-size-3;
+  background: $surface-darken-1;
 }
 
 .notes-sync-conflict-choice.is-selected {
-    background: $accent 18%;
-    text-style: bold;
+  background: $accent 18%;
+  text-style: bold;
 }
 
 .notes-sync-conflict-title,
 .notes-sync-conflict-path,
 .notes-sync-conflict-effect,
 .notes-sync-conflict-selected {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    text-wrap: wrap;
-    text-overflow: clip;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-1;
+  text-wrap: wrap;
+  text-overflow: clip;
 }
 
 .notes-sync-conflict-path,
 .notes-sync-conflict-effect,
 .notes-sync-conflict-selected {
-    color: $text-muted;
+  color: $text-muted;
 }
 
 .notes-sync-comparison-diff {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: $ds-size-8;
-    min-height: $ds-size-4;
-    overflow-x: auto;
-    overflow-y: auto;
+  width: $ds-width-full;
+  min-width: $ds-size-0;
+  height: $ds-size-8;
+  min-height: $ds-size-4;
+  overflow-x: auto;
+  overflow-y: auto;
 }
 
 .notes-sync-receipt-actions,
 .notes-sync-history-actions {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: auto;
-    min-height: $ds-size-1;
+  width: $ds-width-full;
+  min-width: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-1;
 }
 
 .notes-sync-receipt-actions > Button,
 .notes-sync-history-actions > Button {
-    min-width: $ds-size-0;
+  min-width: $ds-size-0;
 }
 
 .notes-sync-history-page {
-    width: auto;
-    min-width: $ds-size-6;
-    height: $ds-size-1;
-    content-align: left middle;
+  width: auto;
+  min-width: $ds-size-6;
+  height: $ds-size-1;
+  content-align: left middle;
 }
 
 ConsoleCapturePolicyDialog,
 ConsoleExchangeExportDialog {
-    align: center middle;
+  align: center middle;
 }
 
 #capture-policy-dialog,
 #exchange-export-dialog {
-    width: $ds-size-76;
-    max-width: $ds-percent-96;
-    height: $ds-size-22;
-    max-height: $ds-percent-96;
-    border: tall $primary;
-    background: $surface;
-    padding: $ds-space-1 $ds-space-2;
+  width: $ds-size-76;
+  max-width: $ds-percent-96;
+  height: $ds-size-22;
+  max-height: $ds-percent-96;
+  border: tall $primary;
+  background: $surface;
+  padding: $ds-space-1 $ds-space-2;
 }
 
 #capture-policy-title,
 #exchange-export-title {
-    height: $ds-size-1;
-    text-style: bold;
+  height: $ds-size-1;
+  text-style: bold;
 }
 
 #capture-policy-body,
 #exchange-export-body {
-    height: $ds-height-fill;
-    scrollbar-gutter: stable;
+  height: $ds-height-fill;
+  scrollbar-gutter: stable;
 }
 
 #capture-policy-scopes,
 #capture-policy-details,
 #exchange-export-profiles,
 #exchange-export-destinations {
-    height: auto;
+  height: auto;
 }
 
 #capture-policy-effective,
@@ -4082,43 +4118,43 @@ ConsoleExchangeExportDialog {
 #exchange-export-profile-copy,
 #exchange-export-full-reason,
 #exchange-export-status {
-    height: auto;
+  height: auto;
 }
 
 #capture-policy-reason,
 #exchange-export-full-reason {
-    color: $warning;
+  color: $warning;
 }
 
 #capture-policy-actions,
 #exchange-export-actions {
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    align-horizontal: right;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
+  align-horizontal: right;
 }
 
 #capture-policy-actions Button,
 #exchange-export-actions Button {
-    min-width: $ds-size-10;
-    margin-left: $ds-space-1;
+  min-width: $ds-size-10;
+  margin-left: $ds-space-1;
 }
 
 #capture-policy-status.-error,
 #exchange-export-status.-error {
-    color: $error;
+  color: $error;
 }
 
 #exchange-export-path {
-    height: $ds-size-3;
+  height: $ds-size-3;
 }
 
 
 BuddyConversationModal #approval-batch-body {
-    height: auto;
+  height: auto;
 }
 BuddyConversationModal .approval-row-decision {
-    width: $ds-width-fill;
-    min-width: $ds-size-10;
+  width: $ds-width-fill;
+  min-width: $ds-size-10;
 }
 
 
@@ -4137,381 +4173,375 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 
 
 
-App.-wide-viewport #console-settings-modal {
-    width: $ds-percent-85;
-    max-width: $ds-console-settings-wide-max-width;
-}
-
-
 App.-wide-viewport #console-inspector-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-workspace-files-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #file-notes-conflict-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-run-log-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-citation-sources-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-side-chat-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-edit-message-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-edit-thinking-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-prompts-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #agent-history-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #agent-progress-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #worktree-recovery-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #internal-prompt-editor-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 
 App.-wide-viewport #speech-voice-profile-picker {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 
 App.-wide-viewport #notes-recovery-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #skills-recovery-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport ChatbookCreationWindow > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport ChatbookExportManagementWindow > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport ChatbookTemplatesWindow > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 
 
 App.-wide-viewport #personal-context-review-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #console-scope-picker-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #console-prompt-comparison-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #buddy-conversation {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #actor-pack-import-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #personal-context-link-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #console-system-prompt-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #server-switch-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #buddy-inbox {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport FileExtractionDialog > Vertical.file-extraction-body {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport EmojiPickerScreen #dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 
 App.-wide-viewport #buddy-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #petdex-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #tool-pack-export-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #tool-pack-import-options {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #tool-pack-import-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #tool-profile-bind-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 
 App.-wide-viewport #prompt-collection-manager {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 
 
 
 App.-wide-viewport #buddy-management {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport NoteCreationModal > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #conversation-selection-container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #note-selection-container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport AudioTroubleshootingDialog .dialog-container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #file-notes-push-auth-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #trace-export-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-library-access {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #capture-policy-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #trace-privacy-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #exchange-export-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-prompt-queue-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-reaction-picker-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-review-notes-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-endpoint-template-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-rewind-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #video-capacity-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #project-skills-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-prompt-picker-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-style-picker-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport .model-install-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport .local-gguf-import-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #file-notes-push-endpoint-details-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #file-notes-root-details-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-project-setup-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-fork-chat-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-character-picker {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-save-as-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-terminal-session-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #global-full-confirmation {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-generate-image-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport EncryptionSetupDialog > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #character-tts-collision-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #character-tts-existing-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport .settings-speech-credential-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport DocumentGenerationModal > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-auto-speak-consent-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-rag-settings {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-summarize-preview-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-workspace-switcher-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #prompt-delete-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #persona-visual-custom-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-save-markdown-box {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #profile-interview-cancel-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #dictionary-picker-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #world-book-picker-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport DictionaryAttachPicker > Vertical.dictionary-attach-body {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport ConversationAttachPicker > Vertical.conversation-attach-body {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #profile-dialog-container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport FeedbackDialog > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-composer-menu {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #prompt-variables-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 
 App.-wide-viewport TemplateSelectorDialog .template-selector-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 
 
@@ -8506,16 +8536,22 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 
 
 
+
 #console-settings-modal {
-    width: $ds-size-120;
+    width: $ds-size-150;
     max-width: $ds-percent-95;
-    height: $ds-percent-94;
+    height: $ds-size-22;
     max-height: $ds-percent-95;
     overflow: hidden;
     scrollbar-size: 1 1;
     border: round $ds-grid-line;
     background: $ds-surface-panel;
-    padding: $ds-space-1 $ds-space-2;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+
+#console-settings-modal.-context-view {
+    height: $ds-percent-94;
 }
 
 
@@ -8539,6 +8575,7 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 
 ConsoleSettingsModal Collapsible {
     min-height: $ds-size-0;
+    margin: $ds-space-0;
     padding: $ds-space-0;
     border: none;
     background: $ds-surface-panel;
@@ -8546,20 +8583,17 @@ ConsoleSettingsModal Collapsible {
 
 
 ConsoleSettingsModal Collapsible > Contents {
+    padding: $ds-space-0;
     background: $ds-surface-panel;
 }
 
+
 #console-settings-provider-model-section,
-#console-settings-connection {
+#console-settings-connection,
+ConsoleSettingsModal CollapsibleTitle {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;
-}
-
-.console-settings-primary-section {
-    padding: $ds-space-0 $ds-space-1;
-    border: round $ds-action-focus;
-    background: $ds-surface-raised;
 }
 
 .console-settings-modal-row {
@@ -8580,10 +8614,19 @@ ConsoleSettingsModal Collapsible > Contents {
 }
 
 
+.-context-view .console-settings-modal-label {
+    width: $ds-size-24;
+    max-width: $ds-size-24;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact .console-settings-modal-label {
+    width: $ds-size-16;
+}
+
+
 ConsoleSettingsModal Button,
 ConsoleSettingsModal #console-settings-view-tabs,
-ConsoleSettingsModal #console-settings-default-recovery-actions,
-ConsoleSettingsModal ModelSearchPicker .model-search-picker-control {
+ConsoleSettingsModal #console-settings-default-recovery-actions {
     height: $ds-control-height-compact;
     min-height: $ds-control-height-compact;
 }
@@ -8600,16 +8643,36 @@ ConsoleSettingsModal .console-context-action-row {
 }
 
 
-#console-settings-generation-advanced Input,
+.console-settings-field-row Input,
 #console-settings-context-view Input {
     width: $ds-size-12;
 }
 
-#console-settings-verbosity,
-#console-settings-thinking-effort {
-    width: $ds-size-11;
+#console-settings-streaming {
+    width: $ds-size-8;
 }
 
+
+.console-settings-field-label {
+    width: $ds-size-18;
+}
+
+.console-settings-field-source {
+    width: $ds-size-20;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+}
+
+.console-settings-help-line {
+    width: $ds-width-fill;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+
+#console-settings-verbosity,
+#console-settings-thinking-effort,
 #console-settings-reasoning-effort,
 #console-context-thinking-history-policy {
     width: $ds-size-12;
@@ -8637,9 +8700,22 @@ ConsoleSettingsModal .console-context-action-row {
     max-width: $ds-size-32;
 }
 
-#console-settings-provider-picker,
-#console-settings-model-picker {
-    max-width: $ds-size-48;
+
+#console-settings-model-summary {
+    width: $ds-width-fill;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#console-settings-model-source,
+#console-settings-model-status {
+    width: auto;
+    margin: $ds-space-0 $ds-space-1;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-model-source,
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-model-status {
+    display: none;
 }
 
 #console-settings-base-url {
@@ -8659,12 +8735,6 @@ ConsoleSettingsModal .console-context-action-row {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;
-}
-
-#console-settings-model-custom {
-    width: $ds-size-18;
-    min-width: $ds-size-18;
-    max-width: $ds-size-18;
 }
 
 #console-settings-model-discover {
@@ -8748,17 +8818,8 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     width: $ds-width-full;
     min-width: $ds-size-0;
     max-width: $ds-width-full;
-}
-
-ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-connection-action {
     height: $ds-size-1;
     min-height: $ds-size-1;
-}
-
-
-#console-settings-modal.-conversation-settings-wide {
-    width: $ds-percent-85;
-    max-width: $ds-console-settings-wide-max-width;
 }
 
 
@@ -15394,6 +15455,22 @@ SplashScreen.hidden {
 #wizard-next:disabled {
     opacity: 0.5;
 }
+
+
+.setup-navigation Button#wizard-back:disabled,
+.setup-navigation Button#wizard-next:disabled,
+.setup-navigation Button#wizard-cancel:disabled {
+    text-style: dim;
+}
+
+
+.setup-busy-status {
+    height: auto;
+    color: $text-muted;
+    text-style: italic;
+    padding: $ds-space-0 $ds-space-2;
+}
+.setup-busy-status.hidden { display: none; }
 
 
 

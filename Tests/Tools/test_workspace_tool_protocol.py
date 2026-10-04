@@ -60,7 +60,11 @@ def _arguments_for(operation: str) -> dict[str, object]:
             "sensitive_exclusions": [],
         },
         "fs_glob": {"pattern": "**/*.py", "sensitive_exclusions": []},
-        "fs_grep": {"pattern": "needle", "sensitive_exclusions": [], "content_exclusions": []},
+        "fs_grep": {
+            "pattern": "needle",
+            "sensitive_exclusions": [],
+            "content_exclusions": [],
+        },
         "stat_path": {"path": "file.txt"},
         "git_status": {"sensitive_exclusions": []},
         "git_diff": {"sensitive_exclusions": []},
@@ -186,7 +190,9 @@ def test_request_rejects_nul_in_private_strings(field: str) -> None:
         ("output_max_bytes", True),
     ],
 )
-def test_request_rejects_wrong_types_and_closed_values(field: str, value: object) -> None:
+def test_request_rejects_wrong_types_and_closed_values(
+    field: str, value: object
+) -> None:
     payload = _payload(_request())
     payload[field] = value
 
@@ -276,7 +282,9 @@ def test_fs_read_limit_rejects_oversized_json_integer() -> None:
             arguments={"path": "read.txt", "limit": 1, "sensitive_exclusions": []},
         )
     )
-    raw = json.dumps(payload).encode().replace(b'"limit": 1', b'"limit": ' + b"9" * 5_000)
+    raw = (
+        json.dumps(payload).encode().replace(b'"limit": 1', b'"limit": ' + b"9" * 5_000)
+    )
 
     with pytest.raises(WorkspaceProtocolError, match="malformed"):
         WorkspaceToolRequest.from_bytes(raw)
@@ -359,9 +367,12 @@ def test_response_round_trip_requires_matching_operation_id() -> None:
         cleanup_proven=True,
     )
 
-    assert WorkspaceToolResponse.from_bytes(
-        response.to_bytes(), expected_operation_id="operation-1"
-    ) == response
+    assert (
+        WorkspaceToolResponse.from_bytes(
+            response.to_bytes(), expected_operation_id="operation-1"
+        )
+        == response
+    )
     with pytest.raises(WorkspaceProtocolError, match="operation ID"):
         WorkspaceToolResponse.from_bytes(
             response.to_bytes(), expected_operation_id="different"

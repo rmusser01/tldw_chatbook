@@ -41,6 +41,41 @@ app by its own pid and confirm it is gone before relaunching. Then read the
 log's last `console_send_stage` phase: it says which recovery state the
 relaunch will show, before you go looking for it.
 
+## A live race control needs proof the race happened, not a fixed sleep (TASK-33622.15, 2026-10-04)
+
+**Incident.** The fix under test: a fork that finishes while Ctrl+Q's "Quit while still working?"
+covers the fork dialog must still close the dialog after Wait. The live recipe held the fork
+commit behind `BEGIN EXCLUSIVE` in `sqlite3`, raised the question, ran `COMMIT`, slept 3 s and
+pressed Wait. The fixed build closed the dialog. The pre-fix control, same script, closed it too,
+which read as "the bug does not reproduce live". The capture taken before Wait showed why: the
+Console beneath was still on the source chat, so on that run the fork opened only after Wait,
+when nothing covered the dialog. Rerun with a longer wait, and with the fork's own toast ("Fork
+created and opened.") captured under the question before Wait, the control left the dialog stuck
+on "Forking..." as the tests predicted.
+
+**What to do.** For a cover-then-finish race, gate each step on on-screen proof that the previous
+one happened, and keep the capture taken just before the deciding key. A control that "passes"
+is only evidence once that capture shows the race was actually entered. (Also: `tmux send-keys`
+treats a `;` argument as its own command separator; send SQL as `-l 'COMMIT\;'`.)
+
+## A dead modal after a send can be the app pump, not tmux (TASK-33622.15, 2026-10-03)
+
+**Incident.** Live-verifying the generated video's Save-to-disk picker, three runs looked like
+the detached-tmux trap below: the `/generate-video` cost confirm (then the capacity choice) ignored
+Tab, Escape and clicks, the process sat idle, and a SIGUSR2 dump showed the main loop in
+`_run_once` and the input thread in `select`. Attaching a client changed nothing, and the MiniMax
+request kept polling in a worker thread. The fault was in the app, not tmux: priority
+**Ctrl+Q** never logged `Application quit initiated`, F1 did nothing, and the same freeze
+reproduced on clean dev. A **mouse** click on Send took a path that left input alive, and the
+choice, the picker and their quit prompts then all worked. The likely mechanism -- the Enter-key
+send awaiting the whole `/generate-video` command, so input queues behind it -- is inferred from
+those symptoms and was **not** confirmed with a stack of the send path.
+
+**What to do.** When a modal goes dead right after a send, press Ctrl+Q and grep the app log
+for `Application quit initiated`. If it is missing, input is probably queued behind the send:
+check `console_send_stage ... status=entered` with no outcome line, and retry with a different
+send path before blaming the harness. Before filing it as yours, reproduce it on the merge base.
+
 ## CSS overflow alone does not provide keyboard scrolling
 
 **TASK-32879, 2026-09-20.** The restored MCP review made a plain Container
@@ -445,6 +480,13 @@ tmux -L verify kill-server                  # done
 Use `TLDW_CONFIG_PATH=<scratch>/config.toml` so the run cannot touch real state (see
 the profile-isolation entry below). Ctrl+digit hotkeys cannot be sent through tmux --
 verify those bindings by reading `BINDINGS` in the code instead.
+
+Ctrl+Enter, though, can be sent (TASK-33006.5, 2026-10-03): its kitty-protocol CSI u
+form reaches Textual as `ctrl+enter`: `tmux -L verify send-keys -l $'\e[13;5u'`.
+Chat settings' Apply (Ctrl+Enter) ran from a focused field this way, so the
+advertised key itself was exercised live. Also send typed values with `-l`
+(`send-keys -l "0.9"`): in that run the same text without `-l` left the
+Temperature field empty.
 
 ---
 
@@ -3647,3 +3689,53 @@ Use `loopback_network` for a pytest probe, or the documented guard mode for a
 standalone probe against an owned numeric loopback address. Restore blocked mode
 in `finally` and assert that no blocked attempts were swallowed. Keep failed
 setup attempts out of the passing receipt.
+
+## A gap between tmux frames is not a blocked UI loop until the main thread says so (TASK-34100.1 review, 2026-10-03)
+
+**Incident.** A review of the first-run wizard reported mid-track Nexts that "froze" for
+0.6-1.6 s with no busy line, from `capture-pane` timelines showing no frame between the
+key press and the next step. Choosing Full was a real loop block: synchronous TLS and
+storage setup in the localhost scan, fixed by moving it to a thread. The mid-track cases
+were different. The app was relaunched under a wrapper that sampled the main thread's stack
+every 10 ms and logged busy-line, checkpoint and `show_step` marks
+(`setup-wizard-ux-qa/evidence/g1-r1x-prof/`). At load 60-65 on 14 cores, the main thread
+sat idle in the selector for 85-95% of those windows. The wait was a checkpoint write on a
+worker thread (0.1-1.35 s), and the busy line did show during it. What it could not cover
+was the incoming step's synchronous mount and CSS matching after `show_step`, plus tmux
+receiving the repaint in chunks (one Model step arrived over 2.08-2.15 s). The same Nexts
+headless took 0.15-0.4 s.
+
+**Practice.** Before attributing a no-frame window to blocking work, sample the main
+thread: a `runpy` wrapper that starts a sampler thread and then runs `tldw_chatbook.app`
+needs no repo change and no root, unlike `py-spy` on macOS. Record the load average with
+every timing. Also, in this app a focused `Input` draws a solid `┌─┐` border
+(`components/_forms.tcss`) and an unfocused one the tall `▊▔` border, so read focus from
+that glyph or `capture-pane -e`, not from "the border changed".
+
+## Read the whole screen after a live action, not just the line you added (TASK-34350, 2026-10-04)
+
+**Incident.** TASK-34350 gave a send that cannot fit its model a precise alert:
+"Your message was not sent: gpt-5.6-terra's 32,000-token context window (an
+estimate) is used up by … Max tokens (32,000) … Lower Max tokens …". Controller
+tests pinned the copy exactly and passed. The live run in the real app showed the
+copy correctly, and also, on the same screen, "Response accepted; waiting for
+dispatch." with [Retry response] [Discard] and a composer hint of "Send blocked —
+resolve response recovery first". The alert fired after the turn was accepted,
+and the durable dispatch checkpoint it left behind surfaced as a recovery panel
+that contradicted the alert and blocked the composer. That is the TASK-33621.4
+symptom, reached by a new path. No test looked at anything but the alert's own
+text. The fix moved the refusal before commit, and the live re-run then showed
+the alert alone, with the message in the "Unsent turn needs attention" shelf and
+Restore putting it back in the composer.
+
+The same session's live run also caught a second claim no test had checked: a
+custom 1,500-token budget was described as coming "from an estimated context
+window". It did not.
+
+**What to do.** After each live action, capture the full pane and read every
+surface that can carry state: the transcript rows, the composer hint, the shelf
+above the composer, callouts at the top of the transcript, and the run chip. Ask
+whether any of them contradicts what you just added. When a change adds copy
+that explains a state, grep the capture for the competing copies the app already
+has for nearby states ("waiting for dispatch", "Send blocked", "Unsent turn",
+"Failed"). A test that asserts only your new string cannot see them.

@@ -216,9 +216,7 @@ class ConflictsTab(Vertical):
         )
         details: list[str] = []
         schedule = (
-            record.get("schedule_kind")
-            or record.get("cron")
-            or record.get("run_at")
+            record.get("schedule_kind") or record.get("cron") or record.get("run_at")
         )
         if schedule:
             details.append(str(schedule))
@@ -265,9 +263,11 @@ class ConflictsTab(Vertical):
         if conflict_id is None or conflict is None:
             self.app.notify("Select a conflict first.", severity="warning")
             return
-        title = (conflict.get("local_state") or {}).get("record", {}).get(
-            "title"
-        ) or (conflict.get("local_state") or {}).get("title") or "Untitled"
+        title = (
+            (conflict.get("local_state") or {}).get("record", {}).get("title")
+            or (conflict.get("local_state") or {}).get("title")
+            or "Untitled"
+        )
         if resolution == "server":
             message = (
                 f"Keep the server version of '{title}'?\n\n"

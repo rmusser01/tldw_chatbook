@@ -284,6 +284,25 @@ class ProjectSkillsImportModal(SafeModalDismissMixin, ModalScreen[ImportDecision
             return
         self.dismiss_safe_once(("not_now", None))
 
+    async def confirm_quit(self) -> bool:
+        """Stay while an import runs, as every close does (TASK-33622.15).
+
+        Quitting mid-import would leave the half-imported skill that
+        ``_import_in_flight`` exists to prevent, with no way to know.
+
+        Returns:
+            refuse_quit_while_working's answer mid-import; else True.
+        """
+        if not self._import_in_flight():
+            return True
+        from tldw_chatbook.Widgets.quit_while_working import (
+            refuse_quit_while_working,
+        )
+
+        return await refuse_quit_while_working(
+            self, "Project skills are still being imported."
+        )
+
     @on(Button.Pressed, "#project-skills-not-now")
     async def _not_now(self, event: Button.Pressed) -> None:
         event.stop()
@@ -376,9 +395,7 @@ async def _project_skills_installed_names(app: Any) -> frozenset[str]:
         if inspect.isawaitable(payload):
             payload = await payload
     except Exception:
-        logger.opt(exception=True).debug(
-            "project-skills installed-name lookup failed"
-        )
+        logger.opt(exception=True).debug("project-skills installed-name lookup failed")
         return frozenset()
     if not isinstance(payload, dict):
         return frozenset()
@@ -719,6 +736,4 @@ def maybe_offer_project_skills_import(
     except Exception:
         coroutine.close()
         app._project_skills_offer_active = False
-        logger.opt(exception=True).debug(
-            "project-skills offer chain failed to start"
-        )
+        logger.opt(exception=True).debug("project-skills offer chain failed to start")

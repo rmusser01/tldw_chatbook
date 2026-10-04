@@ -97,15 +97,19 @@ class _BlockingProviderGateway:
         self._block_forever = asyncio.Event()
 
     async def resolve_for_send(self, selection) -> ConsoleProviderResolution:
-        return with_destination(ConsoleProviderResolution(
-            provider=selection.provider,
-            base_url="",
-            model=(
-                selection.explicit_model or selection.configured_model or "gpt-task-650"
-            ),
-            ready=True,
-            execution_key="openai",
-        ))
+        return with_destination(
+            ConsoleProviderResolution(
+                provider=selection.provider,
+                base_url="",
+                model=(
+                    selection.explicit_model
+                    or selection.configured_model
+                    or "gpt-task-650"
+                ),
+                ready=True,
+                execution_key="openai",
+            )
+        )
 
     async def stream_chat(self, resolution, messages, **kwargs):
         del resolution, messages

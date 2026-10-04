@@ -16,6 +16,7 @@ import stat
 import contextlib
 import threading
 import time
+import traceback
 from contextlib import nullcontext
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
@@ -46,7 +47,9 @@ from tldw_chatbook.Agents.approval_provenance import (
     approval_key_unanswered,
     selected_approval_key,
 )
-from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import TOOL_DESCRIPTION_CAPTURE_CAP
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
+    TOOL_DESCRIPTION_CAPTURE_CAP,
+)
 from tldw_chatbook.Character_Chat.emote_directives import (
     CharacterEmoteAssetReference,
     CharacterEmoteRunSnapshot,
@@ -60,10 +63,13 @@ from tldw_chatbook.Chat.attachment_core import (
     vision_block_reason,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_PENDING_APPROVAL_KIND,
+    CONSOLE_PENDING_CHAT_CREATE_KIND,
     FEEDBACK_ACTIVE_RUN_STATUSES,
     CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
     CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
     CONSOLE_DISPATCH_DISCARDED_COPY,
+    CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
     ConsoleControllerActivity,
@@ -149,6 +155,7 @@ from tldw_chatbook.Chat.console_history_budget import (
     count_console_messages_tokens,
     provider_continuation_owner_groups,
 )
+
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_auxiliary_routing imports at its one call site.)
 from tldw_chatbook.Agents.agent_service import append_personal_context
 from tldw_chatbook.Chat.console_compaction_failure import (
@@ -190,6 +197,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextCapacity,
     ConsoleContextPolicyOverrides,
     ContextCarryForwardMode,
+    ContextCompactionMode,
     ContextCompactionRepresentation,
     context_policy_overrides_from_console_config,
     merge_context_policy,
@@ -266,6 +274,7 @@ from tldw_chatbook.Chat.console_trace_redaction import (
     PIIRedactionSpan,
     CredentialSanitizer,
 )
+
 # `Chat.console_visual_transcript` (PIL-backed visual compaction) is imported
 # inside `_apply_conversation_memory_preflight`, its only user, so it stays
 # off the UI-ready module census (ADR-097): task-31384 spends that slot on
@@ -325,6 +334,7 @@ from tldw_chatbook.Chat.console_turn_context import (
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsolePreparationTransition,
+    ContextCompactionHold,
     ConsoleTurnPreparation,
     ConsoleTurnPreparationState,
     admit_one_shot_capture_off,
@@ -376,8 +386,10 @@ from tldw_chatbook.Chat.console_skill_resolver import (
     resolve_skill_command,
 )
 from tldw_chatbook.Chat.prompt_history import PromptHistory
+
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
+    from tldw_chatbook.Chat.console_context_budget_copy import ContextOverflowCause
     from tldw_chatbook.Agents.hook_permissions import HookPermissions
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
@@ -390,6 +402,7 @@ from tldw_chatbook.Agents.builtin_tool_gate import (
     LOCAL_TOOLS_DEFAULT_ENABLED,
     build_builtin_gate,
 )
+
 #: task-31385: environment override for ``[console] interrupt_bell``
 #: (environment -> config.toml -> default, like every other setting).
 INTERRUPT_BELL_ENV_VAR = "TLDW_CONSOLE_INTERRUPT_BELL"
@@ -413,6 +426,7 @@ def _bool_or_none(value: object) -> bool | None:
         return None
     parsed = coerce_bool_setting(value, True)
     return None if parsed is None else bool(parsed)
+
 
 # task-31384: `Chat.console_interrupt_rounds` is imported lazily (constructor
 # and shims) so the host module stays off the UI-ready census (ADR-097);
@@ -815,6 +829,7 @@ _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: for `request_chat_create_confirm`'s own wait loop (fallback used when no
 #: `chat_create_confirm_timeout_seconds` seam is injected).
 _DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS = 0.0
+_CHAT_CREATE_SESSION_GONE = "session_gone"
 #: Same ADR-067 contract, for `request_worktree_merge_confirm`'s own wait
 #: loop (fallback used when no `worktree_merge_confirm_timeout_seconds`
 #: seam is injected).
@@ -1060,7 +1075,9 @@ def resolve_project_instruction_binding(
         if selection.locator_fingerprint != state.working_folder_locator_fingerprint:
             raise ProjectInstructionBindingRecovery("binding_retargeted")
         return selection
-    eligible = list_project_instruction_bindings(session, registry, status_cache=status_cache)
+    eligible = list_project_instruction_bindings(
+        session, registry, status_cache=status_cache
+    )
     if not eligible:
         raise ProjectInstructionBindingRecovery("no_eligible_binding")
     if len(eligible) != 1:
@@ -1139,9 +1156,7 @@ def _project_binding_snapshot(
         # Freeze the exclusions admitted with the binding so a mid-run
         # registry removal cannot relax this run's family-2 enforcement
         # (the roots helper unions these with the live entries).
-        exclusions=tuple(
-            entry.path for entry in binding_exclusion_entries(binding)
-        ),
+        exclusions=tuple(entry.path for entry in binding_exclusion_entries(binding)),
     )
 
 
@@ -1280,7 +1295,9 @@ def capture_character_authority(
     )
 
 
-def capture_prompt_transform_inputs(app: Any, session: ConsoleChatSession) -> dict[str, Any]:
+def capture_prompt_transform_inputs(
+    app: Any, session: ConsoleChatSession
+) -> dict[str, Any]:
     """Capture bounded dictionary/world inputs without retaining a screen."""
     conversation_id = session.persisted_conversation_id
     db = getattr(app, "chachanotes_db", None)
@@ -1625,9 +1642,7 @@ def _validate_remote_project_instruction_binding(
     # locator text: an alias is only a name, and the destination is what
     # the user consented to. The executor re-resolves before every
     # identity capture and refuses a destination that no longer matches.
-    recorded = (getattr(binding, "metadata", None) or {}).get(
-        "canonical_fingerprint"
-    )
+    recorded = (getattr(binding, "metadata", None) or {}).get("canonical_fingerprint")
     fingerprint_source = f"ssh-destination:{recorded}" if recorded else locator
     return ProjectInstructionBindingSelection(
         binding=binding,
@@ -1663,8 +1678,7 @@ def _same_project_instruction_authority(
             expected.root, expected.root_identity
         )
     identity_matches = (
-        not expected.root_identity
-        or current.root_identity == expected.root_identity
+        not expected.root_identity or current.root_identity == expected.root_identity
     )
     return (
         str(current.binding.binding_id) == str(expected.binding.binding_id)
@@ -1820,13 +1834,13 @@ def _exclusion_paths_provider(
         kind_by_path: dict[str, str] = {}
         try:
             binding = registry.get_runtime_binding(binding_id)
-            from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
+            from tldw_chatbook.Workspaces.registry_service import (
+                binding_exclusion_entries,
+            )
 
             live_entries = binding_exclusion_entries(binding)
             live = frozenset(entry.path for entry in live_entries)
-            kind_by_path = {
-                entry.path: entry.kind for entry in live_entries
-            }
+            kind_by_path = {entry.path: entry.kind for entry in live_entries}
         except Exception:  # noqa: BLE001 -- degrade to last-known, never wider
             live = frozenset()
         holder["effective"] = holder["effective"] | live
@@ -1836,9 +1850,7 @@ def _exclusion_paths_provider(
                 if remote:
                     resolved.append(
                         SensitiveExclusion(
-                            "file"
-                            if kind_by_path.get(rel) == "file"
-                            else "subtree",
+                            "file" if kind_by_path.get(rel) == "file" else "subtree",
                             rel,
                         )
                     )
@@ -1865,7 +1877,7 @@ _REMOTE_GIT_UNSUPPORTED_MESSAGE = "git tools not yet supported on SSH bindings"
 #: shows alias -> URI mappings, so the refusal a URI path earns must
 #: teach the correct convention instead of a bare invalid-path error.
 _REMOTE_URI_PATH_MESSAGE = (
-    'remote roots take a path RELATIVE to the root, not a URI: use '
+    "remote roots take a path RELATIVE to the root, not a URI: use "
     'root_alias "{alias}" with a relative path'
 )
 
@@ -1919,9 +1931,7 @@ class _RemoteExecutorDispatchAdapter:
         if not isinstance(result, str):
             # Contract violation (a success frame without result text):
             # refuse loudly rather than stringifying a wire dict.
-            raise RemoteWorkspaceExecutionError(
-                "protocol_failure", admitted=True
-            )
+            raise RemoteWorkspaceExecutionError("protocol_failure", admitted=True)
         return result
 
     def ping(self) -> Any:
@@ -2107,9 +2117,8 @@ def _remote_cached_state(status_cache: Any, binding_id: str) -> str | None:
 
 
 def _is_ssh_binding_row(binding: Any) -> bool:
-    kind = (
-        getattr(getattr(binding, "binding_kind", None), "value", None)
-        or str(getattr(binding, "binding_kind", ""))
+    kind = getattr(getattr(binding, "binding_kind", None), "value", None) or str(
+        getattr(binding, "binding_kind", "")
     )
     return kind == "ssh-filesystem"
 
@@ -2188,8 +2197,7 @@ def capture_run_admitted_workspace_roots(
             ).maybe_schedule_recovery_probe()
         except Exception:  # noqa: BLE001 - probe scheduling degrades silently
             logger.opt(exception=True).debug(
-                "Remote binding recovery probe could not be scheduled "
-                "(binding_id={})",
+                "Remote binding recovery probe could not be scheduled (binding_id={})",
                 binding_id,
             )
 
@@ -2261,8 +2269,7 @@ def capture_run_admitted_workspace_roots(
             )
 
             snapshot_rels = tuple(
-                entry.path
-                for entry in binding_exclusion_entries(selection.binding)
+                entry.path for entry in binding_exclusion_entries(selection.binding)
             )
             exclusions_provider = _exclusion_paths_provider(
                 registry, binding_id, selection.root, snapshot_rels
@@ -2294,14 +2301,15 @@ def capture_run_admitted_workspace_roots(
                     # split-authority client check (registry row, fingerprint,
                     # cache identity); the worker's root pin guards the call.
                     return (
-                        not write
-                        or selection.allow_write
-                    ) and bool(project_guard()) and _workspace_binding_authority_is_current(
-                        workspace_id=workspace_id,
-                        registry=registry,
-                        expected_selection=selection,
-                        write=write,
-                        status_cache=status_cache,
+                        (not write or selection.allow_write)
+                        and bool(project_guard())
+                        and _workspace_binding_authority_is_current(
+                            workspace_id=workspace_id,
+                            registry=registry,
+                            expected_selection=selection,
+                            write=write,
+                            status_cache=status_cache,
+                        )
                     )
             else:
 
@@ -2335,8 +2343,7 @@ def capture_run_admitted_workspace_roots(
         from tldw_chatbook.Workspaces.registry_service import binding_exclusion_entries
 
         snapshot_rels = tuple(
-            entry.path
-            for entry in binding_exclusion_entries(selection.binding)
+            entry.path for entry in binding_exclusion_entries(selection.binding)
         )
         # Local selections yield resolved laptop Paths (``user_exclusion_paths``
         # classification); remote selections yield typed SensitiveExclusion
@@ -2580,10 +2587,16 @@ _APPROVAL_SCOPE_RANK: dict[str, int] = {
 
 #: The card answers that approve a call for every tool owner. MCP rows also
 #: accept ``"allow_matching"``; built-in and local rows do not.
-_APPROVING_DECISIONS: tuple[str, ...] = ("approve_once", "approve_session", "always_allow")
+_APPROVING_DECISIONS: tuple[str, ...] = (
+    "approve_once",
+    "approve_session",
+    "always_allow",
+)
 
 
-def approval_was_unanswered(row: "MCPPendingCall", decisions: Mapping[str, str]) -> bool:
+def approval_was_unanswered(
+    row: "MCPPendingCall", decisions: Mapping[str, str]
+) -> bool:
     """True when ``row``'s deny came from a Stop/revoke, not from the user.
 
     Args:
@@ -2798,6 +2811,7 @@ def _build_speculative_voice_capture_request(
     )
     return replace(request, capture_durability="durable")
 
+
 _WATCHLISTS_RECEIPT_ID_RE = re.compile(
     r"^local:(?:watchlist_run|briefing):[1-9][0-9]*$"
 )
@@ -2843,6 +2857,45 @@ def watchlists_operation_receipt_ids(
         if isinstance(operation_id, str)
         and _WATCHLISTS_RECEIPT_ID_RE.fullmatch(operation_id)
     )
+
+
+def _request_fingerprint(messages: list[dict[str, Any]]) -> tuple[int, int]:
+    """Cheap identity of an assembled request's size (rows, content length)."""
+
+    return len(messages), sum(len(str(row.get("content", ""))) for row in messages)
+
+
+def _context_overflow_cause(
+    decision: CompactionDecision,
+    resolved: Any,
+    capacity: Any,
+) -> "ContextOverflowCause | None":
+    """Name why compacting cannot make an over-limit send fit (TASK-34350).
+
+    Args:
+        decision: The preflight's compaction decision.
+        resolved: The request's ``ResolvedConsoleContextPolicy``.
+        capacity: The prepared request's ``ConsoleRequestCapacity``.
+
+    Returns:
+        The cause, or ``None`` when the window itself is unknown.
+    """
+
+    # Lazy (ADR-097 UI-ready census): needed only when a send cannot fit.
+    from tldw_chatbook.Chat.console_context_budget_copy import ContextOverflowCause
+
+    window = capacity.context_window_tokens
+    if (
+        window is not None
+        and window - capacity.effective_response_tokens - capacity.safety_margin_tokens
+        <= 0
+    ):
+        return ContextOverflowCause.NO_INPUT_CAPACITY
+    if resolved.available_conversation_capacity_tokens == 0:
+        return ContextOverflowCause.MANDATORY_EXCEEDS
+    if decision is CompactionDecision.NON_COMPACTABLE:
+        return ContextOverflowCause.NOTHING_TO_COMPACT
+    return None
 
 
 def _flatten_preflight_messages(
@@ -3378,10 +3431,7 @@ def build_tool_review_hook(
             library_provider, "preflight_agent_lesson_save", None
         )
         if callable(preflight_lesson):
-            batch_call_ids = [
-                str(getattr(call, "call_id", "") or "")
-                for call in calls
-            ]
+            batch_call_ids = [str(getattr(call, "call_id", "") or "") for call in calls]
             duplicate_batch_call_ids = {
                 call_id
                 for call_id in batch_call_ids
@@ -4216,6 +4266,15 @@ class _PreparedEvidenceLease:
     capture_result: Any | None = field(default=None, repr=False)
     released: bool = False
 
+    def __post_init__(self) -> None:
+        # TASK-34352: a staged launch with nobody to capture it used to be
+        # dropped silently at capture time (the turn went out without the
+        # evidence the user staged). Refuse it where the wiring is decided.
+        if self.launch is not None and not callable(self.capture):
+            raise RuntimeError(
+                "Staged evidence was admitted with no capture collaborator."
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class _PreparedSendContinuation:
@@ -4447,6 +4506,7 @@ _MAINTENANCE_REFUSAL = "Console generation is paused for backup maintenance."
 
 def _maintenance_boundary(kind="turn"):
     """Retain one controller call through nested preflight/publication awaits."""
+
     def decorate(function):
         @functools.wraps(function)
         async def admitted(self, *args, **kwargs):
@@ -4479,7 +4539,9 @@ def _maintenance_boundary(kind="turn"):
                     self._maintenance_calls[task] = depth
                 else:
                     self._maintenance_calls.pop(task, None)
+
         return admitted
+
     return decorate
 
 
@@ -4737,6 +4799,7 @@ _REVOCATION_STAMPS: dict[str, Callable[[dict[str, Any]], None]] = {
     "question": _stamp_question_round_closed,
 }
 
+
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
 
@@ -4755,8 +4818,7 @@ class ConsoleChatController:
     #: finite so the composer never wedges.
     PROVIDER_VALIDATION_TIMEOUT_SECONDS = 30.0
 
-    async def _auxiliary_compaction_resolution(
-        self, main_selection, main_resolution):
+    async def _auxiliary_compaction_resolution(self, main_selection, main_resolution):
         """Resolve a cheaper auxiliary model for compaction, or fall back.
 
         TASK-26024. Reads ``[chat_defaults] auxiliary_provider`` /
@@ -4768,9 +4830,7 @@ class ConsoleChatController:
         ledger records provider+model per attempt (AC#4).
         """
         try:
-            aux_provider = get_cli_setting(
-                "chat_defaults", "auxiliary_provider", None
-            )
+            aux_provider = get_cli_setting("chat_defaults", "auxiliary_provider", None)
             aux_model = get_cli_setting("chat_defaults", "auxiliary_model", None)
         except Exception:
             return main_resolution
@@ -4873,6 +4933,8 @@ class ConsoleChatController:
         scratch_spaces: ConsoleScratchSpaceManager | None = None,
         activity_receipts: Any | None = None,
         staged_evidence_provider: Callable[[str], bool] | None = None,
+        staged_evidence_snapshot: "Callable[[], tuple[Any | None, Callable[[Any, Any], None] | None]] | None" = None,
+        frozen_rag_capture: "Callable[[str, Any, Any], Awaitable[Any]] | None" = None,
         cancel_raw_cli_session: Callable[[str], object] | None = None,
         canvas_enabled_reader: Callable[[], bool] | None = None,
         canvas_disabled_reader: Callable[[], bool] | None = None,
@@ -4919,6 +4981,13 @@ class ConsoleChatController:
         self._world_info_applier = world_info_applier
         self._rag_capture_provider = rag_capture_provider
         self._staged_evidence_provider = staged_evidence_provider
+        # TASK-34352: the staged-evidence owner's freeze and exact-launch
+        # capture, passed explicitly. They used to be found by private name
+        # on `rag_capture_provider.__self__`, and a missing name silently
+        # meant "unsupported". Runtime-admitted turns carry their own capture
+        # and release hooks; these serve controllers built without a runtime.
+        self._staged_evidence_snapshot = staged_evidence_snapshot
+        self._frozen_rag_capture = frozen_rag_capture
         self._cancel_raw_cli_session = cancel_raw_cli_session
         if canvas_enabled_reader is None:
             from tldw_chatbook.config import get_canvas_execution_enabled
@@ -4931,6 +5000,14 @@ class ConsoleChatController:
         )
         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
         self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
+        # TASK-34350: sends held at the compaction threshold (Ask), and the
+        # held sends the user already answered (Compact and send / Send
+        # without compacting), which must not be asked about again.
+        self._context_compaction_holds: dict[str, ContextCompactionHold] = {}
+        self._compaction_hold_answered: set[str] = set()
+        # Held after skills / retrieval / hooks already ran (rare, late check):
+        # the resumed pass must not append their notes and events again.
+        self._compaction_hold_after_effects: set[str] = set()
         self._durable_postcommit_continuations: dict[
             str, _DurablePostcommitContinuation
         ] = {}
@@ -5110,7 +5187,9 @@ class ConsoleChatController:
         self._interrupt_host = InterruptRoundHost(self)
         # ADR-090: every path that pushes an approval head (teardown
         # promotion, revocation, activation, attach) fires the summary.
-        self._interrupt_host.after_remount["approval"] = self._maybe_fire_permission_summary
+        self._interrupt_host.after_remount["approval"] = (
+            self._maybe_fire_permission_summary
+        )
         self._approval_state_lock = self._interrupt_host.lock
         self._watchlists_receipt_lock = threading.Lock()
         self._followed_watchlists_operation_ids: tuple[str, ...] = ()
@@ -5130,6 +5209,8 @@ class ConsoleChatController:
         # from reusing the generation of an older, timed-out incarnation.
         self._session_close_generation = 0
         self._session_close_generations: dict[str, int] = {}
+        # Failed provisional rollbacks block retry without retiring live usage.
+        self._failed_session_close_generations: dict[str, int] = {}
         self._session_close_states: dict[
             str,
             tuple[ConsoleSessionCloseTicket, bool, Any, str | None],
@@ -5567,12 +5648,16 @@ class ConsoleChatController:
         #: session could ever have a live install confirm, but parking makes
         #: two DIFFERENT background sessions' install confirms genuinely
         #: concurrent.
-        self._pending_skill_install_rounds = self._interrupt_host.registries["skill_install"]
+        self._pending_skill_install_rounds = self._interrupt_host.registries[
+            "skill_install"
+        ]
         self._pending_skill_install_lock = self._interrupt_host.lock
         #: PR0: retained payload per ROUND (was per session), keyed by
         #: `request_id`. The mounted card is the session's FIFO head, so a
         #: second same-session confirm no longer evicts an older sibling.
-        self._parked_skill_install_payloads = self._interrupt_host.payloads["skill_install"]
+        self._parked_skill_install_payloads = self._interrupt_host.payloads[
+            "skill_install"
+        ]
         #: UI-thread callback that pushes/clears the pending skill-SCRIPT
         #: confirm payload into the owning screen's task-resume state.
         #: Invoked through self.app.call_from_thread from
@@ -5581,7 +5666,9 @@ class ConsoleChatController:
         self.set_pending_skill_script: Callable[[dict | None], None] | None = None
         #: PRD Feature B: UI-thread sink for the pinned task panel --
         #: ``(session_id, tasks)``. Bound by `attach_view`; None = no view.
-        self.set_task_panel: Callable[[str | None, list[dict[str, object]]], None] | None = None
+        self.set_task_panel: (
+            Callable[[str | None, list[dict[str, object]]], None] | None
+        ) = None
         #: Optional test override for the confirm timeout, mirroring
         #: `skill_install_confirm_timeout_seconds`.
         self.skill_script_confirm_timeout_seconds: Callable[[], float] | None = None
@@ -5595,12 +5682,16 @@ class ConsoleChatController:
         #: task-581: rounds keyed by request_id, not a single slot. Two rounds
         #: armed at once previously clobbered each other's event/decision and
         #: both worker threads then blocked to their full deadline.
-        self._pending_skill_script_rounds = self._interrupt_host.registries["skill_script"]
+        self._pending_skill_script_rounds = self._interrupt_host.registries[
+            "skill_script"
+        ]
         self._pending_skill_script_lock = self._interrupt_host.lock
         #: PR0: retained payload per ROUND (was per session), keyed by
         #: `request_id`. The mounted card is the session's FIFO head, so a
         #: second same-session confirm no longer evicts an older sibling.
-        self._parked_skill_script_payloads = self._interrupt_host.payloads["skill_script"]
+        self._parked_skill_script_payloads = self._interrupt_host.payloads[
+            "skill_script"
+        ]
         #: TASK-28238 phase 2 Task 6: UI-thread callback that pushes/clears
         #: the pending agent-worktree merge/discard confirm payload.
         #: Mirrors set_pending_skill_install (single-key {"allow": bool}
@@ -5613,11 +5704,15 @@ class ConsoleChatController:
         #: Per-round release Event + shared decision box + owning session
         #: id, keyed by request id -- same per-round design as
         #: `_pending_skill_install_rounds`.
-        self._pending_worktree_merge_rounds = self._interrupt_host.registries["worktree_merge"]
+        self._pending_worktree_merge_rounds = self._interrupt_host.registries[
+            "worktree_merge"
+        ]
         self._pending_worktree_merge_lock = self._interrupt_host.lock
         #: Retained payload per ROUND, keyed by `request_id` -- same FIFO-
         #: head-remount contract as `_parked_skill_install_payloads`.
-        self._parked_worktree_merge_payloads = self._interrupt_host.payloads["worktree_merge"]
+        self._parked_worktree_merge_payloads = self._interrupt_host.payloads[
+            "worktree_merge"
+        ]
         #: PRD Feature A: the ask_user question round -- same shape as the
         #: skill-script confirm (round-keyed registry + retained payloads).
         self.set_pending_question: Callable[[dict | None], None] | None = None
@@ -6530,14 +6625,15 @@ class ConsoleChatController:
             and custom_pii_ruleset.runnable_rules
         ):
             pii_ruleset_revision_id = custom_pii_ruleset.revision_id
-        if pii_ruleset_revision_id is not None and type(pii_ruleset_revision_id) is not str:
+        if (
+            pii_ruleset_revision_id is not None
+            and type(pii_ruleset_revision_id) is not str
+        ):
             raise TypeError("pii_ruleset_revision_id")
         signals = ConsoleProviderStreamSignals(
             exchange_capture_enabled=(
                 resolution.enabled
-                and bool(
-                    getattr(runtime, "legacy_writes_enabled", runtime.enabled)
-                )
+                and bool(getattr(runtime, "legacy_writes_enabled", runtime.enabled))
             ),
             capture_detail=resolution.detail,
             pii_redaction_enabled=pii_redaction_enabled,
@@ -6815,12 +6911,10 @@ class ConsoleChatController:
             live_ids = {session.id for session in sessions}
             with self._lifecycle_revision_lock:
                 for session in sessions:
-                    conversation_id = (
-                        session.persisted_conversation_id or session.id
+                    conversation_id = session.persisted_conversation_id or session.id
+                    self._lifecycle_session_by_conversation[str(conversation_id)] = (
+                        session.id
                     )
-                    self._lifecycle_session_by_conversation[
-                        str(conversation_id)
-                    ] = session.id
             if session_id is not None:
                 target_ids = (session_id,) if session_id in live_ids else ()
             else:
@@ -7202,7 +7296,7 @@ class ConsoleChatController:
         return len(self._live_busy_session_ids())
 
     def add_pending_round(
-        self, session_id: str, round_id: str, kind: str = "approval"
+        self, session_id: str, round_id: str, kind: str = CONSOLE_PENDING_APPROVAL_KIND
     ) -> None:
         """Register ``round_id`` as an outstanding approval-like round for ``session_id``.
 
@@ -7235,9 +7329,9 @@ class ConsoleChatController:
                 the reserved ``_LEGACY_PENDING_APPROVAL_ROUND_ID`` sentinel
                 -- see ``set_run_pending_approval``).
             kind: Which interrupt kind is waiting -- a
-                ``console_interrupt_rounds.KIND_SETTER_ATTRS`` key
-                (``approval``, ``question``, ``skill_install``,
-                ``skill_script``, ``worktree_merge``). Qodo #4: the badge and
+                registered interrupt key (``approval``, ``question``,
+                ``skill_install``, ``skill_script``, ``worktree_merge``, or
+                the standalone ``chat_create`` confirmation). Qodo #4: the badge and
                 lifecycle do not care, but the run chip and activity line do
                 -- they used to translate this registry's generic "something
                 is pending" into "Waiting for your approval" even for a
@@ -7254,7 +7348,7 @@ class ConsoleChatController:
             changed = round_id not in rounds
             rounds.add(round_id)
             self._pending_round_kinds.setdefault(session_id, {})[round_id] = str(
-                kind or "approval"
+                kind or CONSOLE_PENDING_APPROVAL_KIND
             )
         if changed:
             if self._buddy_sink is not None:
@@ -7350,12 +7444,29 @@ class ConsoleChatController:
             session_id: The session to read.
 
         Returns:
-            Every distinct kind currently outstanding for ``session_id``
-            (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys), empty
-            when nothing is.
+            Every distinct registered kind outstanding for ``session_id``,
+            including standalone chat creation, empty when nothing is.
         """
         with self._approval_state_lock:
             return frozenset(self._pending_round_kinds.get(session_id, {}).values())
+
+    def pending_round_count(
+        self, session_id: str, *, kind: str = CONSOLE_PENDING_APPROVAL_KIND
+    ) -> int:
+        """Count one session's outstanding rounds of the requested kind.
+
+        Args:
+            session_id: The owning session to inspect.
+            kind: Interrupt kind to count, including queued or hidden rounds.
+
+        Returns:
+            Number of registered rounds of this kind for the session.
+        """
+        with self._approval_state_lock:
+            return sum(
+                value == kind
+                for value in self._pending_round_kinds.get(session_id, {}).values()
+            )
 
     def set_run_pending_approval(self, session_id: str, pending: bool) -> None:
         """DEPRECATED boolean shim -- prefer ``add_pending_round``/``discard_pending_round``.
@@ -8153,7 +8264,11 @@ class ConsoleChatController:
     @staticmethod
     def _frozen_rag_top_k(context: ConsoleTurnExecutionContext) -> int:
         value = context.rag_defaults.get("top_k", 5)
-        return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 5
+        return (
+            value
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0
+            else 5
+        )
 
     @staticmethod
     def _automatic_scope_for_authority(
@@ -8224,9 +8339,7 @@ class ConsoleChatController:
         authority = preparation.execution_context.library_authority
         request = LibraryRagSearchRequest(
             query=preparation.executed_draft,
-            source_types=self._frozen_rag_source_types(
-                preparation.execution_context
-            ),
+            source_types=self._frozen_rag_source_types(preparation.execution_context),
             mode="rag",
             top_k=self._frozen_rag_top_k(preparation.execution_context),
             include_citations=True,
@@ -8475,7 +8588,7 @@ class ConsoleChatController:
         return await self.resume_durable_postcommit(preparation.preparation_id)
 
     def trace_call_recovery_preparation(self) -> ConsoleTurnPreparation | None:
-        """Return only the active preparation offering trace-call recovery."""
+        """Return only the active preparation offering a pre-dispatch card."""
 
         preparation = self.store.preparation_for_session(self.store.active_session_id)
         if (
@@ -8486,6 +8599,8 @@ class ConsoleChatController:
                 ConsolePreparationPauseKind.TRACE_PROVENANCE,
                 ConsolePreparationPauseKind.TRACE_CALL,
                 ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
+                # TASK-34350: the context-limit hold uses the same card.
+                ConsolePreparationPauseKind.CONTEXT_COMPACTION,
             }
         ):
             return None
@@ -8700,7 +8815,8 @@ class ConsoleChatController:
                 return self._prepared_action_refusal(current)
             if (
                 current.pause_kind is ConsolePreparationPauseKind.TRACE_CALL
-                and trace_call_admission.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                and trace_call_admission.capture_mode
+                is ConsoleTraceCaptureMode.CAPTURE_ON
                 and preparation_id not in self._trace_call_boundaries_by_preparation
             ):
                 return self._prepared_action_refusal(current)
@@ -8863,10 +8979,15 @@ class ConsoleChatController:
             return self._prepared_action_refusal()
         if (
             preparation.state is ConsoleTurnPreparationState.PAUSED
-            and preparation.pause_kind
-            is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+            and preparation.pause_kind is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
         ):
             return self._cancel_temporary_capture_preparation(preparation)
+        if (
+            preparation.state is ConsoleTurnPreparationState.PAUSED
+            and preparation.pause_kind
+            is ConsolePreparationPauseKind.CONTEXT_COMPACTION
+        ):
+            return self._cancel_context_compaction_hold(preparation)
         if (
             preparation.state is ConsoleTurnPreparationState.PAUSED
             and preparation.pause_kind
@@ -8916,6 +9037,159 @@ class ConsoleChatController:
             session_id=preparation.session_id,
         )
         return self._prepared_action_refusal(preparation, visible_copy)
+
+    def _cancel_context_compaction_hold(
+        self,
+        preparation: ConsoleTurnPreparation,
+    ) -> ConsoleSubmitResult:
+        """Drop one held send unsent and give its text back (TASK-34350)."""
+
+        cancelled = self.store.cancel_preparation(
+            preparation.session_id,
+            preparation.preparation_id,
+            expected_state=ConsoleTurnPreparationState.PAUSED,
+        )
+        if cancelled is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation.preparation_id)
+            )
+        self._drop_preparation(
+            preparation.preparation_id,
+            expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
+        )
+        self._compaction_hold_answered.discard(preparation.preparation_id)
+        if not self.store.session_draft(preparation.session_id).strip():
+            self.store.set_session_draft(
+                preparation.session_id, preparation.executed_draft
+            )
+        visible_copy = "Held message not sent; it is back in the composer."
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
+            session_id=preparation.session_id,
+        )
+        return self._prepared_action_refusal(preparation, visible_copy)
+
+    def context_compaction_hold(
+        self, preparation_id: str
+    ) -> ContextCompactionHold | None:
+        """Return why one send is held at the compaction threshold, if it is.
+
+        Args:
+            preparation_id: The held send's preparation.
+
+        Returns:
+            The hold, or ``None`` once the send is no longer held.
+        """
+
+        preparation = self._preparation_by_id(preparation_id)
+        if (
+            preparation is None
+            or preparation.state is not ConsoleTurnPreparationState.PAUSED
+            or preparation.pause_kind
+            is not ConsolePreparationPauseKind.CONTEXT_COMPACTION
+        ):
+            return None
+        return self._context_compaction_holds.get(preparation_id)
+
+    def _held_send_echo_id(self, session_id: str) -> str | None:
+        """The optimistic echo of this session's paused, uncommitted send."""
+
+        preparation = self.store.preparation_for_session(session_id)
+        if (
+            preparation is None
+            or preparation.state is not ConsoleTurnPreparationState.PAUSED
+            or preparation.pause_kind
+            is not ConsolePreparationPauseKind.CONTEXT_COMPACTION
+        ):
+            return None
+        return preparation.transient_user_message_id
+
+    def _consume_compaction_hold_answer(self, preparation_id: str | None) -> bool:
+        """Whether this send's compaction hold was answered; clears it."""
+
+        if preparation_id is None or preparation_id not in self._compaction_hold_answered:
+            return False
+        self._compaction_hold_answered.discard(preparation_id)
+        return True
+
+    def _held_for_compaction(
+        self, preparation_id: str
+    ) -> ConsoleTurnPreparation | None:
+        preparation = self._preparation_by_id(preparation_id)
+        if self.context_compaction_hold(preparation_id) is None:
+            return None
+        return preparation
+
+    async def compact_and_send(self, preparation_id: str) -> ConsoleSubmitResult:
+        """Compact the held send's chat, then send that exact message.
+
+        Args:
+            preparation_id: The send held at the compaction threshold.
+
+        Returns:
+            The resumed send's result, or a refusal that keeps the hold (and
+            its message) when compaction does not complete.
+        """
+
+        preparation = self._held_for_compaction(preparation_id)
+        if preparation is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation_id)
+            )
+        compacted, visible_copy = await self.compact_context_now(
+            preparation.session_id
+        )
+        if not compacted:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation_id), visible_copy
+            )
+        # The user approved compaction for this send; never ask again for it
+        # even if the summary leaves it near the threshold.
+        return await self._resume_compaction_hold(preparation_id)
+
+    async def send_without_compacting(
+        self, preparation_id: str
+    ) -> ConsoleSubmitResult:
+        """Send the held message once without compacting the chat.
+
+        Args:
+            preparation_id: The send held at the compaction threshold.
+
+        Returns:
+            The resumed send's result, or a refusal if it is no longer held.
+        """
+
+        if self._held_for_compaction(preparation_id) is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation_id)
+            )
+        return await self._resume_compaction_hold(preparation_id)
+
+    async def _resume_compaction_hold(
+        self, preparation_id: str
+    ) -> ConsoleSubmitResult:
+        preparation = self._held_for_compaction(preparation_id)
+        if preparation is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation_id)
+            )
+        ready = self.store.compare_and_set_preparation(
+            preparation.session_id,
+            ConsolePreparationTransition(
+                preparation_id=preparation_id,
+                expected_state=ConsoleTurnPreparationState.PAUSED,
+                new_state=ConsoleTurnPreparationState.READY,
+                pause_kind=None,
+                new_attempt_id=None,
+            ),
+        )
+        if ready is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation_id)
+            )
+        self._context_compaction_holds.pop(preparation_id, None)
+        self._compaction_hold_answered.add(preparation_id)
+        return await self._continue_prepared_submission(preparation_id)
 
     def _cancel_trace_recovery_preparation(
         self,
@@ -9095,9 +9369,6 @@ class ConsoleChatController:
 
     def _has_explicit_staged_evidence(self, session_id: str) -> bool | None:
         provider = self._staged_evidence_provider
-        if provider is None:
-            owner = getattr(self._rag_capture_provider, "__self__", None)
-            provider = getattr(owner, "_has_staged_evidence", None)
         if not callable(provider):
             return False
         try:
@@ -9113,18 +9384,22 @@ class ConsoleChatController:
     def _snapshot_staged_evidence(
         self,
     ) -> tuple[bool, Any | None, Callable[[Any, Any], None] | None]:
-        """Freeze the production retrieval owner's current live launch, if any."""
+        """Freeze the staged-evidence owner's current launch, if one is wired.
 
-        owner = getattr(self._rag_capture_provider, "__self__", None)
-        snapshot = getattr(owner, "_snapshot_console_staged_evidence", None)
-        release = getattr(owner, "_release_frozen_console_staged_rag", None)
-        release_callback = release if callable(release) else None
-        if not callable(snapshot):
+        Returns:
+            ``(frozen, launch, release)``. ``frozen`` is False only when this
+            controller has no staged-evidence owner, so the turn keeps the
+            live capture route.
+        """
+
+        snapshot = self._staged_evidence_snapshot
+        if snapshot is None:
             return False, None, None
         try:
-            return True, snapshot(), release_callback
+            launch, release = snapshot()
         except Exception:
-            return True, None, release_callback
+            return True, None, None
+        return True, launch, release
 
     @staticmethod
     def _ordinary_library_text(
@@ -9167,6 +9442,13 @@ class ConsoleChatController:
             self._preparation_outcomes.pop(preparation_id, None)
             self._prepared_send_continuations.pop(preparation_id, None)
             self._trace_call_boundaries_by_preparation.pop(preparation_id, None)
+            self._context_compaction_holds.pop(preparation_id, None)
+            self._compaction_hold_after_effects.discard(preparation_id)
+            if ConsoleTurnPreparationState.CANCELLED in expected_states:
+                # A cancelled or abandoned send never reaches the stream that
+                # consumes its answer (Qodo #6). An accepted one keeps it:
+                # the durable path drops the preparation before streaming.
+                self._compaction_hold_answered.discard(preparation_id)
             fingerprint = self.store.durable_acceptance_fingerprint_for(preparation_id)
             if (
                 fingerprint is None
@@ -9951,9 +10233,7 @@ class ConsoleChatController:
                 configuration=configuration,
                 accepted_attachments=accepted_attachments,
                 captured_one_shot_prefill=captured_one_shot_prefill,
-                captured_one_shot_prefill_revision=(
-                    captured_one_shot_prefill_revision
-                ),
+                captured_one_shot_prefill_revision=(captured_one_shot_prefill_revision),
                 staged_evidence_launch=staged_evidence_launch,
                 staged_evidence_capture=staged_evidence_capture,
                 staged_evidence_release=staged_evidence_release,
@@ -9973,9 +10253,7 @@ class ConsoleChatController:
                 configuration=configuration,
                 accepted_attachments=accepted_attachments,
                 captured_one_shot_prefill=captured_one_shot_prefill,
-                captured_one_shot_prefill_revision=(
-                    captured_one_shot_prefill_revision
-                ),
+                captured_one_shot_prefill_revision=(captured_one_shot_prefill_revision),
                 staged_evidence_launch=staged_evidence_launch,
                 staged_evidence_capture=staged_evidence_capture,
                 staged_evidence_release=staged_evidence_release,
@@ -10064,6 +10342,7 @@ class ConsoleChatController:
     ) -> ConsoleSubmitResult:
         """Submit work, explicitly identifying a wake's proven preflight refusal."""
         from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
+
         scope = (
             nullcontext()
             if origin is ConsoleSubmissionOrigin.AGENT_WAKE
@@ -10214,9 +10493,13 @@ class ConsoleChatController:
             preserve_composer = prepared_continuation.preserve_composer
         if preserve_composer and not session_id:
             return ConsoleSubmitResult(False, False, "Choose an explicit conversation.")
-        if preserve_composer and str(draft).lstrip().startswith((COMMAND_PREFIX, MENTION_SIGIL)):
+        if preserve_composer and str(draft).lstrip().startswith(
+            (COMMAND_PREFIX, MENTION_SIGIL)
+        ):
             return ConsoleSubmitResult(
-                False, False, "Use Console for slash commands and @ references.",
+                False,
+                False,
+                "Use Console for slash commands and @ references.",
                 session_id=session_id,
             )
         if _resume_preparation_id is not None and resumed_preparation is None:
@@ -10340,7 +10623,8 @@ class ConsoleChatController:
             or self._has_explicit_staged_evidence(session.id) is not False
         ):
             return ConsoleSubmitResult(
-                False, False,
+                False,
+                False,
                 "This conversation has staged Console attachments, evidence or prefill. "
                 "Review them in Console before sending from Buddy.",
                 session_id=session.id,
@@ -10365,7 +10649,8 @@ class ConsoleChatController:
             else list(accepted_attachments or ())
             if custodied_inputs
             else self.store.pending_attachments(session.id)
-            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE and not preserve_composer
+            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            and not preserve_composer
             else []
         )
         attachment_mode_pendings = [
@@ -10421,6 +10706,7 @@ class ConsoleChatController:
                 )
 
                 if find_reference_candidates(clean_draft):
+
                     def _expand() -> object:
                         return expand_references(
                             clean_draft,
@@ -10899,8 +11185,7 @@ class ConsoleChatController:
             has_pending_attachment=has_pending_attachment,
         )
         if (
-            ordinary_library_text
-            or capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+            ordinary_library_text or capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
         ) and resumed_preparation is None:
             automatic_eligible = (
                 ordinary_library_text
@@ -10912,9 +11197,7 @@ class ConsoleChatController:
                 initial_state = ConsoleTurnPreparationState.READY
             else:
                 initial_state = (
-                    initial_preparation_state(
-                        library_authority.policy.auto_retrieve
-                    )
+                    initial_preparation_state(library_authority.policy.auto_retrieve)
                     if automatic_eligible
                     or library_authority.policy.auto_retrieve
                     is ConsoleAutoRetrieve.NEVER
@@ -10940,14 +11223,24 @@ class ConsoleChatController:
                 frozen_prefill, frozen_prefill_from_one_shot = (
                     self._resolve_submit_prefill(session.id)
                 )
-            one_shot_prefill = (
-                frozen_prefill if frozen_prefill_from_one_shot else None
-            )
+            one_shot_prefill = frozen_prefill if frozen_prefill_from_one_shot else None
             if custodied_inputs:
-                staged_evidence_frozen = staged_evidence_launch is not None
+                # TASK-34352: a turn admitted with a frozen capture seam froze
+                # its evidence decision at admission -- including "nothing
+                # staged". Recording that as unfrozen sent a paused-then-
+                # resumed turn down the live route, where it consumed
+                # evidence the user staged for their NEXT message meanwhile.
+                staged_evidence_frozen = (
+                    staged_evidence_launch is not None
+                    or staged_evidence_capture is not None
+                )
                 staged_evidence = staged_evidence_launch
             elif preserve_composer:
-                staged_evidence_frozen, staged_evidence, staged_evidence_release = True, None, None
+                staged_evidence_frozen, staged_evidence, staged_evidence_release = (
+                    True,
+                    None,
+                    None,
+                )
             else:
                 (
                     staged_evidence_frozen,
@@ -11031,7 +11324,11 @@ class ConsoleChatController:
                     staged_evidence=(
                         _PreparedEvidenceLease(
                             staged_evidence,
-                            capture=staged_evidence_capture,
+                            capture=(
+                                staged_evidence_capture
+                                if staged_evidence_capture is not None
+                                else self._frozen_rag_capture
+                            ),
                             release=staged_evidence_release,
                         )
                         if staged_evidence is not None
@@ -11125,6 +11422,26 @@ class ConsoleChatController:
                 else:
                     raise ValueError("hook_continuation_input_missing")
             trace_source_messages = tuple(dict(row) for row in provider_messages)
+            # TASK-34350 (owner ruling 2026-10-03): a composer send over the
+            # compaction threshold under Ask is held HERE -- before skills,
+            # retrieval or hooks run and before anything is committed -- so a
+            # resumed send repeats none of them. Nothing is marked Failed and
+            # no dispatch checkpoint exists (TASK-33621.4). The Ask trigger
+            # counts conversation history, which is all present already.
+            early_request = _request_fingerprint(provider_messages)
+            stop = await self._compaction_admission_check(
+                session=session,
+                preparation=preparation,
+                origin=origin,
+                preserve_composer=preserve_composer,
+                resolution=resolution,
+                provider_messages=provider_messages,
+                echoed_user=echoed_user,
+                queue_entry_id=queue_entry_id,
+                after_side_effects=False,
+            )
+            if stop is not None:
+                return stop
             # TASK-33940.4: a custodied turn that needed no preparation (e.g. a
             # "/" or "$" draft with Capture off) has no continuation to carry
             # its staged launch, so it gets its own lease -- captured on the
@@ -11132,7 +11449,11 @@ class ConsoleChatController:
             custody_evidence_lease = (
                 _PreparedEvidenceLease(
                     staged_evidence_launch,
-                    capture=staged_evidence_capture,
+                    capture=(
+                        staged_evidence_capture
+                        if staged_evidence_capture is not None
+                        else self._frozen_rag_capture
+                    ),
                     release=staged_evidence_release,
                 )
                 if custodied_inputs
@@ -11157,7 +11478,13 @@ class ConsoleChatController:
                 if preparation is not None:
                     self._abandon_preparation(preparation.preparation_id)
                 return self._block(session.id, refuse)
-            for note in skill_notes:
+            # TASK-34350: a send held AFTER this point already appended its
+            # notes and retrieval events once; its resumed pass must not.
+            repeated_pass = (
+                preparation is not None
+                and preparation.preparation_id in self._compaction_hold_after_effects
+            )
+            for note in () if repeated_pass else skill_notes:
                 # An embedded skipped-skill note is never an abort: append the
                 # same system-row copy `_block` would, then let the turn proceed.
                 self.store.append_message(
@@ -11233,7 +11560,12 @@ class ConsoleChatController:
                     if provider_messages[_i].get("role") == "user":
                         provider_messages = (
                             provider_messages[:_i]
-                            + [{**provider_messages[_i], "content": executed_draft_text}]
+                            + [
+                                {
+                                    **provider_messages[_i],
+                                    "content": executed_draft_text,
+                                }
+                            ]
                             + provider_messages[_i + 1 :]
                         )
                         break
@@ -11248,7 +11580,7 @@ class ConsoleChatController:
                     provider_messages,
                     citation_context,
                 )
-            if citation_context and echoed_user is not None:
+            if citation_context and echoed_user is not None and not repeated_pass:
                 trace_prefix = f"console-trace:{echoed_user.id}:retrieval"
                 retrieval_event_id = f"{trace_prefix}:retrieval_completed"
                 attached_event_id = f"{trace_prefix}:context_attached"
@@ -11403,7 +11735,8 @@ class ConsoleChatController:
                         session_id=session.id,
                         data={"prompt": truncate_hook_text(clean_draft)},
                     )
-                    if hooks_engine is not None else None
+                    if hooks_engine is not None
+                    else None
                 )
             except BaseException:
                 if echoed_user is not None:
@@ -11411,7 +11744,9 @@ class ConsoleChatController:
                 if preparation is not None:
                     self._abandon_preparation(preparation.preparation_id)
                 self._set_run_state(
-                    ConsoleRunState(ConsoleRunStatus.STOPPED, "Send cancelled before acceptance."),
+                    ConsoleRunState(
+                        ConsoleRunStatus.STOPPED, "Send cancelled before acceptance."
+                    ),
                     session_id=session.id,
                 )
                 raise
@@ -11432,8 +11767,12 @@ class ConsoleChatController:
                     metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
                 )
                 return ConsoleSubmitResult(
-                    False, False, f"Blocked by hook: {outcome.reason}",
-                    session_id=session.id, origin=origin, queue_entry_id=queue_entry_id,
+                    False,
+                    False,
+                    f"Blocked by hook: {outcome.reason}",
+                    session_id=session.id,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
                 )
             hook_context = outcome.context if outcome is not None else ""
         if hook_context:
@@ -11443,6 +11782,24 @@ class ConsoleChatController:
                 *provider_messages,
                 {"role": ConsoleMessageRole.USER.value, "content": hook_context},
             ]
+        if _request_fingerprint(provider_messages) != early_request:
+            # Skills, retrieved evidence or hook context grew the request
+            # after the early check (Qodo #1 on PR #3003): check again before
+            # commit, so a request they push past the limit is refused or
+            # held here rather than blocked after acceptance.
+            stop = await self._compaction_admission_check(
+                session=session,
+                preparation=preparation,
+                origin=origin,
+                preserve_composer=preserve_composer,
+                resolution=resolution,
+                provider_messages=provider_messages,
+                echoed_user=echoed_user,
+                queue_entry_id=queue_entry_id,
+                after_side_effects=True,
+            )
+            if stop is not None:
+                return stop
         if preparation is not None:
             current_preparation = self._preparation_by_id(preparation.preparation_id)
             if current_preparation is None or (
@@ -11749,6 +12106,9 @@ class ConsoleChatController:
                     if deferred_provider_dispatch
                     else None
                 ),
+                compaction_ask_bypassed=self._consume_compaction_hold_answer(
+                    preparation.preparation_id if preparation is not None else None
+                ),
                 trusted_profile_user_message_id=(
                     echoed_user.id
                     if echoed_user.role is ConsoleMessageRole.USER
@@ -11994,7 +12354,9 @@ class ConsoleChatController:
         """
 
         if self._durable_db_call_offloadable():
-            return await asyncio.to_thread(self._run_owned_chat_db_operation, call, *args)
+            return await asyncio.to_thread(
+                self._run_owned_chat_db_operation, call, *args
+            )
         return call(*args)
 
     async def _drain_dispatch_transition(self, assistant_id: str) -> bool:
@@ -12227,9 +12589,7 @@ class ConsoleChatController:
                                 cursor,
                                 revision_id=descriptor.revision_id,
                                 policy_id=policy.policy_id,
-                                omission_reason_code=(
-                                    CREDENTIAL_SANITIZER_UNAVAILABLE
-                                ),
+                                omission_reason_code=(CREDENTIAL_SANITIZER_UNAVAILABLE),
                             )
                             continue
                         if policy.pii_ruleset_revision_id is None:
@@ -12368,8 +12728,7 @@ class ConsoleChatController:
 
         if error is not None:
             logger.warning(
-                "Console trace provenance could not be saved; "
-                "exception_type={}",
+                "Console trace provenance could not be saved; exception_type={}",
                 type(error).__name__,
             )
         visible_copy = (
@@ -12842,10 +13201,13 @@ class ConsoleChatController:
         ):
             try:
                 verify_recovery = getattr(
-                    self.provider_gateway, "_verify_trace_preparation_recovery", None,
+                    self.provider_gateway,
+                    "_verify_trace_preparation_recovery",
+                    None,
                 )
                 if (
-                    continuation.trace_capture_mode is not ConsoleTraceCaptureMode.CAPTURE_ON
+                    continuation.trace_capture_mode
+                    is not ConsoleTraceCaptureMode.CAPTURE_ON
                     or not callable(verify_recovery)
                 ):
                     raise TraceCallPersistenceError()
@@ -12910,7 +13272,8 @@ class ConsoleChatController:
                     self.store.get_message(audit_id)
                 except KeyError:
                     self.store.append_message(
-                        session_id, role=ConsoleMessageRole.SYSTEM,
+                        session_id,
+                        role=ConsoleMessageRole.SYSTEM,
                         content=continuation.hook_context,
                         metadata=MessageMetadata(origin=MESSAGE_ORIGIN_HOOK),
                         message_id=audit_id,
@@ -12932,7 +13295,9 @@ class ConsoleChatController:
             )
             if (
                 live_session is not None
-                and not (continuation.prepared and continuation.prepared.preserve_composer)
+                and not (
+                    continuation.prepared and continuation.prepared.preserve_composer
+                )
                 and live_session.draft == continuation.clean_draft
             ):
                 live_session.draft = ""
@@ -12996,7 +13361,9 @@ class ConsoleChatController:
                 )
             if (
                 continuation.origin is ConsoleSubmissionOrigin.MANUAL
-                and not (continuation.prepared and continuation.prepared.preserve_composer)
+                and not (
+                    continuation.prepared and continuation.prepared.preserve_composer
+                )
                 and self.store.active_session_id == session_id
             ):
                 callback = self.on_submission_accepted
@@ -13211,12 +13578,18 @@ class ConsoleChatController:
                     preparation_id=preparation_id,
                     provider_started=False,
                 )
-            bind_trace_owner = getattr(self.provider_gateway, "_bind_trace_preparation", None)
+            bind_trace_owner = getattr(
+                self.provider_gateway, "_bind_trace_preparation", None
+            )
             if callable(bind_trace_owner):
                 bind_trace_owner(
-                    continuation.stream_signals, continuation,
-                    boundary=(self._trace_call_boundaries_by_preparation.get(preparation_id)
-                              if effective_capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON else None),
+                    continuation.stream_signals,
+                    continuation,
+                    boundary=(
+                        self._trace_call_boundaries_by_preparation.get(preparation_id)
+                        if effective_capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON
+                        else None
+                    ),
                 )
             stream_result = await self._run_durable_postcommit_effect(
                 preparation_id,
@@ -13236,6 +13609,9 @@ class ConsoleChatController:
                     preparation_id=None,
                     stream_signals=continuation.stream_signals,
                     before_provider_dispatch=enter_provider_dispatch,
+                    compaction_ask_bypassed=self._consume_compaction_hold_answer(
+                        preparation_id
+                    ),
                     capture_mode_override=effective_capture_mode,
                     trace_request=(
                         continuation.trace_request
@@ -13297,9 +13673,7 @@ class ConsoleChatController:
                         terminal_status=ConsoleRunStatus.STOPPED,
                     )
                 else:
-                    failed = self.store.mark_message_failed(
-                        commit.assistant_message_id
-                    )
+                    failed = self.store.mark_message_failed(commit.assistant_message_id)
                     self._set_run_state(
                         ConsoleRunState(
                             ConsoleRunStatus.FAILED,
@@ -13333,8 +13707,13 @@ class ConsoleChatController:
                         # A cached unstarted reservation is not rollback evidence
                         # when the exact dispatch read-back was unavailable.
                         failed_call_started = True
-                        if getattr(exc.boundary, "_accepted_preparation", None) is continuation:
-                            self._trace_call_boundaries_by_preparation[preparation_id] = exc.boundary
+                        if (
+                            getattr(exc.boundary, "_accepted_preparation", None)
+                            is continuation
+                        ):
+                            self._trace_call_boundaries_by_preparation[
+                                preparation_id
+                            ] = exc.boundary
                             if not any_provider_started:
                                 try:
                                     # FRESH normalizes before this checkpoint;
@@ -13342,7 +13721,9 @@ class ConsoleChatController:
                                     # conservative uncertainty before cold recovery.
                                     await enter_provider_dispatch()
                                 except Exception:  # noqa: BLE001 - retain unknown ownership if its checkpoint also fails
-                                    logger.warning("Uncertain trace dispatch checkpoint could not be saved.")
+                                    logger.warning(
+                                        "Uncertain trace dispatch checkpoint could not be saved."
+                                    )
                                 else:
                                     any_provider_started = True
                     elif type(boundary_started) is bool:
@@ -14611,7 +14992,15 @@ class ConsoleChatController:
 
         Returns:
             Opaque ticket required by :meth:`finalize_session_close`.
+
+        Raises:
+            ConsoleLifecycleRevisionChanged: The approved impact changed.
+            RuntimeError: Recovery or an unreconciled close fence blocks close.
         """
+        if session_id in self._failed_session_close_generations:
+            raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+        if session_id in self._session_close_generations:
+            raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
         impact = self.lifecycle_impact(session_id=session_id)
         if impact.revision != expected_revision:
             raise ConsoleLifecycleRevisionChanged(
@@ -14652,53 +15041,81 @@ class ConsoleChatController:
                 "abort_fleet_fence",
                 None,
             )
-            if not callable(abort_fleet_fence):
-                return
             try:
-                abort_fleet_fence(
+                if callable(abort_fleet_fence) and abort_fleet_fence(
                     fleet_conversation_id,
                     generation=generation,
+                ):
+                    return
+            except Exception as exc:  # noqa: BLE001 -- failed rollback stays fenced
+                logger.warning(
+                    "close_session provisional fleet rollback failed (error_type={})",
+                    type(exc).__name__,
                 )
-            except Exception:  # noqa: BLE001 -- failed rollback stays fenced
-                logger.warning("close_session provisional fleet fence stayed latched")
+            # An uncertain rollback must never be replaced by a retry's new
+            # generation. Keep this close fail-closed even without a ticket;
+            # surviving children still own valid usage in the retained session.
+            self._failed_session_close_generations[session_id] = generation
+            logger.warning("close_session provisional fleet fence stayed latched")
 
         # A reservation publishes its lifecycle revision before the fleet
         # fence can acquire the coordinator lock. Recheck only after that
         # admission boundary is closed; a child admitted while the dialog was
         # open must refresh consent rather than silently widening it.
-        current_impact = self.lifecycle_impact(session_id=session_id)
-        if current_impact.revision != expected_revision:
-            abort_provisional_fleet_fence()
-            raise ConsoleLifecycleRevisionChanged(
-                "Console session activity changed during close."
+        try:
+            current_impact = self.lifecycle_impact(session_id=session_id)
+            if current_impact.revision != expected_revision:
+                raise ConsoleLifecycleRevisionChanged(
+                    "Console session activity changed during close."
+                )
+            if self._cancel_raw_cli_session is not None:
+                try:
+                    self._cancel_raw_cli_session(session_id)
+                except Exception:  # noqa: BLE001 -- teardown remains best-effort
+                    logger.warning("close_session could not cancel raw CLI commands")
+            owns_active_stream = self._active_stream_belongs_to_session(session_id)
+            active_assistant_message_id = self._active_assistant_message_ids.get(
+                session_id
             )
-        if self._cancel_raw_cli_session is not None:
-            try:
-                self._cancel_raw_cli_session(session_id)
-            except Exception:  # noqa: BLE001 -- teardown remains best-effort
-                logger.warning("close_session could not cancel raw CLI commands")
-        owns_active_stream = self._active_stream_belongs_to_session(session_id)
-        active_assistant_message_id = self._active_assistant_message_ids.get(
-            session_id
-        )
-        if owns_active_stream and active_assistant_message_id is not None:
-            # Closing is an explicit cancellation boundary. Settle the durable
-            # dispatch before removing its in-memory owner so the cancelled
-            # task cannot leave a restart-visible ``dispatch_started`` row.
-            self._signal_stop(session_id=session_id)
-            try:
-                self._mark_stream_stopped(
-                    active_assistant_message_id,
-                    visible_copy="Session closed.",
+            if owns_active_stream and active_assistant_message_id is not None:
+                # Closing is an explicit cancellation boundary. Settle the durable
+                # dispatch before removing its in-memory owner so the cancelled
+                # task cannot leave a restart-visible ``dispatch_started`` row.
+                self._signal_stop(session_id=session_id)
+                try:
+                    self._mark_stream_stopped(
+                        active_assistant_message_id,
+                        visible_copy="Session closed.",
+                    )
+                except ConsoleDispatchSettlementError:
+                    self._restore_dispatch_recovery_after_settlement_failure(
+                        session_id,
+                        active_assistant_message_id,
+                    )
+                    raise
+            # Progress ownership must release before child cancellation, but a
+            # failed callback must not commit wake, scratch or queue teardown.
+            close_progress = getattr(self._agent_bridge, "close_progress", None)
+            if callable(close_progress):
+                close_progress(session_id, conversation_id=fleet_conversation_id)
+        except BaseException as exc:
+            abort_provisional_fleet_fence()
+            if (
+                isinstance(exc, Exception)
+                and session_id in self._failed_session_close_generations
+            ):
+                frames = traceback.extract_tb(exc.__traceback__)
+                logger.warning(
+                    "close_session provisional failure (error_type={}, origin={})",
+                    type(exc).__name__,
+                    frames[-1].name if frames else "unknown",
                 )
-            except ConsoleDispatchSettlementError:
-                self._restore_dispatch_recovery_after_settlement_failure(
-                    session_id,
-                    active_assistant_message_id,
-                )
-                abort_provisional_fleet_fence()
-                raise
-        self._session_close_generations[session_id] = generation
+                raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL) from None
+            raise
+        # Commit under the question registry's shared host lock. An earlier
+        # registration is swept below; a later one observes this fence.
+        with self._approval_state_lock:
+            self._session_close_generations[session_id] = generation
         # Admission fences are the first irreversible close action after the
         # durable stream gate has settled successfully. They must beat every
         # cancellation snapshot and precede queue/file teardown, so a stale
@@ -14746,9 +15163,6 @@ class ConsoleChatController:
         # along. getattr-guarded and wrapped: a bare bridge double, no
         # bridge, or a raising cancel must never break a close.
         fleet_conversation_id = self._agent_conversation_id(session_id)
-        close_progress = getattr(self._agent_bridge, "close_progress", None)
-        if callable(close_progress):
-            close_progress(session_id, conversation_id=fleet_conversation_id)
         cancel_all = (
             getattr(self._agent_bridge, "cancel_all_subagents", None)
             if self._agent_bridge is not None
@@ -14931,9 +15345,7 @@ class ConsoleChatController:
             return False
         return True
 
-    def session_shutdown_tasks(
-        self, session_id: str
-    ) -> tuple[asyncio.Task[Any], ...]:
+    def session_shutdown_tasks(self, session_id: str) -> tuple[asyncio.Task[Any], ...]:
         """Snapshot controller-owned tasks that must settle before deletion."""
 
         tasks = set(self._submit_tasks_for_session(session_id))
@@ -15833,9 +16245,7 @@ class ConsoleChatController:
         try:
             session_id = str(payload.get("session_id") or "")
             messages: list = list(
-                self._provider_messages_for_session(session_id)
-                if session_id
-                else []
+                self._provider_messages_for_session(session_id) if session_id else []
             )
         except Exception:  # noqa: BLE001 -- advisory only
             return []
@@ -15949,8 +16359,7 @@ class ConsoleChatController:
                 self._parked_skill_script_payloads,
             )
             for payload in store.values()
-            if payload.get("session_id") == session_id
-            and payload.get("_decision_id")
+            if payload.get("session_id") == session_id and payload.get("_decision_id")
         ]
         return sorted(payloads, key=lambda item: int(item["_decision_order"]))
 
@@ -16121,7 +16530,11 @@ class ConsoleChatController:
         )
         if self.set_pending_decision is not None:
             mounted = self.set_pending_decision(projection) is True
-            if mounted and projection is not None and projection.decision_type == "approval":
+            if (
+                mounted
+                and projection is not None
+                and projection.decision_type == "approval"
+            ):
                 self._maybe_fire_permission_summary(dict(projection.payload))
             return mounted
         if projection is None:
@@ -16191,6 +16604,17 @@ class ConsoleChatController:
                 event = state.get("event")
                 if isinstance(event, threading.Event):
                     events.append(event)
+        with self._pending_question_lock:
+            for state in self._pending_question_rounds.values():
+                if state.get("session_id") != session_id:
+                    continue
+                state["revoked"] = True
+                if not state.get("settled"):
+                    state["settled"] = True
+                    state["terminal_reason"] = "cancelled"
+                event = state.get("event")
+                if isinstance(event, threading.Event):
+                    events.append(event)
         with self._pending_skill_install_lock:
             for state in self._pending_skill_install_rounds.values():
                 if state.get("session_id") == session_id:
@@ -16215,6 +16639,18 @@ class ConsoleChatController:
                     if isinstance(decision, dict):
                         decision["allow"] = False
                         decision["remember"] = False
+                event = state.get("event")
+                if isinstance(event, threading.Event):
+                    events.append(event)
+        with self._pending_chat_create_lock:
+            for state in self._pending_chat_create_rounds.values():
+                if state.get("session_id") != session_id:
+                    continue
+                state["revoked"] = True
+                decision = state.get("decision")
+                if isinstance(decision, dict):
+                    decision["allow"] = False
+                    decision["remember"] = False
                 event = state.get("event")
                 if isinstance(event, threading.Event):
                     events.append(event)
@@ -16331,6 +16767,7 @@ class ConsoleChatController:
         from tldw_chatbook.Chat.console_interrupt_rounds import park_round_payload
 
         return park_round_payload(self._approval_state_lock, store, round_id, payload)
+
     def _head_round_payload(
         self, store: dict[str, dict[str, Any]], session_id: str
     ) -> dict[str, Any] | None:
@@ -16379,9 +16816,7 @@ class ConsoleChatController:
             return
 
         if self.set_pending_decision is not None:
-            self.app.call_from_thread(
-                self.project_pending_decision_for_active_session
-            )
+            self.app.call_from_thread(self.project_pending_decision_for_active_session)
             return
         if setter is None:
             return
@@ -16414,7 +16849,8 @@ class ConsoleChatController:
         self._interrupt_host.refresh_decision_clocks()
         kinds = (
             ("worktree_merge", "question")
-            if self.set_pending_decision is not None else SESSION_REMOUNT_KINDS
+            if self.set_pending_decision is not None
+            else SESSION_REMOUNT_KINDS
         )
         self._interrupt_host.remount_for_session(session_id, kinds=kinds)
 
@@ -16528,7 +16964,9 @@ class ConsoleChatController:
         host = getattr(self, "_interrupt_host", None)
 
         def _apply() -> None:
-            from tldw_chatbook.UI.Navigation.main_navigation import set_console_attention
+            from tldw_chatbook.UI.Navigation.main_navigation import (
+                set_console_attention,
+            )
 
             # Re-read the total on the UI thread: two workers' updates may
             # be marshalled out of order, and the badge must show the
@@ -16577,7 +17015,7 @@ class ConsoleChatController:
         self._announce_detached_approval(session_id, kind=kind)
 
     def _announce_detached_approval(
-        self, session_id: str, *, kind: str = "approval"
+        self, session_id: str, *, kind: str = CONSOLE_PENDING_APPROVAL_KIND
     ) -> None:
         """Raise the app-wide toast for a round with no visible Console view.
 
@@ -16668,10 +17106,7 @@ class ConsoleChatController:
         }[decision_type]
         # Deliberately excludes title, ids, tool/skill names, URLs, paths,
         # arguments, and payload bodies.
-        message = (
-            f"A Console session {label}. "
-            "Return to Console to respond."
-        )
+        message = f"A Console session {label}. Return to Console to respond."
 
         def _emit() -> bool:
             """Post the fixed notice while the exact registry lock is held.
@@ -17269,9 +17704,7 @@ class ConsoleChatController:
             if turn_context is not None
             else "default"
         )
-        profile_kwargs = (
-            {} if profile_id == "default" else {"profile_id": profile_id}
-        )
+        profile_kwargs = {} if profile_id == "default" else {"profile_id": profile_id}
 
         bound_request_approvals = functools.partial(
             self.request_mcp_approvals, session_id=session_id
@@ -17291,9 +17724,7 @@ class ConsoleChatController:
 
         def _persist_approval(hub: "HubTool", decision: str) -> None:
             if decision == "approve_session":
-                service.approve_for_session(
-                    hub.server_key, hub.name, **profile_kwargs
-                )
+                service.approve_for_session(hub.server_key, hub.name, **profile_kwargs)
             elif decision == "always_allow":
                 # set_tool_state computes definition_hash(hub.description,
                 # hub.input_schema) itself -- required for the rug-pull guard.
@@ -17489,9 +17920,7 @@ class ConsoleChatController:
             if turn_context is not None
             else "default"
         )
-        profile_kwargs = (
-            {} if profile_id == "default" else {"profile_id": profile_id}
-        )
+        profile_kwargs = {} if profile_id == "default" else {"profile_id": profile_id}
 
         def resolve_state(hub: "HubTool") -> Any:
             if profile_id == "default":
@@ -17531,9 +17960,7 @@ class ConsoleChatController:
 
         def persist(hub: "HubTool", decision: str) -> None:
             if decision == "approve_session":
-                service.approve_for_session(
-                    hub.server_key, hub.name, **profile_kwargs
-                )
+                service.approve_for_session(hub.server_key, hub.name, **profile_kwargs)
             elif decision == "always_allow":
                 service.set_tool_state(
                     hub.server_key,
@@ -17723,9 +18150,13 @@ class ConsoleChatController:
         Returns:
             ``{"ask_user": callback}`` or ``{}``.
         """
-        if session_id is None or self.app is None or (
-            self.set_pending_question is None
-            and not self._interrupt_host.has_retained_decision_target(session_id)
+        if (
+            session_id is None
+            or self.app is None
+            or (
+                self.set_pending_question is None
+                and not self._interrupt_host.has_retained_decision_target(session_id)
+            )
         ):
             return {}
 
@@ -17794,10 +18225,16 @@ class ConsoleChatController:
             # no timeout, and can hang at shutdown (task-32954 Task 5, R11).
             app.post_message(CharacterCardChanged(character_id))
 
-        return {"character_service": CharacterToolService(
-            service_loader=_service,
-            runtime_source_loader=functools.partial(self._session_runtime_source, session_id),
-            read_guard=guard, on_changed=_changed)}
+        return {
+            "character_service": CharacterToolService(
+                service_loader=_service,
+                runtime_source_loader=functools.partial(
+                    self._session_runtime_source, session_id
+                ),
+                read_guard=guard,
+                on_changed=_changed,
+            )
+        }
 
     def _library_provider_for_context(
         self, turn_context: ConsoleTurnExecutionContext
@@ -18760,6 +19197,7 @@ class ConsoleChatController:
         delay, or deny the round.
         """
         from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+
         enriched = dict(payload)
         tool = str(enriched.get("tool") or "")
         try:
@@ -18778,11 +19216,7 @@ class ConsoleChatController:
                     if session is not None
                     else None
                 )
-                if (
-                    session is not None
-                    and not session.ephemeral
-                    and conversation_id
-                ):
+                if session is not None and not session.ephemeral and conversation_id:
                     # The tree-read leg carries its OWN guard so a failure
                     # here degrades to the session-title fallback below
                     # instead of skipping it.
@@ -18792,19 +19226,13 @@ class ConsoleChatController:
                             if self.store.persistence
                             else None
                         )
-                        tree = ChatConversationService(
-                            database
-                        ).get_conversation_tree(
+                        tree = ChatConversationService(database).get_conversation_tree(
                             str(conversation_id),
                             root_limit=10_000,
                             depth_cap=10_000,
                         )
-                        conversation_row = dict(
-                            tree.get("conversation") or {}
-                        )
-                        source_title = str(
-                            conversation_row.get("title") or ""
-                        )
+                        conversation_row = dict(tree.get("conversation") or {})
+                        source_title = str(conversation_row.get("title") or "")
                         # Count definition -- ACTIVE-PATH LENGTH, not total
                         # tree nodes: the executor's
                         # copy_conversation_active_path copies exactly the
@@ -18820,9 +19248,7 @@ class ConsoleChatController:
                         for root in tree.get("root_threads") or []:
                             _walk(root)
                         leaf = (
-                            database.get_conversation_active_leaf(
-                                str(conversation_id)
-                            )
+                            database.get_conversation_active_leaf(str(conversation_id))
                             if database is not None
                             else None
                         )
@@ -18833,9 +19259,7 @@ class ConsoleChatController:
                             leaf = (
                                 max(
                                     nodes,
-                                    key=lambda i: str(
-                                        nodes[i].get("timestamp") or ""
-                                    ),
+                                    key=lambda i: str(nodes[i].get("timestamp") or ""),
                                 )
                                 if nodes
                                 else None
@@ -18851,9 +19275,7 @@ class ConsoleChatController:
                             # Same default formula the executor applies
                             # post-confirm, so the card header matches the
                             # title that would actually be created.
-                            title = (
-                                f"Fork of {source_title or 'chat'}"[:120]
-                            )
+                            title = f"Fork of {source_title or 'chat'}"[:120]
                     except Exception:  # noqa: BLE001 — omit the fork line only
                         logger.opt(exception=True).debug(
                             "chat-create confirm fork enrichment degraded; "
@@ -18924,11 +19346,14 @@ class ConsoleChatController:
         """
         from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
         from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY
+
         if self.app is None or self.set_pending_chat_create is None:
             return {"allow": False, "remember": False}
 
-        owning_session_id = session_id if session_id is not None else (
-            self.store.active_session_id or ""
+        owning_session_id = (
+            session_id
+            if session_id is not None
+            else (self.store.active_session_id or "")
         )
         tool = str(payload.get("tool") or "")
         # PR review #13: the card must display the TRUE owning run id. The
@@ -18971,13 +19396,15 @@ class ConsoleChatController:
         # SUB-AGENT requester never rides one -- children share the session
         # with the primary, so the user's session grant must not silently
         # auto-allow child-run chat creation; every child call confirms.
-        if (
-            requesting_kind == AGENT_KIND_PRIMARY
-            and tool in self._chat_create_session_grants.get(
-                owning_session_id, set()
-            )
-        ):
-            return {"allow": True, "remember": True}
+        with self._pending_chat_create_lock:
+            if owning_session_id in self._session_close_generations:
+                return {"allow": False, "remember": False}
+            if (
+                requesting_kind == AGENT_KIND_PRIMARY
+                and tool
+                in self._chat_create_session_grants.get(owning_session_id, set())
+            ):
+                return {"allow": True, "remember": True}
 
         # Final-review fix wave (Finding 1): enrich the payload BEFORE the
         # round is armed -- fork_source_title/fork_message_count (the card's
@@ -19000,12 +19427,17 @@ class ConsoleChatController:
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
+            # Legacy callers never park; their initial card remains unscoped.
+            "session_scoped": session_id is not None,
             "run_id": current_run_id(),
             # Re-read after the wait: a late Allow must not stick. See
             # `revoke_approval_rounds_for_run`.
             "revoked": False,
         }
         with self._pending_chat_create_lock:
+            # Enrichment can finish after Close has swept the standalone rounds.
+            if owning_session_id in self._session_close_generations:
+                return {"allow": False, "remember": False}
             self._pending_chat_create_rounds[request_id] = chat_create_round_state
 
         timeout_seconds = (
@@ -19015,9 +19447,7 @@ class ConsoleChatController:
         )
         # ADR-067: <= 0 arms NO deadline (the default) -- the round waits
         # for a decision or the owning run's cancellation.
-        deadline = (
-            time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
-        )
+        deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
         card_payload = dict(enriched_payload)
         card_payload["timeout_seconds"] = timeout_seconds
         card_payload["request_id"] = request_id
@@ -19032,7 +19462,9 @@ class ConsoleChatController:
         # they keep the unconditional mount below.
         is_head = True
         if session_id is not None:
-            self.add_pending_round(session_id, request_id)
+            self.add_pending_round(
+                session_id, request_id, kind=CONSOLE_PENDING_CHAT_CREATE_KIND
+            )
             # Keyed by ROUND; the return says whether THIS round is its
             # session's FIFO head. A non-head round must not mount: an
             # older sibling is still holding the card.
@@ -19047,9 +19479,7 @@ class ConsoleChatController:
                 self._marshal_pending_chat_create(card_payload)
             # ADR-067: mark the owning run as waiting on a human decision
             # (see the sibling bridges' identical wrap for the why).
-            with use_human_input_wait(
-                str(chat_create_round_state.get("run_id") or "")
-            ):
+            with use_human_input_wait(str(chat_create_round_state.get("run_id") or "")):
                 while not event.wait(_MCP_APPROVAL_POLL_SECONDS):
                     if self._is_session_cancelled(
                         session_id,
@@ -19064,27 +19494,26 @@ class ConsoleChatController:
             # was cancelled must not authorize the create. Mirrors the
             # sibling bridges' identical post-wait guard.
             with self._pending_chat_create_lock:
-                was_revoked = bool(chat_create_round_state.get("revoked"))
-            if was_revoked:
-                return {"allow": False, "remember": False}
-            allow = bool(decision.get("allow", False))
-            remember = bool(decision.get("remember", False))
-            # Record a standing grant only on an allow that ALSO asked to
-            # be remembered -- a remembered deny must not poison later
-            # rounds into auto-allowing.
-            if allow and remember:
-                self._chat_create_session_grants.setdefault(
-                    owning_session_id, set()
-                ).add(tool)
-            return {"allow": allow, "remember": remember}
+                if (
+                    chat_create_round_state.get("revoked")
+                    or owning_session_id in self._session_close_generations
+                ):
+                    return {"allow": False, "remember": False}
+                allow = bool(decision.get("allow", False))
+                remember = bool(decision.get("remember", False))
+                # Decide and remember atomically with the Close/revocation sweep.
+                # A remembered deny must never become a standing grant.
+                if allow and remember:
+                    self._chat_create_session_grants.setdefault(
+                        owning_session_id, set()
+                    ).add(tool)
+                return {"allow": allow, "remember": remember}
         finally:
             with self._pending_chat_create_lock:
                 self._pending_chat_create_rounds.pop(request_id, None)
             # Drop exactly THIS round's retained payload -- each round owns
             # its own key, so no still-armed sibling guard is needed.
-            self._unpark_round_payload(
-                self._parked_chat_create_payloads, request_id
-            )
+            self._unpark_round_payload(self._parked_chat_create_payloads, request_id)
             if session_id is not None:
                 # Discard ONLY this round's own id -- the badge clears only
                 # once every bridge round for this session has resolved.
@@ -19138,13 +19567,45 @@ class ConsoleChatController:
         )
 
     def _marshal_pending_chat_create(self, payload: dict[str, Any] | None) -> None:
-        """WORKER THREAD: hand a chat-create confirm payload to the UI thread.
+        """WORKER THREAD: project a current chat-create decision on the UI.
+
+        Recheck scoped ownership after dispatch; legacy unparked rounds keep
+        their unconditional initial projection. A clear derives the current head.
 
         Args:
-            payload: The pending confirm dict to show, or None to hide it.
+            payload: Proposed confirmation, or None to rederive the active head.
         """
-        if self.app is not None and self.set_pending_chat_create is not None:
-            self.app.call_from_thread(self.set_pending_chat_create, payload)
+        if self.app is None or self.set_pending_chat_create is None:
+            return
+
+        def _apply() -> None:
+            """UI THREAD: qualify the current owner before painting its decision."""
+            setter = self.set_pending_chat_create
+            if setter is None:
+                return
+            active_session_id = self.store.active_session_id or ""
+            if payload is None:
+                setter(
+                    self._head_round_payload(
+                        self._parked_chat_create_payloads, active_session_id
+                    )
+                )
+                return
+            owning_session_id = str(payload.get("session_id") or "")
+            if owning_session_id in self._session_close_generations:
+                return
+            with self._pending_chat_create_lock:
+                state = self._pending_chat_create_rounds.get(payload.get("request_id"))
+                if state is None or state.get("revoked") or state["event"].is_set():
+                    return
+                if state.get("session_scoped", True) and (
+                    owning_session_id != active_session_id
+                ):
+                    return
+            # The UI owns Close/navigation; external sinks run outside locks.
+            setter(payload)
+
+        self.app.call_from_thread(_apply)
 
     def resolve_pending_chat_create(
         self, allow: bool, remember: bool, request_id: str | None = None
@@ -19179,11 +19640,11 @@ class ConsoleChatController:
             return
         with self._pending_chat_create_lock:
             round_state = self._pending_chat_create_rounds.get(request_id)
-        if round_state is None:
-            return
-        round_state["decision"]["allow"] = bool(allow)
-        round_state["decision"]["remember"] = bool(remember)
-        round_state["event"].set()
+            if round_state is None:
+                return
+            round_state["decision"]["allow"] = bool(allow)
+            round_state["decision"]["remember"] = bool(remember)
+            round_state["event"].set()
 
     def pending_chat_create_ids(self) -> list[str]:
         """Return the request ids of every currently-armed chat-create round.
@@ -19201,8 +19662,10 @@ class ConsoleChatController:
 
         TASK-32482 Task 7. Runs ONLY after ``request_chat_create_confirm``
         returned an allow (the bridge closure enforces that ordering), so
-        every failure below is fail-closed: nothing is created, and the
-        outcome's ``kind`` tells the model (and the run log) why.
+        refusal before creation makes no chat; the outcome's ``kind``
+        tells the model (and the run log) why. A source retired during I/O
+        refuses UI placement and discards its newly committed row through
+        the existing best-effort orphan soft-delete helper.
 
         For ``fork_chat`` the new conversation copies the source's active
         path verbatim (``ChatConversationService.copy_conversation_active_
@@ -19238,12 +19701,21 @@ class ConsoleChatController:
 
         tool = str(payload.get("tool") or "")
         session_id = str(payload.get("session_id") or "")
-        session = next(
-            (s for s in self.store.sessions() if s.id == session_id), None
-        )
+        # A committed Close retains its source during drain; an earlier Allow
+        # cannot authorize a new durable chat once that Close has committed.
+        if session_id in self._session_close_generations:
+            return {
+                "ok": False,
+                "kind": _CHAT_CREATE_SESSION_GONE,
+                "error": "source session is closing",
+            }
+        session = next((s for s in self.store.sessions() if s.id == session_id), None)
         if session is None:
-            return {"ok": False, "kind": "session_gone",
-                    "error": "source session not found"}
+            return {
+                "ok": False,
+                "kind": _CHAT_CREATE_SESSION_GONE,
+                "error": "source session not found",
+            }
         title = str(payload.get("title") or "").strip()
         opening_prompt = str(payload.get("opening_prompt") or "")
         instructions = str(payload.get("instructions") or "")
@@ -19266,9 +19738,10 @@ class ConsoleChatController:
         # agent_models -- the single shared constant, PR review #5);
         # duplicated here so the executor stays safe even if wired to a
         # caller other than the closures.
-        if len(opening_prompt) > CHAT_CREATE_PAYLOAD_MAX or len(
-            instructions
-        ) > CHAT_CREATE_PAYLOAD_MAX:
+        if (
+            len(opening_prompt) > CHAT_CREATE_PAYLOAD_MAX
+            or len(instructions) > CHAT_CREATE_PAYLOAD_MAX
+        ):
             return {
                 "ok": False,
                 "kind": "payload_too_large",
@@ -19277,8 +19750,11 @@ class ConsoleChatController:
         persistence = self.store.persistence
         db = getattr(persistence, "db", None)
         if persistence is None or db is None:
-            return {"ok": False, "kind": "execution_failed",
-                    "error": "persistence unavailable"}
+            return {
+                "ok": False,
+                "kind": "execution_failed",
+                "error": "persistence unavailable",
+            }
 
         # TASK-32874: optional routing for the CREATED chat. Resolved
         # BEFORE anything is created; every RoutingError surfaces as the
@@ -19312,12 +19788,18 @@ class ConsoleChatController:
                     (r for r in rows if str(r.get("name") or "") == req_preset), None
                 )
                 if match is None:
-                    return {"ok": False, "kind": "unknown_preset",
-                            "error": f"no enabled agent preset named '{req_preset}'"}
+                    return {
+                        "ok": False,
+                        "kind": "unknown_preset",
+                        "error": f"no enabled agent preset named '{req_preset}'",
+                    }
                 preset_def = definition_from_row(match)
                 if not (preset_def.provider or preset_def.model):
-                    return {"ok": False, "kind": "preset_unrouted",
-                            "error": f"preset '{req_preset}' sets no provider/model"}
+                    return {
+                        "ok": False,
+                        "kind": "preset_unrouted",
+                        "error": f"preset '{req_preset}' sets no provider/model",
+                    }
             try:
                 # The [agents] SUB-AGENT default level does not apply to
                 # chat creation (this is not a spawn): clear it so the
@@ -19327,9 +19809,7 @@ class ConsoleChatController:
                     parent_provider=(
                         session.settings.provider if session.settings else ""
                     ),
-                    parent_model=(
-                        session.settings.model if session.settings else ""
-                    ),
+                    parent_model=(session.settings.model if session.settings else ""),
                     preset=preset_def,
                     override_provider=req_provider,
                     override_model=req_model,
@@ -19366,8 +19846,11 @@ class ConsoleChatController:
         if tool == "fork_chat":
             source_conv = session.persisted_conversation_id
             if session.ephemeral or not source_conv:
-                return {"ok": False, "kind": "source_not_persisted",
-                        "error": "the current chat is temporary; nothing to fork"}
+                return {
+                    "ok": False,
+                    "kind": "source_not_persisted",
+                    "error": "the current chat is temporary; nothing to fork",
+                }
         elif not title:
             title = "New Chat"
 
@@ -19420,9 +19903,12 @@ class ConsoleChatController:
                         :CHAT_CREATE_TITLE_MAX
                     ]
                 if instructions and source_row.get("character_id"):
-                    return {"ok": False, "kind": "character_conflict",
-                            "error": "character chats keep their persona; "
-                                     "fork without instructions"}
+                    return {
+                        "ok": False,
+                        "kind": "character_conflict",
+                        "error": "character chats keep their persona; "
+                        "fork without instructions",
+                    }
                 conversation_service = ChatConversationService(db)
                 # PR review #3: resolve the EFFECTIVE leaf (pointer, else
                 # latest -- always a live row) through the same resolver the
@@ -19432,8 +19918,11 @@ class ConsoleChatController:
                     str(source_conv)
                 )
                 if source_leaf is None:
-                    return {"ok": False, "kind": "empty_history",
-                            "error": "nothing to fork yet; use new_chat"}
+                    return {
+                        "ok": False,
+                        "kind": "empty_history",
+                        "error": "nothing to fork yet; use new_chat",
+                    }
                 new_conv = persistence.create_conversation(
                     conversation_title=title,
                     scope_type=source_row.get("scope_type") or "global",
@@ -19472,8 +19961,11 @@ class ConsoleChatController:
             if new_conv is not None:
                 self._discard_chat_create_orphan(db, new_conv)
             if "empty_history" in str(exc):
-                return {"ok": False, "kind": "empty_history",
-                        "error": "nothing to fork yet; use new_chat"}
+                return {
+                    "ok": False,
+                    "kind": "empty_history",
+                    "error": "nothing to fork yet; use new_chat",
+                }
             return {"ok": False, "kind": "execution_failed", "error": str(exc)}
         except Exception as exc:  # noqa: BLE001
             if new_conv is not None:
@@ -19534,20 +20026,57 @@ class ConsoleChatController:
                 if session.local_character_id() is not None
                 else None,
             }
-        if self.app is not None and self.complete_agent_chat_create is not None:
-            self.app.call_from_thread(
-                self.complete_agent_chat_create,
-                session_id=session_id,
-                conversation_id=new_conv,
-                title=title,
-                tool=tool,
-                opening_prompt=opening_prompt,
-                workspace_id=completion_workspace_id,
-                nodes=nodes,
-                active_leaf_persisted_id=new_leaf,
-                settings=routed_settings,
-                **identity,
-            )
+
+        completion_admitted = False
+
+        def complete_if_source_open(**kwargs: Any) -> bool:
+            """UI THREAD: qualify the source before using the current view sink.
+
+            Args:
+                kwargs: Created-chat placement inputs resolved by this worker.
+
+            Returns:
+                False if Close/disposal retired the source; True otherwise,
+                including a live source whose view is currently detached.
+            """
+            nonlocal completion_admitted
+            if not self._chat_create_source_is_open(session_id):
+                return False
+            completion_admitted = True
+            complete = self.complete_agent_chat_create
+            if complete is not None:
+                complete(session_id=session_id, **kwargs)
+            return True
+
+        completion_allowed = self._chat_create_source_is_open(session_id)
+        app = self.app
+        if completion_allowed and app is not None:
+            try:
+                completion_allowed = app.call_from_thread(
+                    complete_if_source_open,
+                    conversation_id=new_conv,
+                    title=title,
+                    tool=tool,
+                    opening_prompt=opening_prompt,
+                    workspace_id=completion_workspace_id,
+                    nodes=nodes,
+                    active_leaf_persisted_id=new_leaf,
+                    settings=routed_settings,
+                    **identity,
+                )
+            except Exception:
+                # A retiring app can refuse the UI hop before running its gate.
+                # Keep unrelated completion failures on their existing path.
+                if completion_admitted or self._chat_create_source_is_open(session_id):
+                    raise
+                completion_allowed = False
+        if not completion_allowed:
+            self._discard_chat_create_orphan(db, new_conv)
+            return {
+                "ok": False,
+                "kind": _CHAT_CREATE_SESSION_GONE,
+                "error": "source session closed before chat completion",
+            }
         return {
             "ok": True,
             "title": title,
@@ -19556,6 +20085,21 @@ class ConsoleChatController:
             "copied_messages": copied,
             "draft_set": bool(opening_prompt),
         }
+
+    def _chat_create_source_is_open(self, session_id: str) -> bool:
+        """Check the existing lifetime fence and live source ownership.
+
+        Args:
+            session_id: Exact source session of the confirmed chat creation.
+
+        Returns:
+            True while the source exists without committed Close or disposal.
+        """
+        return (
+            not self._disposed
+            and session_id not in self._session_close_generations
+            and any(session.id == session_id for session in self.store.sessions())
+        )
 
     def _resolve_ask_user_timeout_seconds(self) -> float:
         """PRD A7: the question deadline -- seam, else env, else config, else 0.
@@ -19639,7 +20183,9 @@ class ConsoleChatController:
         ):
             return unanswered_result("cancelled")
         owning_session_id = (
-            session_id if session_id is not None else (self.store.active_session_id or "")
+            session_id
+            if session_id is not None
+            else (self.store.active_session_id or "")
         )
         owning_run_id = current_run_id()
         event = threading.Event()
@@ -19658,6 +20204,10 @@ class ConsoleChatController:
         # gets `busy`. The host re-registers the same state object at
         # run_round entry, which is idempotent.
         with self._pending_question_lock:
+            # Close publishes its fence and sweeps questions under this same
+            # lock; no delayed worker may register after the sweep has passed.
+            if owning_session_id in self._session_close_generations:
+                return unanswered_result("cancelled")
             live = any(
                 state.get("session_id") == owning_session_id
                 for state in self._pending_question_rounds.values()
@@ -19680,9 +20230,13 @@ class ConsoleChatController:
         timeout_seconds = self._resolve_ask_user_timeout_seconds()
         deadline = time.monotonic() + timeout_seconds if timeout_seconds > 0 else None
         actor = current_run_actor()
-        asked_by = "sub-agent" if actor is not None and actor.kind == "subagent" else "agent"
+        asked_by = (
+            "sub-agent" if actor is not None and actor.kind == "subagent" else "agent"
+        )
         # task-31382: name WHICH sub-agent is asking when the run carries a label.
-        asker_label = actor.label if asked_by == "sub-agent" and actor is not None else None
+        asker_label = (
+            actor.label if asked_by == "sub-agent" and actor is not None else None
+        )
         card_payload: dict[str, Any] = {
             "questions": [dict(question) for question in questions],
             "asked_by": asked_by,
@@ -20026,9 +20580,7 @@ class ConsoleChatController:
             None when delivered; a human-readable refusal otherwise.
         """
         session_id = self.store.active_session_id
-        redirect = (
-            self._active_redirect_hooks.get(session_id) if session_id else None
-        )
+        redirect = self._active_redirect_hooks.get(session_id) if session_id else None
         if redirect is None:
             return "no active run to redirect — plain messages queue for the next turn"
         return redirect(text)
@@ -20052,7 +20604,9 @@ class ConsoleChatController:
         conversation_id = ""
         for session in self.store.sessions():
             if session.id == session_id:
-                conversation_id = str(getattr(session, "persisted_conversation_id", "") or "")
+                conversation_id = str(
+                    getattr(session, "persisted_conversation_id", "") or ""
+                )
                 break
         if not conversation_id:
             return None
@@ -20679,11 +21233,15 @@ class ConsoleChatController:
             )
             return self._block(session_id, visible_copy)
         assert turn_context is not None
-        if resend and (
-            thinking_block := self._thinking_persistence_preflight(
-                session_id=session_id, resolution=resolution
+        if (
+            resend
+            and (
+                thinking_block := self._thinking_persistence_preflight(
+                    session_id=session_id, resolution=resolution
+                )
             )
-        ) is not None:
+            is not None
+        ):
             return thinking_block
         provider_messages = self._provider_messages_through_message(
             session_id,
@@ -20951,18 +21509,14 @@ class ConsoleChatController:
         self, message_id: str, focus: str = ""
     ) -> ConsoleSubmitResult:
         """Create a generated memory for complete units strictly before a prompt."""
-        return await self._summarize_manual(
-            message_id, from_here=False, focus=focus
-        )
+        return await self._summarize_manual(message_id, from_here=False, focus=focus)
 
     @_maintenance_boundary("turn")
     async def summarize_from(
         self, message_id: str, focus: str = ""
     ) -> ConsoleSubmitResult:
         """Create a generated memory for the complete inclusive range to the leaf."""
-        return await self._summarize_manual(
-            message_id, from_here=True, focus=focus
-        )
+        return await self._summarize_manual(message_id, from_here=True, focus=focus)
 
     async def _manual_summary_planning(
         self, message_id: str, *, from_here: bool, focus: str = ""
@@ -21147,14 +21701,10 @@ class ConsoleChatController:
             A ``ManualSummaryPreview`` on success, or the blocked
             ``ConsoleSubmitResult`` the commit path would have produced.
         """
-        planning = await self._manual_summary_planning(
-            message_id, from_here=from_here
-        )
+        planning = await self._manual_summary_planning(message_id, from_here=from_here)
         if isinstance(planning, ConsoleSubmitResult):
             return planning
-        return manual_summary_preview(
-            planning.plan_result.plan, from_here=from_here
-        )
+        return manual_summary_preview(planning.plan_result.plan, from_here=from_here)
 
     async def _hooks_for_compaction(self, session_id, resolution, *, reason, current):
         """Resolve a real context operation under the runtime's one hook owner."""
@@ -21457,7 +22007,10 @@ class ConsoleChatController:
             )
         span: list[ConsoleChatMessage] = []
         for message in self.store.messages_for_session(session_id):
-            if message.role not in (ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT):
+            if message.role not in (
+                ConsoleMessageRole.USER,
+                ConsoleMessageRole.ASSISTANT,
+            ):
                 continue
             if getattr(message, "status", None) == "failed":
                 continue
@@ -21485,7 +22038,9 @@ class ConsoleChatController:
         parts.append(f"Up to message: {message_id}")
         return "\n".join(f"> {part}" for part in parts)
 
-    def build_transcript_note(self, message_id: str) -> ConsoleNoteDraft | ConsoleSubmitResult:
+    def build_transcript_note(
+        self, message_id: str
+    ) -> ConsoleNoteDraft | ConsoleSubmitResult:
         """Format the transcript up to and including message_id as a note.
 
         Args:
@@ -21623,9 +22178,7 @@ class ConsoleChatController:
             )
         title = "Summary: " + (span[0].content.strip().splitlines() or [""])[0][:48]
         content = (
-            self._note_provenance_header(session_id, message_id)
-            + "\n\n"
-            + summary
+            self._note_provenance_header(session_id, message_id) + "\n\n" + summary
         )
         return ConsoleNoteDraft(title=title, content=content)
 
@@ -22543,7 +23096,9 @@ class ConsoleChatController:
                 run_id=f"preview:{session.id}",
                 session_id=session.id,
                 current_user_message=None,
-                kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
+                kill_switch=(
+                    self._console_tool_kill_switch_reader() or (lambda: False)
+                ),
                 reserve_direct_update_schema=True,
             )
             configuration = (
@@ -22757,9 +23312,7 @@ class ConsoleChatController:
                 locator_fingerprint=project_selection.locator_fingerprint,
                 max_bytes=startup_max_bytes,
                 dispatch_started_wall_ns=time.time_ns(),
-                excluded_dirs=_project_instruction_excluded_dirs(
-                    project_selection
-                ),
+                excluded_dirs=_project_instruction_excluded_dirs(project_selection),
             )
         except Exception:  # noqa: BLE001 - prep failure proceeds
             # Content-free by design: no exception text is attached (a
@@ -22938,7 +23491,9 @@ class ConsoleChatController:
                 run_id=f"preview:{session.id}",
                 session_id=session.id,
                 current_user_message=None,
-                kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
+                kill_switch=(
+                    self._console_tool_kill_switch_reader() or (lambda: False)
+                ),
                 reserve_direct_update_schema=True,
             )
         try:
@@ -23412,7 +23967,9 @@ class ConsoleChatController:
     def _hook_authority_values(self, session_id: str) -> dict[str, Any]:
         """Read current hook authority without assembling unrelated catalogs."""
         keys = (
-            "workspace_roots", "project_authority", "tool_policy_profile_id",
+            "workspace_roots",
+            "project_authority",
+            "tool_policy_profile_id",
             "persona_policy_rules",
         )
         if self._turn_context_provider is not None:
@@ -23420,17 +23977,24 @@ class ConsoleChatController:
             return {key: getattr(snapshot, key) for key in keys}
         session = next(item for item in self.store.sessions() if item.id == session_id)
         workspace_id = self.store.session_workspace_id(session_id)
-        roots, _aliases, _skipped = capture_change_review_admission(self.app, workspace_id)
+        roots, _aliases, _skipped = capture_change_review_admission(
+            self.app, workspace_id
+        )
         return {
             "workspace_roots": roots,
             "project_authority": capture_project_instruction_authority(
-                session, getattr(self.app, "workspace_registry_service", None),
+                session,
+                getattr(self.app, "workspace_registry_service", None),
                 include_bindings=self._agent_dispatch_is_eligible(
                     session, prefill=self.store.session_one_shot_prefill(session_id)
                 ),
             ),
-            "tool_policy_profile_id": resolve_turn_tool_policy_profile_id(self.app, workspace_id),
-            "persona_policy_rules": resolve_turn_persona_policy_rules(self.app, session),
+            "tool_policy_profile_id": resolve_turn_tool_policy_profile_id(
+                self.app, workspace_id
+            ),
+            "persona_policy_rules": resolve_turn_persona_policy_rules(
+                self.app, session
+            ),
         }
 
     def resolve_turn_configuration_snapshot(
@@ -23459,9 +24023,7 @@ class ConsoleChatController:
 
         selection = self._provider_selection_for_session(session_id)
         model = selection.explicit_model or selection.configured_model
-        session = next(
-            item for item in self.store.sessions() if item.id == session_id
-        )
+        session = next(item for item in self.store.sessions() if item.id == session_id)
         held_scope = session.rag_scope_holder.scope
         from tldw_chatbook.Chat.console_agent_bridge import console_run_budget
         from tldw_chatbook.Library.library_rag_state import library_rag_profile_top_k
@@ -24829,14 +25391,13 @@ class ConsoleChatController:
         launch the turn was admitted with. ``None`` means nothing was staged.
         """
 
-        if lease is None:
+        if lease is None or lease.launch is None:
             return None, None, None, None
+        if lease.capture_result is not None:
+            # TASK-34350: a send held after capture resumes with the exact
+            # evidence it already captured; the Library is not searched again.
+            return self._normalize_rag_capture(lease.capture_result)
         provider = lease.capture
-        if not callable(provider):
-            owner = getattr(self._rag_capture_provider, "__self__", None)
-            provider = getattr(owner, "_capture_frozen_console_staged_rag", None)
-        if not callable(provider):
-            return None, None, None, None
         try:
             captured = await provider(
                 draft,
@@ -25165,12 +25726,17 @@ class ConsoleChatController:
                     if key in payload
                 }
             )
-            calls = [{
-                "name": "install_skill" if kind == "skill_install" else "run_skill_script",
-                "args_summary": summarize_hook_arguments(arguments),
-            }]
+            calls = [
+                {
+                    "name": "install_skill"
+                    if kind == "skill_install"
+                    else "run_skill_script",
+                    "args_summary": summarize_hook_arguments(arguments),
+                }
+            ]
         engine.notify(
-            "ApprovalRequested", session_id=session_id,
+            "ApprovalRequested",
+            session_id=session_id,
             run_id=run_id,
             data={
                 "calls": calls,
@@ -25273,9 +25839,21 @@ class ConsoleChatController:
             pass
 
     def _durable_context_snapshots(
-        self, session_id: str
+        self,
+        session_id: str,
+        *,
+        uncommitted_user_message_id: str | None = None,
     ) -> tuple[DurableMessageSnapshot, ...] | None:
-        """Capture the active durable lineage without leaking content to logs."""
+        """Capture the active durable lineage without leaking content to logs.
+
+        Args:
+            session_id: The session whose active path to capture.
+            uncommitted_user_message_id: TASK-34350: the optimistic echo of a
+                send still being assessed before commit. It is the request,
+                not history, so it is skipped instead of failing the capture.
+                Defaults to the echo of a send held at the compaction
+                threshold, which no caller should treat as history either.
+        """
         persistence = getattr(self.store, "persistence", None)
         # task-32804.12 ([D2]): prefer the batch version reader so the
         # snapshot capture is a few chunked SELECTs instead of one point read
@@ -25308,7 +25886,14 @@ class ConsoleChatController:
             except Exception:
                 return None
         snapshots: list[DurableMessageSnapshot] = []
+        skip_id = (
+            uncommitted_user_message_id
+            if uncommitted_user_message_id is not None
+            else self._held_send_echo_id(session_id)
+        )
         for native_id in active_ids:
+            if native_id == skip_id:
+                continue
             message = messages.get(native_id)
             if message is None:
                 return None
@@ -26434,6 +27019,308 @@ class ConsoleChatController:
         self._preflight_block_copies.pop(assistant_message_id, None)
         return ConsoleSubmitResult(True, True, visible_copy)
 
+    def _context_overflow_alert(
+        self,
+        decision: CompactionDecision,
+        resolved: Any,
+        capacity: Any,
+        prepared_before: Any,
+        resolution: ConsoleProviderResolution,
+    ) -> str | None:
+        """Alert copy for a request compacting cannot make fit, else None.
+
+        Shared by the stream preflight and the pre-commit assessment so the
+        two cannot disagree (TASK-34350).
+        """
+
+        if decision not in {
+            CompactionDecision.UNKNOWN_WINDOW,
+            CompactionDecision.NON_COMPACTABLE,
+        }:
+            return None
+        if not prepared_before.known_overflow:
+            return None
+        if (
+            resolved.policy.failure_behavior
+            is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
+        ):
+            return None
+        # Lazy (ADR-097 UI-ready census): needed only when a send cannot fit.
+        from tldw_chatbook.Chat.console_context_budget_copy import (
+            MODEL_WINDOW_SETTING,
+            context_overflow_alert_copy,
+        )
+
+        cause = _context_overflow_cause(decision, resolved, capacity)
+        if cause is not None:
+            return context_overflow_alert_copy(
+                cause,
+                model=resolution.model or "the selected model",
+                window_tokens=capacity.context_window_tokens,
+                window_estimated=capacity.limit_source == "estimated",
+                response_tokens=capacity.effective_response_tokens,
+                input_ceiling_tokens=capacity.effective_input_ceiling_tokens,
+            )
+        limiting_reason = (
+            resolved.validation_errors[0]
+            if resolved.validation_errors
+            else "The effective model input ceiling is unavailable."
+        )
+        return (
+            "This request cannot fit the selected model. "
+            f"{limiting_reason} Summarizing older turns cannot make "
+            "enough room. Set the model's context window in "
+            f"{MODEL_WINDOW_SETTING}, or reduce mandatory context or "
+            "the response maximum."
+        )
+
+    def _assess_request_capacity_only(
+        self,
+        *,
+        session_id: str,
+        owner: Any,
+        resolution: ConsoleProviderResolution,
+        provider_messages: list[dict[str, Any]],
+        prepare: Callable[..., Any],
+        agent_tools_enabled: bool,
+        assessment_sink: Callable[..., None],
+    ) -> None:
+        """Report a request's capacity verdict when there is no history yet."""
+
+        tools: list[Mapping[str, Any]] = []
+        if agent_tools_enabled and self._agent_bridge is not None:
+            preview = getattr(self._agent_bridge, "preview_tool_schemas", None)
+            if callable(preview):
+                try:
+                    tools = list(preview())
+                except Exception:
+                    tools = []
+        prepared = prepare(
+            resolution, list(provider_messages), tools=tools, apply_safety_window=False
+        )
+        capacity = prepared.capacity
+        try:
+            global_overrides = self._global_context_policy_overrides()
+        except Exception:
+            global_overrides = None
+        resolved = resolve_context_policy(
+            capacity=ConsoleContextCapacity(
+                model_context_window_tokens=capacity.context_window_tokens,
+                model_window_verified=capacity.safety_verified,
+                provider_input_cap_tokens=capacity.provider_input_cap_tokens,
+                response_reservation_tokens=capacity.effective_response_tokens,
+                safety_margin_tokens=capacity.safety_margin_tokens,
+                mandatory_input_tokens=(
+                    prepared.accounting.non_compactable_tokens
+                    - prepared.accounting.memory_tokens
+                ),
+            ),
+            global_overrides=global_overrides,
+            conversation_overrides=owner.context_policy_overrides,
+        )
+        decision = decide_compaction(
+            resolved,
+            conversation_tokens=(
+                prepared.accounting.memory_tokens
+                + prepared.accounting.compactable_tokens
+            ),
+            compactable_units=0,
+        )
+        budget = resolved.effective_conversation_budget_tokens or 0
+        assessment_sink(
+            ContextCompactionHold(
+                session_id=session_id,
+                used_tokens=(
+                    prepared.accounting.memory_tokens
+                    + prepared.accounting.compactable_tokens
+                ),
+                trigger_tokens=int(budget * resolved.policy.trigger_ratio),
+                budget_tokens=budget,
+                estimated=False,
+            ),
+            decision,
+            self._context_overflow_alert(
+                decision, resolved, capacity, prepared, resolution
+            ),
+        )
+
+    async def _compaction_admission_check(
+        self,
+        *,
+        session: Any,
+        preparation: ConsoleTurnPreparation | None,
+        origin: ConsoleSubmissionOrigin,
+        preserve_composer: bool,
+        resolution: Any,
+        provider_messages: list[dict[str, Any]],
+        echoed_user: Any,
+        queue_entry_id: str | None,
+        after_side_effects: bool,
+    ) -> ConsoleSubmitResult | None:
+        """Hold or refuse one composer send before commit (TASK-34350).
+
+        Returns:
+            The result to return for a held or refused send, else ``None``.
+        """
+
+        if (
+            origin is not ConsoleSubmissionOrigin.MANUAL
+            or preparation is None
+            or preserve_composer
+            or preparation.preparation_id in self._compaction_hold_answered
+            or not isinstance(resolution, ConsoleProviderResolution)
+            or self._compaction_mode_for(session) is ContextCompactionMode.OFF
+        ):
+            return None
+        hold, alert = await self._assess_context_compaction(
+            session_id=session.id,
+            resolution=resolution,
+            provider_messages=provider_messages,
+            uncommitted_user_message_id=(
+                echoed_user.id if echoed_user is not None else None
+            ),
+        )
+        if alert is not None:
+            # Compacting cannot make it fit: refuse before commit, so the
+            # alert is not buried under a dispatch-recovery panel and the
+            # message stays recoverable (live 2026-10-04).
+            if echoed_user is not None:
+                self._mark_transient_echo_blocked(echoed_user.id)
+            self._abandon_preparation(preparation.preparation_id)
+            return self._block(session.id, alert)
+        if hold is None:
+            return None
+        if after_side_effects:
+            self._compaction_hold_after_effects.add(preparation.preparation_id)
+        return self._hold_send_for_compaction(
+            preparation, hold, origin=origin, queue_entry_id=queue_entry_id
+        )
+
+    def _compaction_mode_for(self, session: Any) -> ContextCompactionMode:
+        """This session's effective compaction mode (Off skips the checks)."""
+
+        try:
+            global_overrides = self._global_context_policy_overrides()
+        except Exception:
+            global_overrides = None
+        return merge_context_policy(
+            global_overrides=global_overrides,
+            conversation_overrides=session.context_policy_overrides,
+        ).compaction_mode
+
+    async def _assess_context_compaction(
+        self,
+        *,
+        session_id: str,
+        resolution: ConsoleProviderResolution,
+        provider_messages: list[dict[str, Any]],
+        uncommitted_user_message_id: str | None,
+    ) -> tuple[ContextCompactionHold | None, str | None]:
+        """Probe whether this exact request would stop at Ask or cannot fit.
+
+        Runs the real preflight as a side-effect-free assessment (TASK-34350).
+        A probe failure never blocks the send: the stream preflight still
+        runs and owns every refusal.
+
+        Args:
+            session_id: The sending session.
+            resolution: The resolved provider for this send.
+            provider_messages: The assembled request, current draft included.
+            uncommitted_user_message_id: The send's own optimistic echo.
+
+        Returns:
+            ``(hold, alert)``: the hold numbers when the decision is Ask, and
+            the alert copy when compacting cannot make the request fit.
+        """
+
+        captured: list[
+            tuple[ContextCompactionHold, CompactionDecision, str | None]
+        ] = []
+        try:
+            continuation_sidecar, continuation_target = (
+                self._provider_continuation_history_for_resolution(
+                    session_id, resolution
+                )
+            )
+            await self._apply_conversation_memory_preflight(
+                session_id=session_id,
+                resolution=resolution,
+                provider_messages=list(provider_messages),
+                assistant_message_id="",
+                agent_tools_enabled=(
+                    self._agent_runtime_enabled and self._agent_bridge is not None
+                ),
+                continuation_sidecar=continuation_sidecar,
+                continuation_target=continuation_target,
+                assessment_sink=lambda hold, decision, alert: captured.append(
+                    (hold, decision, alert)
+                ),
+                uncommitted_user_message_id=uncommitted_user_message_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - the stream preflight decides
+            logger.warning(
+                "Console compaction hold assessment unavailable; "
+                "exception_type={}",
+                type(exc).__name__,
+            )
+            return None, None
+        if not captured:
+            return None, None
+        hold, decision, alert = captured[0]
+        return (hold if decision is CompactionDecision.ASK else None), alert
+
+    def _hold_send_for_compaction(
+        self,
+        preparation: ConsoleTurnPreparation,
+        hold: ContextCompactionHold,
+        *,
+        origin: ConsoleSubmissionOrigin,
+        queue_entry_id: str | None,
+    ) -> ConsoleSubmitResult:
+        """Pause one uncommitted send at the compaction threshold."""
+
+        paused = self._pause_prepared_commit(
+            preparation.preparation_id,
+            ConsolePreparationPauseKind.CONTEXT_COMPACTION,
+        )
+        if (
+            paused is None
+            or paused.state is not ConsoleTurnPreparationState.PAUSED
+            or paused.pause_kind is not ConsolePreparationPauseKind.CONTEXT_COMPACTION
+        ):
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "Prepared turn changed before provider dispatch.",
+                session_id=hold.session_id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+            )
+        self._context_compaction_holds[preparation.preparation_id] = hold
+        from tldw_chatbook.Chat.console_context_budget_copy import (
+            compaction_prompt_copy,
+        )
+
+        visible_copy = compaction_prompt_copy(
+            used_tokens=hold.used_tokens,
+            budget_tokens=hold.budget_tokens,
+            estimated=hold.estimated,
+        )
+        self._set_run_state(
+            ConsoleRunState.blocked(visible_copy),
+            session_id=hold.session_id,
+        )
+        return ConsoleSubmitResult(
+            False,
+            False,
+            visible_copy,
+            session_id=hold.session_id,
+            origin=origin,
+            queue_entry_id=queue_entry_id,
+            preparation_id=preparation.preparation_id,
+            provider_started=False,
+        )
+
     async def _apply_conversation_memory_preflight(
         self,
         *,
@@ -26449,8 +27336,18 @@ class ConsoleChatController:
         continuation_target: ContinuationRestoreTarget | None = None,
         thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
         thinking_policy: ThinkingHistoryPolicy = "auto",
+        assessment_sink: "Callable[[ContextCompactionHold, CompactionDecision, str | None], None] | None" = None,
+        uncommitted_user_message_id: str | None = None,
+        ask_bypassed: bool = False,
     ) -> tuple[list[dict[str, Any]], ConsoleSubmitResult | None]:
-        """Revalidate memory and optionally run one automatic summary call."""
+        """Revalidate memory and optionally run one automatic summary call.
+
+        TASK-34350: ``assessment_sink`` turns this into a side-effect-free
+        probe -- it receives the decision and its numbers, and the request is
+        returned unchanged before anything compacts or blocks.
+        ``ask_bypassed`` is the user's one-shot "Send without compacting" for
+        a send held at the threshold.
+        """
         from tldw_chatbook.Chat.console_visual_transcript import (
             count_semantic_images,
             plan_visual_compaction,
@@ -26478,11 +27375,29 @@ class ConsoleChatController:
             or service is None
             or not callable(prepare)
             or owner is None
-            or owner.persisted_conversation_id is None
         ):
             return provider_messages, None
-        snapshots = self._durable_context_snapshots(session_id)
+        snapshots = (
+            self._durable_context_snapshots(
+                session_id, uncommitted_user_message_id=uncommitted_user_message_id
+            )
+            if owner.persisted_conversation_id is not None
+            else None
+        )
         if not snapshots:
+            if assessment_sink is not None and not owner.ephemeral:
+                # TASK-34350: a durable chat's first message is assessed for
+                # capacity alone (nothing to compact yet), so a request that
+                # cannot fit is refused before commit, like a later one.
+                self._assess_request_capacity_only(
+                    session_id=session_id,
+                    owner=owner,
+                    resolution=resolution,
+                    provider_messages=provider_messages,
+                    prepare=prepare,
+                    agent_tools_enabled=agent_tools_enabled,
+                    assessment_sink=assessment_sink,
+                )
             return provider_messages, None
         conversation_id = owner.persisted_conversation_id
         effective = self._select_session_effective_memory(
@@ -26546,9 +27461,7 @@ class ConsoleChatController:
         capacity = prepared_before.capacity
         # TASK-26019: this accounting IS the request's own (AC#2); the
         # breakdown surface reads the latest copy, no re-estimation.
-        self._context_accounting_by_session[session_id] = (
-            prepared_before.accounting
-        )
+        self._context_accounting_by_session[session_id] = prepared_before.accounting
         mandatory_tokens = (
             prepared_before.accounting.non_compactable_tokens
             - prepared_before.accounting.memory_tokens
@@ -26618,14 +27531,50 @@ class ConsoleChatController:
             if ruling is None:
                 return _flatten_preflight_messages(semantic), None
             decision, micro_escalated = ruling
+        if assessment_sink is not None:
+            budget = resolved.effective_conversation_budget_tokens or 0
+            assessment_sink(
+                ContextCompactionHold(
+                    session_id=session_id,
+                    used_tokens=(
+                        prepared_before.accounting.memory_tokens
+                        + prepared_before.accounting.compactable_tokens
+                    ),
+                    trigger_tokens=int(budget * resolved.policy.trigger_ratio),
+                    budget_tokens=budget,
+                    # Only a budget the window sets rests on its estimate; a
+                    # custom budget below capacity does not (live 2026-10-04).
+                    estimated=(
+                        capacity.limit_source == "estimated"
+                        and resolved.effective_conversation_budget_tokens
+                        == resolved.available_conversation_capacity_tokens
+                    ),
+                ),
+                decision,
+                self._context_overflow_alert(
+                    decision, resolved, capacity, prepared_before, resolution
+                ),
+            )
+            return provider_messages, None
         logger.info("console_context_policy_decision")
         if decision in {CompactionDecision.OFF, CompactionDecision.BELOW_TRIGGER}:
             return _flatten_preflight_messages(semantic), None
+        if ask_bypassed and decision in {
+            CompactionDecision.ASK,
+            CompactionDecision.AUTOMATIC,
+        }:
+            # The user's answer was "do not compact this send" (or "compacted
+            # already"); a policy changed to Automatic meanwhile must not
+            # compact it anyway (Qodo #2 on PR #3003).
+            return _flatten_preflight_messages(semantic), None
         if decision is CompactionDecision.ASK:
+            # A composer send is held before it is committed (TASK-34350);
+            # this is the path for sends that cannot show the hold card.
             result = blocked(
                 (
                     "Conversation context reached its compaction threshold. "
-                    "Review and approve compaction before sending again."
+                    "Use Compact now in Conversation settings > Context and "
+                    "memory, then send again."
                 )
             )
             return provider_messages, result
@@ -26640,39 +27589,12 @@ class ConsoleChatController:
             # request still fits must not turn that advisory threshold into
             # an admission failure.  Block only when the immutable prepared
             # request proves that the effective input ceiling is exceeded.
-            if not prepared_before.known_overflow:
-                return _flatten_preflight_messages(semantic), None
-            if (
-                resolved.policy.failure_behavior
-                is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
-            ):
-                return _flatten_preflight_messages(semantic), None
-            if decision is CompactionDecision.NON_COMPACTABLE:
-                limiting_reason = (
-                    "No older complete conversation turns are available to compact."
-                )
-                recovery = (
-                    "Reduce the active request, system/tool/source context, or "
-                    "response maximum."
-                )
-            else:
-                limiting_reason = (
-                    resolved.validation_errors[0]
-                    if resolved.validation_errors
-                    else "The effective model input ceiling is unavailable."
-                )
-                recovery = (
-                    "Repair the model limit, reduce mandatory context or the "
-                    "response maximum, or allow older turns to be omitted."
-                )
-            result = blocked(
-                (
-                    "This request cannot fit the selected model. "
-                    f"{limiting_reason} Summarizing older turns cannot make "
-                    f"enough room. {recovery}"
-                )
+            alert = self._context_overflow_alert(
+                decision, resolved, capacity, prepared_before, resolution
             )
-            return provider_messages, result
+            if alert is None:
+                return _flatten_preflight_messages(semantic), None
+            return provider_messages, blocked(alert)
 
         requested_representation = resolved.policy.compaction_representation
         if effective.kind is EffectiveMemoryKind.GENERATED_RANGE:
@@ -26815,12 +27737,14 @@ class ConsoleChatController:
             session_id,
             resolution,
             reason="automatic",
-            current=lambda: self._compaction_admission(
-                session_id=session_id,
-                resolution=resolution,
-                prompt=prompt,
-            )
-            == admission,
+            current=lambda: (
+                self._compaction_admission(
+                    session_id=session_id,
+                    resolution=resolution,
+                    prompt=prompt,
+                )
+                == admission
+            ),
         )
         transaction = await service.compact(
             admission=admission,
@@ -26836,7 +27760,12 @@ class ConsoleChatController:
             prepare_main=prepare_main,
             prefix_messages=snapshots[: boundary_index + 1],
             retry_fence=compaction_retry_fence(
-                conversation_id, resolution, prompt, resolved, effective, snapshots,
+                conversation_id,
+                resolution,
+                prompt,
+                resolved,
+                effective,
+                snapshots,
                 active_request=not manual_action,
             ),
             honor_failure_latch=micro_compaction or not manual_action,
@@ -27007,6 +27936,7 @@ class ConsoleChatController:
         trusted_profile_user_message_id: str | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
+        compaction_ask_bypassed: bool = False,
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
 
@@ -27043,6 +27973,7 @@ class ConsoleChatController:
                         propagate_trace_call_persistence_errors
                     ),
                     trusted_profile_user_message_id=trusted_profile_user_message_id,
+                    compaction_ask_bypassed=compaction_ask_bypassed,
                 )
         finally:
             if isinstance(turn_context, ConsoleTurnExecutionContext):
@@ -27083,6 +28014,7 @@ class ConsoleChatController:
         trusted_profile_user_message_id: str | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
+        compaction_ask_bypassed: bool = False,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -27178,11 +28110,9 @@ class ConsoleChatController:
         character_emote_snapshot: CharacterEmoteRunSnapshot | None = None
         if force_plain:
             try:
-                character_emote_snapshot = (
-                    await self._character_emote_snapshot_for_run(
-                        owner_id,
-                        turn_context,
-                    )
+                character_emote_snapshot = await self._character_emote_snapshot_for_run(
+                    owner_id,
+                    turn_context,
                 )
             except _CharacterEmoteAuthorityChanged:
                 return self._block_context_preflight(
@@ -27230,6 +28160,8 @@ class ConsoleChatController:
                 continuation_target=continuation_target,
                 thinking_sidecar=thinking_sidecar,
                 thinking_policy=thinking_policy,
+                # TASK-34350: the user already answered this send's hold.
+                ask_bypassed=compaction_ask_bypassed,
             )
             if context_block is not None:
                 return context_block
@@ -27435,9 +28367,7 @@ class ConsoleChatController:
                     propagate_trace_call_persistence_errors=(
                         propagate_trace_call_persistence_errors
                     ),
-                    trusted_profile_user_message_id=(
-                        trusted_profile_user_message_id
-                    ),
+                    trusted_profile_user_message_id=(trusted_profile_user_message_id),
                 )
             return await self._run_direct_provider_reply(
                 resolution=resolution,
@@ -27700,11 +28630,15 @@ class ConsoleChatController:
             return
         register = getattr(bridge, "on_fleet_child_settled", None)
         if callable(register):
-            register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_child_settled)
+            register(
+                ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_child_settled
+            )
         else:
             register = getattr(bridge, "on_fleet_drained", None)
             if callable(register):
-                register(ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_fleet_drained)
+                register(
+                    ConsoleFleetWakeCoordinator.NAME, self._fleet_wake.on_fleet_drained
+                )
 
     def _on_fleet_drained_reattach_usage(self, event: Any) -> None:
         """``FleetDrained`` consumer: hop off the child's thread and fold.
@@ -29079,9 +30013,7 @@ class ConsoleChatController:
         project_state = (
             ProjectInstructionControlState(
                 project_instructions_enabled=project_snapshot.enabled,
-                working_folder_binding_id=(
-                    project_snapshot.working_folder_binding_id
-                ),
+                working_folder_binding_id=(project_snapshot.working_folder_binding_id),
                 working_folder_locator_fingerprint=(
                     project_snapshot.working_folder_locator_fingerprint
                 ),
@@ -29099,10 +30031,7 @@ class ConsoleChatController:
         confirm_project_dispatch = None
         project_authority_guard = None
         project_activation_callback = None
-        if (
-            session is not None
-            and project_state.project_instructions_enabled
-        ):
+        if session is not None and project_state.project_instructions_enabled:
             try:
                 registry = getattr(self.app, "workspace_registry_service", None)
             except Exception:
@@ -29447,7 +30376,9 @@ class ConsoleChatController:
                     session_id=session_id,
                     turn_context=turn_context,
                     project_root=(
-                        project_selection.root if project_selection is not None else None
+                        project_selection.root
+                        if project_selection is not None
+                        else None
                     ),
                     project_root_identity=(
                         project_selection.root_identity
@@ -29458,12 +30389,16 @@ class ConsoleChatController:
                     admitted_roots=run_admitted_roots,
                 )
             )
-            raw_shell_provider, raw_shell_review_hook = self._compose_raw_shell_provider(
-                session_id=session_id,
-                turn_context=turn_context,
-                project_root=(
-                    project_selection.root if project_selection is not None else None
-                ),
+            raw_shell_provider, raw_shell_review_hook = (
+                self._compose_raw_shell_provider(
+                    session_id=session_id,
+                    turn_context=turn_context,
+                    project_root=(
+                        project_selection.root
+                        if project_selection is not None
+                        else None
+                    ),
+                )
             )
             self._mcp_provider = mcp_provider
 
@@ -29541,7 +30476,9 @@ class ConsoleChatController:
             # hooks see every batch; each gates only what its provider owns,
             # so the combined hook is a collision-free merge.
             if local_review_hook is not None:
-                review_hook = build_combined_review_hook([review_hook, local_review_hook])
+                review_hook = build_combined_review_hook(
+                    [review_hook, local_review_hook]
+                )
             if virtual_cli_review_hook is not None:
                 review_hook = build_combined_review_hook(
                     [review_hook, virtual_cli_review_hook]
@@ -29559,7 +30496,9 @@ class ConsoleChatController:
                 managed_skill_promotion_gate = ManagedSkillProposalGate()
                 managed_skill_review_hook = build_managed_skill_promotion_review_hook(
                     managed_skill_promotion_gate,
-                    functools.partial(self.request_mcp_approvals, session_id=session_id),
+                    functools.partial(
+                        self.request_mcp_approvals, session_id=session_id
+                    ),
                 )
                 review_hook = build_combined_review_hook(
                     [review_hook, managed_skill_review_hook]
@@ -29620,7 +30559,9 @@ class ConsoleChatController:
             ):
                 raise RuntimeError("Prepared turn changed before provider dispatch.")
             if generation_token is None:
-                generation_token = self.store.begin_generation_attempt(assistant_message_id)
+                generation_token = self.store.begin_generation_attempt(
+                    assistant_message_id
+                )
             _generation_handoff.issue(generation_token)
             if variant_mode:
                 self.store.begin_variant_stream(
@@ -29642,7 +30583,8 @@ class ConsoleChatController:
                     candidate = self.store.get_message(trusted_profile_user_message_id)
                     if (
                         candidate.role is ConsoleMessageRole.USER
-                        and self.store.session_id_for_message(candidate.id) == session_id
+                        and self.store.session_id_for_message(candidate.id)
+                        == session_id
                     ):
                         trusted_profile_user_message = candidate
                 except KeyError:
@@ -29657,7 +30599,9 @@ class ConsoleChatController:
                     run_id=assistant_message_id,
                     session_id=session_id,
                     current_user_message=trusted_profile_user_message,
-                    kill_switch=(self._console_tool_kill_switch_reader() or (lambda: False)),
+                    kill_switch=(
+                        self._console_tool_kill_switch_reader() or (lambda: False)
+                    ),
                 )
             canvas_provider = None
             canvas_authority = None
@@ -30015,9 +30959,9 @@ class ConsoleChatController:
             if session.id == session_id:
                 conversation_id = session.persisted_conversation_id or session_id
                 with self._lifecycle_revision_lock:
-                    self._lifecycle_session_by_conversation[
-                        str(conversation_id)
-                    ] = session_id
+                    self._lifecycle_session_by_conversation[str(conversation_id)] = (
+                        session_id
+                    )
                 return conversation_id
         return session_id
 
@@ -30537,8 +31481,7 @@ class ConsoleChatController:
                 # stopped: ...").
                 return reason + suffix
             return (
-                f"Agent run stuck: "
-                f"{reason or 'budget or loop limit reached'}.{suffix}"
+                f"Agent run stuck: {reason or 'budget or loop limit reached'}.{suffix}"
             )
         return f"Agent run failed: {reason or outcome.status}."
 
@@ -30629,7 +31572,11 @@ class ConsoleChatController:
     def _resolved_system_prompt(self, session_id: str | None) -> str | None:
         """Resolve the trusted identity system template for the session kind."""
         session = next(
-            (candidate for candidate in self.store.sessions() if candidate.id == session_id),
+            (
+                candidate
+                for candidate in self.store.sessions()
+                if candidate.id == session_id
+            ),
             None,
         )
         return session_send_system_prompt(
@@ -31454,24 +32401,25 @@ class ConsoleChatController:
                 wake.retry_soon()
         # Hook lifecycle belongs to an accepted turn, independently of the
         # queue's coalesced notification policy. Pop before invoking callbacks.
-        if (
-            target in self._run_hooks_stop_pending
-            and run_state.status in {
-                ConsoleRunStatus.COMPLETED, ConsoleRunStatus.FAILED,
-                ConsoleRunStatus.STOPPED,
-            }
-        ):
+        if target in self._run_hooks_stop_pending and run_state.status in {
+            ConsoleRunStatus.COMPLETED,
+            ConsoleRunStatus.FAILED,
+            ConsoleRunStatus.STOPPED,
+        }:
             self._run_hooks_stop_pending.discard(target)
             try:
                 engine = self._run_hooks_engine()
                 if engine is not None:
                     engine.notify(
-                        "Stop", session_id=target,
-                        data={"status": {
-                            ConsoleRunStatus.COMPLETED: "completed",
-                            ConsoleRunStatus.FAILED: "error",
-                            ConsoleRunStatus.STOPPED: "cancelled",
-                        }[run_state.status]},
+                        "Stop",
+                        session_id=target,
+                        data={
+                            "status": {
+                                ConsoleRunStatus.COMPLETED: "completed",
+                                ConsoleRunStatus.FAILED: "error",
+                                ConsoleRunStatus.STOPPED: "cancelled",
+                            }[run_state.status]
+                        },
                     )
             except Exception:  # noqa: BLE001 -- observers cannot break settlement
                 logger.warning("Stop observer failed; continuing terminal publication")
@@ -31555,7 +32503,11 @@ class ConsoleChatController:
         if mapped_status is None:
             return
         session = next(
-            (candidate for candidate in self.store.sessions() if candidate.id == session_id),
+            (
+                candidate
+                for candidate in self.store.sessions()
+                if candidate.id == session_id
+            ),
             None,
         )
         conversation_id = (
@@ -31810,3 +32762,6 @@ class ConsoleChatController:
             # of one lost race.
             visible_copy=visible_copy,
         )
+
+
+

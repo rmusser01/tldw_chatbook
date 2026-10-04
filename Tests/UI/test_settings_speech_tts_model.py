@@ -108,9 +108,7 @@ def _malformed_sized_compressed_sample(response_format: str) -> bytes:
     if response_format == "mp3":
         return b"\xff\xfb\x90\x64" + b"\x00" * 413
     if response_format == "opus":
-        opus_head = (
-            b"OpusHead\x01\x01\x00\x00\x80\xbb\x00\x00\x00\x00\x00"
-        )
+        opus_head = b"OpusHead\x01\x01\x00\x00\x80\xbb\x00\x00\x00\x00\x00"
         return _ogg_page(opus_head, sequence=0, header_type=2) + _ogg_page(
             b"\x00" * 20,
             sequence=1,
@@ -119,12 +117,7 @@ def _malformed_sized_compressed_sample(response_format: str) -> bytes:
         stream_info = bytearray(34)
         packed = (44_100 << 44) | (15 << 36) | 1
         stream_info[10:18] = packed.to_bytes(8, "big")
-        return (
-            b"fLaC\x80\x00\x00\x22"
-            + bytes(stream_info)
-            + b"\xff\xf8"
-            + b"\x00" * 20
-        )
+        return b"fLaC\x80\x00\x00\x22" + bytes(stream_info) + b"\xff\xf8" + b"\x00" * 20
     if response_format == "aac":
         return b"\xff\xf1\x50\x80\x02\x9f\xfc" + b"\x00" * 13
     raise AssertionError(f"Unsupported test format: {response_format}")
