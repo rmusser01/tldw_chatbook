@@ -1,0 +1,29 @@
+.............                                                            [100%]
+=============================== warnings summary ===============================
+Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Performance/test_ui_ready_module_census.py:482: UserWarning: ui-ready-census: 1033/1033 modules (headroom 0); snapshot drift +5/-2
+    ratchet.emit_headroom(
+
+Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Performance/test_app_import_weight.py:325: UserWarning: boot-import-weight: 681/686 modules (headroom 5); snapshot drift +25/-13
+    ratchet.emit_headroom(
+
+Tests/Performance/test_screen_preimport_payload_budget.py::test_preimport_pass_payload_stays_within_budget
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Performance/test_screen_preimport_payload_budget.py:342: UserWarning: preimport-payload: 556/556 modules (headroom 0); 411958/425347 LOC (headroom 13389); 125112/135111 LOC fattest-route (library) (headroom 9999)
+    ratchet.emit_headroom(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+26.94s call     Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+7.26s call     Tests/Performance/test_app_import_weight.py::test_ensure_transformers_resolves_real_transformers_when_installed
+5.84s call     Tests/Performance/test_screen_preimport_payload_budget.py::test_preimport_pass_payload_stays_within_budget
+3.19s call     Tests/Performance/test_app_import_weight.py::test_app_import_stays_well_under_pre_fix_baseline
+2.87s call     Tests/Performance/test_app_import_weight.py::test_app_import_defers_advanced_tool_readiness
+2.77s call     Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_torch_or_transformers
+2.34s call     Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+2.15s call     Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_full_heavy_dependency_set
+1.69s call     Tests/Performance/test_app_import_weight.py::test_ensure_torch_resolves_real_torch_when_installed
+1.63s setup    Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+
+(15 durations < 1s hidden.)
+13 passed, 3 warnings in 58.12s

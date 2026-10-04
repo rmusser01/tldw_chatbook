@@ -1,6 +1,31 @@
 {
-  "source_head": "0d2e581ba96ef00adb02e2c800cd449582f8a629",
+  "source_head": "872efa5bdcf21fd17fe98b29177603d9e61faf99",
   "files": [
+    {
+      "path": "backup-dev-qualification.json",
+      "bytes": 705,
+      "sha256": "a0c2c2a2c58a1e947b6e1ee9230e1373e174e16cb8fcd13044eda31b8d530666"
+    },
+    {
+      "path": "backup-dev-qualification.log",
+      "bytes": 631,
+      "sha256": "9c85ac1516c1084fd7b7ab198a508d35c2394adb9996fe1c145b7790fdca4c31"
+    },
+    {
+      "path": "backup-dev-rebase-receipt.json",
+      "bytes": 7977,
+      "sha256": "38723932b054c9babc69834e08c6aaf189fed1137e3f36c4e62f63f40242b815"
+    },
+    {
+      "path": "backup-dev-startup.json",
+      "bytes": 612,
+      "sha256": "c0e5dc9a69067e267fbe014b2a16b4797c1e81b133bca591c55440560fca1c2d"
+    },
+    {
+      "path": "backup-dev-startup.log",
+      "bytes": 2647,
+      "sha256": "63c4bd9390ed5d8fcab3df17fbf6a632ce38b8e1c26ba0304bac8fa4a163a6dc"
+    },
     {
       "path": "baseline21.json",
       "bytes": 11323,
@@ -303,8 +328,8 @@
     },
     {
       "path": "progress.md",
-      "bytes": 4682,
-      "sha256": "8bfaf8022f268b45926dda256acf588e37511aafb9eb3493fb21793ff5d927c2"
+      "bytes": 5222,
+      "sha256": "fcf33ff61e9ecd059659496d1142ede82f71e53a4a544d255b7562fb6b611719"
     },
     {
       "path": "publication-audit-classification.json",
@@ -504,7 +529,7 @@
     {
       "path": "task-2-review.md",
       "bytes": 4311,
-      "sha256": "f02be365b76d8b26c4fea2b32ffba3c01471fd87210175d18518cf3d495edd61"
+      "sha256": "9d6690f39e788e6de435c1356d6f6dc7d0a0e5b819b1dc587d038af59bbef326"
     },
     {
       "path": "task-2-source-commit.log",

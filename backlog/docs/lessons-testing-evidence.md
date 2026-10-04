@@ -18412,3 +18412,7 @@ The same run found that Ctrl+U cleared a version-2 handoff visibly while the sav
 revision stayed unchanged, although direct store edit/clear tests passed. Exercise
 the mounted composer event and reopen the actual database: persistence must be
 wired to the empty edit event, not only to activation or nonblank input.
+
+### A clean rebase can duplicate cleanup before a new ownership guard
+
+PR #2995 rebased an earlier chat-create grant cleanup onto dev's newer close-ticket validation. Git merged both removals without a conflict: a stale ticket revoked a live session grant before being rejected, even though the newer validated cleanup already existed. Final review found the duplicate; all four existing stale/mismatched/generation and valid-close controls failed with KeyError before repair. Removing only the prevalidation cleanup made the complete shutdown owner pass36tests (`Docs/superpowers/qa/2026-10-03-console-pr2995-review-and-merge/task-2-report.md`). After rebasing lifecycle code, compare cleanup with newly landed ownership guards and qualify the complete affected guard owner; a conflict-free merge is not behavior evidence.

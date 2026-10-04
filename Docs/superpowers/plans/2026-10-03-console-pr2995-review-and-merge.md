@@ -28,7 +28,7 @@ Reason: Restore approved draft ownership and startup ratchets; no new schema or 
 
 ## Controller preparation
 
-- [ ] Incorporate latest dev81c7c94f48 backup-admission fix; verify reviewed feature source bytes unchanged and qualify affected backup/startup seams.
+- [x] Incorporate latest dev81c7c94f48 backup-admission fix; verify reviewed feature source bytes unchanged and qualify affected backup/startup seams.
 
 - [x] Record old PR head ce918c467898eb24feff216bced45b779bf310c6 and create /private/tmp/console-pr2995-merge/pre-rebase.bundle.
 - [x] Fetch origin/dev at 01a2020981c6197e5cd9945e5287567ad977edfe and rebase the feature branch. Resolve the lessons append by keeping both original entries.
@@ -70,11 +70,11 @@ Reason: Restore approved draft ownership and startup ratchets; no new schema or 
 - [x] Correct the guide: child agents may fork a chat or create a same-workspace draft; child requests require fresh confirmation. Casual destinations and bounded starts remain primary-only. Verify current prepare/bridge contracts before wording.
 - [x] Run complete Tests/Chat/test_console_runtime_shutdown.py with private profile and exact recorded command; no full suite/new markers/suppression. If baseline setup fails, diagnose/verify immutable base before repairing unrelated expectations.
 - [x] Run fatal Ruff, formatter ratchet for the touched Python file against recorded BASE, and git diff --check. Commit only these two owned paths; report exact SHA, results and retained warnings.
-- [ ] Scoped independent re-review of these two findings and this fix diff; no second whole-branch review or repeated tests without a concrete doubt.
+- [x] Scoped independent re-review of these two findings and this fix diff; no second whole-branch review or repeated tests without a concrete doubt.
 
 ## External review and publication
 
-- [ ] Independent task review of Task1, then whole-branch review of the rebased PR. Package diffs before dispatch; reviewers do not repeat completed test runs.
+- [x] Independent task review of Task1, then whole-branch review of the rebased PR. Package diffs before dispatch; reviewers do not repeat completed test runs.
 - [ ] Push with force-with-lease pinned to the verified old remote head; update the PR description and mark ready to enable reviews.
 - [ ] Retrieve all PR issue/review comments and Qodo suggestions. Verify each actionable finding; dispatch concrete follow-up fixes with reproductions and covering tests. Reply and resolve addressed threads with commit/test evidence.
 - [ ] Wait for current-head checks and Qodo completion. If future waiting is required, create a quiet thread heartbeat that continues review fixes and merge under the user's authorization.

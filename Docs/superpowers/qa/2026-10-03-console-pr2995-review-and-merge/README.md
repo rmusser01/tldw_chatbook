@@ -13,6 +13,8 @@ Task1 repairs accepted-original handoff consumption after caret/selection naviga
 
 Final branch review found two small issues: duplicate grant clearing before close-ticket validation, and inaccurate child-tool documentation. Task2 repairs them at source `0d2e581ba96ef00adb02e2c800cd449582f8a629`: four focused controls fail before repair, then the complete shutdown owner passes36tests without pytest warnings. Fatal Ruff, formatter ratchets and whitespace checks pass; exact owned source fingerprints match tested bytes. See `task-2-report.md`; its scoped re-review is recorded in `task-2-review.md`. Current-head GitHub checks and Qodo review remain publication gates; this archive alone does not establish merged state.
 
+Latest dev advanced again through PR2994: backup-admission device-renumbering and malformed-token normalization. The rebase onto `81c7c94f486491d6fde09584710dc3a3172225a0` yields `872efa5bdcf21fd17fe98b29177603d9e61faf99`; all78owned feature source/test blobs remain identical. The affected backup group passes42tests; startup/import ratchets pass13tests with three unchanged headroom warnings. See `backup-dev-rebase-receipt.json` and the two `backup-dev-*.json` receipts.
+
 ## Evidence
 
 | Record | Scope |
@@ -28,6 +30,7 @@ Final branch review found two small issues: duplicate grant clearing before clos
 | `derived-checks.json` | All11derived preflight guards exit0 in recorded scope |
 | `latest-dev-backlog-checks.json` | Both guards affected by docs-only dev qualified again |
 | `rebase-receipt.json`, `docs-dev-rebase-receipt.json` | Dev ancestry and historical QA/source identity |
+| `backup-dev-rebase-receipt.json`, `backup-dev-qualification.json`, `backup-dev-startup.json` | Latest dev ancestry, feature byte identity and affected seam qualification |
 | `rebase-task-id-sweep.json` | Ref/history/worktree task-ID ownership sweep |
 | `manifest.json`, `publication-audit.json` | Exact archived bytes, exclusions and scoped publication audit |
 
