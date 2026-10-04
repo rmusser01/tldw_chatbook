@@ -2426,6 +2426,37 @@ class S:
     assert _w003(with_callback) == [_row("S.on_button_pressed")]
 
 
+def test_w003_a_wait_push_and_a_hand_rolled_push_in_one_function_are_two_rows():
+    """A ``push_screen_wait`` and a hand-rolled wait in one function are two
+    pushes, so two rows: a new hand-rolled push beside a censused wait push
+    is a new row, not hidden behind the one already pinned."""
+    source = """
+class S:
+    async def on_button_pressed(self, event):
+        answer = asyncio.get_running_loop().create_future()
+        await self.app.push_screen_wait(Picker())
+        self.app.push_screen(Review(), callback=answer.set_result)
+        await answer
+"""
+    assert _w003(source) == [_row("S.on_button_pressed")] * 2
+
+
+def test_w003_a_wait_for_dismiss_push_with_a_callback_is_one_row():
+    """``push_screen(..., callback=..., wait_for_dismiss=True)`` is ONE push:
+    a wait push, never also a hand-rolled one, even in a function that
+    awaits the future its callback settles."""
+    source = """
+class S:
+    async def on_button_pressed(self, event):
+        answer = asyncio.get_running_loop().create_future()
+        await self.app.push_screen(
+            Review(), callback=answer.set_result, wait_for_dismiss=True
+        )
+        await answer
+"""
+    assert _w003(source) == [_row("S.on_button_pressed")]
+
+
 # The hand-rolled wait split across two functions, as ``(split, joined,
 # push site)``: ``split`` creates the future and pushes in a helper and
 # awaits it in the handler; ``joined`` is the same wait in ONE function.
@@ -2977,19 +3008,23 @@ class S:
     assert _w003(source) == [_row("S.on_button_pressed", "S._open")]
 
 
-# Every shape from here to the end of this section is a hand-rolled wait that
-# 5918cfd1df reports and that some version of a "leave this push out" rule
-# dropped during the PR #2987 review (rounds 2-6, 2026-10-03/04). The rule
+# Every shape from here to the end of this section is a hand-rolled wait
+# shape that 5918cfd1df reports. Each one but the last accepted false
+# positive -- a mutation pin that no version dropped -- lost a push to some
+# version of a "leave this push out" rule during the PR #2987 review (rounds
+# 2-6, 2026-10-03/04): a recall pin as a missed wait, an accepted false
+# positive as one of the precision controls the rule was for. The rule
 # left a callback push out when its callback seemed to settle a future other
 # than the awaited one: first by comparing names, then by proving what the
 # callback's body does, then by also requiring that nothing else could read
-# the settled future, and last only for a direct `callback=other.set_result`
-# (or a one-call lambda) of a local future nothing else read. Each version
+# the settled future, then only for a direct settle (`callback=
+# other.set_result`, a one-call lambda, a `partial` of it), and last only
+# for such a settle of a local future nothing else read. Each version
 # missed a way the awaited future can depend on the callback running. The
 # real-tree census stayed byte-identical every time, because the rule never
 # dropped a real push. The rule is gone: every callback push counts by shape,
-# and `_ACCEPTED_FALSE_POSITIVES` lists what that costs. These shapes stay
-# pinned, so any future precision rule has to keep every one of them.
+# and `_ACCEPTED_FALSE_POSITIVES` lists what that costs. The recall pins
+# stay, so any future precision rule has to keep every one of them.
 
 _AWAIT_REVIEW = """
 
@@ -3193,8 +3228,8 @@ async def review(screen):
         + _AWAIT_REVIEW,
         ("S.on_button_pressed", "review"),
     ),
-    # Pinned in round 4: a mutation could drop any premise below with every
-    # other case still green.
+    # The next four were pinned in round 4: a mutation could drop any of
+    # their premises with every other case still green.
     "rebound-by-a-walrus-in-a-nested-defs-default": (
         """
 async def review(screen):
@@ -3808,8 +3843,9 @@ def test_w003_a_callback_push_counts_even_when_it_settles_only_another_future(sh
 # settle is ever settled -- and any awaited future that is chained to one
 # of those futures hangs too. 511b3ddd49 asked only whether the settled
 # name was bound fresh, never whether that future ESCAPES: is read anywhere
-# other than as the receiver of a settle call. Each shape below is a row on
-# 5918cfd1df and was silent on 511b3ddd49 (PR #2987 review, round 3).
+# other than as the receiver of a settle call. Each shape in the next table
+# is a row on 5918cfd1df and was silent on 511b3ddd49 (PR #2987 review,
+# round 3).
 
 #: (source, row): the settled future feeds the awaited one.
 _SETTLED_FUTURE_FEEDS_THE_AWAITED_ONE = {
@@ -4200,8 +4236,9 @@ def test_w003_a_rebound_settled_attribute_or_an_indirect_callback_still_waits(sh
 # other effects -- and a nonlocal or item store a relay polls, an attribute
 # store a watcher or a property setter acts on, an await, a `with` block or
 # a returned inspection are effects with no call of their own. Each shape
-# below is a row on 5918cfd1df and was silent at 4c87eb4d3e (PR #2987
-# review, round 4); the six nested-def shapes are rows on origin/dev too.
+# in the next table is a row on 5918cfd1df and was silent at 4c87eb4d3e
+# (PR #2987 review, round 4); its six nested-def shapes are rows on
+# origin/dev too.
 
 #: (source, row): a callback that settles another future AND does more.
 _CALLBACK_EFFECTS_BEYOND_SETTLING = {
@@ -4518,12 +4555,16 @@ async def review(screen):
 # Round 6 (PR #2987 review of f606e0c3ef). The last version of the rule left
 # out only a direct settle of a LOCAL future that nothing else read, counting
 # a `cancel()`/`set()` statement as no read, and naming the introspection
-# that hands on every local. It still missed these. A nested scope holds the
-# future in a closure cell, which `__closure__`, `inspect.getclosurevars` or a
-# generator's locals read without loading the name; and
-# `asyncio.current_task().get_stack()` or `sys._current_frames()` reach the
-# pusher's frame through APIs the list did not name. Each is a row on
+# that hands on every local. It still missed these. A nested def or
+# generator holds the future in a closure cell, which `__closure__`,
+# `inspect.getclosurevars` or a generator's locals read without loading the
+# name; and `asyncio.current_task().get_stack()` or `sys._current_frames()`
+# reach the pusher's frame through APIs the list did not name. Each shape in
+# the next table but one, and the Event shape after it, is a row on
 # origin/dev and 5918cfd1df and was silent at a106783a85 and f606e0c3ef.
+# The one, `a-closure-cell-of-a-lambda-cancel`, is a control: silent at
+# a106783a85 too, it was already a row at f606e0c3ef, which exempted a
+# `cancel()` STATEMENT only, and a lambda's body is an expression.
 
 _PUSH_SETTLING_OTHER = """
 class S:
@@ -5001,8 +5042,9 @@ def test_w003_a_partial_of_a_settle_counts_by_shape(shape):
 
 def test_w003_a_settle_through_a_computed_receiver_hands_the_future_on():
     """``screen.chain(other, answer).cancel()`` hands ``other`` to ``chain``
-    before anything is cancelled. A row on 5918cfd1df and at every head of
-    the PR #2987 review."""
+    before anything is cancelled. A row on 5918cfd1df and origin/dev, and
+    at every head of the PR #2987 review from 7e1a1eccfc on; silent at
+    c2e4b15fe7 and 511b3ddd49."""
     source = (
         """
 async def review(screen):
@@ -5036,10 +5078,12 @@ def test_w003_a_settle_handed_to_a_partial_hands_its_future_on():
 
 #: (source, row): a package definition named like a future factory or like
 #: ``push_screen`` that hands the "fresh" future, or the callback's, on to
-#: the awaited one. Strict-xfail known misses at a106783a85 and f606e0c3ef:
-#: leaving a direct settle of a fresh local out had to trust those names.
-#: Counting every callback push needs no such premise, so each is a row
-#: again, as on 5918cfd1df and origin/dev.
+#: the awaited one. Silent at every head of the PR #2987 review from
+#: c2e4b15fe7 through f606e0c3ef, and pinned as strict-xfail known misses
+#: only at f606e0c3ef (added in 59b64872be), whose rule left a direct
+#: settle of a fresh local out and so had to trust those names. Counting
+#: every callback push needs no such premise, so each is a row again, as on
+#: 5918cfd1df and origin/dev.
 _DEFINED_UNDER_A_FACTORY_OR_PUSH_NAME = {
     "a-package-create-future-returning-the-awaited-future": (
         """

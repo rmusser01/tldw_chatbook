@@ -97,13 +97,16 @@ W003 (census ratchet, TASK-33621.13)
     "worker" on its pump), and ``request_hook_review`` logs an ERROR when
     awaited off one; the runtime proof is
     ``Tests/UI/test_console_hook_review_send_freeze.py``. The wait may be
-    split across two functions (TASK-33621.33): a helper that creates the
-    future and pushes with ``callback=``, then RETURNS the future, is a site
-    wherever it is awaited -- ``await helper()``, ``fut = helper(); await
-    fut``, ``await helper().wait()`` -- and so is a helper that STORES it on
-    ``self`` for a method of the same object (its class, a base, a subclass)
-    to await. Not followed: a future created by the caller and completed by
-    a push in a helper it calls.
+    split across two functions (TASK-33621.33): a plain ``def`` helper that
+    creates the future and pushes with ``callback=``, then RETURNS the
+    future, is a site wherever it is awaited -- ``await helper()``, ``fut =
+    helper(); await fut``, ``await helper().wait()``. An ``async def`` one
+    is a site only where its call's RESULT is awaited -- ``await (await
+    helper())`` -- since ``await helper()`` only obtains the future. A
+    helper that STORES it on ``self`` is a site wherever a method of the
+    same object (its class, a base, a subclass) awaits it. Not followed: a
+    future created by the caller and completed by a push in a helper it
+    calls.
 
     The roots are message handlers (``@on``, ``on_*``/``_on_*``, ``key_*``),
     actions (``action_*``) and watchers (``watch_*``), none of which Textual
@@ -694,7 +697,8 @@ class _Function:
 
     def _hand_rolled(self, settled: set[str]) -> int:
         """This body's callback pushes, when it created one of the futures
-        ``settled`` -- those a caller waits on; else 0.
+        ``settled`` -- those it awaits itself, or hands back for a caller to
+        await; else 0.
 
         Matched by SHAPE: every ``push_screen(..., callback=...)`` here
         counts, whatever its callback is or settles. Which future the
