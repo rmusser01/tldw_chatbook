@@ -42,6 +42,7 @@ import pytest
 from loguru import logger
 
 from Tests.Chat.test_console_fleet_wake import _drain, _settle, _survivor
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
@@ -681,8 +682,11 @@ async def test_transcript_payload_db_and_active_leaf_all_agree(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(tmp_path):
+async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(
+    tmp_path, request
+):
     """A staged wake targets a session id; that id must not change on nav.
 
     The snapshot preserved session ids explicitly
@@ -699,10 +703,11 @@ async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(tmp_pa
     gateway = _StallingWakeGateway()
     app.console_provider_gateway_factory = lambda: gateway
 
+    # This harness supplies the one content screen before deferred startup.
+    app._initial_screen_pushed = True
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
         await _wait_for_selector(chat, pilot, "#console-native-composer")
@@ -719,6 +724,10 @@ async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(tmp_pa
         await pilot.pause()
         await pilot.press("h", "a", "l", "f")
         await pilot.pause()
+        assert app.screen_stack == [app.screen_stack[0], chat]
+        assert app.screen is chat
+        assert chat._console_runtime().view is chat
+        assert chat.query_one("#console-native-composer").draft_text() == "half"
         before_ids = [session.id for session in store.sessions()]
         assert first.persisted_conversation_id in (None, ""), (
             "this test is about an UNSAVED conversation"
