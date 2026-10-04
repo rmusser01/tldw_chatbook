@@ -10,6 +10,12 @@ changes diagnostics only, on the separate `codex/console-pause-evidence` branch.
 
 Production source: PR head `16e5f0270e1ee02ed807abde940b25843a5b4c1d`, based on
 dev `8f83422dde2a5b95da648882b8f7e09da5b41f08`.
+During this investigation, concurrent retry-guard changes and a newer dev merge
+advanced PR #3017 to `b825d974d78306bc4a6d9db754fedbaac27c6985` (dev
+`a7d9bca5da`). The production diff from the measured commit changes only
+`Chat/console_trace_service.py`. The UI, storage admission, native-file, config,
+SQLite and CSS paths examined below are unchanged. Measurements remain pinned
+to the earlier source; they are not a fresh whole-head timing run.
 Native matrix [37228072972](https://github.com/rmusser01/tldw_chatbook/actions/runs/37228072972)
 ran diagnostic revision `badbc8dd17457f1943a5f3447cb5390ef130c0d1` on Python 3.12.10.
 Its OS-specific JSON timing/stacks and JUnit receipts are retained as artifacts.
