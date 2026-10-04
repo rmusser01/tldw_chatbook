@@ -31,13 +31,13 @@
    standalone harnesses. */
 #mcp-inspector-state,
 #mcp-overview-summary {
-    width: $ds-width-fill;
-    height: auto;
-    min-height: $ds-size-1;
+  width: $ds-width-fill;
+  height: auto;
+  min-height: $ds-size-1;
 }
 
 ConsoleSettingsModal {
-    align: center middle;
+  align: center middle;
 }
 
 /* TASK-33003.2: Chat settings is a dense form (DESIGN.md "Dense-form control
@@ -45,104 +45,104 @@ ConsoleSettingsModal {
    full border costs a row above and below, so a field is marked by a
    one-column left edge instead, and its focus by a thick edge + fill + bold. */
 ConsoleSettingsModal Input {
-    width: $ds-width-fill;
-    min-width: $ds-size-0;
-    height: $ds-control-height-compact;
-    min-height: $ds-control-height-compact;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
-    border-left: solid $ds-control-edge;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
+  width: $ds-width-fill;
+  min-width: $ds-size-0;
+  height: $ds-control-height-compact;
+  min-height: $ds-control-height-compact;
+  padding: $ds-space-0 $ds-space-1;
+  border: none;
+  border-left: solid $ds-control-edge;
+  background: $ds-surface-raised;
+  color: $ds-text-primary;
 }
 
 ConsoleSettingsModal Select {
-    width: $ds-width-fill;
-    min-width: $ds-size-0;
-    height: $ds-control-height-compact;
-    min-height: $ds-control-height-compact;
-    border: none;
-    border-left: solid $ds-control-edge;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
+  width: $ds-width-fill;
+  min-width: $ds-size-0;
+  height: $ds-control-height-compact;
+  min-height: $ds-control-height-compact;
+  border: none;
+  border-left: solid $ds-control-edge;
+  background: $ds-surface-raised;
+  color: $ds-text-primary;
 }
 
 ConsoleSettingsModal Checkbox {
-    height: $ds-size-1;
-    min-height: $ds-size-1;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
 }
 
 ConsoleSettingsModal Select > SelectCurrent {
-    width: $ds-width-fill;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    margin: $ds-space-0;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-    content-align: left middle;
+  width: $ds-width-fill;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  margin: $ds-space-0;
+  padding: $ds-space-0 $ds-space-1;
+  border: none;
+  background: $ds-surface-raised;
+  color: $ds-text-primary;
+  content-align: left middle;
 }
 
 ConsoleSettingsModal Select > SelectCurrent Static#label {
-    width: $ds-width-fill;
-    height: $ds-size-1;
-    background: transparent;
-    color: $ds-text-primary;
+  width: $ds-width-fill;
+  height: $ds-size-1;
+  background: transparent;
+  color: $ds-text-primary;
 }
 
 ConsoleSettingsModal Select > SelectCurrent .arrow {
-    background: transparent;
-    color: $ds-text-muted;
+  background: transparent;
+  color: $ds-text-muted;
 }
 
 ConsoleSettingsModal Input:focus {
-    height: $ds-control-height-compact;
-    min-height: $ds-control-height-compact;
-    border: none;
-    border-left: thick $ds-input-focus-accent;
-    outline: none;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    text-style: bold;
+  height: $ds-control-height-compact;
+  min-height: $ds-control-height-compact;
+  border: none;
+  border-left: thick $ds-input-focus-accent;
+  outline: none;
+  background: $ds-input-focus-bg;
+  color: $ds-text-primary;
+  text-style: bold;
 }
 
 ConsoleSettingsModal Input > .input--cursor {
-    background: $ds-input-focus-accent;
-    color: $ds-surface-panel;
+  background: $ds-input-focus-accent;
+  color: $ds-surface-panel;
 }
 
 ConsoleSettingsModal Input > .input--selection {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
 }
 
 ConsoleSettingsModal Select:focus {
-    border: none;
-    border-bottom: none;
-    border-left: thick $ds-input-focus-accent;
+  border: none;
+  border-bottom: none;
+  border-left: thick $ds-input-focus-accent;
     /* An outline's corner glyph paints over the left edge cell of a one-row
        Select (lessons-testing-evidence.md, task-17651); the edge is the cue. */
-    outline: none;
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
+  outline: none;
+  background: $ds-input-focus-bg;
+  color: $ds-text-primary;
 }
 
 ConsoleSettingsModal Select:focus > SelectCurrent {
-    background: $ds-input-focus-bg;
-    color: $ds-text-primary;
-    text-style: bold;
+  background: $ds-input-focus-bg;
+  color: $ds-text-primary;
+  text-style: bold;
 }
 
 /* The overlay holds focus while open, so Textual's 5% focus tint only cut
    the edge to 2.71:1 against the panel the guard pins it on (cubic #2937). */
 ConsoleSettingsModal Select > SelectOverlay {
-    padding: $ds-space-0 $ds-space-1;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
-    background-tint: transparent;
-    color: $ds-text-primary;
-    min-width: $ds-size-30;
+  padding: $ds-space-0 $ds-space-1;
+  border: solid $ds-grid-line;
+  background: $ds-surface-panel;
+  background-tint: transparent;
+  color: $ds-text-primary;
+  min-width: $ds-size-30;
 }
 
 /* TASK-33003.6: `SelectOverlay Option` rules never matched (Textual 8
@@ -150,181 +150,181 @@ ConsoleSettingsModal Select > SelectOverlay {
    modal lives in components/_lists.tcss. */
 
 ConsolePromptPickerModal {
-    align: center middle;
+  align: center middle;
 }
 
 ConsoleStylePickerModal {
-    align: center middle;
+  align: center middle;
 }
 
 ConsoleSystemPromptModal {
-    align: center middle;
+  align: center middle;
 }
 
 /* TASK-199: one shared Prompt-variable dialog for Console and Library lanes.
    Only the variable field owns scrolling; destination, authorization, status,
    and actions remain fixed and reachable at the 64x24 support floor. */
 PromptVariablesDialog {
-    align: center middle;
+  align: center middle;
 }
 
 #prompt-variables-dialog {
-    width: $ds-size-76;
-    max-width: $ds-percent-96;
-    height: $ds-percent-90;
-    max-height: $ds-size-36;
-    min-height: $ds-size-18;
-    padding: $ds-space-1 $ds-space-2;
-    border: round $ds-grid-line;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-    overflow-x: hidden;
-    overflow-y: hidden;
+  width: $ds-size-76;
+  max-width: $ds-percent-96;
+  height: $ds-percent-90;
+  max-height: $ds-size-36;
+  min-height: $ds-size-18;
+  padding: $ds-space-1 $ds-space-2;
+  border: round $ds-grid-line;
+  background: $ds-surface-panel;
+  color: $ds-text-primary;
+  overflow-x: hidden;
+  overflow-y: hidden;
 }
 
 #prompt-variables-destination {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    color: $ds-text-muted;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-1;
+  margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+  color: $ds-text-muted;
 }
 
 #prompt-variables-system-authorization {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-3;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-3;
+  margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+  background: $ds-surface-panel;
+  color: $ds-text-primary;
 }
 
 #prompt-variables-dialog #prompt-variables-apply-system {
-    width: $ds-size-5;
-    min-width: $ds-size-5;
-    max-width: $ds-size-5;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    padding: $ds-space-0;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
-    text-overflow: clip;
+  width: $ds-size-5;
+  min-width: $ds-size-5;
+  max-width: $ds-size-5;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
+  padding: $ds-space-0;
+  background: $ds-surface-panel;
+  color: $ds-text-primary;
+  text-overflow: clip;
 }
 
 #prompt-variables-system-state {
-    width: $ds-size-5;
-    min-width: $ds-size-5;
-    max-width: $ds-size-5;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    content-align: center middle;
-    color: $ds-text-primary;
-    text-style: bold;
+  width: $ds-size-5;
+  min-width: $ds-size-5;
+  max-width: $ds-size-5;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
+  content-align: center middle;
+  color: $ds-text-primary;
+  text-style: bold;
 }
 
 #prompt-variables-system-copy {
-    width: $ds-width-fill;
-    min-width: $ds-size-0;
-    height: $ds-size-2;
-    min-height: $ds-size-2;
-    content-align: left top;
-    color: $ds-text-primary;
-    text-wrap: wrap;
-    text-overflow: clip;
+  width: $ds-width-fill;
+  min-width: $ds-size-0;
+  height: $ds-size-2;
+  min-height: $ds-size-2;
+  content-align: left top;
+  color: $ds-text-primary;
+  text-wrap: wrap;
+  text-overflow: clip;
 }
 
 /* TASK-31665 AC#15: visible thumb -- see the first of these rules. */
 #prompt-variables-scroll {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-3;
-    border-top: solid $ds-grid-line;
-    border-bottom: solid $ds-grid-line;
-    background: $ds-surface-panel;
-    overflow-x: hidden;
-    overflow-y: auto;
-    scrollbar-size: 1 1;
-    scrollbar-background: $ds-surface-panel;
-    scrollbar-color: $ds-text-muted;
-    scrollbar-color-hover: $ds-text-muted;
-    scrollbar-color-active: $ds-action-focus;
+  width: $ds-width-full;
+  height: $ds-height-fill;
+  min-height: $ds-size-3;
+  border-top: solid $ds-grid-line;
+  border-bottom: solid $ds-grid-line;
+  background: $ds-surface-panel;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-size: 1 1;
+  scrollbar-background: $ds-surface-panel;
+  scrollbar-color: $ds-text-muted;
+  scrollbar-color-hover: $ds-text-muted;
+  scrollbar-color-active: $ds-action-focus;
 }
 
 .prompt-variable-row {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-5;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-5;
+  margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
 }
 
 .prompt-variable-label {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    color: $ds-text-muted;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-1;
+  color: $ds-text-muted;
 }
 
 #prompt-variables-dialog .prompt-variable-input {
-    width: $ds-width-full;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    border: none;
-    border-left: solid $ds-grid-line;
-    background: $surface-darken-1;
-    color: $ds-text-primary;
+  width: $ds-width-full;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
+  border: none;
+  border-left: solid $ds-grid-line;
+  background: $surface-darken-1;
+  color: $ds-text-primary;
 }
 
 #prompt-variables-dialog .prompt-variable-input:focus {
-    border-left: thick $ds-action-focus;
-    background: $ds-focus-bg;
-    color: $ds-text-primary;
-    text-style: bold;
+  border-left: thick $ds-action-focus;
+  background: $ds-focus-bg;
+  color: $ds-text-primary;
+  text-style: bold;
 }
 
 #prompt-variables-status {
-    width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    color: $ds-status-warning;
+  width: $ds-width-full;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  color: $ds-status-warning;
 }
 
 #prompt-variables-actions {
-    width: $ds-width-full;
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
-    align-horizontal: right;
+  width: $ds-width-full;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
+  margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+  align-horizontal: right;
 }
 
 #prompt-variables-cancel,
 #prompt-variables-original,
 #prompt-variables-apply {
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
-    border: none;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
+  margin: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+  border: none;
 }
 
 #prompt-variables-cancel,
 #prompt-variables-apply {
-    width: $ds-size-10;
-    min-width: $ds-size-10;
+  width: $ds-size-10;
+  min-width: $ds-size-10;
 }
 
 #prompt-variables-original {
-    width: $ds-agentic-prompt-vars-pane;
-    min-width: $ds-agentic-prompt-vars-pane;
+  width: $ds-agentic-prompt-vars-pane;
+  min-width: $ds-agentic-prompt-vars-pane;
 }
 
 #prompt-variables-actions Button:focus {
-    outline: heavy $ds-action-focus;
+  outline: heavy $ds-action-focus;
 }
 
 #prompt-variables-actions Button:disabled {
-    opacity: 100%;
-    text-opacity: 100%;
-    background: $surface-darken-1;
-    color: $text-muted;
+  opacity: 100%;
+  text-opacity: 100%;
+  background: $surface-darken-1;
+  color: $text-muted;
 }
 
 /* TASK-870: "View full log" read-only run-log viewer, sized/laid out the
@@ -332,7 +332,7 @@ PromptVariablesDialog {
    single action row), minus the multi-field editing chrome that modal
    doesn't need. */
 ConsoleRunLogModal {
-    align: center middle;
+  align: center middle;
 }
 
 #home-dashboard,
@@ -346,8 +346,8 @@ ConsoleRunLogModal {
 #acp-shell,
 #skills-shell,
 #settings-shell {
-    height: $ds-height-full;
-    min-height: $ds-size-0;
+  height: $ds-height-full;
+  min-height: $ds-size-0;
 }
 
 #home-title,
@@ -362,11 +362,11 @@ ConsoleRunLogModal {
 #acp-title,
 #skills-title,
 #settings-title {
-    height: $ds-destination-header-height;
-    min-height: $ds-destination-header-height;
-    padding: $ds-space-0 $ds-space-1;
-    margin: $ds-space-0;
-    border: none;
+  height: $ds-destination-header-height;
+  min-height: $ds-destination-header-height;
+  padding: $ds-space-0 $ds-space-1;
+  margin: $ds-space-0;
+  border: none;
 }
 
 #home-purpose,
@@ -387,17 +387,17 @@ ConsoleRunLogModal {
 #acp-mode-strip,
 #skills-mode-strip,
 #settings-category-strip {
-    height: $ds-destination-compact-strip-height;
-    min-height: $ds-destination-compact-strip-height;
-    padding: $ds-space-0 $ds-space-1;
-    margin: $ds-space-0;
-    border: none;
+  height: $ds-destination-compact-strip-height;
+  min-height: $ds-destination-compact-strip-height;
+  padding: $ds-space-0 $ds-space-1;
+  margin: $ds-space-0;
+  border: none;
 }
 
 #watchlists-header-bar {
     /* The backend Select needs three rows; auto height consumes the shell. */
-    height: $ds-size-3;
-    min-height: $ds-size-3;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
 }
 
 .home-dashboard-region,
@@ -428,13 +428,13 @@ ConsoleRunLogModal {
 #ccp-character-library-pane,
 #ccp-behavior-detail-pane,
 #ccp-attachment-inspector-pane {
-    width: $ds-width-fill;
-    min-width: $ds-size-0;
-    height: $ds-height-full;
-    min-height: $ds-size-0;
-    padding: $ds-space-1;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
+  width: $ds-width-fill;
+  min-width: $ds-size-0;
+  height: $ds-height-full;
+  min-height: $ds-size-0;
+  padding: $ds-space-1;
+  border: solid $ds-grid-line;
+  background: $ds-surface-panel;
 }
 
 /* TASK-15504: File Notes and Session Git are trust-sensitive local-file
@@ -445,19 +445,19 @@ ConsoleRunLogModal {
    because widget DEFAULT_CSS cannot override Textual's Button rule. */
 LibraryFileNotesWorkspace Button:disabled,
 LibraryFileNotesGitPanel Button:disabled {
-    opacity: 100%;
-    text-opacity: 100%;
-    text-style: none;
-    color: $ds-text-primary;
-    background: $surface-darken-1;
+  opacity: 100%;
+  text-opacity: 100%;
+  text-style: none;
+  color: $ds-text-primary;
+  background: $surface-darken-1;
 }
 
 .file-notes-git-commit-error,
 #file-notes-save-status.-error {
-    opacity: 100%;
-    text-opacity: 100%;
-    color: $ds-status-error-readable;
-    background: $error-darken-3;
+  opacity: 100%;
+  text-opacity: 100%;
+  color: $ds-status-error-readable;
+  background: $error-darken-3;
 }
 
 /* TASK-15509: Session Git previously redeclared a fixed focus palette inside
@@ -468,22 +468,22 @@ LibraryFileNotesGitPanel .file-notes-git-row:focus,
 LibraryFileNotesGitPanel .file-notes-git-row.-highlight,
 LibraryFileNotesGitPanel .file-notes-git-commit-included-row:focus,
 LibraryFileNotesGitPanel .file-notes-git-commit-included-row.-highlight {
-    background: $primary-background;
-    color: $text;
-    text-style: bold underline;
-    outline: none;
+  background: $primary-background;
+  color: $text;
+  text-style: bold underline;
+  outline: none;
 }
 
 LibraryFileNotesGitPanel Button.-style-default:focus {
-    background: $primary-background;
-    color: $text;
-    text-style: bold underline;
-    outline: none;
+  background: $primary-background;
+  color: $text;
+  text-style: bold underline;
+  outline: none;
 }
 
 LibraryFileNotesGitPanel #file-notes-git-push-body:focus,
 LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {
-    outline: heavy $primary;
+  outline: heavy $primary;
 }
 
 /* Disabled-action recovery remains on screen and uses readable semantic ink.
@@ -493,44 +493,44 @@ LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {
 #file-notes-git-status,
 #file-notes-git-push-result-reason,
 #file-notes-git-commit-check-again-reason {
-    opacity: 100%;
-    text-opacity: 100%;
-    color: $ds-text-primary;
+  opacity: 100%;
+  text-opacity: 100%;
+  color: $ds-text-primary;
 }
 
 #file-notes-authority {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    max-height: $ds-size-2;
-    color: $ds-text-muted;
-    text-wrap: wrap;
-    overflow: hidden hidden;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-1;
+  max-height: $ds-size-2;
+  color: $ds-text-muted;
+  text-wrap: wrap;
+  overflow: hidden hidden;
 }
 
 ConsoleTerminalWorkspace Button {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    max-height: $ds-size-1;
-    margin: $ds-space-0;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
-    content-align: center middle;
+  width: $ds-width-full;
+  min-width: $ds-size-0;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  max-height: $ds-size-1;
+  margin: $ds-space-0;
+  padding: $ds-space-0 $ds-space-1;
+  border: none;
+  content-align: center middle;
 }
 
 ConsoleTerminalWorkspace Button:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold underline;
 }
 
 /* Shared direct-section body. The owner applies the measured content-row
    allocation inline; no CSS ceiling may override a smaller Context grant. */
 ConsoleBoundedSection {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 ConsoleAgentHistoryModal { align: center middle; background: $background 60%; }
@@ -562,44 +562,44 @@ ConsoleAgentHistoryModal { align: center middle; background: $background 60%; }
 #chat-skill-script-card,
 #skill-install-buttons,
 #skill-script-buttons {
-    height: auto;
+  height: auto;
 }
 
 /* task-3401.10: modal full-player screen -- centered panel, frame area above
    a status line (position/drift/dropped/mode) and the hints line (only
    implemented actions, decision 031). */
 VideoPlayerScreen {
-    align: center middle;
+  align: center middle;
 }
 
 VideoPlayerScreen .video-player-frame {
-    height: auto;
-    max-height: $ds-size-26;
-    padding: $ds-space-0 $ds-space-1;
+  height: auto;
+  max-height: $ds-size-26;
+  padding: $ds-space-0 $ds-space-1;
 }
 
 #video-player-status {
-    color: $ds-text-muted;
-    height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
+  color: $ds-text-muted;
+  height: $ds-size-1;
+  padding: $ds-space-0 $ds-space-1;
 }
 
 #video-player-hints {
-    color: $ds-text-muted;
-    text-style: dim;
-    height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
+  color: $ds-text-muted;
+  text-style: dim;
+  height: $ds-size-1;
+  padding: $ds-space-0 $ds-space-1;
 }
 
 /* TASK-26042: read-only Workspace Files modal.  The modal's rows are pinned;
    only the tree and safe viewer scroll.  At compact widths it deliberately
    becomes full-screen, so there is no misleading visible backdrop target. */
 ConsoleWorkspaceFilesModal {
-    align: center middle;
+  align: center middle;
 }
 
 ConsoleCitationSourcesModal {
-    align: center middle;
+  align: center middle;
 }
 
 /* task-18812 / ADR-071: focus mode. The -focus class lives on the
@@ -608,7 +608,7 @@ ConsoleCitationSourcesModal {
    reach it). display:none only — no raw visual values (ADR-042). The
    one-line #screen-footer-status status bar is intentionally KEPT. */
 ChatScreen.-focus MainNavigationBar {
-    display: none;
+  display: none;
 }
 
 
@@ -623,7 +623,7 @@ ChatScreen.-focus MainNavigationBar {
    VerticalScroll do the work. */
 .meetings-rail-block,
 .meetings-rail-actions {
-    height: auto;
+  height: auto;
 }
 
 /* Same treatment `.console-retrieval-scope-action` needed (TASK-24607):
@@ -631,8 +631,8 @@ ChatScreen.-focus MainNavigationBar {
    `min-width: 16`. Four 16-column buttons need 65 columns; the rail is half
    a workbench, so "Import…" was clipped to one column at 100 (review I4). */
 .meetings-rail-button {
-    width: auto;
-    min-width: $ds-size-0;
+  width: auto;
+  min-width: $ds-size-0;
 }
 
 #artifacts-workbench,
@@ -645,17 +645,17 @@ ChatScreen.-focus MainNavigationBar {
 #settings-workbench,
 #evals-workbench,
 #meetings-workbench {
-    height: $ds-height-fill;
+  height: $ds-height-fill;
     /* Must stay below the worst-case available height at small terminal
        sizes, otherwise content overflows and the footer status bar
        intercepts clicks on the covered rows. Pane content scrolls
        internally. */
-    min-height: $ds-size-10;
-    padding: $ds-space-1;
-    margin: $ds-space-0;
-    overflow: hidden;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
+  min-height: $ds-size-10;
+  padding: $ds-space-1;
+  margin: $ds-space-0;
+  overflow: hidden;
+  border: solid $ds-grid-line;
+  background: $ds-surface-panel;
 }
 
 #artifacts-list-pane,
@@ -674,7 +674,7 @@ ChatScreen.-focus MainNavigationBar {
 #mcp-readiness-pane,
 #acp-list-pane,
 #acp-detail-pane {
-    margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+  margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
 }
 
 #artifacts-inspector-pane,
@@ -683,7 +683,7 @@ ChatScreen.-focus MainNavigationBar {
 #workflows-inspector-pane,
 #mcp-readiness-pane,
 #acp-inspector-pane {
-    margin: $ds-space-0;
+  margin: $ds-space-0;
 }
 
 #personas-list-pane,
@@ -700,105 +700,105 @@ ChatScreen.-focus MainNavigationBar {
 #evals-library-pane,
 #evals-detail-pane,
 #evals-inspector-pane {
-    height: $ds-height-full;
-    min-height: $ds-size-0;
-    border: solid $ds-grid-line;
-    background: $ds-surface-panel;
+  height: $ds-height-full;
+  min-height: $ds-size-0;
+  border: solid $ds-grid-line;
+  background: $ds-surface-panel;
 }
 
 #personas-inspector-pane {
-    width: $ds-fr-2;
-    min-width: $ds-size-30;
-    border: solid $ds-grid-line;
-    padding: $ds-space-1;
+  width: $ds-fr-2;
+  min-width: $ds-size-30;
+  border: solid $ds-grid-line;
+  padding: $ds-space-1;
 }
 
 #personas-readiness-console {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: auto;
-    text-wrap: wrap;
+  width: $ds-width-full;
+  min-width: $ds-size-0;
+  height: auto;
+  text-wrap: wrap;
 }
 
 /* Workbench column split (2:4:2). Required here because the generic
    .destination-workbench-pane width (1fr) outranks the screen's DEFAULT_CSS,
    which would squeeze the work area to a third of its intended width. */
 #personas-library-pane {
-    width: $ds-fr-2;
-    min-width: $ds-size-24;
+  width: $ds-fr-2;
+  min-width: $ds-size-24;
 }
 
 #personas-work-area {
-    width: $ds-fr-4;
-    min-width: $ds-size-40;
+  width: $ds-fr-4;
+  min-width: $ds-size-40;
 }
 
 #personas-workbench.personas-workbench-compact {
-    padding: $ds-space-0;
+  padding: $ds-space-0;
 }
 
 #personas-library-pane.personas-workbench-compact-pane {
-    width: $ds-width-fill;
-    min-width: $ds-size-16;
-    padding: $ds-space-0 $ds-space-1;
+  width: $ds-width-fill;
+  min-width: $ds-size-16;
+  padding: $ds-space-0 $ds-space-1;
 }
 
 #personas-work-area.personas-workbench-compact-pane {
-    width: $ds-fr-3;
-    min-width: $ds-size-34;
-    padding: $ds-space-0 $ds-space-1;
+  width: $ds-fr-3;
+  min-width: $ds-size-34;
+  padding: $ds-space-0 $ds-space-1;
 }
 
 #personas-inspector-pane.personas-workbench-compact-pane {
-    width: $ds-width-fill;
-    min-width: $ds-size-22;
-    padding: $ds-space-0 $ds-space-1;
+  width: $ds-width-fill;
+  min-width: $ds-size-22;
+  padding: $ds-space-0 $ds-space-1;
 }
 
 #workflows-list-pane,
 #acp-list-pane {
-    width: $ds-fr-2;
-    min-width: $ds-size-30;
-    border: solid $ds-grid-line;
-    padding: $ds-space-1;
+  width: $ds-fr-2;
+  min-width: $ds-size-30;
+  border: solid $ds-grid-line;
+  padding: $ds-space-1;
 }
 
 #workflows-detail-pane,
 #acp-detail-pane {
-    width: $ds-fr-4;
-    min-width: $ds-size-52;
-    border: solid $ds-grid-line;
-    padding: $ds-space-1;
+  width: $ds-fr-4;
+  min-width: $ds-size-52;
+  border: solid $ds-grid-line;
+  padding: $ds-space-1;
 }
 
 #workflows-inspector-pane,
 #acp-inspector-pane {
-    width: $ds-fr-2;
-    min-width: $ds-size-34;
-    border: solid $ds-grid-line;
-    padding: $ds-space-1;
+  width: $ds-fr-2;
+  min-width: $ds-size-34;
+  border: solid $ds-grid-line;
+  padding: $ds-space-1;
 }
 
 .acp-selected-session-row {
-    width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    padding: $ds-space-0 $ds-space-1;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+  width: $ds-width-full;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+  padding: $ds-space-0 $ds-space-1;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold underline;
 }
 
 .acp-inspector-group-title {
-    width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
-    padding: $ds-space-0 $ds-space-1;
-    background: $ds-surface-raised;
-    color: $ds-text-primary;
-    text-style: bold;
+  width: $ds-width-full;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  margin: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0;
+  padding: $ds-space-0 $ds-space-1;
+  background: $ds-surface-raised;
+  color: $ds-text-primary;
+  text-style: bold;
 }
 
 #personas-list-detail-divider,
@@ -811,7 +811,7 @@ ChatScreen.-focus MainNavigationBar {
 #workflows-detail-inspector-divider,
 #acp-list-detail-divider,
 #acp-detail-inspector-divider {
-    background: $ds-grid-line;
+  background: $ds-grid-line;
 }
 
 .artifacts-column-title,
@@ -823,26 +823,26 @@ ChatScreen.-focus MainNavigationBar {
 .skills-column-title,
 .ccp-column-title,
 .settings-column-title {
-    width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
-    margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
-    background: $ds-surface-raised;
+  width: $ds-width-full;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  padding: $ds-space-0 $ds-space-1;
+  margin: $ds-space-0 $ds-space-0 $ds-space-1 $ds-space-0;
+  background: $ds-surface-raised;
     /* task-1625: the pane titles are the screen's one visual-voice
        carrier -- Focus Phosphor per DESIGN.md, bold, nowhere else. */
-    color: $accent;
-    text-style: bold;
+  color: $accent;
+  text-style: bold;
 }
 
 RagProfileNameModal,
 RagProfileSwitchConfirmModal {
-    align: center middle;
+  align: center middle;
 }
 
 _CredentialEditorModal,
 _CredentialClearModal {
-    align: center middle;
+  align: center middle;
 }
 
 /* ADR-161 task 9 split these density rules by family; task 10 moved the
@@ -850,23 +850,23 @@ _CredentialClearModal {
    _ds_primitives.tcss with their classes, so no member remains here. */
 
 .is-active {
-    border: round $ds-action-focus;
-    text-style: bold;
+  border: round $ds-action-focus;
+  text-style: bold;
 }
 
 .personas-mode-chip.is-active {
-    border: none;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+  border: none;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold underline;
 }
 
 .personas-mode-chip.is-active:focus {
-    outline: none;
-    border: none;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+  outline: none;
+  border: none;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold underline;
 }
 
 /* Keyboard-browse cursor: visually distinct from the flat subdued bg.
@@ -876,27 +876,27 @@ _CredentialClearModal {
    .is-active the final word. */
 ListItem.personas-library-row.-highlight,
 ListItem.personas-conversation-row.-highlight {
-    background: $ds-grid-line;
-    color: $ds-text-primary;
-    text-style: bold;
+  background: $ds-grid-line;
+  color: $ds-text-primary;
+  text-style: bold;
 }
 
 /* Selected/active row: wins because it appears later in the sheet. */
 ListItem.personas-library-row.is-active {
-    border: none;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold;
+  border: none;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold;
 }
 
 /* Active row that is also the browse cursor: .is-active styling wins
    (later in sheet, same specificity as the -highlight rule above). */
 ListItem.personas-library-row.is-active.-highlight {
-    outline: none;
-    border: none;
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold;
+  outline: none;
+  border: none;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold;
 }
 
 /* task-445: the global `*:focus { outline: solid $ds-focus-accent; }`
@@ -908,76 +908,76 @@ ListItem.personas-library-row.is-active.-highlight {
    selection via .is-active/.-highlight backgrounds above, so the fallback
    outline is both redundant and visually broken here. */
 #personas-library-rows:focus {
-    outline: none;
+  outline: none;
 }
 
 .is-disabled {
-    opacity: 0.55;
+  opacity: 0.55;
 }
 
 .is-blocked {
-    border: round $ds-status-error;
-    background: $ds-status-error 10%;
+  border: round $ds-status-error;
+  background: $ds-status-error 10%;
 }
 
 .is-running {
-    border: round $ds-status-running;
+  border: round $ds-status-running;
 }
 
 .is-paused {
-    border: round $ds-status-paused;
+  border: round $ds-status-paused;
 }
 
 .is-unsaved {
-    border: round $ds-status-unsaved;
+  border: round $ds-status-unsaved;
 }
 
 .is-stale {
-    color: $ds-text-muted;
+  color: $ds-text-muted;
 }
 
 .is-conflict {
-    border: thick $ds-status-error;
+  border: thick $ds-status-error;
 }
 
 .needs-approval {
-    border: thick $ds-status-approval-required;
-    background: $ds-status-approval-required 12%;
+  border: thick $ds-status-approval-required;
+  background: $ds-status-approval-required 12%;
 }
 
 .source-local {
-    border: round $ds-authority-local;
+  border: round $ds-authority-local;
 }
 
 .source-server {
-    border: round $ds-authority-server;
+  border: round $ds-authority-server;
 }
 
 .source-workspace {
-    border: round $ds-authority-workspace;
+  border: round $ds-authority-workspace;
 }
 
 .source-remote-only {
-    border: round $ds-authority-remote-only;
+  border: round $ds-authority-remote-only;
 }
 
 .source-dry-run {
-    border: dashed $ds-grid-line;
-    color: $ds-text-muted;
+  border: dashed $ds-grid-line;
+  color: $ds-text-muted;
 }
 
 /* --- MCP Hub (Phase 1 workbench) ------------------------------------- */
 
 #mcp-mode-strip Button.mcp-mode-chip {
-    width: auto;
-    min-width: $ds-size-10;
-    height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
+  width: auto;
+  min-width: $ds-size-10;
+  height: $ds-size-1;
+  padding: $ds-space-0 $ds-space-1;
+  border: none;
 }
 
 #mcp-mode-strip .mcp-mode-chip.is-active {
-    text-style: bold underline;
+  text-style: bold underline;
 }
 
 /* A1: focus must not impersonate .is-active above (bold underline). Kept in
@@ -986,18 +986,18 @@ ListItem.personas-library-row.is-active.-highlight {
    $surface/$text/$text-muted tokens instead of these $ds- aliases. */
 #mcp-mode-strip .mcp-mode-chip:focus,
 #mcp-mode-strip .mcp-mode-chip:hover:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold;
-    outline: none;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold;
+  outline: none;
 }
 
 #mcp-mode-strip .mcp-mode-chip.is-active:focus,
 #mcp-mode-strip .mcp-mode-chip.is-active:hover:focus {
-    background: $ds-surface-raised;
-    color: $ds-text-muted;
-    text-style: bold underline;
-    outline: none;
+  background: $ds-surface-raised;
+  color: $ds-text-muted;
+  text-style: bold underline;
+  outline: none;
 }
 
 /* --- Lab mode strip (Models | Speech | Evals) ---------------------------
@@ -1005,64 +1005,64 @@ ListItem.personas-library-row.is-active.-highlight {
    $ds-action-focus }` rule (line ~3869) otherwise draws a border around the
    1-row chip, clipping its label out of the 1-high strip entirely. */
 #lab-mode-strip Button.lab-mode-chip {
-    width: auto;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
+  width: auto;
+  min-width: $ds-size-0;
+  height: $ds-size-1;
+  padding: $ds-space-0 $ds-space-1;
+  border: none;
 }
 
 #lab-mode-strip .lab-mode-chip.is-active {
-    border: none;
-    text-style: bold underline;
+  border: none;
+  text-style: bold underline;
 }
 
 #lab-mode-strip .lab-mode-chip:focus,
 #lab-mode-strip .lab-mode-chip:hover:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold;
-    outline: none;
+  background: $ds-focus-bg;
+  color: $ds-focus-fg;
+  text-style: bold;
+  outline: none;
 }
 
 #lab-mode-strip .lab-mode-chip.is-active:focus,
 #lab-mode-strip .lab-mode-chip.is-active:hover:focus {
-    background: $ds-surface-raised;
-    color: $ds-text-muted;
-    text-style: bold underline;
-    outline: none;
+  background: $ds-surface-raised;
+  color: $ds-text-muted;
+  text-style: bold underline;
+  outline: none;
 }
 
 #mcp-hub-rail {
-    width: $ds-fr-3;
-    min-width: $ds-size-24;
+  width: $ds-fr-3;
+  min-width: $ds-size-24;
 }
 
 /* Compact rail content may be narrower than Button's default minimum.
    Keep the full navigation label and count paint inside the pane; narrow
    rows wrap naturally and the rail scrolls when more targets are present. */
 #mcp-hub-rail Button.mcp-rail-row {
-    min-width: $ds-size-0;
-    height: $ds-height-auto;
+  min-width: $ds-size-0;
+  height: $ds-height-auto;
     /* Button already supplies one line-pad cell on each side. */
-    padding: $ds-space-0;
+  padding: $ds-space-0;
 }
 
 #mcp-hub-rail .mcp-rail-heading {
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    margin-top: $ds-space-1;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  margin-top: $ds-space-1;
 }
 
 /* Keep the complete onramp and both source labels readable at 80 columns.
    The compact rail has 10 content cells beside its scrollbar. Remove
    SelectCurrent's extra padding, retaining its border and arrow shape. */
 #mcp-purpose {
-    height: $ds-height-auto;
+  height: $ds-height-auto;
 }
 
 #mcp-hub-grid.mcp-compact #mcp-rail-source > SelectCurrent {
-    padding: $ds-space-0;
+  padding: $ds-space-0;
 }
 
 /* Override border away from the generic `.is-active` rule (`border: round
@@ -1074,46 +1074,46 @@ ListItem.personas-library-row.is-active.-highlight {
    sibling `.mcp-mode-chip.is-active` rule below (and MCPScreen.DEFAULT_CSS's
    copy of it), which already carries this same `border: none` override. */
 #mcp-hub-rail Button.mcp-rail-row.is-active {
-    border: none;
-    text-style: bold;
+  border: none;
+  text-style: bold;
 }
 
 #mcp-hub-canvas {
-    width: $ds-fr-5;
-    min-width: $ds-size-38;
+  width: $ds-fr-5;
+  min-width: $ds-size-38;
 }
 
 #mcp-hub-inspector {
-    width: $ds-fr-3;
-    min-width: $ds-size-28;
-    height: $ds-height-full;
-    min-height: $ds-size-0;
+  width: $ds-fr-3;
+  min-width: $ds-size-28;
+  height: $ds-height-full;
+  min-height: $ds-size-0;
 }
 
 /* Inspector actions must fit beside the scrollbar, including approval copy.
    Override the shared single-row action height only in this scrolling pane. */
 #mcp-hub-inspector .console-action-primary,
 #mcp-hub-inspector .console-action-secondary {
-    min-width: $ds-size-0;
-    max-width: $ds-width-full;
-    height: auto;
-    text-wrap: wrap;
+  min-width: $ds-size-0;
+  max-width: $ds-width-full;
+  height: auto;
+  text-wrap: wrap;
 }
 
 /* Keep raw disclosure chrome and content within the compact inspector clip. */
 #mcp-inspector-test-result-raw > CollapsibleTitle {
-    width: $ds-width-full;
-    height: auto;
-    min-width: $ds-size-0;
+  width: $ds-width-full;
+  height: auto;
+  min-width: $ds-size-0;
 }
 
 #mcp-inspector-test-result-raw > Contents {
-    padding: $ds-space-0;
+  padding: $ds-space-0;
 }
 
 /* Leave space for disclosure chrome while retaining keyboard output scrolling. */
 .mcp-compact #mcp-inspector-test-result-raw-scroll {
-    height: $ds-size-8;
+  height: $ds-size-8;
 }
 
 /* F-057: below ~120 cols (`.mcp-compact` on #mcp-hub-grid, toggled by
@@ -1125,18 +1125,18 @@ ListItem.personas-library-row.is-active.-highlight {
    above, so it wins both contests. Kept in lockstep with the bare-harness
    copy in MCPWorkbench.DEFAULT_CSS. */
 #mcp-hub-grid.mcp-compact #mcp-hub-rail {
-    width: $ds-fr-2;
-    min-width: $ds-size-16;
+  width: $ds-fr-2;
+  min-width: $ds-size-16;
 }
 
 #mcp-hub-grid.mcp-compact #mcp-hub-canvas {
-    width: $ds-agentic-mcp-compact-canvas-share;
-    min-width: $ds-size-30;
+  width: $ds-agentic-mcp-compact-canvas-share;
+  min-width: $ds-size-30;
 }
 
 #mcp-hub-grid.mcp-compact #mcp-hub-inspector {
-    width: $ds-fr-2;
-    min-width: $ds-size-20;
+  width: $ds-fr-2;
+  min-width: $ds-size-20;
 }
 
 /* A5: the row wrapping the aggregate summary's colored glyph + neutral
@@ -1151,17 +1151,17 @@ ListItem.personas-library-row.is-active.-highlight {
    itself provides. `#mcp-detail-title` stays at exactly 1 (single-line
    badge + label). */
 #mcp-overview-summary-row {
-    height: auto;
-    min-height: $ds-size-1;
+  height: auto;
+  min-height: $ds-size-1;
 }
 
 #mcp-detail-title {
-    height: $ds-size-1;
-    min-height: $ds-size-1;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
 }
 
 #mcp-overview-callouts .ds-recovery-callout {
-    margin-top: $ds-space-1;
+  margin-top: $ds-space-1;
 }
 
 /* A2: disabled inspector action buttons must stay legible. The generic
@@ -1172,17 +1172,17 @@ ListItem.personas-library-row.is-active.-highlight {
    as functionally invisible on top of `.console-action-secondary`. Restore
    full opacity and use a dim-but-still-readable color instead. */
 #mcp-hub-inspector Button.mcp-inspector-action:disabled {
-    opacity: 100%;
-    background: $ds-surface-raised;
-    color: $ds-text-muted;
-    text-style: none;
+  opacity: 100%;
+  background: $ds-surface-raised;
+  color: $ds-text-muted;
+  text-style: none;
 }
 
 #mcp-hub-inspector Button.mcp-inspector-action:disabled:hover {
-    opacity: 100%;
-    background: $ds-surface-raised;
-    color: $ds-text-muted;
-    text-style: none;
+  opacity: 100%;
+  background: $ds-surface-raised;
+  color: $ds-text-muted;
+  text-style: none;
 }
 
 /* A3: same Button center-default lesson as Button.mcp-rail-row
@@ -1190,8 +1190,8 @@ ListItem.personas-library-row.is-active.-highlight {
    inspector's action stack. Kept in lockstep with the baseline copy in
    MCPInspector.DEFAULT_CSS (mcp_inspector.py). */
 Button.mcp-inspector-action {
-    text-align: left;
-    content-align: left middle;
+  text-align: left;
+  content-align: left middle;
 }
 
 /* --- MCP Hub Phase 2 ------------------------------------------------- */
@@ -1204,23 +1204,23 @@ quiet, not alarming; same muted tier as the legend/hint lines. */
 .mcp-status-muted { color: $ds-text-muted; }
 
 Button.mcp-callout {
-    width: $ds-width-full;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
+  width: $ds-width-full;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  padding: $ds-space-0 $ds-space-1;
+  border: none;
     /* Button defaults BOTH text-align AND content-align to center (see
        Textual's own Button.DEFAULT_CSS, and the same lesson documented on
        Button.mcp-rail-row in MCPRail.DEFAULT_CSS) -- text-align alone does
        not left-align a one-line Button label; without content-align the
        whole callout line still rendered centered under the table. */
-    text-align: left;
-    content-align: left middle;
+  text-align: left;
+  content-align: left middle;
 }
 
 #mcp-servers-form {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 /* Kept in lockstep with the baseline copy in MCPServersMode.DEFAULT_CSS
@@ -1232,35 +1232,35 @@ Button.mcp-callout {
    app-loaded CSS cascading on top of DEFAULT_CSS could silently
    reintroduce that regression. */
 #mcp-servers-table {
-    height: auto;
-    max-height: $ds-agentic-mcp-table-cap;
+  height: auto;
+  max-height: $ds-agentic-mcp-table-cap;
 }
 
 /* Kept in lockstep with the baseline copy in MCPToolsMode.DEFAULT_CSS
    (mcp_tools_mode.py) -- same fix, same rationale, as #mcp-servers-table
    immediately above. */
 #mcp-tools-table {
-    height: auto;
-    max-height: $ds-agentic-mcp-table-cap;
+  height: auto;
+  max-height: $ds-agentic-mcp-table-cap;
 }
 
 /* Keep every tool switch's name and state inside its allocated pane. */
 #mcp-tools-local-enabled,
 #mcp-detail-tool-gates .console-action-secondary {
-    width: $ds-width-full;
-    height: $ds-height-auto;
-    text-wrap: wrap;
+  width: $ds-width-full;
+  height: $ds-height-auto;
+  text-wrap: wrap;
 }
 
 /* The compact workbench cannot fit two useful filter fields side by side. */
 .mcp-compact #mcp-tools-filter-bar {
-    layout: vertical;
+  layout: vertical;
 }
 
 .mcp-compact #mcp-tools-filter-text,
 .mcp-compact #mcp-tools-filter-server-slot,
 .mcp-compact #mcp-tools-filter-server {
-    width: $ds-width-full;
+  width: $ds-width-full;
 }
 
 /* T9 (P4): kept in lockstep with the baseline copy in
@@ -1269,8 +1269,8 @@ Button.mcp-callout {
    hugs its own row count instead of ballooning to fill the canvas, leaving
    room for the policy-preview strip below it. */
 #mcp-perm-table {
-    height: auto;
-    max-height: $ds-agentic-mcp-table-cap;
+  height: auto;
+  max-height: $ds-agentic-mcp-table-cap;
 }
 
 /* T9 (P4): kept in lockstep with the baseline copy in
@@ -1281,8 +1281,8 @@ Button.mcp-callout {
    content, same bug class as #mcp-detail-builtin-toggles/#mcp-import-list
    below. */
 #mcp-perm-preview {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 /* Defect 1 fix (QA round mcp-hub-phase3-2026-07): kept in lockstep with the
@@ -1296,7 +1296,7 @@ Button.mcp-callout {
    default `1fr` inside a `width: auto` slot measured the whole bar's width
    in a probe, pushing the control past the bar's right edge. */
 #mcp-tools-filter-server-slot Select {
-    width: $ds-size-28;
+  width: $ds-size-28;
 }
 
 /* task-32286: the TASK-14807 `MCPToolsMode #mcp-tools-local-enabled`
@@ -1316,8 +1316,8 @@ Button.mcp-callout {
    Button roughly 800px below the built-in enable/expose checkboxes it
    should sit directly under. QA defect 1, mcp-hub-phase2-2026-07 round. */
 #mcp-detail-builtin-toggles {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 /* task-3240 fix round 1 (Minor 2): kept in lockstep with the baseline copy
@@ -1331,27 +1331,27 @@ Button.mcp-callout {
    regression here would be invisible to those tests -- only a bundled-CSS
    harness or the live app would catch it. */
 #mcp-detail-tool-gates {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 #mcp-detail-toolbar Button {
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    border: none;
+  height: $ds-size-1;
+  min-height: $ds-size-1;
+  border: none;
 }
 
 .mcp-compact #mcp-detail-toolbar {
-    layout: grid;
-    grid-size: 2;
-    grid-columns: 1fr 1fr;
-    grid-rows: $ds-size-1;
+  layout: grid;
+  grid-size: 2;
+  grid-columns: 1fr 1fr;
+  grid-rows: $ds-size-1;
 }
 
 .mcp-compact #mcp-detail-toolbar .console-action-primary,
 .mcp-compact #mcp-detail-toolbar .console-action-secondary {
-    width: 1fr;
-    min-width: $ds-size-0;
+  width: 1fr;
+  min-width: $ds-size-0;
 }
 
 /* A1: kept in lockstep with the baseline copy in MCPImportPanel.DEFAULT_CSS
@@ -1362,8 +1362,8 @@ Button.mcp-callout {
    on a real terminal window (same bug class as #mcp-detail-builtin-toggles,
    QA defect 1, mcp-hub-phase2-2026-07 round). */
 #mcp-import-list {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 /* T7 (P3 UX batch): quiet focus treatment for the hub's scrollable content
@@ -1381,9 +1381,9 @@ Button.mcp-callout {
    references. */
 #mcp-detail-scroll:focus,
 #mcp-adv-scroll:focus {
-    outline: none;
-    border: none;
-    background: $ds-surface-panel;
+  outline: none;
+  border: none;
+  background: $ds-surface-panel;
 }
 
 /* task-2272 item 1 (PR-T3 Task 6): the Test Tool's typed form rendered every
@@ -1408,15 +1408,15 @@ Button.mcp-callout {
    On/Off word beside it here, the glyph IS the state carrier, and a boolean
    the user cannot read is a lie about what was sent to the tool. */
 MCPSchemaForm Checkbox {
-    width: auto;
-    height: auto;
-    min-height: $ds-size-1;
+  width: auto;
+  height: auto;
+  min-height: $ds-size-1;
 }
 MCPSchemaForm Checkbox > .toggle--button {
-    color: $ds-surface-panel;
+  color: $ds-surface-panel;
 }
 MCPSchemaForm Checkbox.-on > .toggle--button {
-    color: $success;
+  color: $success;
 }
 
 /* --- MCP Hub Phase 5 (T9: Audit mode + Console batch approvals) ------ */
@@ -1426,15 +1426,15 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    #mcp-tools-table/#mcp-perm-table above: the execution-log table hugs its
    own row count instead of ballooning to fill the canvas. */
 #mcp-audit-table {
-    height: auto;
-    max-height: $ds-agentic-mcp-table-cap;
+  height: auto;
+  max-height: $ds-agentic-mcp-table-cap;
 }
 
 /* Kept in lockstep with the baseline copy in MCPAuditMode.DEFAULT_CSS --
    same fix, same rationale, for the T8 Findings sub-view table. */
 #mcp-audit-findings-table {
-    height: auto;
-    max-height: $ds-agentic-mcp-table-cap;
+  height: auto;
+  max-height: $ds-agentic-mcp-table-cap;
 }
 
 /* Kept in lockstep with the baseline copy in MCPAuditMode.DEFAULT_CSS.
@@ -1444,8 +1444,8 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    instead of hugging its own two-button content, same bug class as
    #mcp-perm-preview/#mcp-detail-builtin-toggles/#mcp-import-list above. */
 #mcp-audit-subview-strip {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
 }
 
 /* Audit filters share a full-width column. Explicit app-tier widths keep
@@ -1454,7 +1454,7 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
 #mcp-audit-filter-text,
 #mcp-audit-filter-decision,
 #mcp-audit-filter-initiator {
-    width: $ds-width-full;
+  width: $ds-width-full;
 }
 
 /* task-32287: the card's body and its action bar hug their content too.
@@ -1467,7 +1467,7 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    live pass reported. */
 #approval-batch-body,
 #approval-batch-actions {
-    height: auto;
+  height: auto;
 }
 
 /* The Console MCP batch-approval card's per-row layout
@@ -1499,8 +1499,8 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    row's FULL width, overlapping/clipping behind the header and args text
    laid out before it; it now pins the bounded share outright. */
 #approval-batch-rows {
-    height: auto;
-    min-height: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-0;
     /* TASK-1846: bound the rows so the action bar below them is reachable
        at ANY row count. The card is `height: auto` inside a plain Container
        (`ChatTaskCards`), so before this a long batch simply grew past the
@@ -1510,8 +1510,8 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
        moved that cliff from five rows to four, so the cap fixes the older
        bug rather than inheriting it. 15 leaves room for the header, the
        deadline and the action bar at 24 rows; taller batches scroll. */
-    max-height: $ds-size-15;
-    overflow-y: auto;
+  max-height: $ds-size-15;
+  overflow-y: auto;
 }
 /* TASK-1846 AC#2: `.approval-row` is now a Vertical -- header, arguments,
    and `.approval-row-controls` each on their own FULL width line (plus, since
@@ -1558,6 +1558,36 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    already keeps these borderless/1-row tall; fixed widths keep them from
    claiming `Button`'s `width: auto` share and squeezing the row. */
 .approval-row-fast-approve,.approval-row-fast-deny{width:$ds-size-14;min-width:$ds-size-14;}
+/* TASK-33625.2: compact grids keep every decision reachable with Inspect open. */
+.approval-compact {
+  padding: $ds-space-0 $ds-space-2;
+}
+.approval-compact #approval-batch-rows {
+  max-height: $ds-size-8;
+}
+.approval-compact .approval-row-controls {
+  layout: grid;
+  grid-size: $ds-size-2;
+  grid-columns: $ds-width-fill $ds-width-fill;
+}
+.approval-compact #approval-batch-actions {
+  layout: grid;
+  grid-size: $ds-size-3;
+  grid-columns: $ds-width-fill $ds-width-fill $ds-width-fill;
+}
+.approval-compact .approval-row-decision {
+  column-span: $ds-size-2;
+  width: $ds-width-fill;
+}
+/* ID subjects preserve specificity without indexing this rule under every Button. */
+.approval-compact Button#approval-approve-all,
+.approval-compact Button#approval-submit,
+.approval-compact Button#approval-deny-all {
+  width: $ds-width-fill;
+  min-width: $ds-size-0;
+  padding: $ds-space-0;
+}
+
 /* task-5 (Phase-5 follow-up): a bulk "Approve all"/"Deny all" press can't
    legally reach every narrowed row (`ChatApprovalCard._set_all_batch_
    decisions` -- a row whose `options` exclude every bulk candidate is left
@@ -1570,8 +1600,8 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    status-warning` one, since this state literally IS "still needs an
    approval decision." */
 .approval-row.needs-decision {
-    border: solid $ds-status-approval-required;
-    background: $ds-status-approval-required 10%;
+  border: solid $ds-status-approval-required;
+  background: $ds-status-approval-required 10%;
 }
 
 /* ConsoleScopePickerModal (rag-scope-narrowing spec §4, Task 8): RAG
@@ -1581,7 +1611,7 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    ConsolePromptPickerModal's modal shell (round border, $ds-surface-panel,
    1 2 padding) sized wider/taller for the extra filter/list chrome. */
 ConsoleScopePickerModal {
-    align: center middle;
+  align: center middle;
 }
 
 /* TASK-1775: one Console Prompt Workbench shell, opened only from the
@@ -1591,105 +1621,105 @@ ConsoleScopePickerModal {
    text labels; accent color is reserved for focus and the primary Improve
    action. */
 ConsolePromptsModal {
-    align: center middle;
+  align: center middle;
 }
 
 ConsolePromptDraftSaveDialog {
-    align: center middle;
+  align: center middle;
 }
 
 #console-prompt-draft-save-dialog {
-    width: $ds-size-60;
-    max-width: $ds-percent-96;
-    height: auto;
-    padding: $ds-space-1 $ds-space-2;
-    border: round $ds-grid-line;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
+  width: $ds-size-60;
+  max-width: $ds-percent-96;
+  height: auto;
+  padding: $ds-space-1 $ds-space-2;
+  border: round $ds-grid-line;
+  background: $ds-surface-panel;
+  color: $ds-text-primary;
 }
 
 #console-prompt-draft-save-copy {
-    width: $ds-width-full;
-    height: auto;
-    margin-bottom: $ds-space-1;
-    color: $ds-text-muted;
+  width: $ds-width-full;
+  height: auto;
+  margin-bottom: $ds-space-1;
+  color: $ds-text-muted;
 }
 
 #console-prompt-draft-save-actions {
-    width: $ds-width-full;
-    height: auto;
-    align-horizontal: right;
+  width: $ds-width-full;
+  height: auto;
+  align-horizontal: right;
 }
 
 #console-prompt-draft-editor {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-12;
+  width: $ds-width-full;
+  height: $ds-height-fill;
+  min-height: $ds-size-12;
 }
 
 #console-prompt-draft-editor-copy,
 #console-prompt-draft-status,
 #console-prompt-draft-promote-title {
-    width: $ds-width-full;
-    height: auto;
+  width: $ds-width-full;
+  height: auto;
 }
 
 #console-prompt-draft-editor-copy,
 #console-prompt-draft-status {
-    color: $ds-text-muted;
+  color: $ds-text-muted;
 }
 
 #console-prompt-draft-status.error {
-    color: $ds-status-error-readable;
+  color: $ds-status-error-readable;
 }
 
 #console-prompt-draft-content {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-6;
-    margin-top: $ds-space-1;
+  width: $ds-width-full;
+  height: $ds-height-fill;
+  min-height: $ds-size-6;
+  margin-top: $ds-space-1;
 }
 
 #console-prompt-draft-actions,
 #console-prompt-draft-promote-fields {
-    width: $ds-width-full;
-    height: auto;
+  width: $ds-width-full;
+  height: auto;
 }
 
 #console-prompt-draft-promote-title {
-    margin-top: $ds-space-1;
-    text-style: bold;
+  margin-top: $ds-space-1;
+  text-style: bold;
 }
 
 #console-prompt-draft-library-name,
 #console-prompt-draft-library-collection {
-    width: $ds-width-fill;
+  width: $ds-width-fill;
 }
 
 .console-prompts-result.highlighted {
-    border-left: thick $ds-action-focus;
-    background: $ds-focus-bg;
+  border-left: thick $ds-action-focus;
+  background: $ds-focus-bg;
 }
 
 ConsolePromptsModal.-narrow #console-prompt-draft-actions,
 ConsolePromptsModal.-narrow #console-prompt-draft-promote-fields {
-    layout: vertical;
+  layout: vertical;
 }
 
 ConsolePromptsModal.-narrow #console-prompt-draft-actions Button,
 ConsolePromptsModal.-narrow #console-prompt-draft-promote-fields Button,
 ConsolePromptsModal.-narrow #console-prompt-draft-library-name,
 ConsolePromptsModal.-narrow #console-prompt-draft-library-collection {
-    width: $ds-width-full;
+  width: $ds-width-full;
 }
 
 /* The legacy app-wide Checkbox rule fixes every checkbox at width: 100% and
    height: 2, leaving no content row inside Textual's tall border. Keep the
    shared Prompt editor's lane choices intrinsic and paintable. */
 PromptBlockEditor #prompt-editor-lane-options Checkbox {
-    width: auto;
-    height: $ds-size-3;
-    margin-bottom: $ds-space-0;
+  width: auto;
+  height: $ds-size-3;
+  margin-bottom: $ds-space-0;
 }
 
 /* Internal Prompts settings page */
@@ -1708,10 +1738,10 @@ PromptBlockEditor #prompt-editor-lane-options Checkbox {
 .internal-prompt-editor-actions { align-horizontal: right; height: auto; padding: $ds-space-1 $ds-space-0 $ds-space-0 $ds-space-0; }
 
 ImageGenSettingsPanel Checkbox > .toggle--button {
-    color: $ds-surface-panel;
+  color: $ds-surface-panel;
 }
 ImageGenSettingsPanel Checkbox.-on > .toggle--button {
-    color: $success;
+  color: $success;
 }
 
 /* task-2012: css/features/_conversations.tcss shipped an UNSCOPED
@@ -1722,26 +1752,26 @@ ImageGenSettingsPanel Checkbox.-on > .toggle--button {
    container rule kills the panel's trailing phantom height; the label
    rule styles the value-field labels added beside it. */
 LibraryIngestCanvas .type-group-contents {
-    height: auto;
+  height: auto;
 }
 LibraryIngestCanvas .type-group-contents Checkbox {
-    width: auto;
-    max-width: $ds-width-full;
-    height: auto;
-    text-wrap: wrap;
+  width: auto;
+  max-width: $ds-width-full;
+  height: auto;
+  text-wrap: wrap;
 }
 /* TASK-32666: escape the compact shell's one-row action cap so the
    disabled install explanation remains complete inside the option panel. */
 LibraryIngestCanvas #opt-audio_video-install-parakeet-v2,
 #library-shell-grid LibraryIngestCanvas #opt-audio_video-install-parakeet-v2 {
-    max-width: $ds-width-full;
-    height: auto;
-    max-height: $ds-height-full;
-    text-wrap: wrap;
+  max-width: $ds-width-full;
+  height: auto;
+  max-height: $ds-height-full;
+  text-wrap: wrap;
 }
 LibraryIngestCanvas .type-group-field-label {
-    color: $text-muted;
-    margin-top: $ds-space-1;
+  color: $text-muted;
+  margin-top: $ds-space-1;
 }
 
 /* task-14824 (3): Textual's stock `$text-disabled` placeholder measured
@@ -1752,7 +1782,7 @@ LibraryIngestCanvas .type-group-field-label {
    field's background, so the placeholder is re-measured against it. */
 LibraryIngestCanvas Input > .input--placeholder,
 LibraryIngestCanvas Input:disabled > .input--placeholder {
-    color: $ds-text-placeholder;
+  color: $ds-text-placeholder;
 }
 
 /* task-2014: focus on this canvas was a background-color change only --
@@ -1761,7 +1791,7 @@ LibraryIngestCanvas Input:disabled > .input--placeholder {
    `outline: heavy $accent`; outlines draw over the widget's own edge
    cells, so dimensions stay stable. */
 LibraryIngestCanvas Input:focus {
-    outline: heavy $accent;
+  outline: heavy $accent;
 }
 /* (task-2041) NOT an outline: `outline: heavy` on a 1-row compact button
    draws over the label row, so every focused action button rendered as a
@@ -1769,10 +1799,10 @@ LibraryIngestCanvas Input:focus {
    confirm was invisible exactly when it must be read. Reverse video is
    monochrome-visible AND keeps the label. */
 LibraryIngestCanvas Button:focus {
-    text-style: bold reverse;
+  text-style: bold reverse;
 }
 LibraryIngestCanvas Checkbox:focus {
-    outline: heavy $accent;
+  outline: heavy $accent;
 }
 /* task-14824 (1): this rule was DEAD on screen and had been since task-2014.
    `Select` composes an opaque `SelectCurrent` that fills its parent's ENTIRE
@@ -1786,18 +1816,18 @@ LibraryIngestCanvas Checkbox:focus {
    The colour half is kept (it is what a partially-covered Select shows);
    the STRUCTURAL cue moves to the child that is actually on screen. */
 LibraryIngestCanvas Select:focus {
-    outline: heavy $accent;
+  outline: heavy $accent;
 }
 /* Heavy replaces SelectCurrent's own `tall` border, so the cue is a glyph
    swap (▊▔▎▁ -> ┏━┓┃┗━┛) at identical thickness: no row is consumed (the
    task-3302 trap where a full `outline: heavy` ate a 1-row compact
    control's only row) and the value stays readable inside it. */
 LibraryIngestCanvas Select:focus > SelectCurrent {
-    border: heavy $ds-input-focus-accent;
+  border: heavy $ds-input-focus-accent;
 }
 
 LibraryIngestCanvas CollapsibleTitle:focus {
-    text-style: bold reverse;
+  text-style: bold reverse;
 }
 
 /* task-2015: at narrow widths the options-panel summary title clipped
@@ -1811,10 +1841,10 @@ LibraryIngestCanvas CollapsibleTitle:focus {
    (task-2043); it was retired in TASK-33003.1, and the one-line pin below
    now serves only the ellipsis. */
 LibraryIngestCanvas Collapsible > CollapsibleTitle {
-    width: $ds-width-fill;
-    height: $ds-size-1;
-    text-wrap: nowrap;
-    text-overflow: ellipsis;
+  width: $ds-width-fill;
+  height: $ds-size-1;
+  text-wrap: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* task-2043: Textual's Collapsible defaults supply the panel filler rows
@@ -1823,10 +1853,10 @@ LibraryIngestCanvas Collapsible > CollapsibleTitle {
    one trailed blank rows. Scoped removal; row separation comes from the
    panels' own stacking. */
 LibraryIngestCanvas Collapsible {
-    padding-bottom: $ds-space-0;
+  padding-bottom: $ds-space-0;
 }
 LibraryIngestCanvas Collapsible Contents {
-    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-3;
+  padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-3;
 }
 
 /* task-2100: the app-wide `Collapsible > CollapsibleTitle:focus` rule added
@@ -1847,9 +1877,9 @@ LibraryIngestCanvas Collapsible Contents {
    at equal (0,1,2) specificity silently discarded the rails (measured --
    `outline_left` stayed the ('', green) default). */
 LibraryIngestCanvas Collapsible > CollapsibleTitle:focus {
-    text-style: bold reverse;
-    outline-left: heavy $ds-focus-accent;
-    outline-right: heavy $ds-focus-accent;
+  text-style: bold reverse;
+  outline-left: heavy $ds-focus-accent;
+  outline-right: heavy $ds-focus-accent;
 }
 
 /* task-2130: inline option-validation message -- a TEXT line (never
@@ -1860,9 +1890,9 @@ LibraryIngestCanvas .type-group-field-error {
        fail, and LESS readable than ordinary help text at 7.21:1, which
        inverted the importance hierarchy. The readable token measures
        7.71:1 and still reads as an error colour. */
-    color: $ds-status-error-readable;
-    height: auto;
-    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-2;
+  color: $ds-status-error-readable;
+  height: auto;
+  padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-2;
 }
 
 /* task-2230 (a11y): the invalid-field border rendered ONLY while focused
@@ -1870,7 +1900,7 @@ LibraryIngestCanvas .type-group-field-error {
    to "Fix the highlighted options" -- pointing at a highlight that had
    already vanished. Mark the field whenever its value is invalid. */
 LibraryIngestCanvas Input.-ingest-option-invalid {
-    border: tall $ds-status-error-readable;
+  border: tall $ds-status-error-readable;
 }
 
 /* task-2130: the disabled Start-ingest label measured ~1.5:1 against its
@@ -1882,10 +1912,10 @@ LibraryIngestCanvas Button:disabled {
        own disabled dim), so no colour-only override survives it. Neutralise
        the opacity layer and state the colour; the flat background is what
        still says "not ready". */
-    opacity: 100%;
-    text-opacity: 100%;
-    color: $text-muted;  /* 115-gray: 3.15:1 measured live on the canvas bg */
-    background: $surface-darken-1;
+  opacity: 100%;
+  text-opacity: 100%;
+  color: $text-muted;  /* 115-gray: 3.15:1 measured live on the canvas bg */
+  background: $surface-darken-1;
 }
 
 /* task-3304 (MI-07): schema-disabled option FIELDS (Parakeet model folder /
@@ -1903,21 +1933,21 @@ LibraryIngestCanvas Button:disabled {
 LibraryIngestCanvas Input:disabled,
 LibraryIngestCanvas Select:disabled,
 LibraryIngestCanvas Checkbox:disabled {
-    opacity: 100%;
-    text-opacity: 100%;
-    color: $text-muted;
-    background: $surface-darken-1;
+  opacity: 100%;
+  text-opacity: 100%;
+  color: $text-muted;
+  background: $surface-darken-1;
 }
 /* SelectCurrent paints its own opaque $surface and colours the value via
    its inner `Static#label` -- without these two the Select override above
    never reaches the screen (the "set but painted over by a child" defect
    family from the Watchlists focus round). */
 LibraryIngestCanvas Select:disabled SelectCurrent {
-    background: $surface-darken-1;
-    color: $text-muted;
+  background: $surface-darken-1;
+  color: $text-muted;
 }
 LibraryIngestCanvas Select:disabled SelectCurrent Static#label {
-    color: $text-muted;
+  color: $text-muted;
 }
 
 /* task-2130: completion toasts overdrew both canvas bottom-border rows
@@ -1927,7 +1957,7 @@ LibraryIngestCanvas Select:disabled SelectCurrent Static#label {
    from the bottom-right anchor. App-wide by necessity (screen-level
    mount); two rows clears both frame borders. */
 Toast {
-    margin-bottom: $ds-space-2;
+  margin-bottom: $ds-space-2;
 }
 
 /* task-2160: clicking dead text focuses the scroll container itself, and
@@ -1935,117 +1965,117 @@ Toast {
    pane edges (round-5's "stray blue tick-marks", root-caused in round 6).
    The container keeps keyboard scrollability; its focus stops painting. */
 LibraryIngestCanvas:focus {
-    border: none;
-    outline: none;
+  border: none;
+  outline: none;
 }
 LibraryIngestCanvas:focus-within {
-    border: none;
-    outline: none;
+  border: none;
+  outline: none;
 }
 
 #notes-sync-body,
 #notes-sync-roots-body {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    scrollbar-gutter: stable;
+  width: $ds-width-full;
+  height: $ds-height-fill;
+  min-height: $ds-size-0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
 }
 
 #notes-sync-pinned-actions,
 #notes-sync-roots-pinned-actions {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    max-height: $ds-size-3;
-    background: $surface-darken-1;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-1;
+  max-height: $ds-size-3;
+  background: $surface-darken-1;
 }
 
 .notes-sync-conflict-choice.is-selected {
-    background: $accent 18%;
-    text-style: bold;
+  background: $accent 18%;
+  text-style: bold;
 }
 
 .notes-sync-conflict-title,
 .notes-sync-conflict-path,
 .notes-sync-conflict-effect,
 .notes-sync-conflict-selected {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    text-wrap: wrap;
-    text-overflow: clip;
+  width: $ds-width-full;
+  height: auto;
+  min-height: $ds-size-1;
+  text-wrap: wrap;
+  text-overflow: clip;
 }
 
 .notes-sync-conflict-path,
 .notes-sync-conflict-effect,
 .notes-sync-conflict-selected {
-    color: $text-muted;
+  color: $text-muted;
 }
 
 .notes-sync-comparison-diff {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: $ds-size-8;
-    min-height: $ds-size-4;
-    overflow-x: auto;
-    overflow-y: auto;
+  width: $ds-width-full;
+  min-width: $ds-size-0;
+  height: $ds-size-8;
+  min-height: $ds-size-4;
+  overflow-x: auto;
+  overflow-y: auto;
 }
 
 .notes-sync-receipt-actions,
 .notes-sync-history-actions {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: auto;
-    min-height: $ds-size-1;
+  width: $ds-width-full;
+  min-width: $ds-size-0;
+  height: auto;
+  min-height: $ds-size-1;
 }
 
 .notes-sync-receipt-actions > Button,
 .notes-sync-history-actions > Button {
-    min-width: $ds-size-0;
+  min-width: $ds-size-0;
 }
 
 .notes-sync-history-page {
-    width: auto;
-    min-width: $ds-size-6;
-    height: $ds-size-1;
-    content-align: left middle;
+  width: auto;
+  min-width: $ds-size-6;
+  height: $ds-size-1;
+  content-align: left middle;
 }
 
 ConsoleCapturePolicyDialog,
 ConsoleExchangeExportDialog {
-    align: center middle;
+  align: center middle;
 }
 
 #capture-policy-dialog,
 #exchange-export-dialog {
-    width: $ds-size-76;
-    max-width: $ds-percent-96;
-    height: $ds-size-22;
-    max-height: $ds-percent-96;
-    border: tall $primary;
-    background: $surface;
-    padding: $ds-space-1 $ds-space-2;
+  width: $ds-size-76;
+  max-width: $ds-percent-96;
+  height: $ds-size-22;
+  max-height: $ds-percent-96;
+  border: tall $primary;
+  background: $surface;
+  padding: $ds-space-1 $ds-space-2;
 }
 
 #capture-policy-title,
 #exchange-export-title {
-    height: $ds-size-1;
-    text-style: bold;
+  height: $ds-size-1;
+  text-style: bold;
 }
 
 #capture-policy-body,
 #exchange-export-body {
-    height: $ds-height-fill;
-    scrollbar-gutter: stable;
+  height: $ds-height-fill;
+  scrollbar-gutter: stable;
 }
 
 #capture-policy-scopes,
 #capture-policy-details,
 #exchange-export-profiles,
 #exchange-export-destinations {
-    height: auto;
+  height: auto;
 }
 
 #capture-policy-effective,
@@ -2055,44 +2085,44 @@ ConsoleExchangeExportDialog {
 #exchange-export-profile-copy,
 #exchange-export-full-reason,
 #exchange-export-status {
-    height: auto;
+  height: auto;
 }
 
 #capture-policy-reason,
 #exchange-export-full-reason {
-    color: $warning;
+  color: $warning;
 }
 
 #capture-policy-actions,
 #exchange-export-actions {
-    height: $ds-size-3;
-    min-height: $ds-size-3;
-    align-horizontal: right;
+  height: $ds-size-3;
+  min-height: $ds-size-3;
+  align-horizontal: right;
 }
 
 #capture-policy-actions Button,
 #exchange-export-actions Button {
-    min-width: $ds-size-10;
-    margin-left: $ds-space-1;
+  min-width: $ds-size-10;
+  margin-left: $ds-space-1;
 }
 
 #capture-policy-status.-error,
 #exchange-export-status.-error {
-    color: $error;
+  color: $error;
 }
 
 #exchange-export-path {
-    height: $ds-size-3;
+  height: $ds-size-3;
 }
 
 /* Buddy transcripts scroll the complete decision card. A 1fr batch body
    inside the auto-height card collapses and clips its controls at 60x20. */
 BuddyConversationModal #approval-batch-body {
-    height: auto;
+  height: auto;
 }
 BuddyConversationModal .approval-row-decision {
-    width: $ds-width-fill;
-    min-width: $ds-size-10;
+  width: $ds-width-fill;
+  min-width: $ds-size-10;
 }
 
 /* Session-only progress inspection shares the Console modal grammar. */
@@ -2144,378 +2174,378 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 
 /* --- cap 170 -- base width >= 104 columns --- */
 App.-wide-viewport #console-inspector-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-workspace-files-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #file-notes-conflict-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-run-log-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-citation-sources-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-side-chat-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-edit-message-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-edit-thinking-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #console-prompts-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #agent-history-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #agent-progress-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #worktree-recovery-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #internal-prompt-editor-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 /* PR #2742 review: persona voice-profile picker missed by the inventory (base 140) */
 App.-wide-viewport #speech-voice-profile-picker {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 /* Wave 2 (2026-09-19): skip-list follow-ups named by the PR #2742 triage
  * (recovery dialogs + Chatbook work windows, base caps 100-120) */
 App.-wide-viewport #notes-recovery-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport #skills-recovery-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport ChatbookCreationWindow > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport ChatbookExportManagementWindow > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 App.-wide-viewport ChatbookTemplatesWindow > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-170;
+  width: $ds-percent-85;
+  max-width: $ds-size-170;
 }
 
 /* --- cap 150 -- base width 84-96 columns --- */
 App.-wide-viewport #personal-context-review-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #console-scope-picker-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #console-prompt-comparison-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #buddy-conversation {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #actor-pack-import-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #personal-context-link-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #console-system-prompt-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #server-switch-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #buddy-inbox {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport FileExtractionDialog > Vertical.file-extraction-body {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport EmojiPickerScreen #dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 /* PR #2742 review: persona-management + tool-pack review surfaces missed
  * by the 2026-09-13 inventory (base widths 86-96) */
 App.-wide-viewport #buddy-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #petdex-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #tool-pack-export-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #tool-pack-import-options {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #tool-pack-import-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 App.-wide-viewport #tool-profile-bind-review {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 /* Wave 2 (2026-09-19): skip-list follow-up (base width 96) */
 App.-wide-viewport #prompt-collection-manager {
-    width: $ds-percent-85;
-    max-width: $ds-size-150;
+  width: $ds-percent-85;
+  max-width: $ds-size-150;
 }
 
 /* --- cap 120 -- base width <= 80 columns --- */
 /* PR #2742 review: persona-management surface missed by the inventory (base 78) */
 App.-wide-viewport #buddy-management {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport NoteCreationModal > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #conversation-selection-container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #note-selection-container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport AudioTroubleshootingDialog .dialog-container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #file-notes-push-auth-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #trace-export-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-library-access {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #capture-policy-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #trace-privacy-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #exchange-export-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-prompt-queue-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-reaction-picker-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-review-notes-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-endpoint-template-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-rewind-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #video-capacity-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #project-skills-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-prompt-picker-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-style-picker-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport .model-install-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport .local-gguf-import-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #file-notes-push-endpoint-details-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #file-notes-root-details-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-project-setup-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-fork-chat-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-character-picker {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-save-as-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-terminal-session-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #global-full-confirmation {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-generate-image-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport EncryptionSetupDialog > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #character-tts-collision-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #character-tts-existing-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport .settings-speech-credential-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport DocumentGenerationModal > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-auto-speak-consent-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-rag-settings {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-summarize-preview-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-workspace-switcher-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #prompt-delete-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #persona-visual-custom-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-save-markdown-box {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #profile-interview-cancel-modal {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #dictionary-picker-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #world-book-picker-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport DictionaryAttachPicker > Vertical.dictionary-attach-body {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport ConversationAttachPicker > Vertical.conversation-attach-body {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #profile-dialog-container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport FeedbackDialog > Container {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #console-composer-menu {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 App.-wide-viewport #prompt-variables-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 /* Wave 2 (2026-09-19): base-width-rule gap closed -- the dialog had no
  * width rule at all; its base geometry (76 / 95%) ships in the widget's
  * BUNDLED_CSS with this wave */
 App.-wide-viewport TemplateSelectorDialog .template-selector-dialog {
-    width: $ds-percent-85;
-    max-width: $ds-size-120;
+  width: $ds-percent-85;
+  max-width: $ds-size-120;
 }
 
 /* Optional denial text stays out of the compact card until requested.

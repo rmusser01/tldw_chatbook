@@ -168,7 +168,9 @@
    colour only (#a2a5a6 against #e0e0e0 for Back and Exit), and reviewers read
    it as enabled while Next was fenced. The dim attribute is a terminal-level
    cue that survives any palette, including monochrome. */
-.setup-navigation Button:disabled {
+.setup-navigation Button#wizard-back:disabled,
+.setup-navigation Button#wizard-next:disabled,
+.setup-navigation Button#wizard-cancel:disabled {
     text-style: dim;
 }
 

@@ -1429,6 +1429,7 @@ class ConsoleInspectorState:
         cls,
         *,
         live_work_title: Any = None,
+        pending_interrupt_copy: str = "",
         provider_label: Any = None,
         model_label: Any = None,
         provider_ready: bool = True,
@@ -1466,6 +1467,8 @@ class ConsoleInspectorState:
                 "Generating…" -- and ignored while ``approval_count`` is
                 non-zero, which reads "Waiting for your approval" instead
                 (task-32345: outranks ``run_active`` too).
+            pending_interrupt_copy: Waiting copy derived from the session's
+                registered interrupt kinds, ahead of active generation copy.
             provider_label: Active provider name for the run-recipe line.
             model_label: Active model name for the run-recipe line.
             provider_ready: Whether the provider can be sent to. ``False``
@@ -1544,17 +1547,15 @@ class ConsoleInspectorState:
             ConsoleDisplayRow("Run recipe", run_recipe),
             ConsoleDisplayRow(
                 "Live work",
-                # task-32345: a pending approval outranks everything below
-                # -- it is a fact about the USER (a card is waiting on
-                # them), more current than "a generation is in flight".
-                # TASK-347: else a running generation shows "Generating…";
-                # else the pending Library-RAG launch title, else no
-                # active work.
+                # Session-owned decisions outrank generation and launch copy.
+                # Approval has priority over questions and confirmations.
                 "Waiting for your approval"
                 if normalized_approval_count > 0
-                else "Generating…"
-                if run_active
-                else _clean(live_work_title, "No active work"),
+                else _clean(pending_interrupt_copy, "") or (
+                    "Generating…"
+                    if run_active
+                    else _clean(live_work_title, "No active work")
+                ),
             ),
             ConsoleDisplayRow(
                 "Provider",

@@ -165,6 +165,8 @@ MAX_TLDW_MODULES_AT_UI_READY = 1033
 #: The two package prefixes are TASK-21731's; the exact module names are the
 #: trajectory family TASK-22213 took off the Chat leg.
 ABSENT_AT_READY_PREFIXES = (
+    # Resend execution is first-use work; pure row eligibility is already resident.
+    "tldw_chatbook.Chat.console_turn_resend",
     "tldw_chatbook.Chunking",
     # Personal Context is user/setup/settings/send work. Its encrypted store,
     # interview coordinator, and agent tools must not delay the first frame.

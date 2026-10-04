@@ -11,7 +11,7 @@ from typing import Any, Optional, Callable
 from loguru import logger
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Container
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Label, Static
 
@@ -36,6 +36,7 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
         Binding("escape", "request_safe_cancel", "Cancel", show=False),
     ]
     SAFE_MODAL_CONTENT = "#confirmation-dialog"
+    AUTO_FOCUS = "#cancel-button"
 
     # CSS for styling
     DEFAULT_CSS = """
@@ -43,7 +44,8 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
         align: center middle;
     }
     
-    ConfirmationDialog > Container {
+    ConfirmationDialog > Container,
+    ConfirmationDialog > .confirmation-scroll {
         width: 60;
         height: auto;
         border: thick $accent;
@@ -122,7 +124,7 @@ class ConfirmationDialog(SafeModalDismissMixin, ModalScreen[bool]):
         # "Delete stored Full captures" confirmation never appeared at all.
         # Callers therefore must NOT pre-escape; the ones that did were
         # changed in the same commit.
-        with Container(id="confirmation-dialog"):
+        with VerticalScroll(id="confirmation-dialog", classes="confirmation-scroll"):
             yield Static(self.title, classes="dialog-title", markup=False)
             yield Label(self.message, classes="dialog-message", markup=False)
 
