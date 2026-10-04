@@ -651,10 +651,11 @@ itself, and offers Undo afterwards.
    you saw.
 3. A receipt opens straight away. While the delete is being saved it reads
    **Deleting N messages…**; with thousands of messages that can take a
-   moment, and the rest of Chatbook keeps responding meanwhile. A save can't
-   be stopped once it starts, so until it finishes **Esc** doesn't close the
-   receipt and **Ctrl+Q** says the delete is still being saved (press it
-   again to be asked whether to quit anyway).
+   moment, and the rest of Chatbook keeps responding while it saves (in a
+   very long chat, redrawing the transcript afterwards can still pause it).
+   A save can't be stopped once it starts, so until it finishes **Esc**
+   doesn't close the receipt and **Ctrl+Q** says the delete is still being
+   saved (press it again to be asked whether to quit anyway).
 4. Once saved, the receipt reads **Deleted N messages**. **Undo** (focused)
    puts exactly those messages back where they were and returns the
    conversation to the branch you were on; while it works the receipt reads

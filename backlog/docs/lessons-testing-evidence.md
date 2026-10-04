@@ -23,6 +23,15 @@ a second or more) before starting the clock. Put a control action beside it:
 arming the same Delete, which writes nothing, blocked the loop for 0.2-0.8 s.
 That marks the floor no change to the write can go below.
 
+**Then compare like with like.** The same task's notes first reported a
+single-probe "1.1 s -> 0.26 s" for the 3k delete; re-run as n=6 on both arms
+on one machine, the durable delete was 0.16-0.20 s on dev and 0.13-0.17 s on
+the branch, and the headline was withdrawn. Its live timing looked like an
+Undo regression (dev 0.54 s, branch 1.44 s "Undo to receipt closed"), but
+dev closes the receipt *before* it restores, so the two numbers timed
+different things. Time both arms to the same user-visible end state (rows
+back and the receipt gone), n>=3 each, and report ranges for both.
+
 ## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
 
 **TASK-14876 audit, 2026-09-30.** Checking whether the 2026-08-09 xdist
