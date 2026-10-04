@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:32'
-updated_date: '2026-10-04 19:16'
+updated_date: '2026-10-04 19:19'
 labels: []
 dependencies: []
 priority: high
@@ -94,6 +94,8 @@ The new checks and the previous 153 have no duplicate test identities: 334 uniqu
 PR3011 review follow-up: two new navigation races are verified in source: started ordered Resume survives suspension, and an older queued Home target competes with a newer character postcommit. Reopened only the focused repair task TASK-32108.1 and defect-regression criterion pending its fresh proof. Recorded human voice/native acceptance remains accepted and is not reopened. The loader validation recommendation has no unvalidated behavioral consumer; both paths use the existing canonical strict parser.
 
 PR3011 remaining review defects are resolved in TASK32108.1. Fresh49-case qualification and no-introduced static findings cover suspension, rollback, character supersession, cold ordered presentation and deferred Buddy close. Original human voice/native acceptance remains accepted and unrepeated; prior334 checks keep source attribution. Report and source-bound review receipt are updated; existing ADR094/139/147 apply. TASK31585 AC9 remains separate.
+
+Final documentation-only strict-base refresh: dev a7d9bca5da7f0d6be95cb9c3b7ab81602987051c adds15 unrelated Backlog follow-up records and merged cleanly at0cf557ff3757569bc259be98212e002fdd7c68d4 after the plan commit. Entire production, Tests, scripts, .github and pyproject.toml trees are byte-identical to published25c9e8d4e0fe79a38b226a72ddd7833491e76768, whose hosted UI lanes passed465 and1070 tests. Existing evidence retains that tested source; no unchanged product tests or accepted human/native/voice UAT repeated. Fresh guards pass:4993 unique/readable Backlog files; profile path census54 occurrences/22 files/51 exceptions; diagnostic census649 owners/1431 TASK492/56 TASK31551/7614 TASK494 calls/16 sinks. Whitespace and independent read-only integration review pass with no actionable finding. Private deterministic tree receipt:/private/tmp/chatbook-buddy-backlog-dev-20261004.json. Existing ADR094/139/147 apply; no new behavior, static-applicable code or ADR. Fresh hosted gates will qualify the updated head; protected auto-merge remains the intended integration.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
