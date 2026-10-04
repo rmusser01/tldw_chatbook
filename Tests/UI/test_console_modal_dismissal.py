@@ -2014,7 +2014,9 @@ async def test_settings_redirected_select_click_uses_real_mro_dispatch() -> None
 
 
 @pytest.mark.asyncio
-async def test_settings_change_pick_mode_escape_keeps_draft_and_focuses_change() -> None:
+async def test_settings_change_pick_mode_escape_keeps_draft_and_focuses_change() -> (
+    None
+):
     """TASK-33006.4 AC#4 (ADR-031 task-16211): Chat settings opens pick-only
     Switch model over itself; Esc returns to Chat settings with the draft
     unchanged and focus on Change, and Chat settings stays open."""

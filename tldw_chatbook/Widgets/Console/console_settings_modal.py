@@ -2602,7 +2602,9 @@ class ConsoleSettingsModal(
         pending = self._pending_suspended_scroll_restore
         restored_focus = pending is not None and logical_focus == pending[0]
         if restored_focus:
-            self.call_after_refresh(self._complete_suspended_scroll_restore, *pending[1:])
+            self.call_after_refresh(
+                self._complete_suspended_scroll_restore, *pending[1:]
+            )
         elif pending is not None:
             self._pending_suspended_scroll_restore = None
         if not (self._suppress_focus_reveal or restored_focus):

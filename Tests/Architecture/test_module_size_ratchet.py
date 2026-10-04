@@ -127,8 +127,10 @@ _BUDGETS: dict[str, int] = {
     # can widen it. TASK-33006.7 lowers it to 6,142: one handler switches
     # both views, which now open at their top. The Phase 6 final review fix
     # lowers it to 6,103: Save as model default shows on the saved-defaults
-    # answer, so the persisted-table predicate is gone.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6191,
+    # answer, so the persisted-table predicate is gone. (Counts above predate
+    # PR #2993's ruff reflow of this file, +60 lines AST-identical; Phase 6
+    # rebased onto it measures 6,193.)
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6193,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them
