@@ -580,6 +580,45 @@ async def test_voice_resume_restores_all_non_secret_controls():
 
 
 @pytest.mark.asyncio
+async def test_voice_resume_restores_no_voice_for_now():
+    """Review round 2 (F8): resume restores the checkpointed Service choice;
+    a "No voice for now" checkpoint (saved beside PocketTTS field values)
+    must come back as "No voice for now", body hidden, posting no save."""
+    resume = SetupDraft(
+        version=SETUP_DRAFT_VERSION,
+        track=TRACK_QUICK,
+        active_step_id=STEP_VOICE,
+        values={
+            STEP_WELCOME: {"track": TRACK_QUICK},
+            STEP_VOICE: {
+                "preset": "none",
+                "endpoint": "http://127.0.0.1:8000/tts",
+                "authentication_mode": "none",
+                "model_id": "pocket-tts",
+                "voice_id": "alba",
+                "response_format": "wav",
+                "speed": 1.0,
+                "sample_text": "Hello from Chatbook.",
+                "use_as_default": False,
+            },
+        },
+    )
+    wizard = _make_wizard(resume_draft=resume)
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.3)
+        container = wizard.query_one(SetupWizardContainer)
+        step = container.steps[container._step_index_for_id(STEP_VOICE)]
+        assert step._preset == "none"
+        assert step.query_one("#setup-voice-preset-none", RadioButton).value is True
+        assert step.query_one("#setup-voice-body").display is False
+        posted: list[object] = []
+        step.app.post_message = posted.append
+        assert await step.commit() == (True, "")
+        assert not [m for m in posted if isinstance(m, STTSSettingsSaveEvent)]
+
+
+@pytest.mark.asyncio
 async def test_voice_resume_restores_the_omnivoice_preset(monkeypatch):
     # TASK-34100.8: the OmniVoice half looks this up in its own module.
     import tldw_chatbook.UI.Wizards.first_run_voice_omnivoice as voice_step_module
@@ -1245,6 +1284,10 @@ async def test_voice_playback_failure_cleans_new_file_and_keeps_verification(
         assert step._verified_draft is not None
         # TASK-34100.8: a playback failure is distinct from a test failure.
         assert status == voice_status.PLAYBACK_FAILED_COPY
+        # Review round 2 (F7): a playback failure must not read as a failed
+        # test -- pin the words, not just the constant.
+        assert not status.startswith("Test failed")
+        assert "couldn't play" in status and "sound output" in status
         assert len(status) <= 120
         assert list(tmp_path.glob("chatbook-voice-sample-*")) == []
         assert step._sample_audio_path is None
@@ -1328,6 +1371,10 @@ async def test_voice_playback_reports_failure_when_no_os_player_is_found(
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
         assert status == voice_status.PLAYBACK_FAILED_COPY
+        # Review round 2 (F7): a playback failure must not read as a failed
+        # test -- pin the words, not just the constant.
+        assert not status.startswith("Test failed")
+        assert "couldn't play" in status and "sound output" in status
         assert list(tmp_path.glob("chatbook-voice-sample-*")) == []
 
 
@@ -1373,6 +1420,10 @@ async def test_voice_playback_cancellation_cleans_new_file(
         assert step._verified_draft is not None
         status = str(step.query_one("#setup-voice-status", Static).renderable)
         assert status == voice_status.PLAYBACK_FAILED_COPY
+        # Review round 2 (F7): a playback failure must not read as a failed
+        # test -- pin the words, not just the constant.
+        assert not status.startswith("Test failed")
+        assert "couldn't play" in status and "sound output" in status
 
 
 @pytest.mark.asyncio
@@ -10224,6 +10275,11 @@ async def test_summary_step_reads_back_the_saved_voice():
         await app.workers.wait_for_complete()
         rendered = str(step.query_one("#setup-summary-rows", Static).render())
         assert "✓ Voice — OmniVoice" in rendered
+        # Review round 2 (F10): the whole row -- the old "(default voice)"
+        # suffix contains the expected text, so a substring check passed it.
+        [row] = [line for line in rendered.splitlines() if "Voice —" in line]
+        assert row.strip().endswith("✓ Voice — OmniVoice")
+        assert "(default voice)" not in row
 
 
 @pytest.mark.asyncio

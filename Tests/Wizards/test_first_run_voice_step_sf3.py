@@ -930,6 +930,13 @@ async def test_a_stale_step_error_clears_on_input_and_service_change() -> None:
         await _settle(pilot, lambda: str(strip.render()) == "")
         assert str(strip.render()) == ""
 
+        # Review round 2 (F4): the Authentication radio is an input too.
+        step.show_step_error("A third thing.")
+        step.query_one("#setup-voice-auth-none", RadioButton).value = True
+        await _settle(pilot, lambda: str(strip.render()) == "")
+        assert str(strip.render()) == ""
+        assert strip.has_class("hidden")
+
 
 # -- AC#7: copy, the default box, one primary, pickers -----------------------------
 
@@ -982,6 +989,74 @@ async def test_voice_copy_controls_and_auto_tick(monkeypatch) -> None:
         )
         assert default.value is True  # ticked itself; counts as acting
         assert step._tested_this_run is True
+
+
+# -- review round 2: guards the mutation run found missing ----------------------
+
+
+@pytest.mark.asyncio
+async def test_a_successful_test_on_an_untouched_rerun_still_saves(monkeypatch) -> None:
+    """Review round 2 (F2): a successful test counts as acting this run, so
+    Next posts a save even when nothing was edited (the user verified it)."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-sent")
+
+    async def sample(*_args, **_kwargs):
+        return voice_state.VoiceSampleResult(b"valid", "audio/mpeg", "mp3", True)
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", sample)
+    step = _step(_raw(_WORKING_OPENAI_APP_TTS))
+    app = _CapturingHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert step._preset == voice_state.VOICE_PRESET_OFFICIAL_OPENAI
+        step.query_one("#setup-voice-test", Button).press()
+        await pilot.pause(0.2)
+        assert str(step.query_one("#setup-voice-status", Static).render()) == (
+            voice_status.PLAYED_COPY
+        )
+
+        commit = asyncio.create_task(step.commit())
+        await pilot.pause()
+        assert app.saved is not None
+        step.receive_stts_settings_save_result(
+            _applied_result(app.saved, defaults_activated=True)
+        )
+        assert await commit == (True, "")
+
+
+@pytest.mark.parametrize(
+    ("select_id", "field_id", "typed", "attribute"),
+    (
+        ("#setup-voice-voice-select", "#setup-voice-voice", "verse", "voice_id"),
+        ("#setup-voice-format-select", "#setup-voice-format", "flac", "response_format"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_other_reveals_a_focused_text_field_that_holds_the_value(
+    select_id, field_id, typed, attribute
+) -> None:
+    """Review round 2 (F5): "Other…" was only checked for being listed."""
+    from tldw_chatbook.UI.Wizards.first_run_voice_pickers import OTHER_VALUE
+
+    step = _step()
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step._select_preset_button("setup-voice-preset-official")
+        await pilot.pause()
+        step.query_one("#setup-voice-advanced").collapsed = False
+        await pilot.pause()
+        field = step.query_one(field_id, Input)
+        assert field.display is False  # the service's own value is picked
+
+        step.query_one(select_id, Select).value = OTHER_VALUE
+        await pilot.pause()
+        assert field.display is True
+        assert step.app.focused is field
+
+        field.value = ""
+        await pilot.press(*typed)
+        await pilot.pause()
+        assert getattr(step._draft_from_controls(), attribute) == typed
 
 
 # -- review round 1, F9: a placeholder key is not a key --------------------------
