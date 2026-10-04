@@ -1567,6 +1567,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._opened: OpenedFileNote | None = None
         self._current_path = ""
         self._selected_deleted_path = ""
+        # task-34383: the tombstone whose restore was refused (occupied or
+        # missing parent) and whose exact bytes the Export deleted copy
+        # fallback can still publish to a new path.
+        self._restore_refusal_path = ""
         self._session_key = ""
         self._save_state: SaveState = "idle"
         self._save_detail = ""
@@ -1815,6 +1819,11 @@ class LibraryFileNotesWorkspace(Vertical):
                 self._editor_widget,
                 Horizontal(
                     Button("Restore", id="file-notes-restore", compact=True),
+                    Button(
+                        "Export deleted copy",
+                        id="file-notes-export-deleted",
+                        compact=True,
+                    ),
                     Button("Compare", id="file-notes-compare", compact=True),
                     Button(
                         "Resolve conflict",
@@ -5676,6 +5685,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 "file-notes-move",
                 "file-notes-delete",
                 "file-notes-restore",
+                "file-notes-export-deleted",
                 "file-notes-compare",
                 "file-notes-resolve-conflict",
                 "file-notes-resolution-keep",
@@ -5767,6 +5777,11 @@ class LibraryFileNotesWorkspace(Vertical):
         recovery_copy.tooltip = copy_disabled_reason
         self.query_one("#file-notes-restore", Button).disabled = (
             not has_service or not has_deleted or not structurally_available
+        )
+        self.query_one("#file-notes-export-deleted", Button).disabled = (
+            not has_service
+            or not structurally_available
+            or not self._restore_refusal_path
         )
         self.query_one("#file-notes-refresh", Button).disabled = (
             self._service is None or not structurally_available
@@ -5894,6 +5909,9 @@ class LibraryFileNotesWorkspace(Vertical):
             "file-notes-move": has_document,
             "file-notes-delete": has_document and not resolving_conflict,
             "file-notes-restore": has_deleted,
+            "file-notes-export-deleted": (
+                has_deleted and bool(self._restore_refusal_path)
+            ),
             "file-notes-compare": (has_document and self._save_state == "conflict"),
             "file-notes-resolve-conflict": (
                 has_document
@@ -6438,6 +6456,10 @@ class LibraryFileNotesWorkspace(Vertical):
         self._work_mode = "edit"
         self._sync_work_mode()
         self._selected_deleted_path = relative_path
+        # task-34383: the export fallback belongs to the tombstone whose
+        # restore was refused; a different selection retires it.
+        if self._restore_refusal_path and self._restore_refusal_path != relative_path:
+            self._restore_refusal_path = ""
         self._clear_open_document(keep_restore_path=True)
         self.query_one("#file-notes-path", Input).value = relative_path
         self._fit_path_surfaces()
@@ -8732,6 +8754,8 @@ class LibraryFileNotesWorkspace(Vertical):
                 return
             deleted_path = opened.relative_path
             self._selected_deleted_path = deleted_path
+            # A fresh tombstone is restorable; no refusal is pending for it.
+            self._restore_refusal_path = ""
             self._work_mode = "edit"
             self._sync_work_mode()
             self._clear_open_document(keep_restore_path=True)
@@ -8744,6 +8768,7 @@ class LibraryFileNotesWorkspace(Vertical):
 
     @on(Button.Pressed, "#file-notes-restore")
     async def _restore_file(self, event: Button.Pressed) -> None:
+        """Restore tombstoned bytes, naming each refusal (task-34383)."""
         event.stop()
         service = self._service
         if service is None:
@@ -8753,11 +8778,84 @@ class LibraryFileNotesWorkspace(Vertical):
             relative_path = self._validated_path_input("Restore")
             if relative_path is None:
                 return
-        await self._complete_path_action(
-            "Restore",
-            relative_path,
-            service.restore_file,
-            relative_path,
+        with self._hold_path_transition() as transition:
+            if transition is None:
+                return
+            service, generation = transition
+            result = await asyncio.to_thread(service.restore_file, relative_path)
+            if self._path_result_is_stale(service, generation):
+                return
+            if not result.succeeded:
+                if result.status in {"exists", "missing"}:
+                    # task-34383: both no-replace refusals name their reason
+                    # and offer the exact-export fallback for these bytes.
+                    self._restore_refusal_path = relative_path
+                    reason = result.message or result.status
+                    self._set_action_status(
+                        f"Restore refused: {reason}. Export deleted copy can "
+                        "write the exact bytes to a new path instead."
+                    )
+                    self._update_controls()
+                    return
+                self._operation_error("Restore", result)
+                return
+            self._restore_refusal_path = ""
+            if not await self._rescan_after_action():
+                return
+            try:
+                opened = await asyncio.to_thread(service.open_file, relative_path)
+            except Exception as error:
+                self._set_action_status(f"Open failed: {error}")
+                return
+            if self._path_result_is_stale(service, generation):
+                return
+            self._apply_opened_document(opened, announce_editable=True)
+            self._update_controls()
+
+    @on(Button.Pressed, "#file-notes-export-deleted")
+    async def _export_deleted_copy(self, event: Button.Pressed) -> None:
+        """Exact-export refused-restore bytes to a new absent path."""
+        event.stop()
+        service = self._service
+        deleted_path = self._restore_refusal_path
+        if service is None or not deleted_path:
+            return
+        destination = self._validated_path_input("Export deleted copy")
+        if destination is None:
+            return
+        with self._hold_path_transition() as transition:
+            if transition is None:
+                return
+            service, generation = transition
+            result = await asyncio.to_thread(
+                service.export_revision_file,
+                deleted_path,
+                destination,
+                kind="delete",
+                session_key=None,
+            )
+            if self._path_result_is_stale(service, generation):
+                return
+            if not result.succeeded:
+                self._action_refusal("Export deleted copy", result)
+                return
+            self._restore_refusal_path = ""
+            if not await self._rescan_after_action():
+                return
+            self._set_action_status(
+                f"Exported the deleted bytes exactly to {destination}."
+            )
+            self._update_controls()
+
+    def _action_refusal(self, action: str, result: OperationResult) -> None:
+        """Report a non-editor action refusal without touching save state.
+
+        Recovery actions (history, deleted-copy export) never touch the open
+        document, so a refusal is an action-line fact -- never an editor
+        conflict the way ``_operation_error`` paints disk-changing failures.
+        """
+        self._set_action_status(
+            f"{action} failed: {result.message or result.status}"
         )
 
     @on(Button.Pressed, "#file-notes-protect")
@@ -8838,13 +8936,6 @@ class LibraryFileNotesWorkspace(Vertical):
         request: _HistoryActionRequest,
     ) -> None:
         """Run one History dialog action under the workspace's file guards."""
-
-        def report(action: str, result: OperationResult) -> None:
-            # History actions never touch the open document, so a refusal is
-            # reported on the action line alone -- never as an editor conflict.
-            detail = result.message or result.status
-            self._set_action_status(f"{action} failed: {detail}")
-
         with self._hold_path_transition() as transition:
             if transition is None:
                 return
@@ -8863,7 +8954,7 @@ class LibraryFileNotesWorkspace(Vertical):
                         "Revision verified: stored bytes match the recorded hash."
                     )
                 else:
-                    report("History verify", result)
+                    self._action_refusal("History verify", result)
                 return
             operation = (
                 service.export_revision_file
@@ -8883,7 +8974,7 @@ class LibraryFileNotesWorkspace(Vertical):
                 "History export" if request.action == "export" else "History restore"
             )
             if not result.succeeded:
-                report(action, result)
+                self._action_refusal(action, result)
                 return
             if not await self._rescan_after_action():
                 return

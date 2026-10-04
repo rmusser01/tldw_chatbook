@@ -1157,7 +1157,17 @@ class FileNotesService:
         try:
             descriptor = os.open(path, flags, 0o666)
         except FileExistsError:
-            return _result("exists", relative_path)
+            return _result(
+                "exists",
+                relative_path,
+                "Destination already exists; restore never replaces a file",
+            )
+        except FileNotFoundError:
+            return _result(
+                "missing",
+                relative_path,
+                "Parent directory is missing; restore only writes absent paths",
+            )
         except OSError as error:
             if error.errno in {errno.ELOOP, errno.ENOTDIR}:
                 return _result("unsafe", relative_path, str(error))
