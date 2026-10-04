@@ -225,6 +225,58 @@ def test_the_agent_failure_summary_keeps_the_whole_fix() -> None:
     assert len(summary) > 500, "the old cut would have dropped the fix"
 
 
+
+def test_agent_service_persists_the_whole_404_fix_in_its_error_step(
+    tmp_path,
+) -> None:
+    """Review C-F3: run the real AgentService error path, not the slice by
+    hand. Its model call raises the recorded Gemini 404 copy; the run's
+    error step -- the summary Console renders as the failure copy -- must
+    still end with the Alt+M fix (the old [:500] cut it). The run-log row
+    keeps its own shorter, marked truncation; that is storage, not copy."""
+    from tldw_chatbook.Agents.agent_models import AgentConfig, RUN_ERROR, STEP_ERROR
+    from tldw_chatbook.Agents.agent_service import AgentService
+    from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    exc = _raised_from_http(
+        ChatProviderError(
+            provider="google",
+            message="Error from google (Status 404).",
+            status_code=404,
+        ),
+        404,
+        GEMINI_RETIRED_MODEL_404,
+    )
+    copy = _provider_error_copy_with_model_recovery(
+        safe_provider_error_copy("google", exc),
+        model="gemini-2.0-flash",
+        status_code=404,
+    )
+    assert len(copy) > 500, "the recorded copy must be longer than the old cut"
+
+    def failing_model_call(**_kwargs):
+        raise RuntimeError(copy)
+
+    db = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    service = AgentService(
+        db=db, registry=ToolCatalogRegistry(), chat_call=failing_model_call
+    )
+    run_id, outcome = service.run_turn(
+        conversation_id="c",
+        messages=[{"role": "user", "content": "hi"}],
+        config=AgentConfig(model="gemini-2.0-flash", system_prompt="s"),
+        api_endpoint="google",
+    )
+
+    assert outcome.status == RUN_ERROR
+    errors = [step for step in outcome.steps if step.kind == STEP_ERROR]
+    assert errors, outcome.steps
+    summary = errors[-1].summary
+    assert summary.rstrip(")").endswith("(Alt+M: Switch model)."), summary
+    assert db.get_run(run_id)["status"] == RUN_ERROR
+
+
 def test_an_agent_failure_reason_that_ends_a_sentence_gets_no_second_period() -> None:
     """Live (slow llama.cpp, 2026-10-03): 'Agent run failed: no first token
     after 90 s -- ... or try a smaller model..' -- the wrapper added a period
