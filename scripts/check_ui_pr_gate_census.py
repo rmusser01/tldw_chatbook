@@ -80,7 +80,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # shared pane shell, rail-row fitting and the behaviour-neutral Tab region.
 # The mounted every-route Tab test (test_base_app_screen_tab_region_routes.py,
 # ~65 s) stays out of the fast lane; the B0 gate run executes it on both arms.
-MINIMUM_FILES = 125
+# TASK-33006 raised it to 130: the five Chat settings files (core-first,
+# disclosures, hidden fields, model change, saved defaults; ~5.3 min serial)
+# gate the redesigned modal, now inside TASK-34353's sharded lane.
+MINIMUM_FILES = 130
 
 
 def read_census(path: Path) -> list[str]:
