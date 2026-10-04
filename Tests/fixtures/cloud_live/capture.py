@@ -90,6 +90,7 @@ KNOWN_TOP = frozenset({"id", "object", "created", "model", "system_fingerprint",
 KNOWN_CHOICE = frozenset({"index", "message", "finish_reason"})
 KNOWN_STREAM_CHOICE = frozenset({"index", "delta", "finish_reason", "usage"})
 KNOWN_MESSAGE = frozenset({"role", "content", "reasoning_content", "tool_calls"})
+KNOWN_TOOL_CALL = frozenset({"id", "type", "function"})
 
 PLAIN_MESSAGES = [{"role": "user", "content": "Say ok."}]
 TOOL_MESSAGES = [
@@ -418,11 +419,13 @@ def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str,
             and ``stream_events``.
 
     Returns:
-        Uncovered key names per level (``top``, ``choice``, ``message``), sorted.
+        Uncovered key names per level (``top``, ``choice``, ``message``,
+        ``tool_call``), sorted. ``tool_call`` covers non-streamed call objects.
     """
     top: set[str] = set()
     choice: set[str] = set()
     message: set[str] = set()
+    tool_call: set[str] = set()
     for field in ("chat_response", "tool_call_response"):
         body = fixture.get(field)
         if not isinstance(body, dict) or "choices" not in body:
@@ -433,6 +436,9 @@ def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str,
                 choice |= set(item) - KNOWN_CHOICE
                 if isinstance(item.get("message"), dict):
                     message |= set(item["message"]) - KNOWN_MESSAGE
+                    for call in item["message"].get("tool_calls") or []:
+                        if isinstance(call, dict):
+                            tool_call |= set(call) - KNOWN_TOOL_CALL
     for payload in fixture.get("stream_events") or []:
         try:
             event = json.loads(payload)
@@ -450,6 +456,7 @@ def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str,
         "top": sorted(top - record.response_allowances),
         "choice": sorted(choice - record.choice_allowances),
         "message": sorted(message - record.message_allowances),
+        "tool_call": sorted(tool_call - record.tool_call_allowances),
     }
 
 

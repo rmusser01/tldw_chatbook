@@ -549,6 +549,95 @@ def test_stream_tolerant_tool_call_extras_normalized_in_visible_frame():
     ]
 
 
+# --- TASK-34364: Fireworks tool calls (cloud_live/fireworks.json) ---
+
+
+def _fireworks_tool_response(**call_extra) -> dict:
+    body = _tool_response()
+    call = body["choices"][0]["message"]["tool_calls"][0]
+    call.update({"name": None, **call_extra})
+    return body
+
+
+def test_allowed_tool_call_extras_are_validated_and_dropped():
+    turn = normalize_hosted_chat_response(
+        _fireworks_tool_response(),
+        finish_policy=_ToolCallsPolicy(),
+        allowed_tool_call_keys=frozenset({"index", "name"}),
+    )
+    assert turn.tool_calls == (
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": '{"city":"Tokyo"}'},
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("allowed", "call_extra"),
+    [
+        (frozenset(), {}),  # strict record: index/name still fail closed
+        (frozenset({"index", "name"}), {"other": 1}),  # only the named extras
+        (frozenset({"index", "name"}), {"name": [{"nested": "list"}]}),  # value rule
+    ],
+)
+def test_tool_call_extras_outside_the_allowance_fail_closed(allowed, call_extra):
+    """A tool-call extra outside the record's allowance, or breaking the value rule, fails.
+
+    Args:
+        allowed: The record's tool-call allowance.
+        call_extra: Keys merged onto the Fireworks-shaped call object.
+    """
+    with pytest.raises(HostedChatProtocolError):
+        normalize_hosted_chat_response(
+            _fireworks_tool_response(**call_extra),
+            finish_policy=_ToolCallsPolicy(),
+            allowed_tool_call_keys=allowed,
+        )
+
+
+def _tool_delta(call_id, arguments, *, name=None):
+    function = {"arguments": arguments} if name is None else {"name": name, "arguments": arguments}
+    return {"choices": [{"index": 0, "finish_reason": None, "delta": {
+        "tool_calls": [{"index": 0, "id": call_id, "type": "function", "function": function}]}}]}
+
+
+def _stream_turn(*deltas):
+    stream = HostedChatStream(
+        _stream_records(*deltas, {
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }),
+        finish_policy=_ToolCallsPolicy(),
+    )
+    list(stream)
+    return stream.terminal_turn
+
+
+def test_stream_continuation_with_a_null_id_keeps_the_call():
+    """Fireworks repeats ``"id": null`` on every continuation delta."""
+    turn = _stream_turn(
+        _tool_delta("call_1", '{"city": ', name="get_weather"),
+        _tool_delta(None, '"Tokyo"}'),
+    )
+    assert turn.tool_calls == (
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": '{"city": "Tokyo"}'},
+        },
+    )
+
+
+def test_stream_continuation_with_a_different_id_still_fails():
+    with pytest.raises(HostedChatProtocolError, match="identity changed"):
+        _stream_turn(
+            _tool_delta("call_1", '{"city": ', name="get_weather"),
+            _tool_delta("call_2", '"Tokyo"}'),
+        )
+
+
 def test_stream_known_keys_only_frames_pass_through_unchanged():
     # zai/moonshot byte-identity: they carry no allowances and no tolerance,
     # so validation admits known keys only and the filtered frame is the

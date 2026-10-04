@@ -518,7 +518,9 @@ class HostedChatStream(Iterator[dict[str, Any]]):
                 self._tools[index] = state
                 self._reserve_output(len(call_id) + len(name))
             else:
-                if "id" in raw_tool and raw_tool.get("id") != state.call_id:
+                # A continuation may repeat ``"id": null`` (Fireworks) instead
+                # of omitting it; null claims no identity (TASK-34364).
+                if raw_tool.get("id") is not None and raw_tool["id"] != state.call_id:
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool identity changed."
                     )
@@ -549,6 +551,7 @@ def normalize_hosted_chat_response(
     allowed_choice_keys: frozenset[str] = frozenset(),
     allowed_message_keys: frozenset[str] = frozenset(),
     tolerant_top_level_extras: bool = False,
+    allowed_tool_call_keys: frozenset[str] = frozenset(),
 ) -> HostedChatTurn:
     """Normalize one non-streaming OpenAI-shaped Chat response."""
     if not _json_shape_is_safe(response) or not isinstance(response, Mapping):
@@ -598,6 +601,7 @@ def normalize_hosted_chat_response(
     tool_calls = _normalize_tool_calls(
         message.get("tool_calls", ()),
         tolerant_extras=tolerant_top_level_extras,
+        allowed_keys=allowed_tool_call_keys,
     )
     if (
         len(text) + len(reasoning or "") + _tool_character_count(tool_calls)
@@ -1277,6 +1281,7 @@ def _normalize_tool_calls(
     value: object,
     *,
     tolerant_extras: bool = False,
+    allowed_keys: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any], ...]:
     if value is None:
         return ()
@@ -1290,13 +1295,20 @@ def _normalize_tool_calls(
         if not isinstance(raw_call, Mapping):
             raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
         keys = set(raw_call)
-        if not _REQUIRED_TOOL_CALL_KEYS <= keys or (
-            not tolerant_extras and keys != _REQUIRED_TOOL_CALL_KEYS
-        ):
+        if not _REQUIRED_TOOL_CALL_KEYS <= keys:
+            raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
+        if not tolerant_extras:
             # Tolerant profile (controller ruling a): call objects may carry
             # extra keys (ollama emits ``index``); id/type/function stay
-            # mandatory and extras are dropped, never passed through.
-            raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
+            # mandatory and extras are dropped, never passed through. A strict
+            # record may allow named extras (Fireworks: ``index``, ``name``).
+            _check_level_extras(
+                raw_call,
+                known=_REQUIRED_TOOL_CALL_KEYS,
+                allowed=allowed_keys,
+                tolerant=False,
+                label="tool call is malformed",
+            )
         call_id = _required_metadata(raw_call.get("id"), "tool ID")
         if raw_call.get("type") != "function" or call_id in call_ids:
             raise HostedChatProtocolError("Hosted Chat tool identity is malformed.")

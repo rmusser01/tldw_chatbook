@@ -244,11 +244,13 @@ _RECORD = next(r for r in capture_tool.engine_presets() if r.key == "zenmux")  #
 
 
 def test_uncovered_keys_reports_each_level_and_subtracts_allowances() -> None:
-    """Body top/choice/message and stream event/choice/delta keys, minus the record's allowances."""
+    """Body top/choice/message/tool-call and stream event/choice/delta keys, minus allowances."""
     fixture = {
         "chat_response": {
             "id": "c", "choices": [{"index": 0, "finish_reason": "stop", "extra_choice": 1,
-                                    "message": {"role": "assistant", "content": "ok", "refusal": None, "extra_msg": 1}}],
+                                    "message": {"role": "assistant", "content": "ok", "refusal": None, "extra_msg": 1,
+                                                "tool_calls": [{"id": "t", "type": "function", "index": 0,
+                                                                "function": {"name": "f", "arguments": "{}"}}]}}],
             "service_tier": "default", "extra_top": 1,
         },
         "tool_call_response": None,
@@ -262,6 +264,7 @@ def test_uncovered_keys_reports_each_level_and_subtracts_allowances() -> None:
         "top": ["event_extra", "extra_top"],
         "choice": ["extra_choice", "stream_choice_extra"],
         "message": ["delta_extra", "extra_msg"],
+        "tool_call": ["index"],
     }
 
 
@@ -273,5 +276,7 @@ def test_uncovered_keys_is_empty_for_a_strict_shape_and_ignores_error_bodies() -
         "tool_call_response": {"error": {"message": "bad request"}},
         "stream_events": ["not json", "[DONE]"],
     }
-    assert capture_tool.uncovered_keys(_RECORD, fixture) == {"top": [], "choice": [], "message": []}
+    assert capture_tool.uncovered_keys(_RECORD, fixture) == {
+        "top": [], "choice": [], "message": [], "tool_call": [],
+    }
 

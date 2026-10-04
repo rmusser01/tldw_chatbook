@@ -1,0 +1,331 @@
+{
+  "server": "fireworks",
+  "base_url": "https://api.fireworks.ai/inference/v1",
+  "model": "accounts/fireworks/models/minimax-m3",
+  "statuses": {
+    "plain": 200,
+    "tool": 200,
+    "stream": 200
+  },
+  "chat_response": {
+    "id": "chatcmpl-e7a666ef41af460ba43feb6622f776dd",
+    "object": "chat.completion",
+    "created": 1791138658,
+    "model": "accounts/fireworks/models/minimax-m3",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "ok.",
+          "reasoning_content": "The user is asking me to say \"ok.\" This is a very simple request."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 130,
+      "total_tokens": 152,
+      "completion_tokens": 22,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 17
+      },
+      "output_tokens_details": {
+        "reasoning_tokens": 17
+      }
+    }
+  },
+  "tool_call_response": {
+    "id": "chatcmpl-6c971702ddd14efaab5de61fdf5cddb1",
+    "object": "chat.completion",
+    "created": 1791138659,
+    "model": "accounts/fireworks/models/minimax-m3",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "I'll check the current weather in Tokyo for you.",
+          "reasoning_content": "The user wants me to get the weather in Tokyo using the get_weather tool.",
+          "tool_calls": [
+            {
+              "index": 0,
+              "id": "call_pm5qHyXNlwo0O59MIT0VRrbo",
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "arguments": "{\"city\": \"Tokyo\"}"
+              },
+              "name": null
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 369,
+      "total_tokens": 426,
+      "completion_tokens": 57,
+      "prompt_tokens_details": {
+        "cached_tokens": 0
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 17
+      },
+      "output_tokens_details": {
+        "reasoning_tokens": 17
+      }
+    }
+  },
+  "stream_events": [
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"The\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" user\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" is\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" asking\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" me\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" to\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" say\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" \\\"\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"ok\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"\\\".\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" This\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" is\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" a\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" simple\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" request\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\".\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":null}",
+    "{\"id\":\"chatcmpl-12788f165ed24447acde201963cf1f94\",\"object\":\"chat.completion.chunk\",\"created\":1791138660,\"model\":\"accounts/fireworks/models/minimax-m3\",\"choices\":[],\"usage\":{\"prompt_tokens\":130,\"total_tokens\":150,\"completion_tokens\":20,\"prompt_tokens_details\":{\"cached_tokens\":129},\"completion_tokens_details\":{\"reasoning_tokens\":16},\"output_tokens_details\":{\"reasoning_tokens\":16}}}",
+    "[DONE]"
+  ],
+  "models_response": {
+    "count": 20,
+    "envelope": true,
+    "sample": [
+      {
+        "id": "accounts/fireworks/routers/glm-5p2-fast",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1781630293,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": true,
+        "context_length": 1048576
+      },
+      {
+        "id": "accounts/fireworks/models/minimax-m3",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1781214748,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": true,
+        "context_length": 512000
+      },
+      {
+        "id": "accounts/fireworks/models/gpt-oss-120b",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1754345600,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": true,
+        "context_length": 131072
+      },
+      {
+        "id": "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1780415326,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": true,
+        "context_length": 262144
+      },
+      {
+        "id": "accounts/fireworks/models/qwen3-reranker-8b",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1759865045,
+        "kind": "EMBEDDING_MODEL",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": false,
+        "context_length": 40960
+      },
+      {
+        "id": "accounts/fireworks/models/qwen3-embedding-8b",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1755707090,
+        "kind": "EMBEDDING_MODEL",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": false,
+        "context_length": 40960
+      },
+      {
+        "id": "accounts/fireworks/models/kimi-k3",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1784483409,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": true,
+        "supports_tools": true,
+        "context_length": 1048576
+      },
+      {
+        "id": "accounts/fireworks/routers/kimi-k3-fast",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1784483409,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": true,
+        "supports_tools": true,
+        "context_length": 1048576
+      },
+      {
+        "id": "accounts/fireworks/models/qwen3p8-max",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1785949040,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": true,
+        "supports_tools": true
+      },
+      {
+        "id": "accounts/fireworks/models/glm-5p3",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1787895551,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": true,
+        "context_length": 1048576
+      },
+      {
+        "id": "accounts/fireworks/routers/glm-5p3-fast",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1787895551,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": true,
+        "context_length": 1048576
+      },
+      {
+        "id": "accounts/fireworks/models/glm-5p3-flash",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1787754936,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": true,
+        "supports_tools": true,
+        "context_length": 1048576
+      },
+      {
+        "id": "accounts/fireworks/models/deepseek-v4p1-flash",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1789019014,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": true,
+        "supports_tools": true,
+        "context_length": 1048576
+      },
+      {
+        "id": "accounts/fireworks/models/ember-1",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1790110339,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": true,
+        "supports_tools": true,
+        "context_length": 1048576
+      },
+      {
+        "id": "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1786139705,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": true,
+        "context_length": 262144
+      },
+      {
+        "id": "accounts/fireworks/models/inkling",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1784058124,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": true,
+        "supports_tools": true,
+        "context_length": 1048576
+      },
+      {
+        "id": "auto",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1790634780,
+        "kind": "ROUTER",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": false
+      },
+      {
+        "id": "firerouter/auto",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1790634780,
+        "kind": "ROUTER",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": false
+      },
+      {
+        "id": "accounts/fireworks/models/glm-5p2",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1781630293,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": true,
+        "context_length": 1048576
+      },
+      {
+        "id": "accounts/fireworks/models/qwen3p8-2p4t-a95b",
+        "object": "model",
+        "owned_by": "fireworks",
+        "created": 1786553734,
+        "kind": "HF_BASE_MODEL",
+        "supports_chat": true,
+        "supports_image_input": false,
+        "supports_tools": true,
+        "context_length": 262144
+      }
+    ]
+  },
+  "captured_at": "2026-10-04T18:31:02+00:00"
+}
