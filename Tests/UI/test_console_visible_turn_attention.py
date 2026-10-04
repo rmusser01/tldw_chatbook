@@ -165,3 +165,46 @@ async def test_a_turn_finishing_while_console_is_off_screen_still_notifies_once(
             "A Console turn completed while hidden. Return to Console to review."
         ]
         assert projections and projections[-1] is True
+
+
+@pytest.mark.asyncio
+async def test_a_turn_finishing_in_a_background_tab_notifies_once_while_console_shows(
+    tmp_path, monkeypatch
+):
+    """Review round 1 (F11): AC#8's second half. Console stays on screen, but
+    the user opened another tab before the turn finished -- that turn did
+    finish out of sight, so it notifies exactly once and raises the '!'."""
+    app, gateway = _console_app(tmp_path)
+    notices, projections = _record_attention(monkeypatch, app)
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        chat = await _reach_console(app, pilot, "explore_home")
+        runtime = chat._console_runtime()
+        store = chat._console_chat_store
+        controller = chat._ensure_console_chat_controller()
+        session_id = store.active_session_id
+        await _run_visible_turn(chat, pilot, gateway, "VISIBLE-FIRST", session_id)
+        assert not any(_HIDDEN_COPY in text for text in notices)
+
+        gateway.arm_two_chunks("BACKGROUND")
+        turn_id = _admit_console_turn_to_runtime(chat, "finish in the background", session_id)
+        task = runtime._turn_custody[turn_id].task
+        assert task is not None
+        await asyncio.wait_for(gateway.first_chunk.wait(), timeout=5)
+        try:
+            other = controller.new_session(title="Second tab")
+            controller.switch_session(other.id)
+            assert store.active_session_id == other.id
+        finally:
+            gateway.release_second.set()
+            gateway.release_terminal.set()
+        outcome = await asyncio.wait_for(task, timeout=10)
+        assert outcome.accepted
+        for _ in range(40):
+            await pilot.pause(0.05)
+
+        assert app.screen is chat, "Console never left the screen"
+        assert [text for text in notices if _HIDDEN_COPY in text] == [
+            "A Console turn completed while hidden. Return to Console to review."
+        ]
+        assert projections and projections[-1] is True
