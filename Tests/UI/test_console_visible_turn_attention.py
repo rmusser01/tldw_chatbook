@@ -19,9 +19,17 @@ import pytest
 from Tests.UI.test_console_store_continuity import _navigate
 from Tests.UI.test_console_turn_navigation_continuity import _build_navigation_app
 from Tests.UI.test_destination_shells import _wait_for_selector
+from textual.screen import ModalScreen
+from textual.widgets import Static
+
 from tldw_chatbook.Constants import TAB_CHAT, TAB_HOME
 from tldw_chatbook.UI.Console_Modules.wiring import _admit_console_turn_to_runtime
+from tldw_chatbook.UI.Navigation.pending_handoff_store import (
+    ConsoleFirstChatIntent,
+    HandoffChannel,
+)
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
 
 _HIDDEN_COPY = "completed while hidden"
 
@@ -70,7 +78,17 @@ async def _reach_console(app, pilot, route: str) -> ChatScreen:
             break
         await pilot.pause(0.05)
     await pilot.pause(0.2)
+    intent: ConsoleFirstChatIntent | None = None
     if route == "start_chatting":
+        # Review round 2 (R2-F3): stage the handoff exactly as the wizard's
+        # Start chatting does, so Console's real first mount consumes it --
+        # the reserved session, the retired first-mount chat and the swapped
+        # active tab are all part of what this route has to survive.
+        assert SetupWizardContainer(app)._stage_console_first_chat_handoff()
+        claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+        assert claim is not None and isinstance(claim.value, ConsoleFirstChatIntent)
+        intent = claim.value
+        assert app.pending_handoffs.release(claim)
         app.handle_first_run_wizard_result({"completed": True, "exit_route": TAB_CHAT})
     else:
         app.handle_first_run_wizard_result({"completed": True, "exit_route": TAB_HOME})
@@ -86,6 +104,23 @@ async def _reach_console(app, pilot, route: str) -> ChatScreen:
     chat = app.screen
     assert isinstance(chat, ChatScreen)
     await _wait_for_selector(chat, pilot, "#console-native-composer")
+    if intent is not None:
+        revision = claim.revision
+        for _ in range(400):
+            status = app.pending_handoffs.exact_revision_status(
+                HandoffChannel.CONSOLE_FIRST_CHAT, revision
+            )
+            if status == "settled":
+                break
+            await pilot.pause(0.05)
+        assert status == "settled", status
+        store = chat._console_chat_store
+        for _ in range(100):
+            if store.active_session_id == intent.session_id:
+                break
+            await pilot.pause(0.05)
+        # The handoff really applied: the reserved first chat is the tab.
+        assert store.active_session_id == intent.session_id
     await pilot.pause(0.3)
     return chat
 
@@ -208,3 +243,64 @@ async def test_a_turn_finishing_in_a_background_tab_notifies_once_while_console_
             "A Console turn completed while hidden. Return to Console to review."
         ]
         assert projections and projections[-1] is True
+
+
+class _OverConsoleModal(ModalScreen[None]):
+    """Stands in for Alt+M's model picker, Rename Chat Tab or the palette."""
+
+    def compose(self):
+        yield Static("modal over Console")
+
+
+@pytest.mark.asyncio
+async def test_a_turn_finishing_under_a_modal_over_console_raises_no_hidden_notice(
+    tmp_path, monkeypatch
+):
+    """Review round 2 (V2-F1), live g5-v2-anthome 08/09, g5-v2-antsc 03: a
+    turn that finished in the active tab while Alt+M's picker, the Rename
+    Chat Tab dialog or the command palette was open over Console raised
+    'completed while hidden' and the nav '!'. Console was still on screen
+    behind the modal."""
+    app, gateway = _console_app(tmp_path)
+    notices, projections = _record_attention(monkeypatch, app)
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        chat = await _reach_console(app, pilot, "explore_home")
+        runtime = chat._console_runtime()
+        session_id = chat._console_chat_store.active_session_id
+        await _run_visible_turn(chat, pilot, gateway, "VISIBLE-FIRST", session_id)
+
+        gateway.arm_two_chunks("UNDER-MODAL")
+        turn_id = _admit_console_turn_to_runtime(chat, "finish under a modal", session_id)
+        task = runtime._turn_custody[turn_id].task
+        assert task is not None
+        await asyncio.wait_for(gateway.first_chunk.wait(), timeout=5)
+        modal = _OverConsoleModal()
+        try:
+            await app.push_screen(modal)
+            await pilot.pause(0.1)
+            assert app.screen is modal
+        finally:
+            gateway.release_second.set()
+            gateway.release_terminal.set()
+        outcome = await asyncio.wait_for(task, timeout=10)
+        assert outcome.accepted
+        for _ in range(40):
+            await pilot.pause(0.05)
+
+        assert app.screen is modal, "the modal stayed open while the turn ended"
+        assert not any(_HIDDEN_COPY in text for text in notices), notices
+        assert True not in projections, projections
+
+        # Closing the modal shows the reply, which acknowledges it: no notice
+        # or '!' arrives late, and nothing is left to turn "hidden" later.
+        modal.dismiss()
+        marks = runtime._console_local_marks_service()
+        for _ in range(100):
+            if app.screen is chat and marks.list_console_unseen_marks() == ():
+                break
+            await pilot.pause(0.05)
+        assert app.screen is chat
+        assert marks.list_console_unseen_marks() == ()
+        assert not any(_HIDDEN_COPY in text for text in notices), notices
+        assert True not in projections, projections

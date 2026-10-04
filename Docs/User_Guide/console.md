@@ -280,7 +280,9 @@ opens one chat on the saved provider and model, with no notice. Notices that
 do appear in Console are drawn below the nav tabs, header and control rows,
 so they never cover the tab bar, the voice controls or the readiness badge.
 "A Console turn completed while hidden" appears only when the turn finished
-while Console was not on screen, or in a tab you were not viewing.
+while Console was not on screen, or in a tab you were not viewing. A dialog
+open over Console (Switch model, Rename, the command palette) does not count
+as hidden.
 
 **Readiness words.** Every model surface — the header's status badge, the
 Model section's status line, this card's current step, the

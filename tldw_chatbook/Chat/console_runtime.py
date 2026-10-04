@@ -1474,8 +1474,10 @@ class ConsoleRuntime:
         completes -- Console is the current screen AND the receipt's
         conversation is its active tab. The attached view acknowledges the
         receipt once it renders the row; until then it is not "hidden".
+        Review round 2 (V2-F1): a modal over Console (Alt+M's picker, a
+        rename dialog, the command palette) leaves Console on screen.
         """
-        if not conversation_id or not self.has_answerable_view():
+        if not conversation_id or not self._console_is_on_screen():
             return False
         store = self._chat_store
         active_id = getattr(store, "active_session_id", None)
@@ -1490,6 +1492,26 @@ class ConsoleRuntime:
             and getattr(session, "persisted_conversation_id", None) == conversation_id
             for session in sessions
         )
+
+    def _console_is_on_screen(self) -> bool:
+        """The attached view is current, or only modal screens cover it.
+
+        A modal suspends the view (``_reconciled_view`` is cleared), but the
+        screen still shows behind it, so only the stack above it counts.
+        """
+        if self.has_answerable_view():
+            return True
+        view = self.view
+        if view is None:
+            return False
+        try:
+            from textual.screen import ModalScreen
+
+            stack = list(view.app.screen_stack)
+            index = next(i for i, screen in enumerate(stack) if screen is view)
+        except Exception:  # noqa: BLE001 -- not in the stack: not on screen
+            return False
+        return all(isinstance(screen, ModalScreen) for screen in stack[index + 1 :])
 
     def _request_visible_receipt_render(self) -> None:
         """Re-arm the on-screen view's transcript sync (thread-safe post)."""
@@ -1620,7 +1642,7 @@ class ConsoleRuntime:
             hidden_marks = [
                 pair for pair in marks if not self._receipt_is_on_screen(pair[0])
             ]
-            if len(hidden_marks) != len(marks):
+            if len(hidden_marks) != len(marks) and self.has_answerable_view():
                 self._request_visible_receipt_render()
             with self._attention_lock:
                 if marks_known:
