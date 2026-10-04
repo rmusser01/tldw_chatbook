@@ -187,22 +187,29 @@ async def test_choosing_full_never_blocks_the_screen_on_local_discovery(monkeypa
     (``asyncio.sleep``) leaves the loop free and cannot catch that; this one
     blocks whichever thread runs it.
 
-    Review round 2: the property is asserted directly (the scan ran off the
-    main thread). The loop-gap bound is a second, looser check, measured with
-    the garbage collector frozen: in a process that has already run other
-    wizard apps, a GC pause alone passed the old 0.5 s bar.
+    Review round 3: no wall clock. Rounds 1 and 2 bounded the largest loop
+    gap over the whole Next (0.5 s, then 0.9 s with GC frozen), which also
+    timed Provider's own mount and cold imports, so the result depended on
+    which tests ran first. Now the scan, while it blocks, asks the UI loop to
+    run one callback and waits for it. Off the loop the callback runs at
+    once; on the loop it never can, so the wait times out. The verdict is a
+    yes/no that no pause elsewhere in the process can flip.
     """
-    import gc
     import threading
-    import time
 
     started = threading.Event()
     ran_on: list[threading.Thread] = []
+    loop_ran_while_blocked: list[bool] = []
+    ui_loop = asyncio.get_running_loop()
 
     async def blocking_discovery(*_args, **_kwargs):
         ran_on.append(threading.current_thread())
         started.set()
-        time.sleep(1.0)  # synchronous, like admission and SSL context setup
+        # Synchronous, like admission and SSL context setup: this wait holds
+        # whichever thread runs the scan until the UI loop runs the callback.
+        loop_ran = threading.Event()
+        ui_loop.call_soon_threadsafe(loop_ran.set)
+        loop_ran_while_blocked.append(loop_ran.wait(timeout=10.0))
         return ()
 
     monkeypatch.setattr(
@@ -217,28 +224,19 @@ async def test_choosing_full_never_blocks_the_screen_on_local_discovery(monkeypa
         container = wizard.query_one(SetupWizardContainer)
         wizard.query_one("#setup-track-full", RadioButton).value = True
         await pilot.pause(0.05)
-
-        gc.collect()
-        gc.disable()
-        try:
-            container.action_next()
-            gaps: list[float] = []
-            last = time.monotonic()
-            deadline = last + 1.6
-            while time.monotonic() < deadline:
-                await asyncio.sleep(0.02)
-                now = time.monotonic()
-                gaps.append(now - last)
-                last = now
-        finally:
-            gc.enable()
+        container.action_next()
+        for _ in range(300):
+            if loop_ran_while_blocked:
+                break
+            await pilot.pause(0.05)
 
         assert started.is_set(), "Provider never started the localhost scan"
         assert ran_on and ran_on[0] is not threading.main_thread(), (
             "the localhost scan ran on the UI thread"
         )
-        # Below the scan's own 1.0 s block: a blocked loop shows the whole of it.
-        assert max(gaps) < 0.9, f"the UI loop was blocked for {max(gaps):.2f} s"
+        assert loop_ran_while_blocked == [True], (
+            "the UI loop could not run while the localhost scan blocked"
+        )
         assert isinstance(container.steps[container.current_step], ProviderStep)
         provider = container.steps[container.current_step]
         for _ in range(60):
