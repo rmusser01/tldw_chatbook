@@ -138,7 +138,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-163](163-expanded-console-hook-runtime.md) | Accepted | Extend shared hooks with explicit lifecycle events, structured effects, permission-gated MCP calls and bounded scheduler continuations. |
 | [ADR-166](166-agent-assisted-archive-recovery.md) | Accepted | Search local archives from Console agents in either retrieval mode under Library authority, with exact-target confirmation and separate restoration/opening. |
 | [ADR-210](210-console-region-ownership.md) | Accepted | Give each Console region one job — authority header, identity tab strip, one Chats browser, three-group Inspect, four-slot status strip, run-owning composer — and re-home every duplicated control. |
-| [ADR-219](219-console-learned-response-rules.md) | Proposed | Learn native Chat-scoped response rules from `/omfg`, evaluate completed answers with honest evidence-based outcomes, and admit bounded corrections through the shared Console queue. |
+| [ADR-219](219-console-learned-response-rules.md) | Accepted | Learn native Chat-scoped response rules from `/omfg`, evaluate completed answers with honest evidence-based outcomes, and admit bounded corrections through the shared Console queue. |
 
 ## Historical Decision Material
 

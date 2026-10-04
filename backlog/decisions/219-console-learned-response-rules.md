@@ -1,9 +1,10 @@
 # ADR-219: Native learned Console response rules
 
 Date: 2026-10-03
-Status: Proposed; reviewed conversational design recorded, written-spec approval pending
+Status: Accepted by user on 2026-10-03 after written-spec review
 Related Task: N/A; this request is design-only and has not created an implementation task.
 Spec: [Console learned response rules](../../Docs/superpowers/specs/2026-10-03-console-response-rules-design.md)
+Plan: [Console response rules implementation](../../Docs/superpowers/plans/2026-10-03-console-response-rules.md), awaiting user review and execution-method selection
 Extends: [ADR-163](163-expanded-console-hook-runtime.md) at the shared continuation admission boundary
 Follows: [ADR-029](029-local-private-data-boundary.md), [ADR-092](092-console-chat-fork-copy-and-authority-boundary.md), [ADR-126](126-complete-local-backup-and-recovery.md), [ADR-197](197-console-hook-configuration-review.md), and [ADR-210](210-console-region-ownership.md)
 

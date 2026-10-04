@@ -1,10 +1,10 @@
 # Console learned response rules
 
 Date: 2026-10-03
-Status: Draft for written-spec review; conversational reviews and written-spec audit incorporated
-ADR: [ADR-219](../../../backlog/decisions/219-console-learned-response-rules.md) (Proposed)
+Status: Approved by user on 2026-10-03 after written-spec review
+ADR: [ADR-219](../../../backlog/decisions/219-console-learned-response-rules.md) (Accepted)
 Related Backlog task: N/A; no implementation task has been created or authorized by this design-only request.
-Implementation plan: Not yet written; written-spec approval precedes implementation planning.
+Implementation plan: [Console response rules plan](../plans/2026-10-03-console-response-rules.md), awaiting user review and execution-method selection.
 
 ## 1. Purpose and agreed intent
 
@@ -225,4 +225,4 @@ ADR path: `backlog/decisions/219-console-learned-response-rules.md`
 
 Reason: New local-only storage and recovery behavior, a response-assessment lifecycle boundary, scope semantics, and a native correction interface shared with existing hook continuations.
 
-This written spec and Proposed ADR require user review before `writing-plans`. An implementation plan and its execution method must then be reviewed before product code or schema changes. No implementation tasks are referenced before their creation.
+The user approved this written spec and ADR on 2026-10-03. The implementation plan and its execution method must be reviewed before product code or schema changes. No implementation tasks are referenced before their creation.
