@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:09'
-updated_date: '2026-09-07 21:37'
+updated_date: '2026-10-04 14:46'
 labels:
   - console
   - switcher
@@ -62,6 +62,7 @@ and dependency references.
 
 <!-- SECTION:PLAN:BEGIN -->
 Continue existing Task5 plan with the 2026-09-07 repair addendum: implement ADR120 destination-only request receipt through app ownership; real-owner RED/GREEN and bounded affected tests; diagnose post-teardown descriptor owners and remediate only proven leaks plus supported dependency compatibility; run frozen-source macOS native workflow and 10k/250k Keyword scale/latency qualification, retaining external Windows/participant gaps until supplied. ADR required: yes, narrow amendment to backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md; original spec/Task5 plan amended before production. No source-overlay/global stack restoration, Meaning expansion, cap raises, warning suppression, or implicit merge waiver.
+2026-10-04 activation repair: reproduce coalesced Console-sync overlap with a deterministic installed test; ensure Character activation awaits the exact transcript publication before its existing strict readiness/completion proof; run affected activation/reuse tests and static checks; record both earlier intermittent failures and remaining native/external qualifications. ADR required: no new ADR. ADR path: backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md. Reason: routine correction implementing the existing exact-ready Console activation contract; no new authority, source, search, layout, or cancellation boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -102,6 +103,8 @@ PR2487 Qodo fixes: conflict-free rebase onto dev0bb00beaf; original patch range-
 Bounded verification follow-up: a repeated unit-plus-installed-History run showed an unawaited refresh coroutine. Tracemalloc pinned allocation to console_session_switcher_modal.py reconcile_active_results line574; queued worker cancellation can precede coroutine execution. Plan: add isolated queued-work regression, defer only this allocation through the supported callable worker seam, retain production reconciliation behavior and rerun affected tests. Existing lifecycle contracts apply; no new ADR or GC policy.
 
 Final queued-worker correction uses functools.partial of the async refresh method; Textual rejects ordinary lambdas (caught by seven actual-worker failures and reviewer before publication). Unit regression now checks deferred creation plus async-callable compatibility and captured query. Final12unit+14installed+41activity gate67passed47.28s/no warnings; descriptor plateau unchanged. All added test Ruff/format checks and whitespace pass; preflight clear and no new workspace diagnostics. Ready for remote review/check gate; no native or GC qualification waiver.
+
+2026-10-04: Reproduced and repaired Character activation rejecting a coalesced broad Console sync before its transcript publication. Await the existing transcript renderer before focus and strict exact-ready proof; authority, rollback, cancellation, and modal ownership unchanged. Deterministic installed regression valid RED then GREEN; reuse/mode gate 15 passed, presentation ownership 14 passed after explicit private-profile marker, activation/reuse unit gate 40 passed. Independent review found no production blocker and its rollback-fixture coverage finding was corrected. Changed tests Ruff clean; four Python paths format clean; no added workspace lint diagnostics. Existing ADR-120 applies, no new ADR. QA receipt in Docs/QA/task-31245/switcher-reuse-and-mode-follow-up.md; lesson in lessons-console-wiring.md. Native/Windows/participant/performance gaps remain open and task remains In Progress.
 <!-- SECTION:NOTES:END -->
 
 ### Approved native follow-up — 2026-09-07

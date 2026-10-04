@@ -592,8 +592,11 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
     screen = SimpleNamespace(is_mounted=True, focused=composer)
     screen.app = SimpleNamespace(screen=screen)
     screen._last_native_transcript_refresh_key = ("stale-session", 1)
+    screen._sync_native_console_transcript = AsyncMock(return_value=None)
+    presentation_steps = []
 
     def query(selector):
+        presentation_steps.append(selector)
         if selector == "#console-native-composer":
             if focus_failure == "missing_composer":
                 from textual.css.query import NoMatches
@@ -603,6 +606,7 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
         return transcript
 
     def focus(widget):
+        presentation_steps.append("focus")
         if focus_failure == "broken_focus":
             raise RuntimeError("focus presentation failed")
         screen.focused = widget
@@ -635,6 +639,9 @@ async def test_production_workspace_predicate_failure_rolls_back_exact_owned_ses
 
     result = await controller.activate_character_conversation_after_commit(request)
 
+    screen._sync_native_console_transcript.assert_awaited_once()
+    assert "#console-native-composer" in presentation_steps
+    assert ("focus" in presentation_steps) == (focus_failure != "missing_composer")
     assert result.kind is ConsoleActivationResultKind.FAILED
     assert store.active_session_id == prior.id
     assert all(

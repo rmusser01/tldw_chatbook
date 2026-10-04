@@ -131,3 +131,43 @@ and the connected desktop controller refuses terminal-app control. No native
 keyboard or screenshot outcome is inferred from the mounted tests. TASK-31245
 remains In Progress; Windows, participant, and performance evidence also remain
 open.
+
+## 2026-10-04 coalesced transcript publication repair
+
+PR #2835 is merged. Fresh checks on `dev f800952214` initially passed 24 of
+26 cases, with two Character activation waits failing after an inactive-tab
+switch. Both passed individually, but bounded state probes reproduced genuine
+postcommit `FAILED` results as well as one wait that expired before a later
+successful completion. Passing retries did not establish a clean result.
+
+The reproduced failure had the requested runtime active and composer focused,
+but the transcript still belonged to the preceding runtime. A whole-Console
+sync was already running, so the requested sync returned after coalescing its
+work. The exact-ready check correctly rejected the stale transcript and rolled
+back. Subsequent reconciliation could retire the visible failure.
+
+Character activation now awaits the existing transcript renderer before its
+immediate composer-focus and strict readiness proof. It retains the transcript
+refresh lock, immutable target, modal ownership, precommit cancellation,
+postcommit rollback, and ordinary exposed-destination requirements. No timeout
+was raised, readiness check weakened, new resume path introduced, or visual
+value changed. Existing ADR-120 governs; no new ADR is needed.
+
+A deterministic installed regression holds the full sync before transcript
+publication while opening an exact existing character conversation. After a
+fixture identity-type correction, the valid RED test returned `FAILED` before
+the repair; GREEN returned `OPENED` and the same single runtime with its exact
+transcript owner and composer focus. The affected unit and reuse/mode cases
+passed **27 tests**. The additional activation file initially had **14 setup
+errors** from missing collection-time profile ownership, before any switcher
+action; it now declares the same private-profile marker as the reuse suite,
+and all **14 cases passed** without a diagnostic plugin. Independent review
+found no production blocker, but identified an older rollback double missing
+the awaited renderer seam. That fixture now reaches and asserts its intended
+stale-transcript, missing-composer, and broken-focus paths; the activation and
+reuse-decision unit files passed **40 tests**.
+
+The changed tests pass Ruff and all four Python paths pass formatting.
+Workspace's 69 inherited Ruff diagnostics match the exact base, with none added.
+Native terminal, Windows, participant, and deferred performance qualifications
+remain open. TASK-31245 remains In Progress.

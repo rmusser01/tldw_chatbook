@@ -6136,6 +6136,9 @@ class ConsoleWorkspaceController:
             # boundary must establish focus before the immediate exact-visible
             # proof, including when activation began in a Context row.
             try:
+                # A whole-Console sync may coalesce into an already-running
+                # pass. Publish this target before the exact-ready proof.
+                await self._screen._sync_native_console_transcript()
                 self._screen.set_focus(
                     self._screen.query_one("#console-native-composer")
                 )

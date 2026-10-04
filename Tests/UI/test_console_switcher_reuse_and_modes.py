@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from textual.widgets import Button, Input
 
@@ -18,7 +20,14 @@ from Tests.UI.test_console_scope_row import (
 )
 from Tests.UI.test_console_workbench_contract import ConsoleHarness
 from Tests.UI.test_library_inspection_admission import library  # noqa: F401
+from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+    LocalCharacterConversationTarget,
+    ResolvedLocalCharacterKey,
+)
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+from tldw_chatbook.Chat.console_conversation_activation import (
+    ConsoleActivationResultKind,
+)
 from tldw_chatbook.Chat.console_switcher_state import SwitcherMode
 from tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
@@ -27,6 +36,75 @@ from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
 )
 
 pytestmark = pytest.mark.bootstrap_profile
+
+
+@pytest.mark.asyncio
+async def test_character_activation_publishes_target_during_coalesced_console_sync(
+    activation_library,  # noqa: F811
+    monkeypatch,
+):
+    """An occupied whole-Console refresh cannot falsely fail an exact warm open."""
+    owner, _, db = activation_library
+    _seed(owner, db)
+    owner.local_chat_conversation_service = ChatConversationService(db)
+    host = ConsoleHarness(owner)
+    async with host.run_test(size=(120, 50)) as pilot:
+        chat = host.screen
+        store = chat._ensure_console_chat_store()
+        prior = store.active_session_id
+        assert await chat._workspace._resume_console_workspace_conversation("exact")
+        warm_id = store.active_session_id
+        await chat._session._activate_native_console_session(prior)
+        await _until(lambda: not chat._console_sync_in_progress)
+        await chat._sync_native_console_chat_ui()
+        transcript = chat.query_one("#console-native-transcript")
+        assert transcript._session_identity == prior
+        record = db.get_conversation_by_id("exact")
+        target = LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey(
+                db.get_local_authority_id(), record["character_id"]
+            ),
+            "exact",
+        )
+
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        original_summary = (
+            chat._retrieval._refresh_active_dictionaries_summary_if_scope_changed
+        )
+
+        async def hold_summary():
+            entered.set()
+            await release.wait()
+            await original_summary()
+
+        monkeypatch.setattr(
+            chat._retrieval,
+            "_refresh_active_dictionaries_summary_if_scope_changed",
+            hold_summary,
+        )
+        background = asyncio.create_task(chat._sync_native_console_chat_ui())
+        activation = None
+        try:
+            await asyncio.wait_for(entered.wait(), 5)
+            activation = asyncio.create_task(
+                chat._workspace.activate_character_conversation(target)
+            )
+            result = await asyncio.wait_for(asyncio.shield(activation), 10)
+            assert result.kind is ConsoleActivationResultKind.OPENED
+            assert store.active_session_id == warm_id
+            assert transcript._session_identity == warm_id
+            assert chat._workspace._character_conversation_target_visible(target)
+            assert chat.focused is chat.query_one("#console-native-composer")
+            matches = [
+                s for s in store.sessions() if s.persisted_conversation_id == "exact"
+            ]
+            assert len(matches) == 1
+        finally:
+            release.set()
+            tasks = [background] + ([activation] if activation is not None else [])
+            await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 10)
+        await pilot.pause()
 
 
 async def _until_stage(predicate, stage):
