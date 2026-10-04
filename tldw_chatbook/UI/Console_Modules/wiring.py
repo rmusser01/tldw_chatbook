@@ -127,12 +127,34 @@ from .workspace import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Agents.hook_permissions import HookReviewSnapshot
+    from .hooks import HookReviewResult
     from tldw_chatbook.Widgets.Console.console_voice_preview import (
         VoicePreviewProjection,
     )
     from ..Screens.chat_screen import ChatScreen
 
 __all__ = ["build_console_controllers"]
+
+
+async def request_console_hooks_review(
+    screen: "ChatScreen",
+    snapshot: "HookReviewSnapshot",
+    waiting: bool,
+    cancel: Callable[[], None],
+) -> "HookReviewResult":
+    """Open the existing modal with the current screen and permission owner."""
+    from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
+        request_hook_review,
+    )
+
+    return await request_hook_review(
+        screen,
+        screen._console_runtime().ensure_hook_permissions(),
+        snapshot,
+        waiting,
+        cancel,
+    )
 
 
 def _navigate_character_context(
@@ -2334,8 +2356,8 @@ def build_console_controllers(
         hook_permissions_accessor=lambda: (
             screen._console_runtime().ensure_hook_permissions()
         ),
-        request_review=lambda snapshot, waiting, cancel: (
-            screen._request_console_hooks_review(snapshot, waiting, cancel)
+        request_review=lambda snapshot, waiting, cancel: request_console_hooks_review(
+            screen, snapshot, waiting, cancel
         ),
         current_session=lambda: screen._console_visible_send_session_id(),
         current_stash=lambda: (

@@ -4811,8 +4811,12 @@ class ChatScreen(BaseAppScreen):
         elif action_id == "settings":
             await self._open_console_settings(focus_model=False)
         elif action_id == "hooks":
+
+            async def review_current_hooks():
+                await self._hooks.review_current()
+
             self.run_worker(
-                self._open_console_hooks_review,
+                review_current_hooks,
                 group="console-hook-review",
                 exclusive=True,
             )
@@ -19125,22 +19129,6 @@ class ChatScreen(BaseAppScreen):
         return await self._dispatch_console_draft_send(
             draft, stash=stash, session_id=session_id
         )
-
-    async def _request_console_hooks_review(self, snapshot, waiting, cancel):
-        from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
-            request_hook_review,
-        )
-
-        return await request_hook_review(
-            self,
-            self._console_runtime().ensure_hook_permissions(),
-            snapshot,
-            waiting,
-            cancel,
-        )
-
-    async def _open_console_hooks_review(self) -> None:
-        await self._hooks.review_current()
 
     async def _refresh_console_hooks(self) -> None:
         # ADR-097: indicator disk reads and hook imports start after first paint.

@@ -371,9 +371,7 @@ async def test_a_review_awaited_off_a_worker_task_is_logged(caller, waiting, hoo
                 console = host.screen
                 owner = console._console_runtime().ensure_hook_permissions()
                 snapshot = await asyncio.to_thread(owner.snapshot)
-                review = console._request_console_hooks_review(
-                    snapshot, waiting, lambda: None
-                )
+                review = console._hooks._review(snapshot, waiting, lambda: None)
                 if caller == "worker":
                     worker = console.run_worker(review, group="test-hook-review")
                     pending = worker.wait()
@@ -396,3 +394,30 @@ async def test_a_review_awaited_off_a_worker_task_is_logged(caller, waiting, hoo
         # and whether a Send was waiting on the review.
         assert "screen=ChatScreen" in errors[0], errors
         assert f"waiting_for_send={waiting}" in errors[0], errors
+
+
+async def test_hooks_button_resolves_current_controller_when_worker_starts(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from Tests.UI.test_console_controller_wiring import _unmounted_console
+    from tldw_chatbook.UI.Workbench.workbench_widgets import WorkbenchActionRequested
+
+    console = _unmounted_console()
+    captured = []
+    before = SimpleNamespace(review_current=AsyncMock())
+    after = SimpleNamespace(review_current=AsyncMock())
+    monkeypatch.setattr(console, "_hooks", before)
+    monkeypatch.setattr(
+        console, "run_worker", lambda work, **kwargs: captured.append((work, kwargs))
+    )
+    await console.on_console_workbench_action_requested(
+        WorkbenchActionRequested("hooks")
+    )
+    assert len(captured) == 1
+    work, options = captured[0]
+    assert options == {"group": "console-hook-review", "exclusive": True}
+    assert asyncio.iscoroutinefunction(work)
+    monkeypatch.setattr(console, "_hooks", after)
+    await work()
+    before.review_current.assert_not_awaited()
+    after.review_current.assert_awaited_once_with()
