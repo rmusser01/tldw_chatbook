@@ -106,12 +106,31 @@ settles a DIFFERENT future -- never that the awaited future is independent
 of it. A done-callback, a relay that awaits or polls the settled future, or
 a handoff chains the two, and the await hangs exactly as before: 18 more
 shapes 5918cfd1df reported were silent, again with a byte-identical census
-and a green suite. **For a precision fix:** run the old and new checker over
-the shapes the fix drops, write down what dropping a match actually
-requires (here: the awaited future cannot depend on anything the callback
-settles), and check that the rule establishes THAT -- not a weaker
-neighbour of it. A name match in another scope proves nothing, and neither
-does "it settles something else".
+and a green suite. **And a fourth time, on the fix for that.** The proof
+checked the callback's CALLS ("every call settles or reads what it
+settles") and wrote that down as "settling is all it does". But a callback
+whose settled future nothing reads can only matter through its OTHER
+effects -- a nonlocal, item or attribute store that a relay polls or a
+property setter acts on, an await, a `with` block, a returned value -- and
+none of those is a call. Ten more shapes 5918cfd1df reported went silent;
+census byte-identical, suite green. In none of those rounds did the
+settling rule drop a real-tree push (per-function push counts stayed
+identical to 5918cfd1df's, and the real tree has no direct-form callback
+at all). **The decision (round 4): stop proving.** Only a callback whose whole effect is visible in the push
+expression -- `callback=other.set_result`, a `partial` of it, a one-call
+lambda with plain arguments -- is left out; every def or method callback
+counts by shape, and the four precision controls that needed the proof are
+now expected rows, named as accepted false positives.
+
+**For a precision fix:** run the old and new checker over the shapes the
+fix drops, write down what dropping a match actually requires (here: the
+awaited future cannot depend on the callback running at all), and check
+that the rule establishes THAT -- not a weaker neighbour of it. A name
+match in another scope proves nothing, neither does "it settles something
+else", and neither does "its calls only settle". **And when each review
+round needs another premise, count what the rule buys on the real tree:**
+a precision rule that drops nothing there pays for itself with recall
+only, and every premise is one more place to lose it.
 
 ## A provider preset's own tests never touched the surfaces users set it up with
 
