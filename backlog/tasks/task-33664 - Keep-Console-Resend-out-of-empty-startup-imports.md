@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 23:40'
+updated_date: '2026-10-04 00:22'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -295,6 +295,23 @@ Reason: preserve the landed existing-conversation-scope compatibility fix and te
 6. Only after both approvals, CLI close AC3/Done and append the four owned canonical Markdown records, preserving all reviewed source/deletion/full tree outside four. Publish ONCE with the EXACT observed 405c5702473378a763e22d1ddd1e0a9170d2c324 lease and concise body; verify actual remote/GitHub/body after any lag without another push. Approvals qualify ONLY exact efea; later actual dev is separately unqualified. Fresh new-head Qodo/no actionable threads and ALL FOUR jobs precede any further strict-base action or normal protected --match-head-commit merge. Verify actual MERGED parents/tree/concurrency before pausing heartbeat/reporting completion.
 
 Every earlier positive/NON-GREEN/baseline/interrupted/unexecuted result, metadata correction, rejected uncreated/unexecuted readiness adapter and optional/style/profile/snapshot/stale-cleanup/physical/wider limit remains. No full suite/live providers/user keys/physical CtrlQ/relaunch/real voice provisioning/service/download/playback/Windows/aggregate/package/index/installed/native-release/wider audit, admin bypass, weakened gate, shared stash or foreign cleanup.
+
+## Approved CI-conflict ordering exception and workspace-send integration — October 4
+
+ADR required: no new ADR
+ADR path: backlog/decisions/101-one-shot-pinned-workspace-tool-execution.md (existing Proposed remains Proposed); backlog/decisions/052-console-conversation-memory-and-compaction-policy.md; backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md; backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; backlog/decisions/211-ephemeral-provider-failure-presentation.md
+Reason: preserve landed PR2975/TASK33940 behavior under its existing file-tool, trace, memory and admission boundaries; no new owner, schema, authority, dependency or performance decision.
+
+The current published 8dd613d4e7aa387c6c9b519cd1bcd8c3ce93bf1a is clean and Qodo-clear with four resolved threads and complete pagination. Its four CI jobs are ABSENT: GitHub suppresses pull_request workflows for merge conflicts, and these workflows expose no workflow_dispatch. Actual dev01a2020981c6197e5cd9945e5287567ad977edfe is CONFLICTING/DIRTY under live strict up-to-date protection enforced for administrators. After this required ordering decision was presented, the user explicitly replied “yes approved”: perform this preserving conflict update before the absent old-head checks, then require all four fresh new-head jobs and current-head Qodo before normal protected merge. This resolves only the current trigger deadlock; it does not waive any qualification, gate or protected merge requirement.
+
+1. Reopen TASK33664 AC3/In Progress through CLI while AC4 remains checked; commit this prospective plan before source mutation. Preserve all prior positive, NON-GREEN, baseline, interrupted, unexecuted and metadata-correction evidence and separate task states. Authenticate 1,329 prior reviewed Git/disk hashes, modes and recomputed blobs. Incoming30 paths have seven manifest overlaps, six actual feature overlaps: three Console modules, diagnostic inventory and two lessons; conftest is manifest-only.
+2. Rebase once onto exact01a2020, preserving 1,322 prior non-overlap records and23 incoming non-overlap paths. Six independently reproduced clean three-way files supply exact expected bytes; reconcile the inventory only against reviewed composed diagnostic statements. Preserve complete prior and incoming lesson additions, current capture_cloud.py deletion, all full tree/index paths/modes/blob identities and every original incoming assertion/fixture/guard. Preserve seven TASK33940 records Done/checked as shipped without claiming their upstream live or wider QA was rerun.
+3. Verify the intersecting build_console_first_request_plan and _submit_draft_body retain both sides: final offered tools constrain folder aliases and scratch guidance; frozen RAG capture follows the admitted turn's evidence lease and releases exactly once, while live queued sends retain current dispatch-staged evidence. Preserve the exact AGENT_WAKE refusal/refund/nonreplay, child initialization/scoped tools/peers, hook/replay/currentness/HELD recovery, finite admitted SQL custody, immediate revocation and typed provider presentation/content-free audit. All other prior and incoming changed functions must remain AST-exact; runtime changed-function intersection is empty.
+4. Run the five new workspace-note/worker-copy/trace-system-prompt/runtime-RAG/unknown-OpenAI modules and bounded changed virtual-CLI/workspace-root/session/SSH/turn-context consumers, including the isolated first workspace-binding regression. Run proportional existing wake/custody/first-plan/trace/privacy and provider-audit neighbors. Use exact checkout cwd/PYTHONPATH and task-owned full-process HOME/USERPROFILE/TLDW/XDG through teardown, default pytest temp depth and unchanged fixtures/markers/guards. Authenticate isolated worker module origin; no install or editable-import retarget. Preserve any NON-GREEN results and qualify necessary exact incoming baselines without inventing cause, physical/live-service or aggregate certificates.
+5. Check fatal Python/owned new versus exact incoming Ruff/format debt, owned whitespace, actual diagnostic inventory and worker source artifacts, CSS/size/guard identity and supported task-ID/path/readability. Obtain independent immutable source/functional/artifact review. Only after all functional/artifact/reviewer activity settles, run the canonical five original budget cases ONCE for this new source with unchanged guards, eight historical census ceiling ASTs, cwd/PYTHONPATH/default temp depth/full outer profile. Do not repeat completed14ad/525/a06/03b budget runs or any prior mutation pipeline. Retain actual counts, warnings, raw/XML and full source/tree authentication; obtain supplemental independent budget approval.
+6. Close AC3/Done through CLI only after approval; update only the four owned canonical Markdown records and authenticate preservation of all reviewed source/deletion/tree outside those four. Read fresh8dd Qodo/refs/live protection, publish ONCE with EXACT observed8dd613d lease and concise body, then verify actual remote/GitHub/head/body without a second push after lag. Wait for fresh current-head Qodo/no actionable threads and ALL FOUR jobs before any next strict-base action or normal protected --match-head-commit merge. Verify MERGED actual parents/tree/current concurrency proportionately, then pause the heartbeat and report completion.
+
+No full suite, live provider/user key, physical Ctrl+Q/relaunch, real voice service/provision/download/playback, installation, Windows/native Linux, aggregate-resource, package/index/installed/native-release or wider-audit qualification. No admin bypass, weakened pins/checks/ceilings/counts/work/warmup/timeouts, shared stash or foreign cleanup.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
