@@ -215,12 +215,15 @@ def test_committed_replacement_preserves_multiple_inactive_eval_sources(
     completed_replacement,
 ):
     from tldw_chatbook.Backup_Recovery.models import DISCOVERY_CONTEXT_KEY
-    from tldw_chatbook.Evals import _default_config_path
+    from tldw_chatbook.Evals import _override_config_path
     from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
 
     _, _, context, selected = completed_replacement
     items = _DefinitionsAdapter().discover({DISCOVERY_CONTEXT_KEY: context})
-    assert {item.path for item in items} == {_default_config_path(), *selected}
+    assert {item.path for item in items} == {
+        _override_config_path(context.config_path),
+        *selected,
+    }
     assert len({item.logical_id for item in items}) == 3
     assert all(item.dependencies == ("profile:destination:config",) for item in items)
 
@@ -253,7 +256,12 @@ def test_retained_mapping_requires_exact_current_local_evidence(
         original.rename(saved)
         try:
             if change == "alias":
-                original.symlink_to(saved)
+                try:
+                    original.symlink_to(saved)
+                except OSError as error:
+                    if getattr(error, "winerror", None) != 1314:
+                        raise
+                    pytest.skip("Windows file symlink privilege is unavailable")
                 with pytest.raises(ValueError):
                     _DefinitionsAdapter().discover(config)
             else:
@@ -342,7 +350,7 @@ def test_ordinary_profile_does_not_create_retained_authority(tmp_path, monkeypat
         DISCOVERY_CONTEXT_KEY,
         DiscoveryContext,
     )
-    from tldw_chatbook.Evals import _default_config_path
+    from tldw_chatbook.Evals import _override_config_path
     from tldw_chatbook.Evals.recovery import _DefinitionsAdapter
 
     root = tmp_path / "absent-bootstrap"
@@ -355,5 +363,5 @@ def test_ordinary_profile_does_not_create_retained_authority(tmp_path, monkeypat
     assert [
         item.path
         for item in _DefinitionsAdapter().discover({DISCOVERY_CONTEXT_KEY: context})
-    ] == [_default_config_path()]
+    ] == [_override_config_path(selector)]
     assert not root.exists()

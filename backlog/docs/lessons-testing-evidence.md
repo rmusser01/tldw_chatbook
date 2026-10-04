@@ -182,6 +182,52 @@ dev closes the receipt *before* it restores, so the two numbers timed
 different things. Time both arms to the same user-visible end state (rows
 back and the receipt gone), n>=3 each, and report ranges for both.
 
+## Preserve stderr without blocking the observed child
+
+**TASK-34408, 2026-10-04.** After replacing unsupported Windows `select(pipe)`,
+uncertainty fixtures still timed out before their first stdout marker. A matched
+child with stderr captured to an owned file completed and preserved 4,992 bytes
+of diagnostics; the original unread stderr pipe blocked that child. The new real
+pipe regression writes 120 KB to stderr before its response and verifies both
+the response and the complete diagnostic output.
+
+Use non-consuming native readiness for stdout and an owned file for stderr when
+a test intentionally leaves diagnostics unread while controlling the child.
+Preserve kill/wait/close cleanup and the original absence assertions. A blocked
+logging channel can look like a product lock failure, even with correct readiness.
+
+## A passed mkdir does not prove its parent barrier completed
+
+**TASK-34408, 2026-10-04.** Native Windows publication tried to flush unchanged
+`C:\Users` and received WinError 5. Removing that ancestor loop passed the ordinary
+path, but review reproduced a creator dying after mkdir and before the parent
+flush: retry would adopt the existing directory without proving the missing
+barrier. A write-rights probe could not distinguish that interruption after
+permissions changed. The final regression kills a real creator at that boundary,
+changes the next attempt's rights, and verifies refusal on its surviving intent.
+
+Durably record intent before mutation and bind mutation, its barrier and intent
+retirement to the same native parent. An identity-bound receipt can narrow later
+barriers only after creation settles. Keep uncertified legacy operations on their
+existing barriers; current permissions are not evidence about a previous write.
+
+## Native Windows private-path tests need a private temporary ancestor
+
+**TASK-34407, 2026-10-04.** The Eval config regression initially failed before
+collection with `recovery_scope_uncertain` in the restricted executor. Running
+as the original user still failed: the ordinary `%TEMP%` directory carried a
+Codex sandbox Modify grant, projected by the native facade as mode `0o766`.
+Pytest's per-test private leaves could not make that ancestor private. A disposable
+directory directly under the original user's home, selected as child `TEMP` and
+`TMP`, allowed the real native checks to run; the final Eval set passed 29 tests.
+The root conftest continued to isolate HOME/USERPROFILE and config selectors.
+
+**What to do.** Check the exact rejected ancestor before diagnosing a private-path
+test failure. Use a disposable private test root and the ordinary test isolation;
+do not replace native admission or relax ACL checks to make collection pass.
+Separate later POSIX-only assertions or native publication failures from the
+evidence for the changed feature, and report those verification limits.
+
 ## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
 
 **TASK-14876 audit, 2026-09-30.** Checking whether the 2026-08-09 xdist

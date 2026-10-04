@@ -486,7 +486,7 @@ def _original_definition_paths(
     from tldw_chatbook.Backup_Recovery.journal import _Rollback
     from tldw_chatbook.Backup_Recovery.restore_plan import _ancestor
 
-    from . import _default_config_path
+    from . import _override_config_path
 
     target = plan.target
     # Scoped plans may record unrelated absent stores. The exact included Eval
@@ -528,8 +528,10 @@ def _original_definition_paths(
         if preserved_only and (item.logical_id, item.path) not in plan.preserve:
             continue
         path = item.path
-        if path == _default_config_path() and (
-            preserved_only or unselected and (item.logical_id, path) in plan.preserve
+        if path == _override_config_path(selector) and (
+            item.status == "unused"
+            or preserved_only
+            or unselected and (item.logical_id, path) in plan.preserve
         ):
             # Native discovery already declares the installed canonical file;
             # it is not an extra source authorized by this recovery copy.
@@ -577,13 +579,12 @@ class _DefinitionsAdapter:
 
     def discover(self, config: Mapping[str, object]) -> tuple[StorageItem, ...]:
         context = discovery_context(config)
-        # Exact EvalConfigLoader default; never inspect arbitrary parents/home or
-        # import its YAML/runtime bootstrap during declaration discovery.
+        # Exact private Eval selector; no runtime bootstrap or package writes.
         import hashlib
 
-        from . import _default_config_path
+        from . import _override_config_path
 
-        path = _default_config_path()
+        path = _override_config_path(context.config_path)
         paths = [("", path)]
         for logical_id, retained in _retained_definition_paths(context):
             if retained not in {value for _, value in paths}:
@@ -595,7 +596,11 @@ class _DefinitionsAdapter:
                 self.owner_id,
                 storage_logical_id(context, self.owner_id, local_id),
                 selected,
-                "included" if selected.is_file() else "missing_required",
+                "included"
+                if selected.is_file()
+                else "unused"
+                if not local_id
+                else "missing_required",
                 (storage_logical_id(context, "config"),),
             )
             for local_id, selected in paths

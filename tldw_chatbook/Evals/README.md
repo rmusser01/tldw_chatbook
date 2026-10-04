@@ -537,7 +537,34 @@ Methods:
 
 ### Configuration File
 
-The module uses YAML configuration at `config/eval_config.yaml`:
+The module reads shipped defaults from `config/eval_config.yaml` as an immutable
+distribution resource. Private overrides live in `eval_overrides.yaml` beside
+the effective `config.toml` (including when `TLDW_CONFIG_PATH` selects another
+profile). An absent override file is normal and is not created by reading.
+
+Override mappings merge recursively; lists and scalar values replace the shipped
+value. Unchanged settings inherit new defaults after an upgrade. For example,
+this entire override file changes only the budget limit:
+
+```yaml
+budget:
+  default_limit: 20.0
+```
+
+`EvalConfigLoader()` returns the merged configuration. `update()` records explicit
+values, including a value equal to today's default; `save()` atomically writes
+only overrides through the existing private-file boundary. Edits to dictionaries
+returned by `get()` are also captured on save. YAML nulls remain nulls.
+`save(other_path)` exports the full effective configuration without marking the
+profile draft saved. `EvalConfigLoader(custom_path)` retains its full-file
+configuration contract.
+
+Backup recovery discovers the same private override path. Older retained Eval
+definition files keep their existing authenticated provenance and inactive state;
+they are not automatically imported or rewritten as overrides. See
+[ADR-220](../../backlog/decisions/220-evaluation-defaults-and-private-overrides.md).
+
+The shipped configuration includes:
 
 ```yaml
 # Task types and metrics
