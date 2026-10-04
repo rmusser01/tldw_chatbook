@@ -171,3 +171,73 @@ def _first_run_discovery_staged_settings(
 
 
 MODEL_DISCOVERY_TIMEOUT_SECONDS = 8.0
+
+# TASK-34100.1 review round 3: the one reuse rule for a provider identity's
+# selected discovery. Only a discovery still running, or one whose model list
+# arrived, stands for that identity. A failed one (the local server was not
+# running yet) or a cancelled one is asked again by whoever needs it next:
+# Provider's show and Next, Model's show and Retry.
+REUSABLE_DISCOVERY_STATES = frozenset({"in_progress", "complete"})
+
+
+def discovery_is_reusable(owner: object, discovery_key: object) -> bool:
+    """Whether ``owner``'s selected discovery can stand for ``discovery_key``.
+
+    Args:
+        owner: The ProviderStep that runs the selected-provider discovery.
+        discovery_key: The exact provider identity a step needs models for.
+
+    Returns:
+        True only for the same identity, with the discovery in progress or
+        complete; never for a failed, cancelled or idle one.
+    """
+
+    return (
+        discovery_key is not None
+        and getattr(owner, "_selected_discovery_key", None) == discovery_key
+        and getattr(owner, "_selected_discovery_state", "")
+        in REUSABLE_DISCOVERY_STATES
+    )
+
+
+def discovery_failed_for(owner: object, discovery_key: object) -> bool:
+    """Whether ``owner``'s last discovery for ``discovery_key`` failed."""
+
+    return (
+        getattr(owner, "_selected_discovery_key", None) == discovery_key
+        and getattr(owner, "_selected_discovery_state", "") == "failed"
+    )
+
+
+def ask_again_on_return(model_step: object, discovery_key: object) -> None:
+    """Ask the server again when the user comes back to Model after a failure.
+
+    Model calls this once per visit, as it shows. It asks only when the
+    Provider step's discovery is still the one Model showed as the user left
+    it, so a Next from Provider, which has just asked again itself, is not
+    asked twice. It never asks while a discovery runs or after a list arrived.
+
+    Args:
+        model_step: The Model step. Supplies the wizard (whose
+            ``_first_run_provider_discovery_owner`` is the Provider step), the
+            staged provider draft, and ``_left_generation``: the Provider
+            discovery it showed when it was last hidden.
+        discovery_key: The exact discovery identity Model is showing.
+    """
+
+    wizard = getattr(model_step, "wizard", None)
+    owner = getattr(wizard, "_first_run_provider_discovery_owner", None)
+    begin = getattr(owner, "_begin_selected_provider_discovery", None)
+    left = getattr(model_step, "_left_generation", None)
+    if (
+        discovery_key is None
+        or left is None
+        or not callable(begin)
+        or getattr(owner, "is_attached", False) is not True
+        or getattr(owner, "_selected_discovery_generation", None) != left
+        or discovery_is_reusable(owner, discovery_key)
+    ):
+        return
+    draft = model_step._current_provider_draft()
+    if draft is not None:
+        begin(draft, sync_live_credential=False)

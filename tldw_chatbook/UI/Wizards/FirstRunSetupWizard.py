@@ -41,6 +41,7 @@ from textual.widgets import (
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.config import get_runtime_config_snapshot
+from tldw_chatbook.UI.Wizards import first_run_model_discovery as model_discovery
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards import first_run_step_guard as step_guard
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
@@ -474,10 +475,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         if (
             owner.is_attached
             and current_key is not None
-            and (
-                owner._selected_discovery_key != current_key
-                or owner._selected_discovery_state not in {"in_progress", "complete"}
-            )
+            and not model_discovery.discovery_is_reusable(owner, current_key)
         ):
             owner._begin_selected_provider_discovery(
                 provider_draft,

@@ -99,6 +99,7 @@ class ModelStep(SetupStep):
         )
         self._selection_config_precondition: object | None = None
         self._manual_decision_active = False
+        self._left_generation: int | None = None  # Provider's discovery as Model hid
         self.selected_model_id: str = ""
         # Bug-5: tracks whether selected_model_id's current value came from
         # the free-text custom Input (as opposed to the RadioSet) -- lets
@@ -228,6 +229,7 @@ class ModelStep(SetupStep):
         return self._explicit_provider_draft
 
     def on_show(self) -> None:
+        visit_starts = not self.is_active  # Textual's Show event repeats this call
         super().on_show()
         self._model_load_generation += 1
         load_generation = self._model_load_generation
@@ -297,6 +299,8 @@ class ModelStep(SetupStep):
         if rendered_is_current:
             self._restore_model_radio_selection(discovery_key)
         if provider_key and not rendered_is_current:
+            if visit_starts:  # review round 3: back to a failure asks again
+                model_discovery.ask_again_on_return(self, discovery_key)
             run_wizard_worker(
                 self,
                 partial(
@@ -335,9 +339,13 @@ class ModelStep(SetupStep):
             self.workers.cancel_group(self, "setup-model-load")
 
     def on_hide(self) -> None:
+        was_active = self.is_active  # Textual's Hide event repeats this call, late
         super().on_hide()
+        if not was_active:  # and would cancel the Provider check Back just began
+            return
         self._cancel_model_discovery()
         owner = getattr(self.wizard, "_first_run_provider_discovery_owner", None)
+        self._left_generation = getattr(owner, "_selected_discovery_generation", None)
         if isinstance(owner, ProviderStep):
             owner.cancel_selected_discovery_handoff()
         self._explicit_provider_draft = None
@@ -390,12 +398,7 @@ class ModelStep(SetupStep):
             discover = None
         elif isinstance(handed_off, Mapping) and discovery_key in handed_off:
             models = list(handed_off[discovery_key])
-            if (
-                not models
-                and isinstance(owner, ProviderStep)
-                and owner._selected_discovery_key == discovery_key
-                and owner._selected_discovery_state == "failed"
-            ):
+            if not models and model_discovery.discovery_failed_for(owner, discovery_key):
                 discovery_state = "connection_failed"
                 failure_category = _handed_off_failure_category(owner, discovery_key)
             discover = None
@@ -420,10 +423,7 @@ class ModelStep(SetupStep):
                 models, discovery_state, failure_category = _model_discovery_ui_outcome(
                     selected_outcome
                 )
-            elif (
-                owner._selected_discovery_key == discovery_key
-                and owner._selected_discovery_state == "failed"
-            ):
+            elif model_discovery.discovery_failed_for(owner, discovery_key):
                 discovery_state = "connection_failed"
                 failure_category = _handed_off_failure_category(owner, discovery_key)
             # ProviderStep owns setup network work for this selection. If the

@@ -389,31 +389,26 @@ async def test_disabled_nav_buttons_carry_the_dim_attribute():
             assert not styles[False].dim, f"{selector} enabled is dim"
 
 
-@pytest.mark.parametrize("outcome", ["models", "failure"])
 @pytest.mark.asyncio
-async def test_back_and_forward_reuse_the_providers_model_discovery(outcome: str):
-    """A model list is fetched once per provider identity.
+async def test_back_and_forward_reuse_the_providers_model_list():
+    """A model list fetched for a provider identity is fetched once.
 
-    ``[models]``: Back to Provider and Forward again reuse the list (review:
-    "reruns on every Forward/Back"). ``[failure]``: moving between the steps
-    after Model does not ask the server again. Going back to Provider does
-    (see the next test): its notice says "Check it's running, then
-    continue", so continuing must check. Model's Retry also asks again.
+    Back to Provider and Forward again reuse the list (review: "reruns on
+    every Forward/Back"), and so does Model -> Voice -> Back to Model. Only a
+    list that arrived is reused: a failed discovery is asked again (see
+    ``test_a_failed_discovery_is_asked_again_on_every_visit``).
 
-    Both cases already passed on the base code, which reused a completed
-    discovery; they stay as regression pins for that reuse.
+    This already passed on the base code, which reused a completed discovery;
+    it stays as a regression pin for that reuse.
     """
     wizard = _wizard()
     wizard.app_instance.app_config = {
         "api_settings": {"custom": {"api_url": "https://cache.example.test/v1"}}
     }
     scope_service = MagicMock()
-    if outcome == "models":
-        scope_service.discover_models = AsyncMock(
-            return_value=_typed_result("custom", "cached-model")
-        )
-    else:
-        scope_service.discover_models = AsyncMock(side_effect=OSError("down"))
+    scope_service.discover_models = AsyncMock(
+        return_value=_typed_result("custom", "cached-model")
+    )
     wizard.app_instance.llm_provider_catalog_scope_service = scope_service
     app = _Host(wizard)
 
@@ -427,33 +422,20 @@ async def test_back_and_forward_reuse_the_providers_model_discovery(outcome: str
         provider = container.steps[provider_index]
         assert isinstance(provider, ProviderStep)
         provider.select_provider("custom")
-        for _ in range(40):
-            if provider._selected_discovery_state in {"complete", "failed"}:
-                break
-            await pilot.pause(0.05)
-
+        await _until_discovery(pilot, provider, "complete")
         model = container.steps[model_index]
         assert isinstance(model, ModelStep)
 
-        async def model_settled() -> None:
-            if outcome == "models":
-                await _until_models(pilot, model, "cached-model")
-            else:
-                await _until_selector(pilot, model, "#setup-model-connection-failed")
-
         await container._advance()
-        await model_settled()
-        # A failure seen on Provider is asked again by its Next.
-        asked = scope_service.discover_models.await_count
-        assert asked == (1 if outcome == "models" else 2)
+        await _until_models(pilot, model, "cached-model")
+        assert scope_service.discover_models.await_count == 1
 
-        if outcome == "models":
-            # Back to Provider, then Forward again: same provider identity.
-            await pilot.press("ctrl+b")
-            await pilot.pause(0.3)
-            assert container.current_step == provider_index
-            await container._advance()
-            await model_settled()
+        # Back to Provider, then Forward again: same provider identity.
+        await pilot.press("ctrl+b")
+        await pilot.pause(0.3)
+        assert container.current_step == provider_index
+        await container._advance()
+        await _until_models(pilot, model, "cached-model")
 
         # Model -> Voice -> Back to Model: still the same identity.
         await container._advance()
@@ -461,17 +443,175 @@ async def test_back_and_forward_reuse_the_providers_model_discovery(outcome: str
         await pilot.press("ctrl+b")
         await pilot.pause(0.3)
         assert container.current_step == model_index
-        await model_settled()
-        assert scope_service.discover_models.await_count == asked
+        await _until_models(pilot, model, "cached-model")
+        assert scope_service.discover_models.await_count == 1
 
-        if outcome == "failure":
-            # Asking again is still one press away.
-            model.query_one("#setup-model-retry", Button).press()
-            for _ in range(40):
-                if scope_service.discover_models.await_count == asked + 1:
-                    break
-                await pilot.pause(0.05)
+
+@pytest.mark.parametrize("visit", ["back_to_provider", "back_to_model", "retry"])
+@pytest.mark.asyncio
+async def test_a_failed_discovery_is_asked_again_on_every_visit(visit: str):
+    """Review round 3: only a model list that arrived is reused.
+
+    The local server is down, so discovery fails and Model says so. The user
+    starts the server. Whatever they do next must ask it again:
+    ``back_to_provider`` goes Back, and Provider's own status must find the
+    models before Next is pressed. ``back_to_model`` continued past the
+    failure to Voice and comes Back to Model. ``retry`` presses Model's
+    Retry. Each time Model then lists the models and stops asking
+    "Continue anyway?".
+
+    RED on the round-2 code for ``back_to_provider`` and ``back_to_model``,
+    which kept the failure for the provider identity. ``retry`` already
+    asked again there; it stays as a pin.
+    """
+    wizard = _wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {"custom": {"api_url": "https://cache.example.test/v1"}}
+    }
+    server_up = False
+
+    async def discover(**_kwargs):
+        if not server_up:
+            raise OSError("down")
+        return _typed_result("custom", "now-up")
+
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(side_effect=discover)
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    app = _Host(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        container.show_step(provider_index)
+        provider = container.steps[provider_index]
+        assert isinstance(provider, ProviderStep)
+        provider.select_provider("custom")
+        await _until_discovery(pilot, provider, "failed")
+        model = container.steps[model_index]
+        assert isinstance(model, ModelStep)
+        await container._advance()
+        await _until_selector(pilot, model, "#setup-model-connection-failed")
+        for _ in range(40):  # the gate is recorded just after the row mounts
+            if model.confirm_before_advance() is not None:
+                break
+            await pilot.pause(0.05)
+        assert model.confirm_before_advance() is not None
+        # Picking the provider asked once and its Next once more; showing
+        # Model straight after that Next does not ask a third time.
+        assert scope_service.discover_models.await_count == 2
+        if visit == "back_to_model":
+            await container._advance()  # "Continue anyway" past the gate
+            await pilot.pause(0.2)
+            assert container.current_step == container._step_index_for_id(STEP_VOICE)
+        asked = scope_service.discover_models.await_count
+
+        server_up = True
+        if visit == "back_to_provider":
+            await pilot.press("ctrl+b")
+            assert container.current_step == provider_index
+            await _until_discovery(pilot, provider, "complete")
             assert scope_service.discover_models.await_count == asked + 1
+            status = provider.query_one("#setup-provider-probe-status")
+            assert "Found 1 model" in str(status.content)
+            await container._advance()
+        elif visit == "back_to_model":
+            await pilot.press("ctrl+b")
+            assert container.current_step == model_index
+        else:
+            model.query_one("#setup-model-retry", Button).press()
+
+        await _until_models(pilot, model, "now-up")
+        assert scope_service.discover_models.await_count == asked + 1
+        assert model.current_probe_failure() == ""
+        assert model.confirm_before_advance() is None
+
+
+@pytest.mark.parametrize("continue_via", ["next", "retry"])
+@pytest.mark.asyncio
+async def test_a_failed_test_connection_does_not_hide_a_later_model_list(
+    continue_via: str,
+):
+    """Review round 3: an old failed Test connection must not outlive the fix.
+
+    The server is down and Test connection says so. The user starts the
+    server, then ``next``: presses Next, or ``retry``: presses Next while it
+    is still down, starts it, and presses Model's Retry. Either way the model
+    list that now arrives is newer than the failed test, so Model shows it
+    instead of "isn't reachable", and does not ask "Continue anyway?".
+
+    RED on the round-2 code: the failed test's evidence overrode every later
+    model list for the same provider identity, Retry included.
+    """
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+
+    wizard = _wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {"custom": {"api_url": "https://cache.example.test/v1"}}
+    }
+    server_up = False
+
+    async def discover(**_kwargs):
+        if not server_up:
+            raise OSError("down")
+        return _typed_result("custom", "now-up")
+
+    async def probe(*_args, **_kwargs):
+        if server_up:
+            return SettingsEndpointProbeOutcome(
+                state="reachable", summary="reachable (1 models)", model_ids=("now-up",)
+            )
+        return SettingsEndpointProbeOutcome(
+            state="unreachable",
+            category="connection_error",
+            summary="unreachable: connection refused",
+        )
+
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(side_effect=discover)
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    app = _Host(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        container.show_step(provider_index)
+        provider = container.steps[provider_index]
+        assert isinstance(provider, ProviderStep)
+        provider._probe = AsyncMock(side_effect=probe)
+        provider.select_provider("custom")
+        await _until_discovery(pilot, provider, "failed")
+        provider.query_one("#setup-provider-test", Button).press()
+        for _ in range(60):
+            if provider._last_tested_provider_identity is not None:
+                break
+            await pilot.pause(0.05)
+        status = provider.query_one("#setup-provider-probe-status")
+        assert str(status.content).startswith("✗"), status.content
+        model = container.steps[model_index]
+        assert isinstance(model, ModelStep)
+
+        if continue_via == "next":
+            server_up = True
+            await container._advance()
+        else:
+            await container._advance()
+            await _until_selector(pilot, model, "#setup-model-connection-failed")
+            server_up = True
+            model.query_one("#setup-model-retry", Button).press()
+        assert container.current_step == model_index
+
+        await _until_models(pilot, model, "now-up")
+        assert model.current_probe_failure() == ""
+        assert model.confirm_before_advance() is None
 
 
 @pytest.mark.parametrize("fixed_via", ["back_then_next", "test_connection"])
@@ -485,8 +625,9 @@ async def test_a_server_fixed_after_a_failed_discovery_is_seen_on_continue(
     continues from Provider, as its notice asks ("Check it's running, then
     continue"). ``back_then_next``: the failure showed on Model, the user
     went Back and pressed Next. ``test_connection``: the failure showed on
-    Provider, and a Test connection succeeded before Next. Either way Next
-    must ask the server again, so Model lists its models and does not hold
+    Provider, and a Test connection succeeded before Next. Either way the
+    server must be asked again (since review round 3, coming Back to
+    Provider already asks), so Model lists its models and does not hold
     Next behind "The server couldn't be reached… Continue anyway?".
     """
     from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
@@ -535,11 +676,13 @@ async def test_a_server_fixed_after_a_failed_discovery_is_seen_on_continue(
         if fixed_via == "back_then_next":
             await container._advance()
             await _until_selector(pilot, model, "#setup-model-connection-failed")
+            asked_before = scope_service.discover_models.await_count
             server_up = True
             await pilot.press("ctrl+b")
             await pilot.pause(0.3)
             assert container.current_step == provider_index
         else:
+            asked_before = scope_service.discover_models.await_count
             server_up = True
             provider.query_one("#setup-provider-test", Button).press()
             for _ in range(40):
@@ -547,7 +690,6 @@ async def test_a_server_fixed_after_a_failed_discovery_is_seen_on_continue(
                     break
                 await pilot.pause(0.05)
             await pilot.pause(0.1)
-        asked_before = scope_service.discover_models.await_count
 
         await container._advance()
         assert container.current_step == model_index
@@ -556,6 +698,16 @@ async def test_a_server_fixed_after_a_failed_discovery_is_seen_on_continue(
         assert scope_service.discover_models.await_count > asked_before
         assert model.current_probe_failure() == ""
         assert model.confirm_before_advance() is None
+
+
+async def _until_discovery(pilot, provider: ProviderStep, state: str) -> None:
+    for _ in range(80):
+        if provider._selected_discovery_state == state:
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"discovery never reached {state!r} ({provider._selected_discovery_state!r})"
+    )
 
 
 async def _until_selector(pilot, model: ModelStep, selector: str) -> None:

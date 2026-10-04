@@ -388,6 +388,7 @@ class ProviderStep(SetupStep):
         )
         self._selected_discovery_generation = 0
         self._selected_discovery_state = "idle"
+        self._listed_after_test = False  # models arrived after the last test
         self._selected_discovery_credential_decision: tuple[str, str | int] | None = (
             None
         )
@@ -604,14 +605,8 @@ class ProviderStep(SetupStep):
                 return
             provider_draft = self._effective_provider_draft()
             discovery_key = self._model_discovery_key(provider_draft)
-            if (
-                discovery_key != self._selected_discovery_key
-                or self._selected_discovery_state
-                in {
-                    "idle",
-                    "cancelled",
-                }
-            ):
+            # Coming Back after a failure asks again (review round 3).
+            if not model_discovery.discovery_is_reusable(self, discovery_key):
                 self._begin_selected_provider_discovery(provider_draft)
         elif self._local_discovery_state in {"idle", "cancelled"}:
             self._start_discovery()
@@ -1706,6 +1701,7 @@ class ProviderStep(SetupStep):
                 self._apply_discovered_server(discovered_server)
 
             self._selected_discovery_state = "failed" if failed else "complete"
+            self._listed_after_test = bool(models)
             from tldw_chatbook.Chat.provider_catalog import provider_display_name
 
             display = provider_display_name(provider_key)
@@ -1809,6 +1805,8 @@ class ProviderStep(SetupStep):
         from tldw_chatbook.Chat.provider_test_evidence import ProviderDraftIdentity
 
         tested = self._last_tested_provider_identity
+        if self._listed_after_test and discovery_key == self._selected_discovery_key:
+            return None  # a model list newer than the test wins (review round 3)
         if type(tested) is not ProviderDraftIdentity:
             return None
         source_matches = (
@@ -2305,6 +2303,7 @@ class ProviderStep(SetupStep):
         if self._active_probe_token is token:
             self._active_probe_token = None
         self._last_tested_provider_identity = identity
+        self._listed_after_test = False
         if (
             generation == self.probe_generation
             and provider_key == self.selected_provider_key
@@ -2429,9 +2428,7 @@ class ProviderStep(SetupStep):
         # A list fetched for this identity is reused; a failure is not (the
         # user may have started the server: "Check it's running, then
         # continue"). It runs in the background, so Next never waits on it.
-        if discovery_key != self._selected_discovery_key or (
-            self._selected_discovery_state not in {"in_progress", "complete"}
-        ):
+        if not model_discovery.discovery_is_reusable(self, discovery_key):
             self._begin_selected_provider_discovery(provider_draft)
         self._last_committed_provider_value = self.provider_value_for_chat_defaults
         if typed_key:
