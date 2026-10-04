@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 03:25'
+updated_date: '2026-10-04 03:46'
 labels:
   - agents
   - console
@@ -344,6 +344,8 @@ All FOUR exact published cac73ef5fef507e7cf26acb727b107aa2fd664da jobs passed at
 5. Close AC3/Done via CLI only after both approvals, AC4 checked, and append only four owned canonical Markdown qualification records. Authenticate approved source/deletion/full tree outside four. Fresh current cac Qodo/allFOUR/actualrefs/live protection precede a single publication with EXACT observed cac73ef5fef507e7cf26acb727b107aa2fd664da lease and concise body; verify actual remote/GitHub/body after lag without second push. Fresh new-head Qodo/no actionable threads and ALL FOUR jobs precede any subsequent strict-base action or normal protected head-matched merge. Verify actual MERGED parents/tree/concurrency before pausing heartbeat/reporting.
 
 No full suite, live provider/user keys, physical reboot/CtrlQ/relaunch, real voice installation/provision/service/download/playback, native Linux/Windows/aggregate/package/index/installed-native-release/wider audit, admin bypass, weakened gate/pin/ceiling/count/work/time/warmup, shared stash or foreign cleanup. Incoming wider sweeps and owner incidents are historical records, not new root execution or certification.
+
+Verification amendment before final immutable review: the broader178-case selection was interrupted after discovering the unchanged native_package fixture builds and target-installs a local wheel. Retain exit130/no XML,88 raw progress dots without a completed-selection certificate, its task-owned wheel/target receipt, and both excluded wheel cases. Continue only the89 uncompleted source cases, without replaying the observed prefix or overriding a fixture. Record this incident in an append-only testing-evidence lesson, preserving the complete prior prefix; all application/test/guard source stays exact. Preserve the unrecovered historical generic followups-published-tree scratch serialization replacement separately from unchanged immutable reviews/raw/XML and authenticated Git contents. Re-authenticate the three owned documentation changes and obtain fresh immutable independent approval before the original five budgets once. ADR required: no; the existing ADR126/097/199 boundaries remain.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
