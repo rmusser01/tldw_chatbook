@@ -18381,3 +18381,23 @@ await and later save a real assistant owner to test custody and settlement
 fingerprints. Retry negatives must include changed system content in both
 single-preamble and distinct-role formats, because unchanged message rows alone
 do not prove unchanged provider input.
+
+## Native file costs and combined sends need platform-specific evidence
+
+**TASK-34402, 2026-10-04.** Latest dev's Ubuntu perf guard passed while actual
+Windows UAT still took 21–29 seconds before provider entry. A call-through full
+Console probe with an immediate adapter reproduced delays on native Linux and
+macOS too (2.8–4.4 and 4.9–5.9 seconds), with three complete captured calls each.
+Local Windows incurred 857,078 main-thread native handle opens during three
+instrumented sends, while the Python os.open audit counted only 72. The facade
+uses NtCreateFile; an os.open counter cannot establish its cost. The existing
+ratchet holds refresh timers still and has no Windows open-count threshold.
+
+Retain main/worker attribution, exact source and native host identities, and
+the whole captured send with ordinary refreshes enabled. Count the actual
+platform primitive, and do not add inclusive nested seam times. Frame sampling
+should read code metadata, not traceback source lines that add filesystem I/O.
+Cross-machine, differently instrumented times establish reproduced work, not
+an OS speed ratio. A Windows Server runner's separate WAL wrong-owner refusal
+also showed why a failed native run must stay visible instead of being counted
+as a successful cross-platform conversation.
