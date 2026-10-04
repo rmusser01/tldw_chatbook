@@ -6,6 +6,7 @@ from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
 
 import asyncio
 import contextlib
+import functools
 import hashlib
 import inspect
 import json
@@ -5356,12 +5357,18 @@ class ConsoleProviderGateway:
             if native_accounting
             else None
         )
-        if automatic is not None:
-            prepared = self.prepare_chat_request(
+        if automatic is not None or rule_lease is not None or native_accounting:
+            prepare = functools.partial(
+                self.prepare_chat_request,
                 resolution,
                 messages,
                 apply_safety_window=False,
                 response_format=request.response_format,
+            )
+            prepared = (
+                await asyncio.to_thread(prepare)
+                if rule_lease is not None or native_accounting
+                else prepare()
             )
             if prepared.known_overflow:
                 raise ChatBadRequestError(
@@ -5423,6 +5430,14 @@ class ConsoleProviderGateway:
                         if prepared is not None
                         else self._auxiliary_chat_api_kwargs(request, resolution)
                     )
+                    if rule_lease is not None:
+                        # Preparation must retain this helper's transport limits.
+                        kwargs.update(
+                            api_base_url=resolution.base_url or None,
+                            request_timeout=resolution.request_timeout,
+                            request_retries=0,
+                            request_retry_delay=resolution.request_retry_delay,
+                        )
                     with _automatic_generation(prepared, call_signals):
                         context = copy_context()
                         if rule_lease is None:

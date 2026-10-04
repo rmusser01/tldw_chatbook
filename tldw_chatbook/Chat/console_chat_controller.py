@@ -17982,6 +17982,22 @@ class ConsoleChatController:
         if callable(marshal):
             marshal(self.remount_watchlists_operation_receipts)
 
+    def observe_response_rule_tool_result(self, session_id: str, message_id: str, run_id: str, call_key: str, tool_name: str, result: Any) -> None:
+        """Retain definitive state without exposing raw sensitive result bodies."""
+        self.observe_watchlists_operation_result(run_id, call_key, tool_name, result)
+        from tldw_chatbook.Agents.agent_models import ToolResult
+
+        if not isinstance(result, ToolResult):
+            return
+        if message_id not in self.store.active_path_message_ids(session_id):
+            return
+        self.store.record_response_rule_tool_result(
+            message_id, call_key,
+            state=result.dispatch_state or "uncertain",
+            outcome="blocked" if result.outcome == "blocked" else "succeeded" if result.ok else "failed",
+            tool_name=tool_name,
+        )
+
     def remount_watchlists_operation_receipts(self) -> None:
         """UI THREAD: publish the process-local canonical receipt snapshot."""
         callback = self.follow_watchlists_operations
@@ -29792,7 +29808,7 @@ class ConsoleChatController:
                 revoke_approvals=self.revoke_approval_rounds_for_run,
                 plugin_cancel_root=cancel_event.set,
                 on_tool_terminal=self.complete_definitive_tool,
-                on_tool_result_terminal=self.observe_watchlists_operation_result,
+                on_tool_result_terminal=functools.partial(self.observe_response_rule_tool_result, session_id, assistant_message_id),
                 on_run_terminal=self.complete_definitive_run,
                 restore_provider_continuation=restore_provider_continuation,
                 restore_provider_target=restore_provider_target,

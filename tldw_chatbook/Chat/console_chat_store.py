@@ -38,6 +38,7 @@ UNSPECIFIED_ASSISTANT = object()
 _HYDRATION_NOT_PREPARED = object()
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.response_rules.models import RuleEvidence
     from tldw_chatbook.Chat.response_rules.store import ResponseRuleStore
     from tldw_chatbook.Agents.fleet_messages import MessageStore
     from tldw_chatbook.Canvas.staging import (
@@ -2050,6 +2051,9 @@ class ConsoleChatStore:
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
+        self._response_rule_evidence_lock = threading.RLock()
+        self._response_rule_results: dict[str, dict[str, RuleEvidence]] = {}
+        self._response_rule_task_roots: dict[str, str] = {}
         # Content-free fence that advances only for live successful
         # completions. It distinguishes duplicate callback delivery from a
         # later regeneration of the same message without retaining text.
@@ -5015,6 +5019,9 @@ class ConsoleChatStore:
             self._variant_restored_message_ids.discard(message_id)
             self._failed_retry_message_ids.discard(message_id)
             self._message_speech_revisions.pop(message_id, None)
+            with self._response_rule_evidence_lock:
+                self._response_rule_results.pop(message_id, None)
+                self._response_rule_task_roots.pop(message_id, None)
             self._message_completion_generations.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
             self._restored_tree_message_ids.discard(message_id)
@@ -10659,6 +10666,9 @@ class ConsoleChatStore:
         self._variant_restored_message_ids.clear()
         self._failed_retry_message_ids.clear()
         self._message_speech_revisions.clear()
+        with self._response_rule_evidence_lock:
+            self._response_rule_results.clear()
+            self._response_rule_task_roots.clear()
         self._message_completion_generations.clear()
         # M2: both keyed by message id, same as the caches immediately
         # above -- previously left uncleared here, so a restore (session
@@ -11934,6 +11944,53 @@ class ConsoleChatStore:
         message = self._message_or_raise(message_id)
         self._materialize_stream_buffer(message)
         return self._snapshot(message)
+
+    def response_rule_source_version(self, message_id: str) -> int:
+        """Read an exact durable version or native semantic-content fence."""
+        message = self._message_or_raise(message_id)
+        if message.persisted_message_id is not None:
+            try:
+                version = self._persisted_message_version_or_reject(message)
+            except Exception:
+                raise ValueError("rule_source_version_unavailable") from None
+            if version is None:
+                raise ValueError("rule_source_version_unavailable")
+            return version
+        return self._message_speech_revisions[message_id] + 1
+
+    def bind_response_rule_task_root(self, message_id: str, user_message_id: str) -> None:
+        """Pin a host-admitted correction to its original task on this branch."""
+        session_id = self._message_session_index[message_id]
+        path = self.active_path_message_ids(session_id)
+        if user_message_id not in path or self._message_or_raise(user_message_id).role is not ConsoleMessageRole.USER:
+            raise ValueError("rule_source_task_unavailable")
+        with self._response_rule_evidence_lock:
+            self._response_rule_task_roots[message_id] = user_message_id
+
+    def response_rule_task_root(self, message_id: str) -> str | None:
+        """Return retained host task identity, never a generated instruction body."""
+        with self._response_rule_evidence_lock:
+            return self._response_rule_task_roots.get(message_id)
+
+    def record_response_rule_tool_result(self, message_id: str, call_id: str, *, state: str, outcome: str, tool_name: str) -> None:
+        """Retain body-free facts from the real definitive tool callback."""
+        from .response_rules.models import RuleEvidence
+
+        if state not in {"settled", "not_started", "uncertain"} or outcome not in {"succeeded", "failed", "blocked"}:
+            raise ValueError("invalid_rule_dispatch_fact")
+        self._message_or_raise(message_id)
+        ref = f"{message_id}:{call_id}"
+        fact = RuleEvidence(ref, state, outcome, None, f"{tool_name[:128]}: {outcome}")
+        with self._response_rule_evidence_lock:
+            previous = self._response_rule_results.setdefault(message_id, {}).get(ref)
+            if previous is not None and previous != fact:
+                fact = replace(fact, state="uncertain", outcome="unknown")
+            self._response_rule_results[message_id][ref] = fact
+
+    def response_rule_tool_results(self, message_id: str) -> tuple[RuleEvidence, ...]:
+        """Read frozen dispatch facts for one exact native response owner."""
+        with self._response_rule_evidence_lock:
+            return tuple(self._response_rule_results.get(message_id, {}).values())
 
     def projected_trace_calls(
         self,

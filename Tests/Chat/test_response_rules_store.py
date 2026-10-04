@@ -54,7 +54,9 @@ def test_failed_draft_without_revision_is_inspectable_only_in_its_scope(rule_sto
 
 def test_temporary_adoption_rolls_back_without_losing_live_rules(rule_store):
     store, db, durable = rule_store
-    temporary = replace(durable, conversation_id=None, message_id="native-answer")
+    temporary = replace(
+        durable, conversation_id=None, message_id="native-answer", message_version=7
+    )
     scope = RuleScope("chat", temporary.session_id)
     activate(store, temporary, scope)
     before = effective(store, scope)
@@ -83,6 +85,7 @@ def test_temporary_adoption_rolls_back_without_losing_live_rules(rule_store):
     assert len(adopted) == 1
     assert adopted[0].origin.conversation_id == durable.conversation_id
     assert adopted[0].origin.message_id == durable.message_id
+    assert adopted[0].origin.message_version == durable.message_version
     assert effective(store, scope) == ()
 
 
@@ -211,7 +214,12 @@ def test_actual_temporary_chat_save_adopts_rules_in_transcript_transaction(
     answer = chats.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content="Missing proof"
     )
-    origin = source(session_id=session.id, conversation_id=None, message_id=answer.id)
+    origin = source(
+        session_id=session.id,
+        conversation_id=None,
+        message_id=answer.id,
+        message_version=chats.response_rule_source_version(answer.id),
+    )
     scope = RuleScope("chat", session.id)
     activate(rules, origin, scope)
     before = effective(rules, scope)
@@ -242,6 +250,12 @@ def test_actual_temporary_chat_save_adopts_rules_in_transcript_transaction(
             adopted[0].origin.message_id
             == chats.get_message(answer.id).persisted_message_id
         )
+        with db.transaction() as cursor:
+            durable_version = cursor.execute(
+                "SELECT version FROM messages WHERE id=?",
+                (adopted[0].origin.message_id,),
+            ).fetchone()[0]
+        assert adopted[0].origin.message_version == durable_version
         assert effective(rules, scope) == ()
 
 

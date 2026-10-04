@@ -383,10 +383,18 @@ class ResponseRuleStore:
             def remap(origin: RuleSource) -> RuleSource:
                 if origin.message_id not in message_ids:
                     raise ValueError("rule_source_not_adopted")
+                durable_id = message_ids[origin.message_id]
+                row = cursor.execute(
+                    "SELECT version FROM messages WHERE id=? AND conversation_id=? AND sender='assistant' AND deleted=0",
+                    (durable_id, conversation_id),
+                ).fetchone()
+                if row is None:
+                    raise ValueError("rule_source_not_adopted")
                 return replace(
                     origin,
                     conversation_id=conversation_id,
-                    message_id=message_ids[origin.message_id],
+                    message_id=durable_id,
+                    message_version=row[0],
                     branch_id=message_ids.get(origin.branch_id, origin.branch_id),
                 )
 

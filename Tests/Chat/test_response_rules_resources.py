@@ -3,6 +3,7 @@
 import asyncio
 import time
 from threading import Event
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -14,6 +15,30 @@ from Tests.Chat.test_console_provider_gateway import (
 )
 from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
 from tldw_chatbook.Chat.response_rules.resources import RuleHelperPool
+
+
+@pytest.mark.asyncio
+async def test_native_helper_refuses_known_context_overflow_before_adapter_entry(
+    monkeypatch,
+):
+    from tldw_chatbook.Chat.Chat_Deps import ChatBadRequestError
+
+    pool, charged = pool_with_usage()
+    lease = pool.try_acquire(
+        source(), purpose="checking", deadline=time.monotonic() + 30
+    )
+    calls = []
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **kwargs: calls.append(kwargs) or "answer"
+    )
+    monkeypatch.setattr(
+        gateway,
+        "prepare_chat_request",
+        lambda *_args, **_kwargs: SimpleNamespace(known_overflow=True),
+    )
+    with pytest.raises(ChatBadRequestError):
+        await gateway.complete_auxiliary(_auxiliary_request(), rule_lease=lease)
+    assert calls == [] and charged == [] and pool.unsettled_count == 0
 
 
 def pool_with_usage(*, current=lambda _source: True, clock=time.monotonic):
