@@ -5,6 +5,11 @@ log_level = "INFO"
 [first_run]
 setup_completed = true
 
+# This navigation fixture has existing chats. It is not first-send onboarding
+# qualification; provider sending stays unavailable and all networking is denied.
+[console.onboarding]
+first_send_completed = true
+
 [splash_screen]
 enabled = false
 

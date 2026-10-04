@@ -124,3 +124,39 @@ embedding model or authority boundary was introduced. Frozen baseline and
 observer-cost comparison precede any later GC remedy. Actual Windows Terminal
 and three first-time participants remain external; TASK-31246's dependency is
 not waived and no final PR has been created yet.
+
+## First clean-process scale attempt and fixture correction
+
+Frozen source `f7b4227e36f0d317d43c988cea13c7e5a2788757` completed the tiny
+CLI smoke and full production-API corpus build. Full counts were
+10,000/250,004/10,000, integrity OK and index ready. Standalone Keyword passed
+all 300 measured identities, P95 108.303041 ms and maximum loop interval
+17.039625 ms, no retained database descriptors or registered handles. Source
+digest was `a8da4228b4e4526b578687af49a33e82bbd4c805f39e3a3dbbf29029fca05921`.
+All raw receipts are retained under `/tmp/task31245-freeze-5uPHpo`.
+
+The first UI attempt failed before collecting samples: the normal provider-setup
+overlay refused the Console switcher action. A separate read-only action
+observer reproduced `setup_blocking=true`, `decision_blocking=false`,
+`first_send_completed=false` and ChatScreen both before and after the action.
+This is a fixture precondition failure, not evidence of search/paint latency.
+The global setup-wizard flag does not represent Console's separate first-send
+state. A focused regression failed on this distinction before the correction.
+
+The checked-in synthetic config now explicitly represents an existing-chat user
+through `[console.onboarding] first_send_completed=true`. This does not assert
+provider readiness, enable sending, inject credentials or bypass a production
+control. Navigation-discovery participants are not application/provider
+onboarding qualification. The provider remains unavailable and network guard
+remains enforced. New source-bound receipts must be measured after re-freezing;
+the earlier passed Keyword receipt is not relabelled for the new head.
+
+The fixture/measurement regression pair passed 42 tests in 8.72s, no pytest
+warnings, strict descriptor gate exit 0 and zero retained database files after
+each teardown (`/tmp/task31245-config-green.log`). RED receipt:
+`/tmp/task31245-config-red.log`. Changed Python lint and format are clean.
+
+The failed UI receipt retains its post-run-test-unmount database descriptors and
+three registered handles; this is not terminal resource proof. One optional
+pydub warning appears in its private application log. No warning suppression,
+manual sweeping of database owners or increased timing limit was applied.

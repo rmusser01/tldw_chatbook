@@ -108,6 +108,29 @@ def test_manifest_is_independent_complete_and_not_mutated_by_a_consumer():
     assert fixture.load_manifest()[0]["expected"] == ["perf-00000"]
 
 
+def test_navigation_fixture_config_does_not_require_provider_setup():
+    import tomllib
+
+    from tldw_chatbook.Chat.console_onboarding_state import console_setup_is_blocking
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
+
+    config = tomllib.loads(
+        Path(fixture.__file__)
+        .with_name("character_qualification_config.toml")
+        .read_text()
+    )
+    onboarding = config.get("console", {}).get("onboarding", {})
+    # Navigation qualification represents a user with saved chats, not first-send
+    # onboarding or send readiness. No fake credential or provider-ready result.
+    readiness = ConsoleSettingsReadiness("Blocked", "No key", False)
+    assert not console_setup_is_blocking(
+        readiness=readiness,
+        has_model=False,
+        first_send_completed=onboarding.get("first_send_completed", False),
+    )
+    assert readiness.native_send_supported is False
+
+
 def test_tiny_real_corpus_matches_independent_queries_and_excludes_nonselected_data(
     tmp_path,
 ):
