@@ -1505,3 +1505,38 @@ def test_primary_remembered_bridge_still_confirms_each_child_request(
         not controller._chat_creation_records
         and not controller.pending_chat_create_ids()
     )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "category"),
+    [
+        ({"title": "x" * 121}, "payload_too_large"),
+        ({"opening_prompt": "x" * 20_001}, "payload_too_large"),
+        ({"instructions": "x" * 20_001}, "payload_too_large"),
+        ({"destination": ["secret-payload"]}, "invalid_args"),
+        ({"mode": None}, "invalid_args"),
+        ({"mode": "start", "opening_prompt": " \n\t"}, "invalid_args"),
+        ({"provider": {"secret-payload": "private"}}, "invalid_args"),
+    ],
+)
+def test_new_chat_tool_and_controller_reject_before_authority_or_execution(
+    real_db_controller, arguments, category
+):
+    controller, _db = real_db_controller
+    confirm, executor = _FakeConfirm([]), _FakeExecutor()
+    preparations = []
+    _, new_chat = build_chat_create_tool_closures(
+        confirm=confirm,
+        execute=executor,
+        session_id="s1",
+        run_id="r1",
+        prepare=lambda payload: preparations.append(payload),
+    )
+    result = new_chat(arguments)
+    assert not result.ok and result.error.startswith(category + ":")
+    assert "secret-payload" not in result.error
+    assert confirm.payloads == executor.calls == preparations == []
+    with pytest.raises(ValueError) as captured:
+        controller.prepare_agent_chat_create(arguments)
+    assert str(captured.value).startswith(category + ":")
+    assert "secret-payload" not in str(captured.value)

@@ -11381,38 +11381,26 @@ def build_chat_create_tool_closures(
 
 
 def validate_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:
-    """Validate public creation fields without carrying model-supplied authority."""
-    defaults = {
-        "title": "",
-        "opening_prompt": "",
-        "instructions": "",
-        "destination": "same_workspace",
-        "mode": "draft",
-        "provider": "",
-        "model": "",
-        "preset": "",
-    }
-    values = {key: arguments.get(key, default) for key, default in defaults.items()}
-    for key, value in values.items():
-        if not isinstance(value, str):
-            raise ValueError(f"invalid_args: {key} must be a string")
-    if len(values["title"]) > CHAT_CREATE_TITLE_MAX:
-        raise ValueError("payload_too_large: title exceeds 120 characters")
-    if any(
-        len(values[key]) > CHAT_CREATE_PAYLOAD_MAX
-        for key in ("opening_prompt", "instructions")
-    ):
-        raise ValueError(
-            "payload_too_large: prompt/instructions exceed 20000 characters"
-        )
-    if values["destination"] not in {"same_workspace", "casual"}:
-        raise ValueError("invalid_args: destination")
-    if values["mode"] not in {"draft", "start"}:
-        raise ValueError("invalid_args: mode")
-    if values["mode"] == "start" and not values["opening_prompt"].strip():
-        raise ValueError("invalid_args: start requires a nonblank opening_prompt")
-    values["title"] = values["title"].strip()
-    return values
+    """Validate public creation fields without carrying model-supplied authority.
+
+    Args:
+        arguments: Public title, opening_prompt, instructions, destination,
+            mode, and optional provider/model/preset strings. Omitted fields
+            retain empty-string, same_workspace, and draft defaults. Unknown
+            authority fields are discarded by the shared validator.
+
+    Returns:
+        The eight validated fields, with title trimmed after its length check
+        and literal prompts, instructions, and routing strings preserved.
+
+    Raises:
+        ValueError: An input-free invalid_args or payload_too_large category for
+            non-string fields, unsupported choices, exceeded limits, or a
+            blank opening_prompt in start mode.
+    """
+    from tldw_chatbook.Utils.input_validation import validate_console_new_chat_arguments
+
+    return validate_console_new_chat_arguments(arguments)
 
 
 def _release_chat_creation_token(payload: dict) -> None:

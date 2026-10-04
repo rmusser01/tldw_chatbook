@@ -22775,10 +22775,20 @@ class ConsoleChatController:
         if isinstance(span, ConsoleSubmitResult):
             return span
         title = "Transcript: " + (span[0].content.strip().splitlines() or [""])[0][:48]
-        body_lines = [
-            f"**{'User' if m.role is ConsoleMessageRole.USER else 'Assistant'}:** {m.content}"
-            for m in span
-        ]
+        body_lines = []
+        for message in span:
+            if message.role is ConsoleMessageRole.USER:
+                origin = getattr(message.metadata, "origin", None)
+                speaker = (
+                    "Agent handoff"
+                    if origin == "agent_chat_start"
+                    else "Unverified handoff"
+                    if origin == "untrusted"
+                    else "User"
+                )
+            else:
+                speaker = "Assistant"
+            body_lines.append(f"**{speaker}:** {message.content}")
         content = (
             self._note_provenance_header(session_id, message_id)
             + "\n\n"

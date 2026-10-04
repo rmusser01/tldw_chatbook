@@ -880,7 +880,6 @@ class ConsoleComposerBar(Horizontal):
         return (
             BASE_ACTIONS_WIDTH
             + (self._send_button_width - 6)
-            + (10 if self._run_active else 0)  # Visible Redirect control.
             + (4 if attachment_visible else 0)
             + (REDIRECT_ACTION_WIDTH if redirect_budgeted else 0)
         )
