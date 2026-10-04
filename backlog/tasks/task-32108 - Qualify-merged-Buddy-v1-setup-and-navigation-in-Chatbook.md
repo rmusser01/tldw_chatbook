@@ -3,9 +3,9 @@ id: TASK-32108
 title: Qualify merged Buddy v1 setup and navigation in Chatbook
 status: Done
 assignee:
-- '@codex'
-created_date: 2026-09-09 04:32
-updated_date: 2026-10-04 14:39
+  - '@codex'
+created_date: '2026-09-09 04:32'
+updated_date: '2026-10-04 17:12'
 labels: []
 dependencies: []
 priority: high
@@ -38,8 +38,10 @@ PR2536 Qodo follow-up: verify all six issue/inline findings against the harness.
 Current-dev Chatbook continuation (2026-10-03): verify source 01a2020981c6197e5cd9945e5287567ad977edfe in the attached clean worktree. Reproduce the ordered management/mount failures and config-admission boundary. Repair only the affected test profile ownership: use the existing private-profile child for the full-app management journey, and bootstrap-profile opt-ins for harness cases that read real config. Rerun the 198 selected Buddy render, interaction, listening and speech checks with confined captures. Exercise the supported Chatbook textual-serve UI with a separate disposable profile, including selection, navigation, draft retention and mouse placement; retain explicit native-terminal and human-audio limits. ADR required: no. ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md. Reason: qualify existing behavior and correct test process ownership without changing product storage or runtime contracts.
 2026-10-04 scope reconciliation: reuse the recorded native geometry and post-fix local human voice acceptance instead of repeating already accepted UAT. Close TASK-32108 against its fresh/upgraded profile, exact ownership, presentation, navigation, draft/running-work, inbox and evidence outcomes, all recorded in the October qualification report. Retain TASK-31585 AC9's separate full OpenAI human realtime and exact native revision coverage limits. ADR required: no. ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md. Reason: correct acceptance accounting for existing behavior; no product contract or runtime change.
 <!-- SECTION:PLAN:END -->
+
 ## Implementation Notes
 
+<!-- SECTION:NOTES:BEGIN -->
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 Qualified unchanged merged source5655c4820733d24754f872c21cc6196d83bf1504 under ADR139 with177 targeted tests passing:142 Buddy/database/management/cold-entry/draft/workspace/layout tests,33 atomic Persona/default assignment tests and2 new headless rendered fresh/schema69→70 upgrade journeys. Both real-app capture profiles preserve independent Buddy ownership and Persona list, exact conversation binding, explicitNone workspace default and settled inbox; Static stays on one frame and Dynamic completes0→1→2→3→0 using real bundled artwork. Config/data/HOME and null keyring are isolated before launch. Tests/UI/test_buddy_v1_qualification_capture.py is the new harness; source hashes,4 representative original SVGs and detailed limits are in Docs/Reviews/2026-09-09-buddy-v1-qualification.md and adjacent artifacts. Ruff/formatter/compile/whitespace checks pass; no production code changed. Initial harness default-screen query and premature loading-state capture were corrected without production changes. No physical native-terminal walkthrough, microphone, audible playback, real provider, normal-profile access or full suite claimed. Keep In Progress and AC uncompleted pending root native integration coverage.
 
@@ -85,8 +87,11 @@ The new checks and the previous 153 have no duplicate test identities: 334 uniqu
 2026-10-04 acceptance reconciliation: earlier continuation notes omitted the post-fix human voice acceptance in qa/buddy-uat-2026-09-05/merged-live-uat/README.md. Run microphone-20260905-587d0a8874 records Buddy listening, successful local transcription, DeepSeek reply and Kokoro playback; the user confirmed Yes, clearly. Native move, resize and geometry restoration are also recorded in native-followup with their original Git/exit provenance limits. The user confirmed these checks were already tested and requested that they not be repeated. The OpenAI key is now present in the isolated UAT profile; only presence was checked and no credential was printed, copied or saved by the agent. No app, provider, microphone, playback or test run was started for reconciliation. All six repair tasks remain Done; existing 334 unique targeted checks retain matching current product/realtime test hashes. Full application-configured OpenAI human realtime and exact native revision limits remain only in TASK-31585 AC9. Report and receipt: Docs/Reviews/2026-10-03-chatbook-buddy-uat.md and acceptance-reconciliation-20261004.json.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
+2026-10-04 publication integration: merged dev7446e3a627 into codex/chatbook-buddy-uat at709434b5aff9. Only appended lesson entries conflicted and both sides were retained. Four repaired modules had incoming changes, so 22 relevant Home Resume, shutdown/recompose, config projection and cold saved-owner cases were checked on merged sources: all passed in128.77s. Six product modules compile; current-dev Ruff511/511 and Bandit24/24 comparisons introduce zero findings; whitespace and independent integration review pass. Receipt: Docs/Reviews/artifacts/buddy-uat-20261003/dev-integration-20261004.json. Prior334 unique passes keep original tested-source attribution; repeated22 are not added to that total. Recorded human local voice and native geometry acceptance remains accepted without another UAT/provider/audio run. TASK31585 AC9 stays separate. Existing ADR094/139/147 apply; no new ADR or behavior change beyond the four recorded repairs.
+<!-- SECTION:NOTES:END -->
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Existing qualification and six repair tasks satisfy all four criteria. Recorded 334 unique targeted checks remain source-matched; prior native geometry and post-fix local human voice acceptance are reused. No repeat UAT or new credential operation. Separate TASK-31585 AC9 retains its original narrower coverage limits.
+The six repair tasks and recorded qualification satisfy all four criteria. Prior334 unique targeted passes retain original source attribution; current-dev integration separately passes22 relevant checks, compile and zero-introduced diagnostic comparisons. Recorded native geometry and post-fix human local voice acceptance is reused. Separate TASK31585 AC9 retains narrower coverage limits.
 <!-- SECTION:FINAL_SUMMARY:END -->

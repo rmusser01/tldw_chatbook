@@ -94,6 +94,16 @@ TASK-32108's fresh/upgraded profile, binding, presentation, navigation, draft, r
 
 [Reconciliation receipt](artifacts/buddy-uat-20261003/acceptance-reconciliation-20261004.json) records the reused evidence hashes and scope. Earlier receipts are unchanged.
 
+## Dev integration — 2026-10-04
+
+The branch now includes dev `7446e3a6270473a5cb248bfe5af3827ded01fff7` through merge `709434b5aff9b3a5c983546a27f9b6c97c7da001`. Only two appended lesson blocks conflicted; both sides were retained. Four repaired product modules also changed on dev, so the relevant Home Resume, shutdown/recompose, loaded config projection and cold saved-owner cases were checked on the merged sources.
+
+**All 22 targeted integration checks passed in 128.77 seconds.** The six production modules compile. Scoped Ruff reports the same 511 diagnostics as current dev and Bandit the same 24 findings, with zero introduced diagnostics after normalizing shifted line references. `git diff --check` passes. Independent review found no actionable issue in either integrated Buddy branch.
+
+The prior 334 unique targeted passes remain attributed to their original tested sources. These 22 repeated cases qualify dev integration and do not increase that unique total. Recorded native geometry and local human voice acceptance remains accepted. No human UAT, provider request, microphone capture, physical playback or full local suite was repeated.
+
+[Separate integration receipt](artifacts/buddy-uat-20261003/dev-integration-20261004.json) records exact source, test-log/JUnit hashes and baseline comparisons. Existing ADR-094, ADR-139 and ADR-147 continue to govern the four repairs; no new ADR is required.
+
 ## Coverage limits and retained attempts
 
 - TASK-32108 is closed against its four recorded qualification outcomes. TASK-31585 AC9 retains the separate exact-native-revision and full application-configured OpenAI human realtime coverage limits. Earlier Chatbook native and local human voice acceptance is preserved; server React evidence remains separate.
