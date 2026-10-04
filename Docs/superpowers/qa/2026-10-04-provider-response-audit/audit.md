@@ -114,3 +114,27 @@ existing deliberate exact-type checks that reject booleans; adapter/test Ruff
 format checks and scoped git diff whitespace checks pass. No full suite,
 credentials, paid requests, main-checkout edits or child commits were used.
 All five tasks remain In Progress pending the combined independent review/PR.
+
+### Merged dev qualification (2026-10-04)
+
+The provider fixes in `b4ed4f91df` were qualified after merging current
+`origin/dev` (`49206beea9`) as `2a3d59baa2`. The automatic merge duplicated
+Together's `choice_allowances` keyword and failed compilation. Removing only
+the narrower duplicate retained the documented allowance superset and the
+live-proven `stream_include_usage=True`, with `stream_usage_optional=False`.
+The target's [Together capture](../../../../Tests/fixtures/cloud_live/together.json)
+(captured 2026-10-04T17:56:04Z), null streamed logprobs, trailing accounting,
+and bare-array model listing were preserved. No new live request was made.
+
+The same nine provider modules plus `test_doc_derived_presets.py`,
+`test_live_capture_replay.py`, and
+`test_openai_compatible_model_discovery.py` passed: **644 passed, one existing
+Pydantic warning in 44.03 seconds**. This includes the retained live capture
+replay/listing and oversized model-template regression controls. Scoped Ruff
+checks, four adapter/test formatting checks, and scoped diff whitespace
+checks passed. Evidence log:
+`C:/Users/GDesktop-1/.config/tldw-console-pause-34402/provider-merged-qualification.txt`.
+The qualified `provider_registry.py` SHA256 is
+`5C62B6DD78D3B299180B84E36BBE11A7A1C7711D8864A9B8240976A9C6137D80`;
+Groq, OpenRouter, shared parser, and documented-contract test source are
+unchanged from the preceding qualification.

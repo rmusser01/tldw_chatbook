@@ -365,7 +365,6 @@ TOGETHER = ProviderRecord(
     base_url_suffix=None,   # the default URL is already complete
     reasoning_disposition="ignored",
     auth_scheme="bearer",
-    choice_allowances=frozenset({"logprobs"}),
     stream_include_usage=True,
 )
 FIREWORKS = ProviderRecord(
