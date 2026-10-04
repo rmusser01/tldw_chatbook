@@ -5850,6 +5850,9 @@ class ConsoleChatStore:
             "continuation_receipt": cls._canonical_fingerprint_value(
                 acceptance.continuation_receipt
             ),
+            "machine_followup_receipt": cls._canonical_fingerprint_value(
+                acceptance.machine_followup_receipt
+            ),
             "parent_message_id": acceptance.parent_message_id,
             "attachments": cls._canonical_fingerprint_value(acceptance.attachments),
             "origin": acceptance.origin,

@@ -28,6 +28,7 @@ from tldw_chatbook.Chat.console_transaction_contribution import (
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.hooks_v2.continuations import ContinuationReceipt
+    from tldw_chatbook.Chat.response_rules.corrections import MachineFollowupReceipt
 
 
 CHECKPOINT_AUTHORITY_MAX_BYTES = 4096
@@ -199,6 +200,7 @@ class ConsoleDurableTurnAcceptance:
     #: saved with ``MessageMetadata(root_fork=True)`` (see
     #: ``console_legacy_flat_roots``). Valid only with no parent.
     user_root_fork: bool = False
+    machine_followup_receipt: MachineFollowupReceipt | None = None
 
 
 @dataclass(frozen=True, slots=True)

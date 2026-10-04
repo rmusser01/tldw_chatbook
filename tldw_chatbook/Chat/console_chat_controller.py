@@ -12554,6 +12554,9 @@ class ConsoleChatController:
             continuation_receipt=self.prompt_queue_coordinator.continuation_receipt(
                 session.id, queue_entry_id
             ),
+            machine_followup_receipt=self.prompt_queue_coordinator.machine_followup_receipt(
+                session.id, queue_entry_id
+            ),
         )
         from .console_send_diagnostics import record_send_stage
 

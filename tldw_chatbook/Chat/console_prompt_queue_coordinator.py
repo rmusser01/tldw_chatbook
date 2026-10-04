@@ -43,6 +43,8 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.hooks_v2.models import HookResult
     from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
+    from tldw_chatbook.Chat.response_rules.corrections import NativeCorrectionProposal
+    from tldw_chatbook.Chat.response_rules.models import RuleAssessment, RuleRevision, RuleSource
 
 
 _AUTHORIZATION_KEY = object()
@@ -107,6 +109,8 @@ class _PromptChain:
     initiator: str = "manual"
     rollback_epoch: tuple[int, int] | None = None
     machine_entry_id: str | None = None
+    machine_receipt: object | None = None
+    native_proposal: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,11 +145,13 @@ class ConsolePromptQueueCoordinator:
         has_staged_rider: Callable[[str], bool] | None = None,
         needs_approval: Callable[[str], bool] | None = None,
         can_reacquire_slot: Callable[[str], bool] | None = None,
-        on_queued_accepted: Callable[[ConsoleQueuedAcceptanceEvent], None]
-        | None = None,
+        on_queued_accepted: (
+            Callable[[ConsoleQueuedAcceptanceEvent], None] | None
+        ) = None,
         on_activity_changed: Callable[[str], None] | None = None,
-        on_chain_terminal: Callable[[str, ConsoleRunStatus, str | None], None]
-        | None = None,
+        on_chain_terminal: (
+            Callable[[str, ConsoleRunStatus, str | None], None] | None
+        ) = None,
     ) -> None:
         self.registry = registry
         self._context_epoch = context_epoch
@@ -170,6 +176,10 @@ class ConsolePromptQueueCoordinator:
         self._continuation_keys: set[tuple[str, str]] = set()
         self._stop_parents = {}
         self._machine_entries = {}
+        self._shared_machine_receipts = {}
+        self._native_settlements: set[tuple[str, str, str]] = set()
+        self._native_assessment_lookup = lambda _source, _key: None
+        self._native_rules_lookup = lambda _source: ()
         self._stop_outcomes = {}
         self._sealed_continuations: set[str] = set()
         self._continuation_admission_current = lambda _request: not self._maintenance_paused
@@ -274,6 +284,12 @@ class ConsolePromptQueueCoordinator:
         chain = self._chains.get(session_id)
         parent = chain.hook_parent if chain else None
         if parent is None:
+            if chain is not None and chain.native_proposal is not None:
+                proposal = chain.native_proposal
+                chain.native_proposal = None
+                await self.admit_machine_followup(
+                    session_id, source=proposal.source, native=proposal
+                )
             return
         chain.hook_parent = None
         lifecycle, _scope, event, _assistant_id, request = parent
@@ -342,6 +358,16 @@ class ConsolePromptQueueCoordinator:
         chain = self._chains.get(session_id)
         if chain is None:
             return None
+        if chain.native_proposal is not None:
+            proposal = chain.native_proposal
+            chain.native_proposal = None
+            return await self.admit_machine_followup(
+                session_id, source=proposal.source, native=proposal
+            )
+        outcome = self._stop_outcomes.get(key)
+        if outcome is None:
+            return None
+        proposals = tuple(result for _, result in outcome.accepted)
         # Consume every exact settlement once, including refusals. A later
         # callback must never interpret a transferred budget as unrestricted.
         self._continuation_keys.add(key)
@@ -350,7 +376,11 @@ class ConsolePromptQueueCoordinator:
         if started is None:
             started = time.monotonic()
         previous = chain.continuation
-        count = previous.admitted_turns if previous else 0
+        count = (
+            chain.machine_receipt.admitted_turns
+            if chain.machine_receipt
+            else (previous.admitted_turns if previous else 0)
+        )
         budget = lifecycle.terminal_budgets.pop(request.turn_id, None)
         budget_at = lifecycle.terminal_budget_times.pop(request.turn_id, None)
         budget_deadline = None
@@ -403,7 +433,11 @@ class ConsolePromptQueueCoordinator:
             parent_turn_id,
             event_id,
             assistant_id,
-            previous.chain_id if previous else parent_turn_id,
+            (
+                chain.machine_receipt.chain_id
+                if chain.machine_receipt
+                else (previous.chain_id if previous else parent_turn_id)
+            ),
             count + 1,
         )
         next_request = replace(
@@ -458,7 +492,283 @@ class ConsolePromptQueueCoordinator:
             next_request.turn_id,
         )
         chain.continuation = receipt
+        from tldw_chatbook.Chat.response_rules.corrections import MachineFollowupReceipt
+
+        shared_receipt = MachineFollowupReceipt(
+            request.turn_id,
+            request.turn_id,
+            event.event_id,
+            assistant_id,
+            receipt.chain_id,
+            receipt.admitted_turns,
+            chain.machine_receipt.native_turns if chain.machine_receipt else 0,
+            ("hook",),
+        )
+        chain.machine_receipt = shared_receipt
+        self._shared_machine_receipts[admitted.entry_id] = shared_receipt
         chain.continuation_started = started
+        if budget is not None:
+            lifecycle.inherited_budgets[next_request.turn_id] = (
+                budget,
+                time.monotonic(),
+            )
+        self._changed(session_id)
+        return next_request.turn_id
+
+    def bind_native_assessment_lookup(
+        self,
+        lookup: Callable[[RuleSource, str], RuleAssessment | None],
+        *,
+        rules: Callable[[RuleSource], tuple[RuleRevision, ...]] | None = None,
+    ) -> None:
+        """Bind runtime-owned assessments and their exact pinned definitions."""
+        self._native_assessment_lookup = lookup
+        self._native_rules_lookup = rules or (lambda _source: ())
+
+    def offer_native_correction(
+        self, session_id: str, proposal: NativeCorrectionProposal
+    ) -> bool:
+        """Defer one native reference until the real Stop settlement boundary."""
+        from tldw_chatbook.Chat.response_rules.corrections import (
+            NativeCorrectionProposal,
+        )
+
+        chain = self._chains.get(session_id)
+        if (
+            type(proposal) is not NativeCorrectionProposal
+            or chain is None
+            or chain.request is None
+            or proposal.source.parent_turn_id != chain.request.turn_id
+        ):
+            return False
+        chain.native_proposal = proposal
+        return True
+
+    async def admit_machine_followup(
+        self,
+        session_id: str,
+        *,
+        source: RuleSource,
+        native: NativeCorrectionProposal | None,
+    ) -> str | None:
+        """Combine exact live native feedback with owned Stop results once."""
+        from tldw_chatbook.Agents.agent_models import (
+            HookContextOrigin,
+            PluginContextText,
+        )
+        from tldw_chatbook.Agents.hooks_v2.continuations import (
+            ContinuationReceipt,
+            combine_proposals,
+        )
+        from tldw_chatbook.Chat.response_rules.corrections import (
+            MachineFollowupReceipt,
+            NativeCorrectionProposal,
+            NativeFollowupAdmission,
+            render_native_feedback,
+        )
+        from tldw_chatbook.Chat.response_rules.models import RuleAssessment, RuleSource
+
+        if native is None:
+            chain = self._chains.get(session_id)
+            key = chain.pending_stop_key if chain is not None else None
+            outcome = self._stop_outcomes.get(key)
+            if key is None or outcome is None:
+                return None
+            return await self.schedule_continuation(key[0], key[1], ())
+        if (
+            type(source) is not RuleSource
+            or type(native) is not NativeCorrectionProposal
+            or native.source != source
+            or source.session_id != session_id
+        ):
+            return None
+        chain = self._chains.get(session_id)
+        if (
+            chain is None
+            or chain.request is None
+            or chain.request.turn_id != source.parent_turn_id
+        ):
+            return None
+        key = (source.operation_id, source.parent_turn_id, source.settlement_id)
+        if key in self._native_settlements:
+            return None
+        assessment = self._native_assessment_lookup(source, native.assessment_id)
+        if (
+            type(assessment) is not RuleAssessment
+            or assessment.source != source
+            or assessment.assessment_id != native.assessment_id
+            or assessment.state != "completed"
+            or assessment.outcome != "violation"
+        ):
+            return None
+        self._native_settlements.add(key)
+        feedback = render_native_feedback(assessment, self._native_rules_lookup(source))
+        if feedback is None:
+            return None
+        snapshot = self.registry.snapshot(session_id)
+        previous = chain.machine_receipt
+        count = (
+            previous.admitted_turns
+            if previous
+            else (chain.continuation.admitted_turns if chain.continuation else 0)
+        )
+        native_count = previous.native_turns if previous else 0
+        started = chain.continuation_started or time.monotonic()
+        if (
+            self._shutting_down
+            or self._maintenance_paused
+            or snapshot.closing
+            or snapshot.waiting_count
+            or self._has_staged_rider(session_id)
+            or self._needs_approval(session_id)
+            or session_id in self._sealed_continuations
+            or session_id in self._dispatch_recoveries
+            or count >= 3
+            or native_count >= 2
+            or time.monotonic() - started >= 120
+            or not self._continuation_admission_current(chain.request)
+        ):
+            return None
+        owned = self._stop_parents.get(chain.pending_stop_key)
+        outcome = self._stop_outcomes.get(chain.pending_stop_key)
+        lifecycle = event = None
+        hook_message = None
+        budget = None
+        budget_deadline = None
+        parent_request = chain.request
+        if chain.hook_parent is not None and owned is None:
+            return None  # Required postevents and Stop still own this boundary.
+        if owned is not None:
+            _, parent = owned
+            lifecycle, _, event, assistant_id, request = parent
+            parent_request = request
+            if (
+                request.turn_id != source.parent_turn_id
+                or assistant_id != source.message_id
+                or outcome is None
+                or not outcome.allowed
+                or outcome.outstanding_cleanup
+                or not lifecycle.live
+                or not lifecycle.current()
+                or not lifecycle.engine.effects_current(event, outcome)
+            ):
+                return None
+            results = tuple(result for _, result in outcome.accepted)
+            if any(
+                result.stop_continuations or result.decision == "deny"
+                for result in results
+            ):
+                return None
+            hook_message = combine_proposals(results)
+            if any(result.continuation for result in results) and hook_message is None:
+                return None
+            budget = lifecycle.terminal_budgets.pop(request.turn_id, None)
+            budget_at = lifecycle.terminal_budget_times.pop(request.turn_id, None)
+            if budget is False:
+                return None
+            if budget is not None and budget_at is not None:
+                budget_deadline = budget_at + budget.max_wall_seconds
+                if budget_deadline <= time.monotonic():
+                    return None
+                budget = replace(
+                    budget, max_wall_seconds=budget_deadline - time.monotonic()
+                )
+        text = feedback + (
+            "\n\nUntrusted hook continuation proposal (machine initiated):\n"
+            + hook_message
+            if hook_message
+            else ""
+        )
+        if len(text.encode("utf-8")) > 8192:
+            return None
+        if chain.pending_stop_key is not None:
+            if chain.pending_stop_key in self._continuation_keys:
+                return None
+            self._continuation_keys.add(chain.pending_stop_key)
+        receipt = MachineFollowupReceipt(
+            source.operation_id,
+            source.parent_turn_id,
+            source.settlement_id,
+            source.message_id,
+            previous.chain_id if previous else source.operation_id,
+            count + 1,
+            native_count + 1,
+            ("native", "hook") if hook_message else ("native",),
+            source.message_version,
+        )
+        next_request = replace(
+            parent_request,
+            turn_id=str(uuid4()),
+            draft=text,
+            attachment_ids=(),
+            one_shot_prefill=None,
+            one_shot_prefill_revision=None,
+            staged_evidence_launch=None,
+        )
+        admitted = self.registry.admit(
+            session_id,
+            text=text,
+            expected_revision=snapshot.revision,
+            custody_request=next_request,
+        )
+        if not admitted.applied:
+            return None
+
+        def current():
+            live = self._native_assessment_lookup(source, native.assessment_id)
+            return (
+                live == assessment
+                and time.monotonic() - started < 120
+                and self._continuation_admission_current(next_request)
+                and (budget_deadline is None or time.monotonic() < budget_deadline)
+                and (
+                    lifecycle is None
+                    or (
+                        lifecycle.live
+                        and lifecycle.current()
+                        and lifecycle.engine.effects_current(event, outcome)
+                    )
+                )
+            )
+
+        gate = NativeFollowupAdmission(
+            session_id=session_id,
+            entry_id=admitted.entry_id,
+            receipt=receipt,
+            current=current,
+        )
+        origins = (
+            tuple(
+                HookContextOrigin(
+                    event.event_id,
+                    handler,
+                    len(result.continuation["message"].encode("utf-8")),
+                )
+                for handler, result in outcome.accepted
+                if result.continuation and result.continuation["message"].strip()
+            )
+            if hook_message
+            else ()
+        )
+        self._machine_entries[admitted.entry_id] = (
+            receipt,
+            lifecycle,
+            event,
+            outcome,
+            PluginContextText(text, (), origins),
+            gate,
+            next_request.turn_id,
+        )
+        self._shared_machine_receipts[admitted.entry_id] = receipt
+        if hook_message:
+            chain.continuation = ContinuationReceipt(
+                source.parent_turn_id,
+                event.event_id,
+                source.message_id,
+                receipt.chain_id,
+                receipt.admitted_turns,
+            )
+        chain.machine_receipt, chain.continuation_started = receipt, started
         if budget is not None:
             lifecycle.inherited_budgets[next_request.turn_id] = (
                 budget,
@@ -532,7 +842,24 @@ class ConsolePromptQueueCoordinator:
         if chain is None or entry_id != chain.current_entry_id:
             return None
         issued = self._machine_entries.get(entry_id)
-        return issued[0] if issued is not None else None
+        if issued is None:
+            return None
+        from tldw_chatbook.Agents.hooks_v2.continuations import ContinuationReceipt
+        from tldw_chatbook.Chat.response_rules.corrections import MachineFollowupReceipt
+
+        if type(issued[0]) is ContinuationReceipt:
+            return issued[0]
+        if type(issued[0]) is MachineFollowupReceipt and "hook" in issued[0].contributors:
+            receipt = issued[0]
+            return ContinuationReceipt(receipt.parent_turn_id, issued[2].event_id, receipt.parent_assistant_message_id, receipt.chain_id, receipt.admitted_turns)
+        return None
+
+    def _claimed_machine_entry(self, session_id, entry_id):
+        chain = self._chains.get(session_id)
+        return self._machine_entries.get(entry_id) if chain is not None and chain.current_entry_id == entry_id else None
+
+    def machine_followup_receipt(self, session_id, entry_id):
+        return self._shared_machine_receipts.get(entry_id) if self._claimed_machine_entry(session_id, entry_id) is not None else None
 
     def acknowledge_machine_rollback(
         self, session_id: str, entry_id: str | None, before: int, after: int
@@ -541,7 +868,7 @@ class ConsolePromptQueueCoordinator:
         chain = self._chains.get(session_id)
         if (
             chain is not None
-            and self.continuation_receipt(session_id, entry_id) is not None
+            and self._claimed_machine_entry(session_id, entry_id) is not None
             and self.registry.snapshot(session_id).expected_context_epoch == before
         ):
             chain.rollback_epoch = (before, after)
@@ -550,7 +877,7 @@ class ConsolePromptQueueCoordinator:
         self, session_id: str, entry_id: str | None
     ) -> ContinuationAdmission | None:
         """Return the one gate for this exact coordinator-minted live claim."""
-        if self.continuation_receipt(session_id, entry_id) is None:
+        if self._claimed_machine_entry(session_id, entry_id) is None:
             return None
         return self._machine_entries[entry_id][5]
 
@@ -565,7 +892,7 @@ class ConsolePromptQueueCoordinator:
         self, session_id: str, entry_id: str | None, text: str
     ) -> PluginContextText | None:
         """Restore only host-issued, whole live input, never parsed metadata."""
-        if self.continuation_receipt(session_id, entry_id) is None:
+        if self._claimed_machine_entry(session_id, entry_id) is None:
             return None
         source = self._machine_entries[entry_id][4]
         if str(text) != str(source):
@@ -578,6 +905,9 @@ class ConsolePromptQueueCoordinator:
         if issued is None:
             return True
         _, lifecycle, event, outcome, _, _gate, _turn_id = issued
+        from tldw_chatbook.Chat.response_rules.corrections import MachineFollowupReceipt
+
+        native = type(issued[0]) is MachineFollowupReceipt
         snapshot = self.registry.snapshot(session_id)
         chain = self._chains.get(session_id)
         return bool(
@@ -587,11 +917,16 @@ class ConsolePromptQueueCoordinator:
             and not snapshot.closing
             and session_id not in self._sealed_continuations
             and snapshot.waiting_count == 0
-            and lifecycle.live
-            and lifecycle.current()
+            and (lifecycle is None or (lifecycle.live and lifecycle.current()))
             and chain.request is not None
             and self._continuation_admission_current(chain.request)
-            and lifecycle.engine.effects_current(event, outcome)
+            and (
+                (
+                    _gate.is_current()
+                    if native
+                    else lifecycle.engine.effects_current(event, outcome)
+                )
+            )
             and chain.continuation_started is not None
             and time.monotonic() - chain.continuation_started < 120
         )
@@ -1257,6 +1592,7 @@ class ConsolePromptQueueCoordinator:
             )
             if claim.prompt.entry_id not in self._machine_entries:
                 chain.continuation = None
+                chain.machine_receipt = None
                 chain.continuation_started = None
             self._changed(session_id)
             if self._has_staged_rider(session_id):
@@ -1403,7 +1739,8 @@ class ConsolePromptQueueCoordinator:
 
     def _retire_machine_entry(self, entry_id: str | None) -> None:
         issued = self._machine_entries.pop(entry_id, None)
-        if issued is not None:
+        self._shared_machine_receipts.pop(entry_id, None)
+        if issued is not None and issued[1] is not None:
             issued[1].inherited_budgets.pop(issued[6], None)
 
     def _finish_visible_terminal(
