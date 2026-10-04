@@ -198,9 +198,9 @@ def companion_guard(operation, attempt):
             else:
                 if not stat.S_ISREG(member_info.st_mode) or member_info.st_nlink != 1:
                     raise bootstrap.RecoveryRequired("config_companion_scope_changed")
-                tokens.add(f"inode:{member_info.st_dev}:{member_info.st_ino}")
+                tokens.add(bootstrap.inode_token(member_info))
             if any(
-                tokens.intersection(entry["historical"])
+                tokens.intersection(bootstrap.identity_view(entry["historical"]))
                 or any(bootstrap._overlap(member, Path(path)) for path in entry["roots"])
                 or any(
                     bootstrap._overlap(member, Path(token[5:]))

@@ -159,12 +159,12 @@ def _source_scope_admitted(root: Path, names: tuple[str, ...], path: Path) -> bo
     resolved = selected.resolve()
     try:
         info = os.stat(selected)
-        inode = f"inode:{info.st_dev}:{info.st_ino}"
+        inode = bootstrap.inode_token(info)
     except FileNotFoundError:
         inode = None
     for name in uncovered:
         entry = registry[name]
-        if inode is not None and inode in entry["historical"]:
+        if inode is not None and inode in bootstrap.identity_view(entry["historical"]):
             return False
         paths = entry["roots"] + [
             token[5:] for token in entry["historical"] if token.startswith("path:")
