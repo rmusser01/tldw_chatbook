@@ -16360,6 +16360,21 @@ SmartContentTree Tree > .selected-node {
     height: $ds-size-3;
 }
 
+
+#setup-voice-preset-none {
+    width: 21fr;
+}
+
+#setup-voice-preset-pocket,
+#setup-voice-preset-omnivoice {
+    width: 14fr;
+}
+
+#setup-voice-preset-official,
+#setup-voice-preset-custom {
+    width: 11fr;
+}
+
 .setup-voice-segmented SetupRadioButton.-on {
     background: $ds-focus-bg;
     color: $ds-focus-fg;

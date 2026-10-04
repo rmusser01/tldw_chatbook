@@ -35,7 +35,12 @@ from textual.widgets import (
 
 import tldw_chatbook.UI.Wizards.first_run_voice_step as voice_step_module
 from Tests.TTS.adapter_fakes import FakeAdapterFactory, provider_spec
-from Tests.Wizards.test_first_run_setup_wizard import _HostApp, _make_wizard, _StepHost
+from Tests.Wizards.test_first_run_setup_wizard import (
+    _HostApp,
+    _make_wizard,
+    _StepHost,
+    _StyledHostApp,
+)
 from tldw_chatbook import config as config_module
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSEventHandler,
@@ -588,6 +593,41 @@ async def test_a_failed_test_names_the_cause() -> None:
         assert step._preset == voice_state.VOICE_PRESET_CUSTOM
         assert status.startswith(f"Test failed — PocketTTS isn't running at 127.0.0.1:{port}.")
         assert "Not tested yet" not in status
+
+
+def _clipped_service_labels(step, app) -> list[str]:
+    """Service radio labels narrower than their own content (they end in "…")."""
+    return [
+        str(button.label)
+        for button in step.query_one("#setup-voice-preset").query(RadioButton)
+        if button.content_size.width < button.get_content_width(button.size, app.size)
+    ]
+
+
+@pytest.mark.parametrize("size", [(120, 40), (100, 30)])
+@pytest.mark.asyncio
+async def test_every_service_label_fits_in_the_wizard(size) -> None:
+    """Review round 1 (F8 / G8-V1-F3): with a service chosen the step
+    scrolls, the scrollbar takes its columns, and five equal segments clipped
+    the lead option to "No voice for no…" at 120 columns. Real stylesheet:
+    without it the radio is not even a row."""
+    wizard = _make_wizard()
+    app = _StyledHostApp(wizard)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        index = container._step_index_for_id(STEP_VOICE)
+        container.show_step(index)
+        await pilot.pause()
+        step = container.steps[index]
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause(0.3)
+
+        buttons = list(step.query_one("#setup-voice-preset").query(RadioButton))
+        assert len({button.region.y for button in buttons}) == 1  # one row
+        assert step.show_vertical_scrollbar  # the case that clipped
+        assert _clipped_service_labels(step, app) == []
 
 
 # -- AC#3: OpenAI without a key never strands the user -------------------------

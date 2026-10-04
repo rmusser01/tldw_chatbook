@@ -1146,6 +1146,25 @@ SmartContentTree Tree > .selected-node {
     height: $ds-size-3;
 }
 
+/* TASK-34100.8 review round 1 (F8): five equal segments clipped the lead
+ * "No voice for now" to "No voice for no…" at 120 columns once the step
+ * scrolled. Share the row in proportion to each label's own width (label +
+ * radio glyph), so every label fits whenever the row has room for all five
+ * and they shrink together when it has not. */
+#setup-voice-preset-none {
+    width: 21fr;
+}
+
+#setup-voice-preset-pocket,
+#setup-voice-preset-omnivoice {
+    width: 14fr;
+}
+
+#setup-voice-preset-official,
+#setup-voice-preset-custom {
+    width: 11fr;
+}
+
 .setup-voice-segmented SetupRadioButton.-on {
     background: $ds-focus-bg;
     color: $ds-focus-fg;
