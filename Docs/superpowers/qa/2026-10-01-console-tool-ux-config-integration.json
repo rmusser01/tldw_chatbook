@@ -29617,5 +29617,768 @@
       "Incoming helper/controller/tests/profile markers/967-line ratchet are exact dev. All owned Console runtime/native source bytes are unchanged; all6 metadata patches replay raw-exact. Census130/floor128 retains every incoming and Console entry; no workflow, admission, getter, worker, canary, cap or budget change.",
       "Diagnostic inventory regenerated from actual combined sources. All3 tasks remain In Progress until fresh exact-head clean/resolved Qodo plus all5 hosted checks including BOTH UI shards, then fresh final Done-metadata-head checks/review before protected normal merge. Auto-merge remains off."
     ]
+  },
+  "oct04_schema_migrations_latest_dev_integration": {
+    "anchor_head": "b0b9d5a70f14ab5a16d98975b08bd980339ce6be",
+    "base": "14a14c4a7ab0da85831afb290ab90d75170fbb79",
+    "previous_published_head": "1045168f1479fbc9bbf1b9468de832a85c44af04",
+    "source_pin_count": 457,
+    "source_map_reconstruction": {
+      "base_key": "oct04_library_reader_delete_refresh_dev_integration",
+      "base_pin_count": 344,
+      "overrides": {
+        "Docs/security/production-diagnostic-inventory.json": "0b61f0251a0aff6e355a710583841a12b652555e501f919b72122f073b38c67c",
+        "Tests/conftest.py": "a065da11e2d3d6b6a5bda42f52e537c7619dc0bee509bf2d5669491c143fa148",
+        "tldw_chatbook/Backup_Recovery/sqlite_validation.py": "30b6b07976450d894b52bef0b4bb63941712639d6691501ab0bcdb14a9b4b784",
+        "tldw_chatbook/DB/ChaChaNotes_DB.py": "1b4e3a348cddc10d79a1f561aaba9ced952de7d3760d14d8d8ab3e639298c87b",
+        "tldw_chatbook/DB/recovery_core_schema.py": "e40d1f9919d976644f238fac7b47aeb5eb932da0ee9ee2cbc532a51586893521",
+        "tldw_chatbook/DB/recovery_operations.py": "0ca339a705da00f1d6141317770a211592886cfe245acfd9bdc0e13f3ca3703e"
+      },
+      "additions": {
+        "Tests/Architecture/test_character_card_hard_delete_census.py": "2498ee43bb5f6ffb97da436a790bc04c874464246f820597f0875dd7ec9366ee",
+        "Tests/Backup_Recovery/test_core_owners.py": "569cae103ed392dbcefb36479fddf68f83b0bca78e5a4657f90b813b1e73f27d",
+        "Tests/Backup_Recovery/test_evals_recovery_migration.py": "123f9f38a228b90e9c5f7120abf15c890f35aae359366920f59be792861accb3",
+        "Tests/Backup_Recovery/test_sqlite_validation.py": "146a888d278a1166808508acf94ed1d20189ca0ff289f4ab288227545469775b",
+        "Tests/ChaChaNotesDB/expected_table_columns.py": "8704c869768a9b1f7457d5d535b3db035ddc71c431e28f299256e455fbc7b1ad",
+        "Tests/ChaChaNotesDB/test_historical_bootstrap.py": "8edc241e39771bcb7767789e023924d1d6fa906c4cf22e9c2db56f35107aead9",
+        "Tests/ChaChaNotesDB/test_migration_atomicity.py": "9deed5044b346b6dbc04ff9345cde2f8186e07737048b605ffd1bba203ce06ff",
+        "Tests/ChaChaNotesDB/test_notes_fts_undelete_guard_migration.py": "6910449ff369087a6099f2076338bf745d8b778bed03b5a6778b1a0d6b33343a",
+        "Tests/ChaChaNotesDB/test_trigger_census.py": "3254ff5948dc7126da07306c629f10daed552634b35607a3ff0180109c2e7211",
+        "Tests/Chatbooks/test_chatbook_thinking_round_trip.py": "d8d1da3d269ed2f4c72d78e0b2c363d60b58eacdd73c01da5ecfc14558f2c8f6",
+        "Tests/DB/test_agent_orchestration_dev_migration.py": "cc4dfe7279287ee649b55b7cc9435429f3f016474d33ad9bbd5d6ce2f3f6ad95",
+        "Tests/DB/test_chachanotes_citation_provenance_migration.py": "3a28ac7be4a36e8e0fe8110d0419f20a1554f5c9f688d4b30cc4d8ba40541ea8",
+        "Tests/DB/test_chachanotes_kept_briefings.py": "669afe485ea912217defd51aa5369b705b625b5634ee020776ad62a3b9c27b03",
+        "Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py": "5200cc420ca47eaaad6bc31554f06ee3728921ed2146bba19b9c29abe156a086",
+        "Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py": "d054fa7f0e72b405d70674952d450ac2b7d57cae829337bda01c38562bbf8f36",
+        "Tests/DB/test_library_ingest_jobs_db.py": "c0e7965e5734ed1f1714b1c59d9e46c001ffbb3ddee2f06ad401088ee9954043",
+        "Tests/DB/test_migration_file_sources.py": "83f8f9231ea1d90c53a2863470ccca35949d019ee94707558210687f3e0b8f5a",
+        "Tests/DB/test_rag_indexing_db.py": "f6bc56ead5a2609645b08c0a2a500bdb36d8d2ad8957fa7a4631409a73841398",
+        "Tests/DB/test_workspace_db.py": "293a87bb6ad60116a0aa995c11f4eed517b641093dfe4ecbcf2f8465aaa70159",
+        "Tests/Evals/test_evals_db.py": "df5caad069fa716237240bcb5cfd5a735b33fe913d2e6671b058245844203656",
+        "Tests/Evals/test_evals_db_v5_to_v6_migration.py": "d59b2b1cfe81d6289f9eff3b383f36552b1bf973eb26e2ee51d2d828c30d8c98",
+        "Tests/Evals/word_bench/test_storage.py": "5b5d31ec4b2d04ce786ad9967437ffd57db42b5fc572c40cce8193d23a7b1151",
+        "Tests/Evaluations_Interop/test_local_evaluations_service.py": "4d7b9771b83eb0310549b661cecd56f8ad505880caea797de84a4d6d945c3f77",
+        "Tests/Notes/test_notes_scope_service_library_canvas.py": "8ada13b6dfd99e513575eca1db80d37d38cabc343d9c2d1b7dc40aa8616049ac",
+        "Tests/Packaging/test_installed_distribution.py": "500931c9457140474732ac28b42c545b6d93f8c517f79221d3895f4e4a922360",
+        "scripts/check_schema_table_allowlist.py": "0df742b9d58bcf7aa61c5e701020b9277f3de7e16ac7fa7403b5be992248ec28",
+        "scripts/index_plan_pin_census.tsv": "032003f5f9199e4753ef32d944a34e32adaaf16ad06135262ccd0157b4e8aac5",
+        "tldw_chatbook/Chatbooks/chatbook_importer.py": "16fa3f84380e064ede6a63edd89b7167dd722a6c2a44fe538f2623bfae6a1132",
+        "tldw_chatbook/Chunking/chunking_interop_library.py": "12f12bb43e016a85653e7df47680bffbf1561a7776d4710a87427a22c08b78a9",
+        "tldw_chatbook/DB/Client_Media_DB_v2.py": "0614defafc69fd5015c488d8e389d0092a3d724e229fff659b4592c53883995d",
+        "tldw_chatbook/DB/Evals_DB.py": "7ba272525ddd1283b0c11213c57de0a87fd8bed790a24d96a222d8433d252e0b",
+        "tldw_chatbook/DB/Library_Collections_DB.py": "8d2e54a53b3642fe594039feab8ee4e2a749b1306c5635d9e3018cf8754e7e97",
+        "tldw_chatbook/DB/Library_Ingest_Jobs_DB.py": "3e9f40a01d407258e248f1402b4b2fb4e1f7cd61cbdad1cac7322a57ac03c349",
+        "tldw_chatbook/DB/RAG_Indexing_DB.py": "a39412f358a1ec5b403dafcbce6b05bb12eee12469958a9560429543ab2585c8",
+        "tldw_chatbook/DB/Subscriptions_DB.py": "d6c79f70d999b89b1f53274513efe4b382972e3fc47b43ad3007b2be652c4518",
+        "tldw_chatbook/DB/Workflows_DB.py": "4a577cc00c1355633d4b4b79cf28036533dd015b96dfac01b3683b2cef495dfe",
+        "tldw_chatbook/DB/Workspace_DB.py": "ebb98c9fdcab87d949701c35fb88adf445de4b176f3af1ccc11432754575437b",
+        "tldw_chatbook/DB/migrations/agent_runs_v15_to_v16_budget_tokens.sql": "99b5f120b5d8c5ebaa8364e0d187fd69afbb30c0fb9b742540cafbc75c1808e0",
+        "tldw_chatbook/DB/migrations/agent_runs_v16_to_v17_automatic_work.sql": "b170d5da917dc034164e77d9b66e5c52d96c7d61d7bc9c0215ece6de646c6b06",
+        "tldw_chatbook/DB/migrations/agent_runs_v17_to_v18_runtime_owner.sql": "f5abe91f52f98627e42bf4d8bbb3915db6fdb6a37298589a0ec67b4fbf997568",
+        "tldw_chatbook/DB/migrations/agent_runs_v18_to_v19_definition_wall_seconds.sql": "8f71c4bbc1a70d077eca8d0d09671cd844efef779f587a198704efcb75f12cfe",
+        "tldw_chatbook/DB/migrations/agent_runs_v19_to_v20_worktree_recovery.sql": "1ddbf8c0b7a1559cd4faca8b8dd8f4aaf29f8c850e13ca2777afd26a4ac34594",
+        "tldw_chatbook/DB/migrations/agent_runs_v20_to_v21_agent_routing.sql": "b010a3c42d4059c0ad19eb67c3bcafc61001ea693b9e2eeadf0d4ec81fb19ae7",
+        "tldw_chatbook/DB/migrations/chachanotes_v16_to_v17_conversation_local_marks.sql": "c713858c17fc4635c567ef7f9eb2747003de9a01e94a346d688a0e828240236e",
+        "tldw_chatbook/DB/migrations/chachanotes_v17_to_v18_conversation_system_prompt.sql": "dd899b0a429e3b0e3ba43f60127d65dcedf21c80ff5cf5cf079d0b02aadd7398",
+        "tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql": "3c05b94dea6580d6b6a44c641fde6cf54fd7385fb7c48016397f26fb41511d2f",
+        "tldw_chatbook/DB/migrations/chachanotes_v19_to_v20_conversation_metadata.sql": "5f32f559008182c5150765fe5db170dd62885c7f6f3cb964fb7f7dc34cc2fb95",
+        "tldw_chatbook/DB/migrations/chachanotes_v20_to_v21_world_book_entry_priority.sql": "0e71fac36b701d852e32e56892203b8da67d7aab0b590212d98eb4bf95b7aac8",
+        "tldw_chatbook/DB/migrations/chachanotes_v21_to_v22_world_book_entry_regex.sql": "612bc9614d020e4cd8693d3c6f5390d9326c53fb79f2d39935338d25cf910eac",
+        "tldw_chatbook/DB/migrations/chachanotes_v22_to_v23_character_expression_images.sql": "82a0129d262d747970766565706aaeaacfb0d58365d3adad91c29c172a463898",
+        "tldw_chatbook/DB/migrations/chachanotes_v23_to_v24_conversation_active_leaf.sql": "33ebe00b6630a98a61a97b848aa0e0b0be868563fa15ba019605180815842494",
+        "tldw_chatbook/DB/migrations/chachanotes_v24_to_v25_message_generation_metadata.sql": "5de53ced3e59cb9820397ae3cbf6e1e1702a139840473ff6954dc9ff8dedea99",
+        "tldw_chatbook/DB/migrations/chachanotes_v25_to_v26_conversation_context_summary.sql": "5c5628db673d264b51cd28ca8a54279c0c8f0ac07e25527842802f99a9b359d4",
+        "tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql": "7f54a20fbd9199a1cd9c5b3d5d1b45646fee946600a3d2d9235e6f0e5f623334",
+        "tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql": "92b882075b7ccdbc9c290c8dcad3c46e2697d63f3131b3383a74aaf39c8f32df",
+        "tldw_chatbook/DB/migrations/chachanotes_v28_to_v29_kept_briefings.sql": "83e1464101f90dbb5d1319e17c804461f0bedb39eed4420ac5ab73acb7736d38",
+        "tldw_chatbook/DB/migrations/chachanotes_v29_to_v30_message_usage.sql": "4e1f14c73b1f0c5d38263c4ccd083983d7bc2709b256fdcad4ccf06a47d560bb",
+        "tldw_chatbook/DB/migrations/chachanotes_v30_to_v31_message_metadata.sql": "2b30780c79e15b0eb2de53c413fd4cad3d6279f7d9a0cd8091a6c4b6ccb92a87",
+        "tldw_chatbook/DB/migrations/chachanotes_v32_to_v33_console_context_memory.sql": "0cbd768487cdd80266a34ae4e7d2bbc17f27b3e8911605b51f6ac135f541be87",
+        "tldw_chatbook/DB/migrations/chachanotes_v33_to_v34_visual_compaction_policy.sql": "4beeb2207efa7b55ebf085f680bd7bf9b53263a85a897359b85daf1ff9658eed",
+        "tldw_chatbook/DB/migrations/chachanotes_v34_to_v35_conversation_dictionary_attachments.sql": "b2917c1ab7a556c8d92708070456c139262712baea3a68565e12bbceea6a4d7a",
+        "tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_note_folders.sql": "5f89d881c3f6a07f5096bee48420bb3dcac9942d39aa99dd7a4649cec9839ce3",
+        "tldw_chatbook/DB/migrations/chachanotes_v36_to_v37_provider_continuation.sql": "8587dadf1291653a11aa26423efcfc33312e97b63684f1afb40e0090f7baab72",
+        "tldw_chatbook/DB/migrations/chachanotes_v37_to_v38_message_trajectory_metadata.sql": "e5f4ace9823884d599468902915b4f73d7dd3c380c15f98c248b47aebd8242e1",
+        "tldw_chatbook/DB/migrations/chachanotes_v38_to_v39_visual_identity.sql": "bf55b2026b7a55b1d485f5fff7e18d5c99b8a6e0056e2e4d6ef65143f765e89c",
+        "tldw_chatbook/DB/migrations/chachanotes_v39_to_v40_transcript_annotations.sql": "df6db71e6f572a73ecb82867039060f9b3244941bf402a97792ff4c320babb58",
+        "tldw_chatbook/DB/migrations/chachanotes_v40_to_v41_persona_visual.sql": "2ef5c8f7bd4bcacc198357fb9ad4f975d1b7f59a1461e909b6c1f7034a2ac902",
+        "tldw_chatbook/DB/migrations/chachanotes_v42_to_v43_message_exchanges.sql": "92a5258c0dfb05f6167948d4cdc4766c0e26ffcdea4bfb0a7b39c45a5260cb03",
+        "tldw_chatbook/DB/migrations/chachanotes_v43_to_v44_sync_conflict_preservation.sql": "1934185d74ef22c7b1bb0b83ebf91b320fc1e33cc1b3289064bd16ad4ad9e87e",
+        "tldw_chatbook/DB/migrations/chachanotes_v44_to_v45_actor_packs.sql": "eb41b92a658e6e540bab0e86bc1915ac0bd23d9f6f2f1d76ebd0634a8486de1c",
+        "tldw_chatbook/DB/migrations/chachanotes_v45_to_v46_sync_log_retention.sql": "f5fae3f68c9f6ba69293d87f4a2a08ef382c76da3b7bbb6df4f180ff50a5c5e7",
+        "tldw_chatbook/DB/migrations/chachanotes_v46_to_v47_messages_fts_backfill_guards.sql": "9ef269415128e217c27c901404d474f664a94d55b0e4ad18c3b1232e03b08afb",
+        "tldw_chatbook/DB/migrations/chachanotes_v47_to_v48_console_library_policy.sql": "5e9784336f8b1b15f07375c03da74f82c62bc185bb036750e81beb91f35bc992",
+        "tldw_chatbook/DB/migrations/chachanotes_v48_to_v49_messages_fts_update_scope.sql": "e8d13d1572675b3589dc56f190066a4f5afa7b0603e98b7fcd0a433cfd4d264e",
+        "tldw_chatbook/DB/migrations/chachanotes_v49_to_v50_console_policy_tombstone_cleanup.sql": "24e1e158b1c243ce97e3a61b4b2d5975bcbf59f09b62db3e2814e6660471bfde",
+        "tldw_chatbook/DB/migrations/chachanotes_v50_to_v51_console_full_capture.sql": "93b1bfffe1809bb31dd58cb7dcef0c2241a7bd8bef630f7112f83016d45c26f3",
+        "tldw_chatbook/DB/migrations/chachanotes_v51_to_v52_console_thinking.sql": "b417f3b489546bffb5c269e1f3100a5dbd2faf8176673660bb1adab74b1e8104",
+        "tldw_chatbook/DB/migrations/chachanotes_v53_to_v54_active_leaf_before_message.sql": "1845491d114b09903fa191e8fab9edb8620841db10096521d7f1086515f2c8a8",
+        "tldw_chatbook/DB/migrations/chachanotes_v54_to_v55_console_memory_scope_selection.sql": "5d5b6f58965fa2585cf0891d6bea646b2fc5daabcc3b04a8c31d856695c41f2a",
+        "tldw_chatbook/DB/migrations/chachanotes_v55_to_v56_console_semantic_trace.sql": "d7db9e8000522fc4b43d9a6af8a9ac7b7b77612fbf2e01e62406fc9c3bfecc61",
+        "tldw_chatbook/DB/migrations/chachanotes_v56_to_v57_semantic_mutation_guard.sql": "b4295afd8066968134a46279c07876aafdc306e5b517c4dc5aba29f53e50d80e",
+        "tldw_chatbook/DB/migrations/chachanotes_v57_to_v58_notes_organization_sync.sql": "7bc551a44cc4ead8c998407581665504829ebe3d25cbacb1da7c71888269baef",
+        "tldw_chatbook/DB/migrations/chachanotes_v58_to_v59_note_organization_tool_receipts.sql": "fd6629bb36ae48ef6a4b48442deebe7a319e1eb6ccc937b50504e25783d127ef",
+        "tldw_chatbook/DB/migrations/chachanotes_v59_to_v60_note_sync_publication_intents.sql": "1b6011914bed2c3dc5928806d29eab6ce5f4698c101b1719575f3044a5766dc2",
+        "tldw_chatbook/DB/migrations/chachanotes_v60_to_v61_agent_lessons_seed.sql": "360ea7d7734f272cdfa9f325741798108959b1b79e89d84654048836d836f79e",
+        "tldw_chatbook/DB/migrations/chachanotes_v61_to_v62_console_trace_privacy_policy.sql": "8bf69574fb26559735e0449d4175a1620afc99e9b47180d3070d69bc21349f0c",
+        "tldw_chatbook/DB/migrations/chachanotes_v62_to_v63_console_trace_gc_guard.sql": "cb9ae48e2a33e1e568455de54bc89c291d6d8542172f80c41c6a81365b280974",
+        "tldw_chatbook/DB/migrations/chachanotes_v63_to_v64_auxiliary_timed_out_status.sql": "72ae3d7c2aec9af4403690022b12461ecd824b3a51270931227be852c45928e5",
+        "tldw_chatbook/DB/migrations/chachanotes_v64_to_v65_console_trace_compaction.sql": "d7a733d79348c8c29320c8c831dd64846e03d3beeb2434d40422de9a5cac098f",
+        "tldw_chatbook/DB/migrations/chachanotes_v65_to_v66_character_conversation_search.sql": "708902293479ce2f54c5e3d7d14dcb74a35711576bc5111a90b0c7bb9c917ffc",
+        "tldw_chatbook/DB/migrations/chachanotes_v66_to_v67_canvas_revisions.sql": "d8f47abf075c78efcb33f870250bb0def2704bc592a81e1b74ac98b98b48ca8b",
+        "tldw_chatbook/DB/migrations/chachanotes_v67_to_v68_canvas_runtime_profiles.sql": "87dc33e1bf604bb2a29b9af0bcee0913d019a7aa2252e65bfe3578f27992f1eb",
+        "tldw_chatbook/DB/migrations/chachanotes_v68_to_v69_console_trace_source_pin.sql": "17a2f117e39f8e9aaac0a3f335578c42108eaf32946ff7d8a66d942059b70523",
+        "tldw_chatbook/DB/migrations/chachanotes_v69_to_v70_independent_buddy.sql": "a00de64c7ef7729bbd967f5fbb0c070c933f2f92010e84d3243a18d9a9ff7bfd",
+        "tldw_chatbook/DB/migrations/chachanotes_v70_to_v71_conversation_archive.sql": "15e03e0423079df1e6c8411b24307ed42c5de3d74109f6c125990394d0eafd44",
+        "tldw_chatbook/DB/migrations/chachanotes_v71_to_v72_voice_trace_provenance.sql": "fe6b6c0ad4d45ac487550c033586743ce3832ae67262932a2ad76961a05557c2",
+        "tldw_chatbook/DB/migrations/chachanotes_v72_to_v73_note_links.sql": "ada95040864753befd40107899014de00e47ecda8f170bbf72d80fc7af7b9ab6",
+        "tldw_chatbook/DB/migrations/chachanotes_v73_to_v74_auxiliary_failure_reason.sql": "fc8248cbb2f71951d57649f0aeca0d63bc8e07d5f0e091f1e1aae1659d01f963",
+        "tldw_chatbook/DB/migrations/chachanotes_v75_to_v76_notes_fts_undelete_guard.sql": "93b669a6caf9ce6e967c4eba7d23f2b1b7efdaf4db2a2cbf504304351b625d59",
+        "tldw_chatbook/DB/migrations/library_collections_v2_to_v3_extraction_leases.sql": "dd870422ce03f5875c204146685b1a13884f7d67d1f61ef456e476c920fedea5",
+        "tldw_chatbook/DB/migrations/subscriptions_v1_to_v2_briefing_provenance.sql": "f7d73f9594cde360e77f2e62104f975fee7d8681b26366f73cf37c950c81c769",
+        "tldw_chatbook/DB/migrations/workflows_v0_to_v1.sql": "48203249df2308308823ce592db7561cb0563111975000c3a963d4360c2df832",
+        "tldw_chatbook/DB/migrations/workflows_v1_to_v2.sql": "006fce4c8ac90ff5a629a604983be3716dbfd25989df3f32e874e215e2d85cc9",
+        "tldw_chatbook/DB/migrations/workflows_v2_to_v3.sql": "c1c23ec7af2212583d7506818c5b8dc2980cc6e87dc5f304cb12f0238f731118",
+        "tldw_chatbook/DB/migrations/workflows_v3_to_v4.sql": "9c4a4edb77a3e48b8b480e48e35291b7869790511337ccdb7fda3380fc3029ac",
+        "tldw_chatbook/DB/migrations/workspaces_v2_to_v3_research_source_operations.sql": "1ab98887fc1c2739267107376415c5a9224747184575a109720765618abde077",
+        "tldw_chatbook/DB/migrations/workspaces_v3_to_v4_quick_note_receipts.sql": "31e860a90bfad824763aca5cca8b7310ef480840d927a8d52ec2bf318366ba9b",
+        "tldw_chatbook/DB/migrations/workspaces_v4_to_v5_quick_note_receipts.sql": "9aa82be40b36867dd84876d3bd62cbac1f85a8e18bc7bc526c526ef1e94f4c6f",
+        "tldw_chatbook/DB/migrations/workspaces_v5_to_v6_quick_note_recovery.sql": "893bbaef8eba0e3bd499b6733eda8f74f9e9888bf1b4643550fec255eb68fffc",
+        "tldw_chatbook/DB/private_sqlite_helper_entry.py": "f5bee36ca8743a6769d32e9930656f698b686b9c08677ae2fcd03ab38f4ae985",
+        "tldw_chatbook/DB/recovery_core.py": "58ffca01571bd9c665803f7de21a08ce7221f3dc85afb0365210a5a18c710ebd",
+        "tldw_chatbook/DB/recovery_sqlite.py": "b3377d15695cefa0eacdb106b10f797640dcbb2b2d961c071b487792f3616581",
+        "tldw_chatbook/Evals/recovery.py": "dd31ac3a0c755a93acbcea9558bb7274b5a7cac2a5b5b0ae36cdf56efcb39836"
+      },
+      "final_pin_count": 457
+    },
+    "rebase": {
+      "old_head": "e381c24b155bee0244ec642fac2def6750d7f969",
+      "previous_published_head": "1045168f1479fbc9bbf1b9468de832a85c44af04",
+      "old_base": "f1f80847a410525ce1b00d27ea0e8be824a98422",
+      "new_head": "b0b9d5a70f14ab5a16d98975b08bd980339ce6be",
+      "new_base": "14a14c4a7ab0da85831afb290ab90d75170fbb79",
+      "source_pin_count": 457,
+      "changed_source_pins": {
+        "Docs/security/production-diagnostic-inventory.json": {
+          "old": "41312165d0673ff456fa2134321843356733de8bedc574b6e852a1fb443a99b4",
+          "new": "0b61f0251a0aff6e355a710583841a12b652555e501f919b72122f073b38c67c"
+        },
+        "Tests/conftest.py": {
+          "old": "bc80d81eac678770afa35d364429849613428c8f81aa3f513d2317c29865203c",
+          "new": "a065da11e2d3d6b6a5bda42f52e537c7619dc0bee509bf2d5669491c143fa148"
+        },
+        "tldw_chatbook/Backup_Recovery/sqlite_validation.py": {
+          "old": "afe88431d57f1a91ffe68acf6748baa5bb8d19e5e31a1dba34296b75d942ac90",
+          "new": "30b6b07976450d894b52bef0b4bb63941712639d6691501ab0bcdb14a9b4b784"
+        },
+        "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+          "old": "d497b27f5b2a4f6a3aee4a58e4830332407636cc43fcb25ee9369396515d63cc",
+          "new": "1b4e3a348cddc10d79a1f561aaba9ced952de7d3760d14d8d8ab3e639298c87b"
+        },
+        "tldw_chatbook/DB/recovery_core_schema.py": {
+          "old": "43bff9c3cd414774c5db21f83e07e749da34d7300af4df53ee5415f3f5354193",
+          "new": "e40d1f9919d976644f238fac7b47aeb5eb932da0ee9ee2cbc532a51586893521"
+        },
+        "tldw_chatbook/DB/recovery_operations.py": {
+          "old": "fd4db82235f658967c3ae4d47104b7a2e0bb628c494a8daa32b879b4b1985b5b",
+          "new": "0ca339a705da00f1d6141317770a211592886cfe245acfd9bdc0e13f3ca3703e"
+        }
+      },
+      "added_source_pins": {
+        "Tests/Architecture/test_character_card_hard_delete_census.py": "2498ee43bb5f6ffb97da436a790bc04c874464246f820597f0875dd7ec9366ee",
+        "Tests/Backup_Recovery/test_core_owners.py": "569cae103ed392dbcefb36479fddf68f83b0bca78e5a4657f90b813b1e73f27d",
+        "Tests/Backup_Recovery/test_evals_recovery_migration.py": "123f9f38a228b90e9c5f7120abf15c890f35aae359366920f59be792861accb3",
+        "Tests/Backup_Recovery/test_sqlite_validation.py": "146a888d278a1166808508acf94ed1d20189ca0ff289f4ab288227545469775b",
+        "Tests/ChaChaNotesDB/expected_table_columns.py": "8704c869768a9b1f7457d5d535b3db035ddc71c431e28f299256e455fbc7b1ad",
+        "Tests/ChaChaNotesDB/test_historical_bootstrap.py": "8edc241e39771bcb7767789e023924d1d6fa906c4cf22e9c2db56f35107aead9",
+        "Tests/ChaChaNotesDB/test_migration_atomicity.py": "9deed5044b346b6dbc04ff9345cde2f8186e07737048b605ffd1bba203ce06ff",
+        "Tests/ChaChaNotesDB/test_notes_fts_undelete_guard_migration.py": "6910449ff369087a6099f2076338bf745d8b778bed03b5a6778b1a0d6b33343a",
+        "Tests/ChaChaNotesDB/test_trigger_census.py": "3254ff5948dc7126da07306c629f10daed552634b35607a3ff0180109c2e7211",
+        "Tests/Chatbooks/test_chatbook_thinking_round_trip.py": "d8d1da3d269ed2f4c72d78e0b2c363d60b58eacdd73c01da5ecfc14558f2c8f6",
+        "Tests/DB/test_agent_orchestration_dev_migration.py": "cc4dfe7279287ee649b55b7cc9435429f3f016474d33ad9bbd5d6ce2f3f6ad95",
+        "Tests/DB/test_chachanotes_citation_provenance_migration.py": "3a28ac7be4a36e8e0fe8110d0419f20a1554f5c9f688d4b30cc4d8ba40541ea8",
+        "Tests/DB/test_chachanotes_kept_briefings.py": "669afe485ea912217defd51aa5369b705b625b5634ee020776ad62a3b9c27b03",
+        "Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py": "5200cc420ca47eaaad6bc31554f06ee3728921ed2146bba19b9c29abe156a086",
+        "Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py": "d054fa7f0e72b405d70674952d450ac2b7d57cae829337bda01c38562bbf8f36",
+        "Tests/DB/test_library_ingest_jobs_db.py": "c0e7965e5734ed1f1714b1c59d9e46c001ffbb3ddee2f06ad401088ee9954043",
+        "Tests/DB/test_migration_file_sources.py": "83f8f9231ea1d90c53a2863470ccca35949d019ee94707558210687f3e0b8f5a",
+        "Tests/DB/test_rag_indexing_db.py": "f6bc56ead5a2609645b08c0a2a500bdb36d8d2ad8957fa7a4631409a73841398",
+        "Tests/DB/test_workspace_db.py": "293a87bb6ad60116a0aa995c11f4eed517b641093dfe4ecbcf2f8465aaa70159",
+        "Tests/Evals/test_evals_db.py": "df5caad069fa716237240bcb5cfd5a735b33fe913d2e6671b058245844203656",
+        "Tests/Evals/test_evals_db_v5_to_v6_migration.py": "d59b2b1cfe81d6289f9eff3b383f36552b1bf973eb26e2ee51d2d828c30d8c98",
+        "Tests/Evals/word_bench/test_storage.py": "5b5d31ec4b2d04ce786ad9967437ffd57db42b5fc572c40cce8193d23a7b1151",
+        "Tests/Evaluations_Interop/test_local_evaluations_service.py": "4d7b9771b83eb0310549b661cecd56f8ad505880caea797de84a4d6d945c3f77",
+        "Tests/Notes/test_notes_scope_service_library_canvas.py": "8ada13b6dfd99e513575eca1db80d37d38cabc343d9c2d1b7dc40aa8616049ac",
+        "Tests/Packaging/test_installed_distribution.py": "500931c9457140474732ac28b42c545b6d93f8c517f79221d3895f4e4a922360",
+        "scripts/check_schema_table_allowlist.py": "0df742b9d58bcf7aa61c5e701020b9277f3de7e16ac7fa7403b5be992248ec28",
+        "scripts/index_plan_pin_census.tsv": "032003f5f9199e4753ef32d944a34e32adaaf16ad06135262ccd0157b4e8aac5",
+        "tldw_chatbook/Chatbooks/chatbook_importer.py": "16fa3f84380e064ede6a63edd89b7167dd722a6c2a44fe538f2623bfae6a1132",
+        "tldw_chatbook/Chunking/chunking_interop_library.py": "12f12bb43e016a85653e7df47680bffbf1561a7776d4710a87427a22c08b78a9",
+        "tldw_chatbook/DB/Client_Media_DB_v2.py": "0614defafc69fd5015c488d8e389d0092a3d724e229fff659b4592c53883995d",
+        "tldw_chatbook/DB/Evals_DB.py": "7ba272525ddd1283b0c11213c57de0a87fd8bed790a24d96a222d8433d252e0b",
+        "tldw_chatbook/DB/Library_Collections_DB.py": "8d2e54a53b3642fe594039feab8ee4e2a749b1306c5635d9e3018cf8754e7e97",
+        "tldw_chatbook/DB/Library_Ingest_Jobs_DB.py": "3e9f40a01d407258e248f1402b4b2fb4e1f7cd61cbdad1cac7322a57ac03c349",
+        "tldw_chatbook/DB/RAG_Indexing_DB.py": "a39412f358a1ec5b403dafcbce6b05bb12eee12469958a9560429543ab2585c8",
+        "tldw_chatbook/DB/Subscriptions_DB.py": "d6c79f70d999b89b1f53274513efe4b382972e3fc47b43ad3007b2be652c4518",
+        "tldw_chatbook/DB/Workflows_DB.py": "4a577cc00c1355633d4b4b79cf28036533dd015b96dfac01b3683b2cef495dfe",
+        "tldw_chatbook/DB/Workspace_DB.py": "ebb98c9fdcab87d949701c35fb88adf445de4b176f3af1ccc11432754575437b",
+        "tldw_chatbook/DB/migrations/agent_runs_v15_to_v16_budget_tokens.sql": "99b5f120b5d8c5ebaa8364e0d187fd69afbb30c0fb9b742540cafbc75c1808e0",
+        "tldw_chatbook/DB/migrations/agent_runs_v16_to_v17_automatic_work.sql": "b170d5da917dc034164e77d9b66e5c52d96c7d61d7bc9c0215ece6de646c6b06",
+        "tldw_chatbook/DB/migrations/agent_runs_v17_to_v18_runtime_owner.sql": "f5abe91f52f98627e42bf4d8bbb3915db6fdb6a37298589a0ec67b4fbf997568",
+        "tldw_chatbook/DB/migrations/agent_runs_v18_to_v19_definition_wall_seconds.sql": "8f71c4bbc1a70d077eca8d0d09671cd844efef779f587a198704efcb75f12cfe",
+        "tldw_chatbook/DB/migrations/agent_runs_v19_to_v20_worktree_recovery.sql": "1ddbf8c0b7a1559cd4faca8b8dd8f4aaf29f8c850e13ca2777afd26a4ac34594",
+        "tldw_chatbook/DB/migrations/agent_runs_v20_to_v21_agent_routing.sql": "b010a3c42d4059c0ad19eb67c3bcafc61001ea693b9e2eeadf0d4ec81fb19ae7",
+        "tldw_chatbook/DB/migrations/chachanotes_v16_to_v17_conversation_local_marks.sql": "c713858c17fc4635c567ef7f9eb2747003de9a01e94a346d688a0e828240236e",
+        "tldw_chatbook/DB/migrations/chachanotes_v17_to_v18_conversation_system_prompt.sql": "dd899b0a429e3b0e3ba43f60127d65dcedf21c80ff5cf5cf079d0b02aadd7398",
+        "tldw_chatbook/DB/migrations/chachanotes_v18_to_v19_message_attachments.sql": "3c05b94dea6580d6b6a44c641fde6cf54fd7385fb7c48016397f26fb41511d2f",
+        "tldw_chatbook/DB/migrations/chachanotes_v19_to_v20_conversation_metadata.sql": "5f32f559008182c5150765fe5db170dd62885c7f6f3cb964fb7f7dc34cc2fb95",
+        "tldw_chatbook/DB/migrations/chachanotes_v20_to_v21_world_book_entry_priority.sql": "0e71fac36b701d852e32e56892203b8da67d7aab0b590212d98eb4bf95b7aac8",
+        "tldw_chatbook/DB/migrations/chachanotes_v21_to_v22_world_book_entry_regex.sql": "612bc9614d020e4cd8693d3c6f5390d9326c53fb79f2d39935338d25cf910eac",
+        "tldw_chatbook/DB/migrations/chachanotes_v22_to_v23_character_expression_images.sql": "82a0129d262d747970766565706aaeaacfb0d58365d3adad91c29c172a463898",
+        "tldw_chatbook/DB/migrations/chachanotes_v23_to_v24_conversation_active_leaf.sql": "33ebe00b6630a98a61a97b848aa0e0b0be868563fa15ba019605180815842494",
+        "tldw_chatbook/DB/migrations/chachanotes_v24_to_v25_message_generation_metadata.sql": "5de53ced3e59cb9820397ae3cbf6e1e1702a139840473ff6954dc9ff8dedea99",
+        "tldw_chatbook/DB/migrations/chachanotes_v25_to_v26_conversation_context_summary.sql": "5c5628db673d264b51cd28ca8a54279c0c8f0ac07e25527842802f99a9b359d4",
+        "tldw_chatbook/DB/migrations/chachanotes_v26_to_v27_citation_provenance.sql": "7f54a20fbd9199a1cd9c5b3d5d1b45646fee946600a3d2d9235e6f0e5f623334",
+        "tldw_chatbook/DB/migrations/chachanotes_v27_to_v28_character_authority.sql": "92b882075b7ccdbc9c290c8dcad3c46e2697d63f3131b3383a74aaf39c8f32df",
+        "tldw_chatbook/DB/migrations/chachanotes_v28_to_v29_kept_briefings.sql": "83e1464101f90dbb5d1319e17c804461f0bedb39eed4420ac5ab73acb7736d38",
+        "tldw_chatbook/DB/migrations/chachanotes_v29_to_v30_message_usage.sql": "4e1f14c73b1f0c5d38263c4ccd083983d7bc2709b256fdcad4ccf06a47d560bb",
+        "tldw_chatbook/DB/migrations/chachanotes_v30_to_v31_message_metadata.sql": "2b30780c79e15b0eb2de53c413fd4cad3d6279f7d9a0cd8091a6c4b6ccb92a87",
+        "tldw_chatbook/DB/migrations/chachanotes_v32_to_v33_console_context_memory.sql": "0cbd768487cdd80266a34ae4e7d2bbc17f27b3e8911605b51f6ac135f541be87",
+        "tldw_chatbook/DB/migrations/chachanotes_v33_to_v34_visual_compaction_policy.sql": "4beeb2207efa7b55ebf085f680bd7bf9b53263a85a897359b85daf1ff9658eed",
+        "tldw_chatbook/DB/migrations/chachanotes_v34_to_v35_conversation_dictionary_attachments.sql": "b2917c1ab7a556c8d92708070456c139262712baea3a68565e12bbceea6a4d7a",
+        "tldw_chatbook/DB/migrations/chachanotes_v35_to_v36_note_folders.sql": "5f89d881c3f6a07f5096bee48420bb3dcac9942d39aa99dd7a4649cec9839ce3",
+        "tldw_chatbook/DB/migrations/chachanotes_v36_to_v37_provider_continuation.sql": "8587dadf1291653a11aa26423efcfc33312e97b63684f1afb40e0090f7baab72",
+        "tldw_chatbook/DB/migrations/chachanotes_v37_to_v38_message_trajectory_metadata.sql": "e5f4ace9823884d599468902915b4f73d7dd3c380c15f98c248b47aebd8242e1",
+        "tldw_chatbook/DB/migrations/chachanotes_v38_to_v39_visual_identity.sql": "bf55b2026b7a55b1d485f5fff7e18d5c99b8a6e0056e2e4d6ef65143f765e89c",
+        "tldw_chatbook/DB/migrations/chachanotes_v39_to_v40_transcript_annotations.sql": "df6db71e6f572a73ecb82867039060f9b3244941bf402a97792ff4c320babb58",
+        "tldw_chatbook/DB/migrations/chachanotes_v40_to_v41_persona_visual.sql": "2ef5c8f7bd4bcacc198357fb9ad4f975d1b7f59a1461e909b6c1f7034a2ac902",
+        "tldw_chatbook/DB/migrations/chachanotes_v42_to_v43_message_exchanges.sql": "92a5258c0dfb05f6167948d4cdc4766c0e26ffcdea4bfb0a7b39c45a5260cb03",
+        "tldw_chatbook/DB/migrations/chachanotes_v43_to_v44_sync_conflict_preservation.sql": "1934185d74ef22c7b1bb0b83ebf91b320fc1e33cc1b3289064bd16ad4ad9e87e",
+        "tldw_chatbook/DB/migrations/chachanotes_v44_to_v45_actor_packs.sql": "eb41b92a658e6e540bab0e86bc1915ac0bd23d9f6f2f1d76ebd0634a8486de1c",
+        "tldw_chatbook/DB/migrations/chachanotes_v45_to_v46_sync_log_retention.sql": "f5fae3f68c9f6ba69293d87f4a2a08ef382c76da3b7bbb6df4f180ff50a5c5e7",
+        "tldw_chatbook/DB/migrations/chachanotes_v46_to_v47_messages_fts_backfill_guards.sql": "9ef269415128e217c27c901404d474f664a94d55b0e4ad18c3b1232e03b08afb",
+        "tldw_chatbook/DB/migrations/chachanotes_v47_to_v48_console_library_policy.sql": "5e9784336f8b1b15f07375c03da74f82c62bc185bb036750e81beb91f35bc992",
+        "tldw_chatbook/DB/migrations/chachanotes_v48_to_v49_messages_fts_update_scope.sql": "e8d13d1572675b3589dc56f190066a4f5afa7b0603e98b7fcd0a433cfd4d264e",
+        "tldw_chatbook/DB/migrations/chachanotes_v49_to_v50_console_policy_tombstone_cleanup.sql": "24e1e158b1c243ce97e3a61b4b2d5975bcbf59f09b62db3e2814e6660471bfde",
+        "tldw_chatbook/DB/migrations/chachanotes_v50_to_v51_console_full_capture.sql": "93b1bfffe1809bb31dd58cb7dcef0c2241a7bd8bef630f7112f83016d45c26f3",
+        "tldw_chatbook/DB/migrations/chachanotes_v51_to_v52_console_thinking.sql": "b417f3b489546bffb5c269e1f3100a5dbd2faf8176673660bb1adab74b1e8104",
+        "tldw_chatbook/DB/migrations/chachanotes_v53_to_v54_active_leaf_before_message.sql": "1845491d114b09903fa191e8fab9edb8620841db10096521d7f1086515f2c8a8",
+        "tldw_chatbook/DB/migrations/chachanotes_v54_to_v55_console_memory_scope_selection.sql": "5d5b6f58965fa2585cf0891d6bea646b2fc5daabcc3b04a8c31d856695c41f2a",
+        "tldw_chatbook/DB/migrations/chachanotes_v55_to_v56_console_semantic_trace.sql": "d7db9e8000522fc4b43d9a6af8a9ac7b7b77612fbf2e01e62406fc9c3bfecc61",
+        "tldw_chatbook/DB/migrations/chachanotes_v56_to_v57_semantic_mutation_guard.sql": "b4295afd8066968134a46279c07876aafdc306e5b517c4dc5aba29f53e50d80e",
+        "tldw_chatbook/DB/migrations/chachanotes_v57_to_v58_notes_organization_sync.sql": "7bc551a44cc4ead8c998407581665504829ebe3d25cbacb1da7c71888269baef",
+        "tldw_chatbook/DB/migrations/chachanotes_v58_to_v59_note_organization_tool_receipts.sql": "fd6629bb36ae48ef6a4b48442deebe7a319e1eb6ccc937b50504e25783d127ef",
+        "tldw_chatbook/DB/migrations/chachanotes_v59_to_v60_note_sync_publication_intents.sql": "1b6011914bed2c3dc5928806d29eab6ce5f4698c101b1719575f3044a5766dc2",
+        "tldw_chatbook/DB/migrations/chachanotes_v60_to_v61_agent_lessons_seed.sql": "360ea7d7734f272cdfa9f325741798108959b1b79e89d84654048836d836f79e",
+        "tldw_chatbook/DB/migrations/chachanotes_v61_to_v62_console_trace_privacy_policy.sql": "8bf69574fb26559735e0449d4175a1620afc99e9b47180d3070d69bc21349f0c",
+        "tldw_chatbook/DB/migrations/chachanotes_v62_to_v63_console_trace_gc_guard.sql": "cb9ae48e2a33e1e568455de54bc89c291d6d8542172f80c41c6a81365b280974",
+        "tldw_chatbook/DB/migrations/chachanotes_v63_to_v64_auxiliary_timed_out_status.sql": "72ae3d7c2aec9af4403690022b12461ecd824b3a51270931227be852c45928e5",
+        "tldw_chatbook/DB/migrations/chachanotes_v64_to_v65_console_trace_compaction.sql": "d7a733d79348c8c29320c8c831dd64846e03d3beeb2434d40422de9a5cac098f",
+        "tldw_chatbook/DB/migrations/chachanotes_v65_to_v66_character_conversation_search.sql": "708902293479ce2f54c5e3d7d14dcb74a35711576bc5111a90b0c7bb9c917ffc",
+        "tldw_chatbook/DB/migrations/chachanotes_v66_to_v67_canvas_revisions.sql": "d8f47abf075c78efcb33f870250bb0def2704bc592a81e1b74ac98b98b48ca8b",
+        "tldw_chatbook/DB/migrations/chachanotes_v67_to_v68_canvas_runtime_profiles.sql": "87dc33e1bf604bb2a29b9af0bcee0913d019a7aa2252e65bfe3578f27992f1eb",
+        "tldw_chatbook/DB/migrations/chachanotes_v68_to_v69_console_trace_source_pin.sql": "17a2f117e39f8e9aaac0a3f335578c42108eaf32946ff7d8a66d942059b70523",
+        "tldw_chatbook/DB/migrations/chachanotes_v69_to_v70_independent_buddy.sql": "a00de64c7ef7729bbd967f5fbb0c070c933f2f92010e84d3243a18d9a9ff7bfd",
+        "tldw_chatbook/DB/migrations/chachanotes_v70_to_v71_conversation_archive.sql": "15e03e0423079df1e6c8411b24307ed42c5de3d74109f6c125990394d0eafd44",
+        "tldw_chatbook/DB/migrations/chachanotes_v71_to_v72_voice_trace_provenance.sql": "fe6b6c0ad4d45ac487550c033586743ce3832ae67262932a2ad76961a05557c2",
+        "tldw_chatbook/DB/migrations/chachanotes_v72_to_v73_note_links.sql": "ada95040864753befd40107899014de00e47ecda8f170bbf72d80fc7af7b9ab6",
+        "tldw_chatbook/DB/migrations/chachanotes_v73_to_v74_auxiliary_failure_reason.sql": "fc8248cbb2f71951d57649f0aeca0d63bc8e07d5f0e091f1e1aae1659d01f963",
+        "tldw_chatbook/DB/migrations/chachanotes_v75_to_v76_notes_fts_undelete_guard.sql": "93b669a6caf9ce6e967c4eba7d23f2b1b7efdaf4db2a2cbf504304351b625d59",
+        "tldw_chatbook/DB/migrations/library_collections_v2_to_v3_extraction_leases.sql": "dd870422ce03f5875c204146685b1a13884f7d67d1f61ef456e476c920fedea5",
+        "tldw_chatbook/DB/migrations/subscriptions_v1_to_v2_briefing_provenance.sql": "f7d73f9594cde360e77f2e62104f975fee7d8681b26366f73cf37c950c81c769",
+        "tldw_chatbook/DB/migrations/workflows_v0_to_v1.sql": "48203249df2308308823ce592db7561cb0563111975000c3a963d4360c2df832",
+        "tldw_chatbook/DB/migrations/workflows_v1_to_v2.sql": "006fce4c8ac90ff5a629a604983be3716dbfd25989df3f32e874e215e2d85cc9",
+        "tldw_chatbook/DB/migrations/workflows_v2_to_v3.sql": "c1c23ec7af2212583d7506818c5b8dc2980cc6e87dc5f304cb12f0238f731118",
+        "tldw_chatbook/DB/migrations/workflows_v3_to_v4.sql": "9c4a4edb77a3e48b8b480e48e35291b7869790511337ccdb7fda3380fc3029ac",
+        "tldw_chatbook/DB/migrations/workspaces_v2_to_v3_research_source_operations.sql": "1ab98887fc1c2739267107376415c5a9224747184575a109720765618abde077",
+        "tldw_chatbook/DB/migrations/workspaces_v3_to_v4_quick_note_receipts.sql": "31e860a90bfad824763aca5cca8b7310ef480840d927a8d52ec2bf318366ba9b",
+        "tldw_chatbook/DB/migrations/workspaces_v4_to_v5_quick_note_receipts.sql": "9aa82be40b36867dd84876d3bd62cbac1f85a8e18bc7bc526c526ef1e94f4c6f",
+        "tldw_chatbook/DB/migrations/workspaces_v5_to_v6_quick_note_recovery.sql": "893bbaef8eba0e3bd499b6733eda8f74f9e9888bf1b4643550fec255eb68fffc",
+        "tldw_chatbook/DB/private_sqlite_helper_entry.py": "f5bee36ca8743a6769d32e9930656f698b686b9c08677ae2fcd03ab38f4ae985",
+        "tldw_chatbook/DB/recovery_core.py": "58ffca01571bd9c665803f7de21a08ce7221f3dc85afb0365210a5a18c710ebd",
+        "tldw_chatbook/DB/recovery_sqlite.py": "b3377d15695cefa0eacdb106b10f797640dcbb2b2d961c071b487792f3616581",
+        "tldw_chatbook/Evals/recovery.py": "dd31ac3a0c755a93acbcea9558bb7274b5a7cac2a5b5b0ae36cdf56efcb39836"
+      },
+      "all_81_owned_runtime_native_paths_byte_exact": true,
+      "all_incoming_non_composed_paths_exact_dev": true,
+      "all_eight_metadata_patches_raw_exact": true,
+      "diagnostic_inventory_regenerated_from_actual_combined_sources": true,
+      "diagnostic_inventory_needed_following_commit": false,
+      "authoritative_migration_sql_files": 73,
+      "UI_census": {
+        "entries": 130,
+        "floor": 128,
+        "unchanged": true
+      },
+      "workflow_real_profile_guards_and_owner_budgets_unchanged": true,
+      "ADR_path": "backlog/decisions/208-migration-sql-files-are-the-executed-source.md",
+      "limits": "Incoming owner DB/schema and normal profile changes retained; all owned Console runtime/native bytes unchanged. Prior receipts retain actual anchors; fresh targeted schema/Console/runtime evidence pending, no full-suite/native replay."
+    },
+    "fresh_checks": {
+      "db": {
+        "label": "schema-db",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-db-up8v26n0/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-db-up8v26n0/pytest.xml",
+          "Tests/DB/test_migration_file_sources.py",
+          "Tests/ChaChaNotesDB/test_trigger_census.py",
+          "Tests/ChaChaNotesDB/test_notes_fts_undelete_guard_migration.py",
+          "Tests/ChaChaNotesDB/test_historical_bootstrap.py",
+          "Tests/ChaChaNotesDB/test_migration_atomicity.py",
+          "Tests/DB/test_chachanotes_v74_auxiliary_failure_reason.py",
+          "Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py",
+          "Tests/Evals/test_evals_db_v5_to_v6_migration.py",
+          "Tests/Backup_Recovery/test_evals_recovery_migration.py",
+          "Tests/Backup_Recovery/test_core_owners.py::test_schema_policy_matches_installed_store[chachanotes]",
+          "Tests/Backup_Recovery/test_core_owners.py::test_capture_roundtrip_and_validation[chachanotes]",
+          "Tests/Backup_Recovery/test_sqlite_validation.py::test_real_installed_core_and_fts_survive[chachanotes]"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 92.29,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-db-up8v26n0",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 163,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "models": {
+        "label": "schema-models",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-models-tf7hlw7c/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-models-tf7hlw7c/pytest.xml",
+          "Tests/Chat/test_console_chat_models.py",
+          "Tests/Chat/test_console_interrupt_rounds.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 8.37,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-models-tf7hlw7c",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 48,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "ui": {
+        "label": "schema-ui",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-ui-4jvqjswu/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-ui-4jvqjswu/pytest.xml",
+          "Tests/UI/test_chat_approval_card.py",
+          "Tests/UI/test_console_pending_interrupt_projection.py",
+          "Tests/UI/test_console_approval_compact_layout.py",
+          "Tests/UI/test_console_session_tab_close.py",
+          "Tests/UI/test_console_session_close_impact.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 344.25,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-ui-4jvqjswu",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 53,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "library": {
+        "label": "schema-library",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-library-zkpw1rsr/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-library-zkpw1rsr/pytest.xml",
+          "Tests/UI/test_library_conversation_reader_freshness.py",
+          "Tests/UI/test_library_reader_console_delete_refresh.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 83.11,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-library-zkpw1rsr",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 12,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "startup": {
+        "label": "schema-startup",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-startup-bqozh0i3/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-startup-bqozh0i3/pytest.xml",
+          "Tests/Performance/test_app_import_weight.py",
+          "Tests/Performance/test_ui_ready_module_census.py",
+          "Tests/Performance/test_boot_worker_census.py",
+          "Tests/Performance/test_textual_css_fastpath.py",
+          "Tests/Performance/test_boot_css_byte_budget.py",
+          "Tests/Performance/test_screen_preimport_payload_budget.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 116.93,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-startup-bqozh0i3",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 22,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "latency": {
+        "label": "schema-latency",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-latency-shseqecm/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-latency-shseqecm/pytest.xml",
+          "Tests/Performance/test_ui_latency_guardrails.py",
+          "Tests/Utils/test_ui_responsiveness_stall_persist.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 93.7,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-latency-shseqecm",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 13,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "CI": {
+        "label": "schema-CI",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-CI-vn2jdu11/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-CI-vn2jdu11/pytest.xml",
+          "Tests/CI/test_ci_queue_pressure_contract.py",
+          "Tests/CI/test_derived_artifacts_workflow.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 4.32,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-CI-vn2jdu11",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 34,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      }
+    },
+    "fresh_targeted_passed": 345,
+    "fresh_targeted_collected": 345,
+    "preflight": {
+      "head": "b0b9d5a70f14ab5a16d98975b08bd980339ce6be",
+      "base": "14a14c4a7ab0da85831afb290ab90d75170fbb79",
+      "exit_code": 0,
+      "elapsed_seconds": 109.7,
+      "log": "/tmp/console-tool-ux-schema-preflight.log",
+      "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-schema-preflight-o32jc06u",
+      "sources_stable": true,
+      "success_line": true
+    },
+    "static": {
+      "head": "b0b9d5a70f14ab5a16d98975b08bd980339ce6be",
+      "base": "14a14c4a7ab0da85831afb290ab90d75170fbb79",
+      "source_pins": 457,
+      "sources_stable": true,
+      "Ruff_zero_new": {
+        "base": "14a14c4a7ab0da85831afb290ab90d75170fbb79",
+        "files": {
+          "Docs/superpowers/qa/2026-10-01-console-approval-layout/native_check.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Docs/superpowers/qa/2026-10-01-console-close-followup/native_check.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Chat/test_console_ask_user_round.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "Tests/Chat/test_console_chat_create_confirm.py": {
+            "before": 6,
+            "after": 6,
+            "new": []
+          },
+          "Tests/Chat/test_console_chat_create_integration.py": {
+            "before": 11,
+            "after": 11,
+            "new": []
+          },
+          "Tests/Chat/test_console_local_review_hook.py": {
+            "before": 2,
+            "after": 2,
+            "new": []
+          },
+          "Tests/Chat/test_console_runtime_shutdown.py": {
+            "before": 2,
+            "after": 2,
+            "new": []
+          },
+          "Tests/Chat/test_console_session_settings.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Packaging/test_console_interaction_import_closure.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Performance/test_console_keystroke_work_census.py": {
+            "before": 2,
+            "after": 2,
+            "new": []
+          },
+          "Tests/Performance/test_ui_ready_module_census.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_chat_approval_card.py": {
+            "before": 5,
+            "after": 5,
+            "new": []
+          },
+          "Tests/UI/test_console_approval_compact_layout.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_console_button_routing.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "Tests/UI/test_console_pending_interrupt_projection.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_console_session_close_impact.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_console_session_tab_close.py": {
+            "before": 4,
+            "after": 4,
+            "new": []
+          },
+          "Tests/UI/test_console_turn_resend_ui.py": {
+            "before": 2,
+            "after": 1,
+            "new": []
+          },
+          "Tests/Utils/test_mcp_native_qa_args.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Widgets/test_confirmation_dialog_literal_text.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "scripts/check_ui_pr_gate_census.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_chat_controller.py": {
+            "before": 199,
+            "after": 199,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_chat_models.py": {
+            "before": 28,
+            "after": 28,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_display_state.py": {
+            "before": 27,
+            "after": 27,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_message_actions.py": {
+            "before": 6,
+            "after": 6,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_runtime.py": {
+            "before": 30,
+            "after": 30,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_turn_resend.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "tldw_chatbook/UI/Console_Modules/message.py": {
+            "before": 38,
+            "after": 38,
+            "new": []
+          },
+          "tldw_chatbook/UI/Console_Modules/session.py": {
+            "before": 42,
+            "after": 41,
+            "new": []
+          },
+          "tldw_chatbook/UI/Console_Modules/wiring.py": {
+            "before": 4,
+            "after": 4,
+            "new": []
+          },
+          "tldw_chatbook/UI/Screens/chat_screen.py": {
+            "before": 200,
+            "after": 200,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": {
+            "before": 6,
+            "after": 6,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/Console/console_transcript.py": {
+            "before": 27,
+            "after": 26,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/cancel_confirmation_dialog.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/confirmation_dialog.py": {
+            "before": 7,
+            "after": 7,
+            "new": []
+          }
+        }
+      },
+      "public_signature_audit": [],
+      "checks": {
+        "diff": {
+          "exit_code": 0,
+          "output": ""
+        },
+        "backlog_ids": {
+          "exit_code": 0,
+          "output": "No duplicate task IDs across 4941 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.\n"
+        },
+        "UI_census": {
+          "exit_code": 0,
+          "output": "OK: 130 Tests/UI files in the PR gate (floor 128); every listed path exists.\n"
+        }
+      },
+      "scope": "Latest dev integration preserves all four overlapping Console module ASTs and comment tokens with upstream Ruff0.15.22 formatting. Incoming runtime/fixture/checker changes are retained exactly. Original native artifacts and all non-overlap feature sources remain byte-identical; no guard/getter/admission/budget/cap changes."
+    },
+    "ADR_required": "no new ADR; existing database ADR208 and Library/Console ADR076/094/097/150/195/212",
+    "ADR_path": "backlog/decisions/208-migration-sql-files-are-the-executed-source.md",
+    "limits": [
+      "345 actual targeted passes: migration-source/trigger/body/history/atomicity and v74/v75 receipt preservation, ChaChaNotes v76 real schema/capture/FTS validation and exact Evals v5-to-v6 restricted migration163; selected Console models48; complete owned Console UI53; real file-backed Console Delete/Undo to Library12; startup22; latency13; CI34. All457 source pins stable, original profiles/guards and180s per-case cap unchanged.",
+      "The73 authoritative/audit migration SQL files plus incoming/shared dependency/test paths are pinned.6 previous source overrides and113 additions reconstruct457. All81 owned Console runtime/native paths remain exact; all incoming non-composed paths and8 metadata patches are exact. Inventory regenerated from actual combined sources; no additional inventory delta. Census130/floor128 unchanged.",
+      "Owner PR3002 changes schema and recovery authorities: ChaChaNotes76, Evals6 and file-backed migrations. These are retained exactly under ADR208; no invented schema, profile, admission/getter, worker/canary, workflow, cap or budget exception.",
+      "Earlier Library reader2 admission refusals on f1f80847 and broader shared-pane MRO red on83c264f2 remain recorded on their actual baseline/runtime anchors. Neither old command is relabelled as a new457-pin run; no blanket claim that full Library/Architecture is green. Prior native and formatter W003 xfail receipts also retain original anchors.",
+      "No fresh full Library, Architecture A/B, installed-wheel build, native Auth/sign-in, credential, live-server or full-suite replay. All3 tasks remain In Progress pending fresh exact-head clean/resolved Qodo and all5 hosted gates including both UI shards, then fresh final Done-metadata-head checks/review before protected normal merge; auto-merge off."
+    ]
   }
 }
