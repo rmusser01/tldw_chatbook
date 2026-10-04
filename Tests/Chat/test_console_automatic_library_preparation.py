@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from Tests.Chat.console_close_helpers import close_controller_session
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -2530,7 +2531,10 @@ async def test_explicit_evidence_lease_never_releases_newer_launch(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_explicit_evidence_lease_cancel_keeps_original_staged(monkeypatch):
+@private_profile_test
+async def test_explicit_evidence_lease_cancel_keeps_original_staged(
+    monkeypatch, request
+):
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("original"),
         "released": [],
@@ -2544,6 +2548,7 @@ async def test_explicit_evidence_lease_cancel_keeps_original_staged(monkeypatch)
         provider_gateway=_StreamingFence(),
         **_retrieval_evidence_owner(retrieval),
     )
+    assert await controller.hook_admission_reason() is None
     held = _CancellationResistantBoundary()
 
     async def capture_evidence(_app, launch, *, user_message):
