@@ -2,7 +2,7 @@ name: Console pause native evidence
 
 on:
   push:
-    branches: [codex/console-pause-evidence]
+    branches: [codex/console-performance-fixes]
 
 permissions:
   contents: read
@@ -35,6 +35,10 @@ jobs:
           New-Item -ItemType Directory -Path $pauseTemp -Force | Out-Null
           "TEMP=$pauseTemp" >> $env:GITHUB_ENV
           "TMP=$pauseTemp" >> $env:GITHUB_ENV
+      - name: Diagnose native Windows ownership and change-time
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        run: python -m pytest Tests/Utils/test_windows_native_admission.py -q -s --timeout=180 --junitxml=${{ runner.temp }}/windows-admission.xml
       - name: Measure real guarded Console and three immediate captured replies
         env:
           TLDW_PAUSE_PROBE_RESULT: ${{ runner.temp }}/console-pause.json
@@ -47,4 +51,5 @@ jobs:
           path: |
             ${{ runner.temp }}/console-pause.json
             ${{ runner.temp }}/console-pause.xml
+            ${{ runner.temp }}/windows-admission.xml
           if-no-files-found: error
