@@ -1008,16 +1008,19 @@ MODEL_PROFILE_SELECT_FIELD_KEYS = frozenset(
         "model_profile_streaming",
     }
 )
+# TASK-33007.5 (AC#4): a placeholder states only a range or unit, short
+# enough for a one-row number field; what a blank field inherits is its
+# row's help line.
 MODEL_PROFILE_INPUT_PLACEHOLDERS = {
     "model_profile_temperature": "0.0 - 2.0",
     "model_profile_top_p": "0.0 - 1.0",
-    "model_profile_min_p": "optional 0.0 - 1.0",
-    "model_profile_top_k": "optional whole number",
-    "model_profile_max_tokens": "optional whole number",
-    "model_profile_seed": "optional whole number",
+    "model_profile_min_p": "0.0 - 1.0",
+    "model_profile_top_k": "integer",
+    "model_profile_max_tokens": "tokens",
+    "model_profile_seed": "integer",
     "model_profile_presence_penalty": "-2.0 - 2.0",
     "model_profile_frequency_penalty": "-2.0 - 2.0",
-    "model_profile_thinking_budget_tokens": "optional >= 1024",
+    "model_profile_thinking_budget_tokens": ">= 1024",
 }
 PROVIDER_MANUAL_SELECT_VALUE = "__manual__"
 PROVIDER_MANUAL_SELECT_LABEL = "Manual / custom provider"
@@ -3357,7 +3360,9 @@ class SettingsScreen(BaseAppScreen):
         self._provider_context_window_suppress_queue: list[str] = []
         self._syncing_provider_credential_env_var = False
         self._syncing_provider_model_profile = False
-        self._generation_defaults_collapsed = True
+        # TASK-33007.5: Model defaults opens expanded; Sampling stays closed.
+        self._generation_defaults_collapsed = False
+        self._sampling_defaults_collapsed = True
         self._syncing_provider_model_value = False
         self._syncing_provider_manual = False
         self._syncing_provider_selection = False
@@ -7377,7 +7382,7 @@ class SettingsScreen(BaseAppScreen):
             id=f"settings-{draft_key.replace('_', '-')}",
             classes="settings-compact-select",
             allow_blank=True,
-            prompt="Inherit default",
+            prompt="Inherit",
             compact=True,
             disabled=not supported,
         )
@@ -13296,13 +13301,6 @@ class SettingsScreen(BaseAppScreen):
             provider_label = "this provider"
         return f"Unavailable for {provider_label}"
 
-    def _model_profile_input_placeholder(
-        self, provider: object, draft_key: str, model: object
-    ) -> str:
-        if not self._model_profile_field_supported(provider, draft_key, model):
-            return self._unsupported_model_profile_placeholder(provider)
-        return MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key]
-
     def _model_profile_input_value(
         self,
         provider: object,
@@ -13313,29 +13311,6 @@ class SettingsScreen(BaseAppScreen):
         if not self._model_profile_field_supported(provider, draft_key, model):
             return ""
         return self._profile_input_value(value)
-
-    def _provider_generation_support_copy(self, provider: object, model: object) -> str:
-        """Name the hidden generation rows in one line (task-189, TASK-33001.2).
-
-        Instead of rendering rows of "Unavailable for <provider>" placeholder
-        fields, the Generation defaults disclosure shows this single summary
-        and hides the rows the provider+model request does not carry.
-
-        Returns:
-            Copy such as ``"Hidden for Anthropic: Min P, Seed, Presence,
-            Frequency, ..."`` or ``""`` when every row is supported.
-        """
-        provider_label = self._provider_display_name(str(provider or "").strip())
-        if not provider_label:
-            provider_label = "this provider"
-        hidden = [
-            MODEL_FIELD_LABELS[name]
-            for draft_key, name in PROVIDER_MODEL_PROFILE_FIELD_KEYS.items()
-            if not self._model_profile_field_supported(provider, draft_key, model)
-        ]
-        if not hidden:
-            return ""
-        return f"Hidden for {provider_label}: {', '.join(hidden)}."
 
     @staticmethod
     def _gated_profile_row_classes(supported: bool) -> str:
@@ -15159,9 +15134,8 @@ class SettingsScreen(BaseAppScreen):
                     except QueryError:
                         continue
                     widget.disabled = not supported
-                    widget.placeholder = self._model_profile_input_placeholder(
-                        provider, draft_key, model
-                    )
+                    # AC#4: a placeholder only states a range or unit.
+                    widget.placeholder = MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key]
                     # task-15740: prevent the posted echo the flag misses.
                     with widget.prevent(Input.Changed):
                         widget.value = (
@@ -15223,14 +15197,10 @@ class SettingsScreen(BaseAppScreen):
         context_window_input.value = value
 
     def _refresh_generation_support_summary(self, provider: str, model: str) -> None:
-        """Update the one-line gated-controls summary and its visibility."""
-        support_copy = self._provider_generation_support_copy(provider, model)
-        try:
-            summary = self.query_one("#settings-provider-generation-support", Static)
-        except QueryError:
-            return
-        summary.update(support_copy)
-        summary.set_class(not support_copy, "settings-gated-profile-hidden")
+        """Re-say Model defaults' title, Source words, help and Sampling line."""
+        from ..Settings_Modules.settings_field_rows import refresh_model_defaults
+
+        refresh_model_defaults(self, provider, model)
 
     def _provider_endpoint_setting_key(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
@@ -19031,7 +19001,7 @@ class SettingsScreen(BaseAppScreen):
                     ),
                     id="settings-console-default-temperature",
                     classes="settings-compact-input",
-                    placeholder="0.0 - 2.0",
+                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_temperature"],
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static(
@@ -19043,7 +19013,7 @@ class SettingsScreen(BaseAppScreen):
                     ),
                     id="settings-console-default-top-p",
                     classes="settings-compact-input",
-                    placeholder="0.0 - 1.0",
+                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_top_p"],
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static(
@@ -19055,7 +19025,7 @@ class SettingsScreen(BaseAppScreen):
                     ),
                     id="settings-console-default-min-p",
                     classes="settings-compact-input",
-                    placeholder="optional 0.0 - 1.0",
+                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_min_p"],
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static(
@@ -19067,7 +19037,7 @@ class SettingsScreen(BaseAppScreen):
                     ),
                     id="settings-console-default-top-k",
                     classes="settings-compact-input",
-                    placeholder="optional whole number",
+                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_top_k"],
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row"):
@@ -19080,7 +19050,7 @@ class SettingsScreen(BaseAppScreen):
                     ),
                     id="settings-console-default-max-tokens",
                     classes="settings-compact-input",
-                    placeholder="optional whole number",
+                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_max_tokens"],
                     restrict=r"^[0-9]*$",
                 )
             with Horizontal(classes="settings-input-row"):
@@ -19105,7 +19075,7 @@ class SettingsScreen(BaseAppScreen):
                     ),
                     id="settings-console-default-presence-penalty",
                     classes="settings-compact-input",
-                    placeholder="-2.0 - 2.0",
+                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_presence_penalty"],
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static(
@@ -19118,7 +19088,7 @@ class SettingsScreen(BaseAppScreen):
                     ),
                     id="settings-console-default-frequency-penalty",
                     classes="settings-compact-input",
-                    placeholder="-2.0 - 2.0",
+                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_frequency_penalty"],
                 )
             yield Static(
                 "Reasoning and thinking controls are sent only to providers that support them.",
@@ -25182,6 +25152,15 @@ class SettingsScreen(BaseAppScreen):
     @on(Collapsible.Toggled, "#settings-generation-defaults")
     def handle_generation_defaults_toggled(self, event: Collapsible.Toggled) -> None:
         self._generation_defaults_collapsed = event.collapsible.collapsed
+
+    @on(Collapsible.Toggled, "#settings-model-sampling")
+    def handle_sampling_defaults_toggled(self, event: Collapsible.Toggled) -> None:
+        """Keep Sampling open or closed across a card rebuild (TASK-33007.5).
+
+        Args:
+            event: The Sampling disclosure's toggle.
+        """
+        self._sampling_defaults_collapsed = event.collapsible.collapsed
 
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:

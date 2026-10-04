@@ -709,6 +709,8 @@ Button.settings-category-group-toggle:focus {
    cells wide, the TASK-32593 floor. Nothing wraps, so each row stays one
    row. */
 #settings-provider-search,
+#settings-provider-auth-source,
+#settings-provider-api-mode,
 #settings-provider-credential-env-var,
 #settings-provider-endpoint-value,
 #settings-model-picker {
@@ -793,6 +795,75 @@ Button.settings-category-group-toggle:focus {
 #settings-providers-models-card .settings-row-help {
     padding: $ds-space-0;
     color: $ds-text-muted;
+}
+
+/* TASK-33007.5: Model defaults rows read label | control | Source word |
+   help (spec §6). Numbers and enums share one 16-cell control column, the
+   enum size, so every Source word in the section lines up; the compact
+   workbench rules above still stack a row and widen its field. */
+#settings-generation-defaults .settings-compact-input,
+#settings-generation-defaults .settings-compact-select {
+    width: $ds-size-16;
+}
+
+/* TASK-33007.5 (spec §6 "a closed disclosure costs 1 row"): Model defaults
+   and its Sampling disclosure drop the global components/_widgets.tcss
+   Collapsible frame (round border, min-height 3, margin) and Textual's
+   padding, as Chat settings does, so each title is a one-row section header
+   and the opened rows line up with Connect's. A title set after mount keeps
+   an auto width's first measure, so it spans its row; the builders keep it
+   to one row and the ellipsis is the narrow-workbench safety net. */
+#settings-generation-defaults,
+#settings-model-sampling {
+    min-height: $ds-size-0;
+    margin: $ds-space-0;
+    padding: $ds-space-0;
+    border: none;
+    background: $ds-surface-panel;
+}
+
+#settings-generation-defaults > Contents,
+#settings-model-sampling > Contents {
+    padding: $ds-space-0;
+    background: $ds-surface-panel;
+}
+
+#settings-generation-defaults > CollapsibleTitle,
+#settings-model-sampling > CollapsibleTitle {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-control-height-compact;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* TASK-33007.5 (R14): Settings inverted the Console's heights -- input rows
+   one row, select rows three. On Providers & Models and Console Behavior a
+   Select row is one row too: the compact Select keeps the compact input's
+   left-edge convention (thin at rest, thick on focus) instead of a full
+   border, which spent a row above and below on chrome. The row's label is
+   named by type: the label class is pinned to the boot bundle, and these
+   rules belong in the lazy Settings sheet (ADR-097). */
+#settings-providers-models-card .settings-select-row,
+#settings-providers-models-card .settings-select-row > Static,
+#settings-console-behavior-card .settings-select-row,
+#settings-console-behavior-card .settings-select-row > Static {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+}
+
+#settings-providers-models-card .settings-compact-select,
+#settings-console-behavior-card .settings-compact-select {
+    height: $ds-control-height-compact;
+    min-height: $ds-control-height-compact;
+    border: none;
+    border-left: solid $ds-control-edge;
+}
+
+#settings-providers-models-card .settings-compact-select:focus,
+#settings-console-behavior-card .settings-compact-select:focus {
+    border: none;
+    border-left: thick $ds-action-focus;
 }
 
 /* TASK-33007.4: the Applies-to row names the open chat and the pair it will

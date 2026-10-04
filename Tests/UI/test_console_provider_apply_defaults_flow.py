@@ -17,7 +17,7 @@ from dataclasses import replace
 from uuid import uuid4
 
 import pytest
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Select, Static
 
 import tldw_chatbook.Chat.console_settings_defaults as defaults_module
 from Tests.console_provider_doubles import provider_resolution
@@ -2515,8 +2515,13 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
             # TASK-33007.4, extended on purpose (R15): the Applies-to row
             # names the pair the open chat will use; the endpoint-key row
             # moved into the Inspector's config-key disclosure, same id.
+            # TASK-33007.5, extended on purpose (R15): Model defaults rows say
+            # their Source word and what a blank inherits; the
+            # generation-support id is now the opened Sampling list.
             dynamic_static_ids = (
                 "settings-model-applies-to",
+                "settings-model-profile-temperature-source",
+                "settings-model-profile-temperature-help",
                 "settings-provider-readiness",
                 "settings-provider-inspector-readiness",
                 "settings-provider-source",
@@ -2587,6 +2592,13 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
                         str(screen.query_one(f"#{widget_id}", Static).renderable),
                     )
                     for widget_id in dynamic_static_ids
+                ),
+                "disclosure_titles": tuple(
+                    str(screen.query_one(selector, Collapsible).title)
+                    for selector in (
+                        "#settings-generation-defaults",
+                        "#settings-model-sampling",
+                    )
                 ),
                 "save": screen.query_one("#settings-save-category", Button).disabled,
                 "revert": screen.query_one(

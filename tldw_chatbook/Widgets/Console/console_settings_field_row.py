@@ -205,35 +205,46 @@ SAMPLING_FOCUS_IDS = frozenset(field_control_id(name) for name in SAMPLING_FIELD
 CONNECTION_FOCUS_IDS = frozenset({"console-settings-base-url"})
 
 
-def hidden_fields_line(provider_name: str, hidden: Iterable[str]) -> str:
+def hidden_fields_line(
+    provider_name: str,
+    hidden: Iterable[str],
+    *,
+    cells: int = DISCLOSURE_TITLE_CELLS,
+    state: str = "",
+) -> str:
     """Return the one-row Sampling title for the fields the provider rejects.
 
     Args:
         provider_name: The provider's display name.
         hidden: Field-table names of the hidden fields, in line order.
+        cells: The title's one-row budget; Settings' card is narrower than
+            the Chat settings frame (TASK-33007.5).
+        state: An optional summary of the shown fields, put right after
+            "Sampling" (Settings' "Top P 0.95 · others inherit").
 
     Returns:
         ``"Sampling"`` when nothing is hidden; ``"Sampling · hidden for
         Anthropic: Min P, Seed (this provider does not accept them)"`` when
-        the labels fit ``DISCLOSURE_TITLE_CELLS``; else ``"Sampling · Together
-        does not accept 10 fields (open to list them)"``, the name shortened
-        with ``…`` if even that is too wide.
+        the labels fit ``cells``; else ``"Sampling · Together does not
+        accept 10 fields (open to list them)"``, the name shortened with
+        ``…`` if even that is too wide. A ``state`` follows "Sampling".
     """
+    title = f"{SAMPLING_TITLE} · {state}" if state else SAMPLING_TITLE
     labels = [MODEL_FIELD_LABELS[name] for name in hidden]
     if not labels:
-        return SAMPLING_TITLE
+        return title
     named = (
-        f"{SAMPLING_TITLE} · hidden for {provider_name}: "
+        f"{title} · hidden for {provider_name}: "
         f"{', '.join(labels)} {HIDDEN_FIELDS_REASON}"
     )
-    if cell_len(named) <= DISCLOSURE_TITLE_CELLS:
+    if cell_len(named) <= cells:
         return named
     noun = "field" if len(labels) == 1 else "fields"
     tail = f" does not accept {len(labels)} {noun} {HIDDEN_FIELDS_OPEN_HINT}"
-    room = DISCLOSURE_TITLE_CELLS - cell_len(f"{SAMPLING_TITLE} · {tail}")
+    room = cells - cell_len(f"{title} · {tail}")
     if cell_len(provider_name) > room:
         provider_name = set_cell_size(provider_name, room - 1) + "…"
-    return f"{SAMPLING_TITLE} · {provider_name}{tail}"
+    return f"{title} · {provider_name}{tail}"
 
 
 def hidden_fields_list(provider_name: str, hidden: Iterable[str]) -> str:

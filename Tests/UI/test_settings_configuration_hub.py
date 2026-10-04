@@ -4466,11 +4466,13 @@ async def test_settings_provider_model_defaults_appear_before_reference_copy():
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         card = screen.query_one("#settings-providers-models-card")
-        title = card.query_one("#settings-selected-model-defaults-title", Static)
+        defaults = card.query_one("#settings-generation-defaults", Collapsible)
         temperature = card.query_one("#settings-model-profile-temperature", Input)
 
-        assert str(title.renderable) == "Selected model defaults"
-        assert temperature in list(card.query("*"))
+        # TASK-33007.5, rewritten on purpose: the "Selected model defaults"
+        # heading is gone; the open disclosure's title names the pair.
+        assert str(defaults.title) == "Model defaults · OpenAI · gpt-4.1"
+        assert defaults in temperature.ancestors
         # TASK-33007.4 (AC#6), rewritten on purpose: no reference copy
         # follows the defaults in the card any more; all five rows live in
         # the Inspector's closed "config key" disclosure.
@@ -4488,9 +4490,12 @@ async def test_settings_provider_model_defaults_appear_before_reference_copy():
 
 
 @pytest.mark.asyncio
-async def test_settings_provider_connect_block_precedes_collapsed_generation_defaults():
+async def test_settings_provider_connect_block_precedes_open_model_defaults():
     """task-189: Connect (provider/model/endpoint/credentials/test) leads the
-    category; sampling lives in a collapsed Generation defaults disclosure."""
+    category. TASK-33007.5, rewritten on purpose (was
+    ``test_settings_provider_connect_block_precedes_collapsed_generation_defaults``):
+    the defaults are open as "Model defaults · <pair>", core rows first, and
+    the samplers sit in a closed Sampling disclosure inside it."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     host = DestinationHarness(app, "settings")
@@ -4506,8 +4511,10 @@ async def test_settings_provider_connect_block_precedes_collapsed_generation_def
             card.query_one("#settings-provider-connect-title")
         )
 
-        assert disclosure.collapsed is True
-        assert str(disclosure.title) == "Generation defaults"
+        assert disclosure.collapsed is False
+        assert str(disclosure.title) == "Model defaults · OpenAI · gpt-4.1"
+        sampling = disclosure.query_one("#settings-model-sampling", Collapsible)
+        assert sampling.collapsed is True
 
         for selector in (
             "#settings-provider-value",
@@ -4526,23 +4533,31 @@ async def test_settings_provider_connect_block_precedes_collapsed_generation_def
             assert connect_index < index < disclosure_index, selector
 
         for selector in (
-            "#settings-selected-model-defaults-title",
             "#settings-model-profile-temperature",
             "#settings-model-profile-reasoning-effort",
             "#settings-model-profile-streaming",
-            "#settings-provider-generation-support",
         ):
             field = card.query_one(selector)
             assert disclosure in field.ancestors, selector
+            assert sampling not in field.ancestors, selector
+        for selector in (
+            "#settings-model-profile-top-p",
+            "#settings-model-profile-top-k",
+            "#settings-provider-generation-support",
+        ):
+            assert sampling in card.query_one(selector).ancestors, selector
 
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_provider_unavailable_fields_render_single_summary_line(
+async def test_settings_provider_unavailable_fields_are_named_by_the_sampling_line(
     request,
 ):
-    """task-189: gated fields collapse to one summary line instead of per-row
-    'Unavailable for <provider>' placeholders."""
+    """task-189: gated fields are hidden and named, never drawn as
+    'Unavailable for <provider>' placeholders. TASK-33007.5, rewritten on
+    purpose (was ``test_settings_provider_unavailable_fields_render_single_summary_line``):
+    the names come from Chat settings' formatter -- the Sampling title names
+    or counts them in one row, and the opened disclosure lists them."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "qwen"}
     host = DestinationHarness(app, "settings")
@@ -4555,11 +4570,14 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line(
         # llama.cpp's request carries reasoning effort and a thinking budget
         # (chat_template_kwargs / reasoning_budget_tokens), so only these hide.
         summary = screen.query_one("#settings-provider-generation-support", Static)
+        sampling = screen.query_one("#settings-model-sampling", Collapsible)
         assert (
             str(summary.renderable)
-            == "Hidden for llama.cpp: Reasoning summary, Verbosity, Thinking."
+            == "llama.cpp does not accept: Reasoning summary, Verbosity, Thinking."
         )
         assert not summary.has_class("settings-gated-profile-hidden")
+        assert str(sampling.title).startswith("Sampling · all inherit · ")
+        assert "llama.cpp" in str(sampling.title)
         for row_id in (
             "#settings-model-profile-reasoning-summary-row",
             "#settings-model-profile-verbosity-row",
@@ -4585,7 +4603,7 @@ async def test_settings_provider_unavailable_fields_render_single_summary_line(
 
         assert (
             str(summary.renderable)
-            == "Hidden for OpenAI: Min P, Top K, Thinking, Thinking budget."
+            == "OpenAI does not accept: Min P, Top K, Thinking, Thinking budget."
         )
         assert not screen.query_one(
             "#settings-model-profile-reasoning-effort-row"
@@ -4636,24 +4654,37 @@ def test_settings_model_profile_rows_ask_the_request_field_decision(provider, mo
 
 
 def test_settings_generation_summary_names_every_hidden_row():
-    """TASK-33001.2: one line names the rows Anthropic's request drops."""
+    """TASK-33001.2: one line names the rows Anthropic's request drops.
+
+    TASK-33007.5, rewritten on purpose: Settings' own "Hidden for ..." copy
+    is gone; the hidden set is formatted by Chat settings' line, so both
+    surfaces name the same fields in the same words."""
     from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+    from tldw_chatbook.UI.Settings_Modules.settings_field_rows import (
+        hidden_model_default_fields,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+        hidden_fields_list,
+    )
 
     screen = SettingsScreen.__new__(SettingsScreen)
     screen.app_instance = None  # no app config, so no endpoint registry
 
-    assert screen._provider_generation_support_copy(
-        "anthropic", "claude-sonnet-4-5"
-    ) == (
-        "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, "
-        "Reasoning effort, Reasoning summary, Verbosity."
+    def copy(provider, name, model):
+        return hidden_fields_list(
+            name, hidden_model_default_fields(screen, provider, model)
+        )
+
+    assert copy("anthropic", "Anthropic", "claude-sonnet-4-5") == (
+        "Anthropic does not accept: Min P, Seed, Presence penalty, Frequency "
+        "penalty, Reasoning effort, Reasoning summary, Verbosity."
     )
-    assert screen._provider_generation_support_copy("anthropic", "claude-sonnet-5") == (
-        "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, "
-        "Reasoning effort, Reasoning summary, Verbosity, Thinking budget."
+    assert copy("anthropic", "Anthropic", "claude-sonnet-5") == (
+        "Anthropic does not accept: Min P, Seed, Presence penalty, Frequency "
+        "penalty, Reasoning effort, Reasoning summary, Verbosity, Thinking budget."
     )
-    assert screen._provider_generation_support_copy("openai", "gpt-5") == (
-        "Hidden for OpenAI: Min P, Top K, Thinking, Thinking budget."
+    assert copy("openai", "OpenAI", "gpt-5") == (
+        "OpenAI does not accept: Min P, Top K, Thinking, Thinking budget."
     )
 
 
@@ -9370,7 +9401,12 @@ async def test_settings_provider_category_saves_selected_model_profile(
         screen.query_one("#settings-model-profile-top-p", Input).value = "0.88"
         screen.query_one("#settings-model-profile-streaming", Select).value = "false"
         # TASK-33002.6: the fallbacks live in the rail's Console Behavior.
-        assert "Global fallbacks live under Console Behavior" in _visible_text(screen)
+        # TASK-33007.5, rewritten on purpose: that sentence is gone; a blank
+        # row's Source word names Console Behavior, and the open section's
+        # title names the pair these defaults belong to.
+        assert str(
+            screen.query_one("#settings-generation-defaults", Collapsible).title
+        ) == "Model defaults · OpenAI · gpt-4.1"
 
         await pilot.click("#settings-save-category")
 
@@ -9492,10 +9528,13 @@ async def test_settings_provider_category_saves_openai_generation_profile(
         for selector, value in select_values.items():
             screen.query_one(selector, Select).value = value
 
-        text = _visible_text(screen)
         # task-189: gated groups collapse to one summary line; dead rows hide.
         # TASK-33001.2: OpenAI's request carries no min_p or top_k either.
-        assert "Hidden for OpenAI: Min P, Top K, Thinking, Thinking budget." in text
+        # TASK-33007.5, rewritten on purpose: the names are Chat settings'
+        # line, listed inside the Sampling disclosure.
+        assert str(
+            screen.query_one("#settings-provider-generation-support", Static).renderable
+        ) == "OpenAI does not accept: Min P, Top K, Thinking, Thinking budget."
         assert (
             screen.query_one("#settings-model-profile-thinking-effort", Select).disabled
             is True
@@ -9636,15 +9675,18 @@ async def test_settings_provider_category_saves_anthropic_thinking_profile(
         for selector, value in select_values.items():
             screen.query_one(selector, Select).value = value
 
-        text = _visible_text(screen)
         # task-189: gated groups collapse to one summary line; dead rows hide.
         # TASK-33001.2: Anthropic's request carries no Min P, Seed or
         # penalties, and Opus 4.7 rejects a fixed thinking budget.
-        assert (
-            "Hidden for Anthropic: Min P, Seed, Presence penalty, Frequency "
+        # TASK-33007.5, rewritten on purpose: the names are Chat settings'
+        # line, listed inside the Sampling disclosure.
+        assert str(
+            screen.query_one("#settings-provider-generation-support", Static).renderable
+        ) == (
+            "Anthropic does not accept: Min P, Seed, Presence penalty, Frequency "
             "penalty, Reasoning effort, Reasoning summary, Verbosity, Thinking "
             "budget."
-        ) in text
+        )
         for row_id in (
             "#settings-model-profile-min-p-row",
             "#settings-model-profile-seed-row",

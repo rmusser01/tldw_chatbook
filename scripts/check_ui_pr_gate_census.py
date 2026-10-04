@@ -185,7 +185,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # its tests) gates the widget-level hostile-text sinks. B1's mounted Roleplay
 # files are bootstrap-profile and run in the PR Fast Lane's
 # admission-sensitive step instead (TASK-32873).
-MINIMUM_FILES = 163
+# TASK-33007.5 raised it to 136: test_settings_model_defaults_rows.py (~75 s
+# serial) gates Settings' Model defaults rows, the one-row Select rows on
+# Providers & Models and Console Behavior, and a real save of a blanked field.
+MINIMUM_FILES = 164
 
 
 def read_census(path: Path) -> list[str]:
