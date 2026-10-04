@@ -148,7 +148,12 @@ from tldw_chatbook.Chat.console_chat_start import (
     AgentChatStartRequest,
     ConsoleChatStartCoordinator,
 )
-from tldw_chatbook.Chat.message_metadata import AgentChatStartMetadata
+from tldw_chatbook.Chat.message_metadata import (
+    AgentChatStartMetadata,
+    HANDOFF_LAUNCH_DRAFT,
+    HANDOFF_LAUNCH_NOT_STARTED,
+    HANDOFF_LAUNCH_REVIEW_REQUIRED,
+)
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
@@ -13106,9 +13111,29 @@ class ConsoleChatController:
         try:
             # TASK-22205: the ~10-statement BEGIN IMMEDIATE turn commit runs
             # off the event loop; the await is the dispatch-ordering barrier.
-            commit = await self._run_durable_db_call(
-                self.store.commit_durable_turn, acceptance
-            )
+            if chat_start_authorization is not None:
+                # Capture the exact store/database before the first await. Stop
+                # may cancel its awaiter, but cannot detach this physical owner.
+                from tldw_chatbook.DB.base_db import run_owned_db_call
+
+                owned_store = chat_start_authorization.store
+                owned_database = owned_store.persistence.db
+
+                async def commit_owned_start():
+                    if getattr(owned_database, "is_memory_db", False):
+                        return owned_store.commit_durable_turn(acceptance)
+                    return await run_owned_db_call(
+                        owned_database, owned_store.commit_durable_turn, acceptance
+                    )
+
+                chat_start_authorization.commit_worker = asyncio.create_task(
+                    commit_owned_start()
+                )
+                commit = await asyncio.shield(chat_start_authorization.commit_worker)
+            else:
+                commit = await self._run_durable_db_call(
+                    self.store.commit_durable_turn, acceptance
+                )
         except Exception as exc:  # noqa: BLE001 -- a failed commit is a retry, not a crash
             record_send_stage("durable_commit", "failed", error=exc)
             from tldw_chatbook.Agents.hooks_v2.continuations import (
@@ -13171,6 +13196,13 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 preparation_id=preparation.preparation_id,
             )
+        if chat_start_authorization is not None and (
+            not self._chat_start.authorizes(chat_start_authorization, session.id)
+            or self._agent_bridge is not chat_start_authorization.bridge
+            or self._fleet_wake.runtime_owner_id
+            != chat_start_authorization.runtime_owner_id
+        ):
+            raise PermissionError("chat start commit owner changed")
         if acceptance.handoff_draft_revision is not None:
             self.store.publish_agent_handoff_consumed(
                 session.id, acceptance.handoff_draft_revision
@@ -19784,7 +19816,10 @@ class ConsoleChatController:
         """Wait on the owning loop only until the new chat's acceptance outcome."""
         loop = self._owner_loop
         if loop is None or loop.is_closed():
-            return {"launch_status": "not_started", "reason": "runtime_unavailable"}
+            return {
+                "launch_status": HANDOFF_LAUNCH_NOT_STARTED,
+                "reason": "runtime_unavailable",
+            }
 
         async def start():
             if self.store.library_policy_coordinator is not None:
@@ -19848,9 +19883,9 @@ class ConsoleChatController:
                 "source_run_id": approved["source_run_id"],
                 "launch": {
                     "mode": approved["mode"],
-                    "status": "draft"
+                    "status": HANDOFF_LAUNCH_DRAFT
                     if approved["mode"] == "draft"
-                    else "review_required",
+                    else HANDOFF_LAUNCH_REVIEW_REQUIRED,
                     "reason": None
                     if approved["mode"] == "draft"
                     else "outcome_unconfirmed",
@@ -19896,9 +19931,9 @@ class ConsoleChatController:
                 "mode": approved["mode"],
                 "copied_messages": 0,
                 "draft_set": bool(approved["opening_prompt"]),
-                "launch_status": "draft"
+                "launch_status": HANDOFF_LAUNCH_DRAFT
                 if approved["mode"] == "draft"
-                else "not_started",
+                else HANDOFF_LAUNCH_NOT_STARTED,
             }
             try:
 
@@ -19936,7 +19971,7 @@ class ConsoleChatController:
             except Exception:
                 result["reason"] = "restore_unavailable"
                 if approved["mode"] == "start":
-                    result["launch_status"] = "not_started"
+                    result["launch_status"] = HANDOFF_LAUNCH_NOT_STARTED
             if result.get("reason") in {"restore_unavailable", "runtime_unavailable"}:
                 from .message_metadata import AgentHandoffLaunchMetadata
 
@@ -19953,7 +19988,8 @@ class ConsoleChatController:
                         )
                 except Exception:
                     result.update(
-                        launch_status="review_required", reason="outcome_unconfirmed"
+                        launch_status=HANDOFF_LAUNCH_REVIEW_REQUIRED,
+                        reason="outcome_unconfirmed",
                     )
             if self.complete_agent_chat_create is not None:
                 try:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -36,6 +37,11 @@ if TYPE_CHECKING:
 # its owner so separate DB handles share the original anchor without a cache.
 _CLOCK_OWNER_ID = uuid4().hex
 
+# Failed durable settlement must deny the same runtime's sibling work, including
+# through another handle. Only identities live here; recovery remains durable.
+_UNCONFIRMED_STARTS: dict[tuple[str, str, str], str | None] = {}
+_UNCONFIRMED_STARTS_LOCK = threading.RLock()
+
 
 def _identity(value: str) -> str:
     if not isinstance(value, str) or not value or len(value) > 256:
@@ -56,6 +62,55 @@ class AutomaticWorkLedger:
         self._db = db
         self._wall_clock = wall_clock
         self._monotonic_clock = monotonic_clock
+
+    def _restriction_database(self) -> str:
+        if not self._db.is_memory_db:
+            return str(self._db.db_path.resolve())
+        # Repeated :memory: names and eventual Python object-ID reuse must not
+        # couple independent stores. A ledger shares its DB's private identity.
+        with _UNCONFIRMED_STARTS_LOCK:
+            identity = getattr(self._db, "_automatic_work_restriction_id", None)
+            if identity is None:
+                identity = "memory:" + uuid4().hex
+                self._db._automatic_work_restriction_id = identity
+            return identity
+
+    def _restrict_chat_start(
+        self, attempt_id: str, *, owner_id: str, chain_id: str | None
+    ) -> None:
+        """Retain uncertain authority before settlement I/O, without reading DB."""
+        with _UNCONFIRMED_STARTS_LOCK:
+            _UNCONFIRMED_STARTS[
+                (self._restriction_database(), owner_id, attempt_id)
+            ] = chain_id
+
+    def _clear_chat_start_restriction(self, attempt_id: str, *, owner_id: str) -> None:
+        with _UNCONFIRMED_STARTS_LOCK:
+            _UNCONFIRMED_STARTS.pop(
+                (self._restriction_database(), owner_id, attempt_id), None
+            )
+
+    def _check_unconfirmed_starts(
+        self, conn: sqlite3.Connection, chain_id: str
+    ) -> None:
+        current = conn.execute(
+            "SELECT owner_id FROM automatic_work_runtime_owner WHERE singleton=1"
+        ).fetchone()
+        with _UNCONFIRMED_STARTS_LOCK:
+            members = tuple(
+                member
+                for (database, owner, _), member in _UNCONFIRMED_STARTS.items()
+                if database == self._restriction_database()
+                and (current is None or owner == current["owner_id"])
+            )
+        if not members:
+            return
+        root = self._allowance_chain(conn, chain_id)["id"]
+        if any(
+            member is None or self._allowance_chain(conn, member)["id"] == root
+            for member in members
+        ):
+            raise AutomaticWorkRefused("settlement_unconfirmed")
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -121,7 +176,7 @@ class AutomaticWorkLedger:
                 )
                 # A stale callback has no authority to pause its replacement's
                 # otherwise healthy chain. Its admission alone is refused.
-                if reason != "runtime_owner_replaced":
+                if reason not in {"runtime_owner_replaced", "settlement_unconfirmed"}:
                     conn.execute(
                         "UPDATE automatic_work_chains SET status=?, pause_reason=? "
                         "WHERE id=? AND status!='review_required'",
@@ -141,6 +196,7 @@ class AutomaticWorkLedger:
         amount: int = 0,
         limits: AutomaticWorkLimits | None = None,
     ) -> None:
+        self._check_unconfirmed_starts(conn, chain_id)
         snapshot = self._snapshot(conn, chain_id)
         if snapshot.status == "review_required":
             raise AutomaticWorkRefused(snapshot.pause_reason or "review_required")
@@ -877,6 +933,44 @@ class AutomaticWorkLedger:
             )
         return True
 
+    def mark_chat_start_review_required(
+        self, attempt_id: str, *, owner_id: str
+    ) -> bool:
+        """Atomically settle same-owner accepted uncertainty and pause its root.
+
+        Preserve every charge and clock anchor. A stale owner cannot change its
+        replacement, and nonaccepted terminal rows cannot be rewritten.
+
+        Args:
+            attempt_id: Exact durable native-start attempt identity.
+            owner_id: Runtime owner that prepared and accepted the attempt.
+
+        Returns:
+            True after accepted or already-reviewed work is durably paused;
+            False for prepared, aborted, or completed work.
+
+        Raises:
+            AutomaticWorkRefused: The durable runtime owner was replaced.
+            ValueError: The attempt is unknown or belongs to another owner.
+            sqlite3.Error: Durable settlement could not be confirmed.
+        """
+        with self.transaction() as conn:
+            self._check_runtime_owner(conn, owner_id)
+            attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
+            if attempt["state"] not in {"accepted", "review_required"}:
+                return False
+            root = self._allowance_chain(conn, attempt["chain_id"])["id"]
+            conn.execute(
+                "UPDATE automatic_chat_start_attempts SET state='review_required', completed_at=COALESCE(completed_at, ?) WHERE id=?",
+                (self._wall_clock(), attempt_id),
+            )
+            conn.execute(
+                "UPDATE automatic_work_chains SET status='review_required', pause_reason='interrupted_work' WHERE id=?",
+                (root,),
+            )
+        self._clear_chat_start_restriction(attempt_id, owner_id=owner_id)
+        return True
+
     def complete_chat_start(self, attempt_id: str, *, owner_id: str) -> bool:
         """Settle accepted native work once, without survivor delivery marks."""
         with self.transaction() as conn:
@@ -1123,4 +1217,11 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_work_chains SET status='review_required', pause_reason='interrupted_work' WHERE id=?",
                 [(chain_id,) for chain_id in chains],
             )
+        with _UNCONFIRMED_STARTS_LOCK:
+            for key in tuple(_UNCONFIRMED_STARTS):
+                if (
+                    key[0] == self._restriction_database()
+                    and key[1] != current_owner_id
+                ):
+                    _UNCONFIRMED_STARTS.pop(key)
         return len(chains)

@@ -26,6 +26,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from Tests.Chat.test_console_durable_turn_acceptance import _ready_store
 from Tests.Chat.test_console_first_send_atomicity import (
     _CheckpointObservingGateway,
@@ -41,7 +42,9 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
 @pytest.mark.parametrize("after_commit", [False, True])
 @pytest.mark.parametrize("execution_path", ["direct", "agent", "sync"])
+@private_profile_test
 async def test_stop_during_dispatch_cas_settles_before_returning(
+    request: pytest.FixtureRequest,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     after_commit: bool,
@@ -219,7 +222,9 @@ def _hold_write_lock(
         connection.close()
 
 
+@private_profile_test
 async def test_send_does_not_stall_event_loop_while_write_lock_is_held(
+    request: pytest.FixtureRequest,
     tmp_path: Path,
 ) -> None:
     """Probe (a): loop stays responsive while the durable commit waits."""
@@ -276,7 +281,9 @@ async def test_send_does_not_stall_event_loop_while_write_lock_is_held(
     )
 
 
+@private_profile_test
 async def test_dispatch_begins_only_after_commit_is_durably_visible(
+    request: pytest.FixtureRequest,
     tmp_path: Path,
 ) -> None:
     """Probe (b): the provider stream starts only after the durable commit.
@@ -315,7 +322,9 @@ async def test_dispatch_begins_only_after_commit_is_durably_visible(
     ]
 
 
+@private_profile_test
 async def test_cancel_during_offloaded_commit_leaves_consistent_state(
+    request: pytest.FixtureRequest,
     tmp_path: Path,
 ) -> None:
     """Shutdown-path walk: cancelling a send mid-commit corrupts nothing.

@@ -384,3 +384,120 @@ def test_stale_owner_cannot_pause_a_completed_native_replacement(db):
                 "INSERT INTO agent_runs (id, conversation_id, agent_kind, task, status, steps, budget, created_at, updated_at, work_chain_id) SELECT 'invalid','other',agent_kind,task,status,steps,budget,created_at,updated_at,work_chain_id FROM agent_runs WHERE id=?",
                 (source,),
             )
+
+
+def test_same_owner_uncertain_start_pauses_root_without_refund_or_replay(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    sibling = prepare(db, source, "b", "sibling")
+    assert db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    before = db.automatic_work.snapshot(root)
+    assert db.automatic_work.mark_chat_start_review_required(first.id, owner_id="owner")
+    assert db.automatic_work.mark_chat_start_review_required(first.id, owner_id="owner")
+    assert (
+        db.automatic_work.read_chat_start_attempt(first.id, owner_id="owner").state
+        == "review_required"
+    )
+    after = db.automatic_work.snapshot(root)
+    assert (
+        after.status == "review_required" and after.pause_reason == "interrupted_work"
+    )
+    assert (after.used, after.reserved, after.started_at, after.deadline_at) == (
+        before.used,
+        before.reserved,
+        before.started_at,
+        before.deadline_at,
+    )
+    with pytest.raises(AutomaticWorkRefused, match="interrupted_work"):
+        db.automatic_work.accept_chat_start(sibling.id, owner_id="owner")
+    assert not db.automatic_work.abort_chat_start(first.id, owner_id="owner")
+    assert not db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    with db.connection() as conn:
+        assert not db.automatic_work._target_active(conn, "a")
+
+
+@pytest.mark.parametrize("state", ["prepared", "aborted", "completed"])
+def test_review_settlement_never_rewrites_nonaccepted_work(db, state):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    if state == "aborted":
+        assert db.automatic_work.abort_chat_start(first.id, owner_id="owner")
+    elif state == "completed":
+        assert db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+        assert db.automatic_work.complete_chat_start(first.id, owner_id="owner")
+    assert not db.automatic_work.mark_chat_start_review_required(
+        first.id, owner_id="owner"
+    )
+    assert (
+        db.automatic_work.read_chat_start_attempt(first.id, owner_id="owner").state
+        == state
+    )
+    assert db.automatic_work.snapshot(root).status == "active"
+
+
+def test_stale_review_settlement_cannot_pause_healthy_replacement(db):
+    root, source = source_run(db)
+    first = prepare(db, source, "a", "first")
+    assert db.automatic_work.accept_chat_start(first.id, owner_id="owner")
+    assert db.automatic_work.complete_chat_start(first.id, owner_id="owner")
+    db.automatic_work.recover(current_owner_id="replacement")
+    with pytest.raises(AutomaticWorkRefused, match="runtime_owner_replaced"):
+        db.automatic_work.mark_chat_start_review_required(first.id, owner_id="owner")
+    assert db.automatic_work.snapshot(root).status == "active"
+
+
+@pytest.mark.parametrize("memory", [False, True])
+def test_transient_uncertainty_is_store_scoped_and_stale_owner_cannot_poison_replacement(
+    tmp_path, memory
+):
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    first_db = AgentRunsDB(
+        ":memory:" if memory else tmp_path / "first.sqlite", client_id="first"
+    )
+    second_db = AgentRunsDB(
+        ":memory:" if memory else tmp_path / "second.sqlite", client_id="second"
+    )
+    try:
+        root, source = source_run(first_db)
+        other_root, _ = source_run(second_db)
+        start = prepare(first_db, source, "a", "first")
+        assert first_db.automatic_work.accept_chat_start(start.id, owner_id="owner")
+        assert first_db.automatic_work.complete_chat_start(start.id, owner_id="owner")
+        first_db.automatic_work._restrict_chat_start(
+            start.id, owner_id="owner", chain_id=root
+        )
+        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+            first_db.automatic_work.check_active(root, owner_id="owner")
+        assert (
+            second_db.automatic_work.check_active(other_root, owner_id="owner").status
+            == "active"
+        )
+        # Same-owner startup recovery does not reconcile this uncertainty.
+        first_db.automatic_work.recover(current_owner_id="owner")
+        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+            first_db.automatic_work.check_active(root, owner_id="owner")
+        manual_root = chain(first_db, conversation="manual", submission="manual")
+        assert (
+            first_db.automatic_work.check_active(manual_root, owner_id="owner").status
+            == "active"
+        )
+        first_db.automatic_work.recover(current_owner_id="replacement")
+        # A late old-owner callback must not poison durable or runtime authority.
+        first_db.automatic_work._restrict_chat_start(
+            start.id, owner_id="owner", chain_id=None
+        )
+        with pytest.raises(AutomaticWorkRefused, match="runtime_owner_replaced"):
+            first_db.automatic_work.mark_chat_start_review_required(
+                start.id, owner_id="owner"
+            )
+        assert (
+            first_db.automatic_work.check_active(root, owner_id="replacement").status
+            == "active"
+        )
+        first_db.automatic_work._clear_chat_start_restriction(
+            start.id, owner_id="owner"
+        )
+    finally:
+        first_db.close()
+        second_db.close()

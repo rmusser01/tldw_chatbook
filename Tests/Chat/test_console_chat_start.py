@@ -1101,6 +1101,20 @@ async def test_ledger_cutoff_retains_charge_and_requires_conversation_receipt(
         if action == "write_failure":
             assert not rows and target.draft == "original"
         assert runs.automatic_work.snapshot(chain).used["generation"] == 1
+        if action != "source_stop":
+            assert (
+                runs.automatic_work.read_chat_start_attempt(
+                    request.attempt_id, owner_id=controller.fleet_wake.runtime_owner_id
+                ).state
+                == "review_required"
+            )
+            assert runs.automatic_work.snapshot(chain).status == "review_required"
+            from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+            with pytest.raises(AutomaticWorkRefused, match="interrupted_work"):
+                runs.automatic_work.check_active(
+                    chain, owner_id=controller.fleet_wake.runtime_owner_id
+                )
     finally:
         release.set()
         await controller.shutdown()
@@ -2712,5 +2726,312 @@ async def test_native_configured_v2_initialization_and_stop_proposal(
     finally:
         await runtime.close_hooks_v2()
         await runtime.dispose()
+        runs.close()
+        store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_native_commit_keeps_exact_worker_and_capacity_until_repeated_cancel_drains(
+    tmp_path,
+):
+    import asyncio
+    from threading import Event
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    entered, release, exited = Event(), Event(), Event()
+    original = store.commit_durable_turn
+    baseline = len(store.persistence.db._connection_quiescence._connections)
+
+    def held(acceptance):
+        entered.set()
+        try:
+            assert release.wait(10)
+            return original(acceptance)
+        finally:
+            exited.set()
+
+    store.commit_durable_turn = held
+    start = asyncio.create_task(controller._chat_start.start(request))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        item = controller._chat_start._active[target.id]
+        store.switch_session(target.id)
+        assert controller.stop_active_run()
+        await asyncio.sleep(0.05)
+        item.task.cancel()
+        await asyncio.sleep(0.05)
+        assert target.id in controller.fleet_wake._automatic_primary_claims
+        assert not item.outcome.done()
+        assert controller._chat_start.tasks() and not exited.is_set()
+        release.set()
+        assert (await start).launch_status == "review_required"
+        await asyncio.gather(*controller._chat_start.tasks())
+        assert exited.is_set()
+        assert not controller.fleet_wake._automatic_primary_claims
+        assert runs.automatic_work.snapshot(chain).status == "review_required"
+        assert runs.automatic_work.snapshot(chain).used["generation"] == 1
+        rows = store.persistence.db.get_messages_for_conversation(
+            request.conversation_id
+        )
+        assert rows and not any(
+            row["sender"] == "assistant" and row["content"] for row in rows
+        )
+        assert len(store.persistence.db._connection_quiescence._connections) == baseline
+    finally:
+        release.set()
+        await asyncio.gather(start, return_exceptions=True)
+        await controller.shutdown()
+        runs.close()
+        store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["preaccept", "accepted_cleanup"])
+async def test_unexpected_start_failure_is_type_only_and_accepted_cleanup_is_review(
+    tmp_path, monkeypatch, phase
+):
+    import asyncio
+    from loguru import logger
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    secret = "private-prompt-api-key-should-never-appear"
+    records = []
+    sink = logger.add(lambda message: records.append(message.record))
+    if phase == "preaccept":
+
+        async def fail(_selection):
+            raise ValueError(secret)
+
+        monkeypatch.setattr(controller, "_resolve_for_send_bounded", fail)
+    else:
+        accept = runs.automatic_work.accept_chat_start
+
+        def fail(*args, **kwargs):
+            assert accept(*args, **kwargs)
+            raise ValueError(secret)
+
+        monkeypatch.setattr(runs.automatic_work, "accept_chat_start", fail)
+    try:
+        outcome = await controller._chat_start.start(request)
+        await asyncio.gather(*controller._chat_start.tasks())
+        assert (outcome.launch_status, outcome.reason) == (
+            ("not_started", "start_failed")
+            if phase == "preaccept"
+            else ("review_required", "receipt_unconfirmed")
+        )
+        failures = [
+            record for record in records if "Chat start failed" in record["message"]
+        ]
+        assert failures and all(
+            "ValueError" in record["message"] for record in failures
+        )
+        assert all(
+            secret not in str(record) and record["exception"] is None
+            for record in records
+        )
+        assert target.draft == "original"
+        assert not store.persistence.db.get_messages_for_conversation(
+            request.conversation_id
+        )
+        assert runs.automatic_work.snapshot(chain).used["generation"] == int(
+            phase == "accepted_cleanup"
+        )
+        assert runs.automatic_work.read_chat_start_attempt(
+            request.attempt_id, owner_id=controller.fleet_wake.runtime_owner_id
+        ).state == ("aborted" if phase == "preaccept" else "review_required")
+    finally:
+        logger.remove(sink)
+        await controller.shutdown()
+        runs.close()
+        store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alias", [False, True])
+@pytest.mark.parametrize("settlement_result", ["raise", "false"])
+async def test_failed_review_settlement_blocks_siblings_across_ledger_handles(
+    tmp_path, monkeypatch, alias, settlement_result
+):
+    import asyncio
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    owner = controller.fleet_wake.runtime_owner_id
+
+    def fail_commit(acceptance):
+        raise OSError("private commit failure")
+
+    from threading import Event
+
+    entered, release = Event(), Event()
+
+    def fail_settlement(*args, **kwargs):
+        entered.set()
+        assert release.wait(10)
+        if settlement_result == "raise":
+            raise OSError("private ledger failure")
+        return False
+
+    monkeypatch.setattr(store, "commit_durable_turn", fail_commit)
+    settle = runs.automatic_work.mark_chat_start_review_required
+    monkeypatch.setattr(
+        runs.automatic_work, "mark_chat_start_review_required", fail_settlement
+    )
+    peer_path = runs.db_path
+    if alias:
+        alias_dir = tmp_path / "alias-dir"
+        alias_dir.mkdir()
+        peer_path = alias_dir / ".." / runs.db_path.name
+    peer = AgentRunsDB(peer_path, client_id="peer", reconcile_on_init=False)
+    start = asyncio.create_task(controller._chat_start.start(request))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        # Denial starts before uncertain settlement I/O returns.
+        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+            peer.automatic_work.check_active(chain, owner_id=owner)
+        release.set()
+        outcome = await start
+        await asyncio.gather(*controller._chat_start.tasks())
+        assert (outcome.launch_status, outcome.reason) == (
+            "review_required",
+            "settlement_unconfirmed",
+        )
+        assert peer.automatic_work.snapshot(chain).status == "active"
+        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+            peer.automatic_work.check_active(chain, owner_id=owner)
+        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+            peer.automatic_work.prepare_chat_start(
+                attempt_id="sibling",
+                source_run_id=request.source_run_id,
+                target_conversation_id="sibling",
+                target_session_id="sibling",
+                target_session_incarnation="sibling",
+                owner_id=owner,
+                draft_revision=1,
+                context_epoch=0,
+                request_fingerprint="a" * 64,
+            )
+        # Verified durable reconciliation replaces transient denial with the root pause.
+        assert settle(request.attempt_id, owner_id=owner)
+        with pytest.raises(AutomaticWorkRefused, match="interrupted_work"):
+            peer.automatic_work.check_active(chain, owner_id=owner)
+    finally:
+        release.set()
+        await asyncio.gather(start, return_exceptions=True)
+        peer.close()
+        await controller.shutdown()
+        runs.close()
+        store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_native_acceptance_refuses_real_writer_contention_and_restores_timeout(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    import sqlite3
+    import time
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    original_accept = controller._chat_start.accept
+    blocker = sqlite3.connect(runs.db_path)
+    # Warm and borrow the real loop-thread owner before taking the independent lock.
+    with runs.connection() as connection:
+        connection.execute("PRAGMA busy_timeout=1739")
+        original_sync = connection.execute("PRAGMA synchronous").fetchone()[0]
+    duration = []
+    ticker = []
+    running = True
+
+    async def tick():
+        while running:
+            ticker.append(time.perf_counter())
+            await asyncio.sleep(0.005)
+
+    async def contended(item):
+        blocker.execute("BEGIN IMMEDIATE")
+        started = time.perf_counter()
+        try:
+            return await original_accept(item)
+        finally:
+            duration.append(time.perf_counter() - started)
+            blocker.rollback()
+
+    monkeypatch.setattr(controller._chat_start, "accept", contended)
+    ticking = asyncio.create_task(tick())
+    try:
+        outcome = await controller._chat_start.start(request)
+        await asyncio.gather(*controller._chat_start.tasks())
+        await asyncio.sleep(0.02)
+        assert duration[0] < 0.25, duration
+        assert max(b - a for a, b in zip(ticker, ticker[1:])) < 0.25
+        print(
+            f"contention_cutoff_seconds={duration[0]:.6f}; ticker_max_gap_seconds={max(b - a for a, b in zip(ticker, ticker[1:])):.6f}"
+        )
+        assert (outcome.launch_status, outcome.reason) == (
+            "not_started",
+            "ledger_contended",
+        )
+        with runs.connection() as same:
+            assert same is connection
+            assert same.execute("PRAGMA busy_timeout").fetchone()[0] == 1739
+            assert same.execute("PRAGMA synchronous").fetchone()[0] == original_sync
+        assert target.draft == "original"
+        assert runs.automatic_work.snapshot(chain).used["generation"] == 0
+        assert (
+            runs.automatic_work.read_chat_start_attempt(
+                request.attempt_id, owner_id=controller.fleet_wake.runtime_owner_id
+            ).state
+            == "aborted"
+        )
+    finally:
+        running = False
+        await ticking
+        blocker.close()
+        await controller.shutdown()
+        runs.close()
+        store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_native_uncontended_acceptance_restores_full_policy_and_retires_owned_handle(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    import time
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    original = controller._chat_start.accept
+    timings = []
+
+    # No borrowed handle: the acceptance operation must retire its own handle.
+    async def measured(item):
+        runs.close()
+        started = time.perf_counter()
+        try:
+            return await original(item)
+        finally:
+            timings.append(time.perf_counter() - started)
+            assert getattr(runs._thread_local, "conn", None) is None
+
+    monkeypatch.setattr(controller._chat_start, "accept", measured)
+    try:
+        assert (await controller._chat_start.start(request)).launch_status == "started"
+        await asyncio.gather(*controller._chat_start.tasks())
+        assert runs.automatic_work.snapshot(chain).used["generation"] == 1
+        print(f"uncontended_cutoff_seconds={timings[0]:.6f}")
+    finally:
+        await controller.shutdown()
         runs.close()
         store.persistence.db.close_connection()

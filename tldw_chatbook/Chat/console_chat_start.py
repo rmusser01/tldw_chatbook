@@ -4,13 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import sqlite3
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
+
+from loguru import logger
 
 from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_call
 
 from .console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
 from .console_turn_context import ConsoleTurnConfigurationSnapshot
+from .message_metadata import (
+    AgentHandoffLaunchStatus,
+    HANDOFF_LAUNCH_NOT_STARTED,
+    HANDOFF_LAUNCH_STARTED,
+    HANDOFF_LAUNCH_REVIEW_REQUIRED,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +40,7 @@ class AgentChatStartRequest:
 
 @dataclass(frozen=True, slots=True)
 class AgentChatStartOutcome:
-    launch_status: Literal["not_started", "started", "review_required"]
+    launch_status: AgentHandoffLaunchStatus
     reason: str | None = None
 
 
@@ -65,6 +74,7 @@ class AgentChatStartAuthorization:
         self.validating_state: Any = None
         self.running = False
         self.provider_worker: asyncio.Task | None = None
+        self.commit_worker: asyncio.Task | None = None
         self.withdrawal_reason: str | None = None
 
 
@@ -192,8 +202,14 @@ class ConsoleChatStartCoordinator:
         except asyncio.CancelledError:
             await self._drain_owned(publication)
             raise
-        except Exception:
-            outcome = AgentChatStartOutcome("review_required", "outcome_unconfirmed")
+        except Exception as exc:
+            logger.warning(
+                "Chat start failed (phase=outcome, exception_type={})",
+                type(exc).__name__,
+            )
+            outcome = AgentChatStartOutcome(
+                HANDOFF_LAUNCH_REVIEW_REQUIRED, "outcome_unconfirmed"
+            )
             launch = AgentHandoffLaunchMetadata(
                 "start", outcome.launch_status, outcome.reason
             )
@@ -207,7 +223,10 @@ class ConsoleChatStartCoordinator:
         return outcome
 
     async def _resolve(
-        self, item: AgentChatStartAuthorization, status: str, reason: str | None = None
+        self,
+        item: AgentChatStartAuthorization,
+        status: AgentHandoffLaunchStatus,
+        reason: str | None = None,
     ) -> None:
         if not item.outcome.done():
             outcome = await self._publish_outcome(
@@ -255,33 +274,41 @@ class ConsoleChatStartCoordinator:
             reason = "destination_unavailable"
         if reason is not None:
             return await self._publish_outcome(
-                request, AgentChatStartOutcome("not_started", reason)
+                request, AgentChatStartOutcome(HANDOFF_LAUNCH_NOT_STARTED, reason)
             )
         if (
             request.configuration.session_settings is not None
             and not request.configuration.session_settings.provider.strip()
         ):
             return await self._publish_outcome(
-                request, AgentChatStartOutcome("not_started", "provider_unconfigured")
+                request,
+                AgentChatStartOutcome(
+                    HANDOFF_LAUNCH_NOT_STARTED, "provider_unconfigured"
+                ),
             )
         if not self._source_live(request):
             return await self._publish_outcome(
-                request, AgentChatStartOutcome("not_started", "source_unavailable")
+                request,
+                AgentChatStartOutcome(HANDOFF_LAUNCH_NOT_STARTED, "source_unavailable"),
             )
         if not self._target_unchanged(request) or request.session_id in self._active:
             return await self._publish_outcome(
-                request, AgentChatStartOutcome("not_started", "target_changed")
+                request,
+                AgentChatStartOutcome(HANDOFF_LAUNCH_NOT_STARTED, "target_changed"),
             )
         ledger = getattr(controller._agent_bridge.runs_db, "automatic_work", None)
         if ledger is None:
             return await self._publish_outcome(
-                request, AgentChatStartOutcome("not_started", "lineage_unavailable")
+                request,
+                AgentChatStartOutcome(
+                    HANDOFF_LAUNCH_NOT_STARTED, "lineage_unavailable"
+                ),
             )
         item = AgentChatStartAuthorization(self, request, None, key=_AUTHORIZATION_KEY)
         owner = controller._fleet_wake
         if not owner.try_claim_automatic_primary(request.session_id, item.token):
             return await self._publish_outcome(
-                request, AgentChatStartOutcome("not_started", "capacity")
+                request, AgentChatStartOutcome(HANDOFF_LAUNCH_NOT_STARTED, "capacity")
             )
         self._active[request.session_id] = item
         # Initial ledger work belongs to runtime shutdown before its first await.
@@ -344,11 +371,14 @@ class ConsoleChatStartCoordinator:
 
         controller, request = self._controller, item.request
         item.running = True
-        status, reason = "not_started", "preflight_refused"
+        status, reason = HANDOFF_LAUNCH_NOT_STARTED, "preflight_refused"
         controller._agent_wake_turn_sessions.add(request.session_id)
+        preparation_started = False
+        preparation_refused = False
         try:
             if item.withdrawn:
                 return
+            preparation_started = True
             if not await self._prepare(item):
                 reason = "source_unavailable"
                 return
@@ -362,71 +392,195 @@ class ConsoleChatStartCoordinator:
                     accepted_attachments=(),
                 )
             if item.accepted and not item.receipted:
-                status, reason = "review_required", "receipt_unconfirmed"
+                status, reason = HANDOFF_LAUNCH_REVIEW_REQUIRED, "receipt_unconfirmed"
         except AutomaticWorkRefused:
+            preparation_refused = item.context is None
             reason = "preparation_refused"
-        except BaseException:
+        except asyncio.CancelledError:
             if item.accepted:
-                status, reason = "review_required", "interrupted"
+                status, reason = HANDOFF_LAUNCH_REVIEW_REQUIRED, "interrupted"
             elif item.context is None:
-                status, reason = "review_required", "preparation_unconfirmed"
+                status, reason = (
+                    HANDOFF_LAUNCH_REVIEW_REQUIRED,
+                    "preparation_unconfirmed",
+                )
+        except Exception as exc:
+            logger.warning(
+                "Chat start failed (phase={}, exception_type={})",
+                "accepted" if item.accepted else "preaccept",
+                type(exc).__name__,
+            )
+            if item.accepted:
+                status, reason = HANDOFF_LAUNCH_REVIEW_REQUIRED, "interrupted"
+            elif item.context is None:
+                status, reason = (
+                    HANDOFF_LAUNCH_REVIEW_REQUIRED,
+                    "preparation_unconfirmed",
+                )
+            else:
+                reason = "start_failed"
+        except BaseException:
+            status, reason = HANDOFF_LAUNCH_REVIEW_REQUIRED, "interrupted"
         finally:
+            ledger = item.ledger
+            settlement_needed = preparation_started and not preparation_refused
+            if settlement_needed and not item.receipted:
+                # Deny siblings before draining any accepted uncertainty; durable
+                # settlement itself still waits for every physical owner.
+                ledger._restrict_chat_start(
+                    request.attempt_id,
+                    owner_id=item.runtime_owner_id,
+                    chain_id=item.context.chain_id
+                    if item.context is not None
+                    else None,
+                )
+            # The physical conversation transaction remains a distinct owner.
+            if item.commit_worker is not None:
+                try:
+                    await self._drain_owned(item.commit_worker)
+                except BaseException as exc:
+                    logger.warning(
+                        "Chat start failed (phase=commit_drain, exception_type={})",
+                        type(exc).__name__,
+                    )
+                    status, reason = (
+                        HANDOFF_LAUNCH_REVIEW_REQUIRED,
+                        "receipt_unconfirmed",
+                    )
             if item.provider_worker is not None:
                 try:
                     await self._drain_owned(item.provider_worker)
-                except BaseException:
-                    status, reason = "review_required", "worker_unconfirmed"
-            if item.receipted:
-                try:
-                    await self._drain_owned(
+                except BaseException as exc:
+                    logger.warning(
+                        "Chat start failed (phase=provider_drain, exception_type={})",
+                        type(exc).__name__,
+                    )
+                    status, reason = (
+                        HANDOFF_LAUNCH_REVIEW_REQUIRED,
+                        "worker_unconfirmed",
+                    )
+            try:
+                if not settlement_needed:
+                    pass
+                elif item.receipted:
+                    settled = await self._drain_owned(
                         asyncio.create_task(
                             run_owned_db_call(
                                 item.database,
-                                item.context.ledger.complete_chat_start,
+                                ledger.complete_chat_start,
                                 request.attempt_id,
-                                owner_id=item.context.owner_id,
+                                owner_id=item.runtime_owner_id,
                             )
                         )
                     )
-                except Exception:
-                    status, reason = "review_required", "settlement_unconfirmed"
-            if not item.accepted and item.context is not None:
-                try:
+                    if not settled:
+                        raise RuntimeError("settlement refused")
+                    ledger._clear_chat_start_restriction(
+                        request.attempt_id, owner_id=item.runtime_owner_id
+                    )
+                elif item.accepted:
+                    settled = await self._drain_owned(
+                        asyncio.create_task(
+                            run_owned_db_call(
+                                item.database,
+                                ledger.mark_chat_start_review_required,
+                                request.attempt_id,
+                                owner_id=item.runtime_owner_id,
+                            )
+                        )
+                    )
+                    status, reason = (
+                        HANDOFF_LAUNCH_REVIEW_REQUIRED,
+                        "receipt_unconfirmed",
+                    )
+                    if not settled:
+                        raise RuntimeError("settlement refused")
+                else:
+                    # A Python exception/false return is not evidence of rollback.
+                    # The transaction alone can prove a prepared refund.
                     refunded = await self._drain_owned(
                         asyncio.create_task(
                             run_owned_db_call(
                                 item.database,
-                                item.context.ledger.abort_chat_start,
+                                ledger.abort_chat_start,
                                 request.attempt_id,
-                                owner_id=item.context.owner_id,
+                                owner_id=item.runtime_owner_id,
                             )
                         )
                     )
-                    if not refunded:
-                        status, reason = "review_required", "settlement_unconfirmed"
-                except Exception:
-                    status, reason = "review_required", "settlement_unconfirmed"
-            await self._drain_owned(
-                asyncio.create_task(
-                    self._resolve(
-                        item,
-                        status,
-                        item.withdrawal_reason
-                        if status == "not_started" and item.withdrawal_reason
-                        else reason,
+                    if refunded:
+                        ledger._clear_chat_start_restriction(
+                            request.attempt_id, owner_id=item.runtime_owner_id
+                        )
+                    else:
+                        settled = await self._drain_owned(
+                            asyncio.create_task(
+                                run_owned_db_call(
+                                    item.database,
+                                    ledger.mark_chat_start_review_required,
+                                    request.attempt_id,
+                                    owner_id=item.runtime_owner_id,
+                                )
+                            )
+                        )
+                        status, reason = (
+                            HANDOFF_LAUNCH_REVIEW_REQUIRED,
+                            "receipt_unconfirmed",
+                        )
+                        if not settled:
+                            raise RuntimeError("settlement refused")
+            except BaseException as exc:
+                ledger._restrict_chat_start(
+                    request.attempt_id,
+                    owner_id=item.runtime_owner_id,
+                    chain_id=item.context.chain_id
+                    if item.context is not None
+                    else None,
+                )
+                logger.warning(
+                    "Chat start failed (phase=settlement, exception_type={})",
+                    type(exc).__name__,
+                )
+                status, reason = (
+                    HANDOFF_LAUNCH_REVIEW_REQUIRED,
+                    "settlement_unconfirmed",
+                )
+            try:
+                await self._drain_owned(
+                    asyncio.create_task(
+                        self._resolve(
+                            item,
+                            status,
+                            item.withdrawal_reason
+                            if status == HANDOFF_LAUNCH_NOT_STARTED
+                            and item.withdrawal_reason
+                            else reason,
+                        )
                     )
                 )
-            )
+            except BaseException as exc:
+                logger.warning(
+                    "Chat start failed (phase=outcome_drain, exception_type={})",
+                    type(exc).__name__,
+                )
+                if not item.outcome.done():
+                    item.outcome.set_result(
+                        AgentChatStartOutcome(
+                            HANDOFF_LAUNCH_REVIEW_REQUIRED, "outcome_unconfirmed"
+                        )
+                    )
             # Release only this preparation. A manual winner may already own a new one.
             preparation = controller.store.preparation_for_session(request.session_id)
             if (
                 not item.accepted
+                and controller.store is item.store
                 and preparation is not None
                 and preparation.preparation_id == item.preparation_id
             ):
                 controller._abandon_preparation(preparation.preparation_id)
             if (
                 not item.accepted
+                and controller.store is item.store
                 and item.validating_state is not None
                 and controller.run_state_for(request.session_id)
                 is item.validating_state
@@ -460,23 +614,39 @@ class ConsoleChatStartCoordinator:
         if reason is not None:
             item.withdrawal_reason = reason
             return False
-        if (
-            not self.authorizes(item, request.session_id)
-            or item.accepted
-            or not self._source_live(request)
-            or not self._target_unchanged(request)
-            or not self._controller._fleet_wake.try_claim_automatic_primary(
-                request.session_id, item.token
-            )
-        ):
-            return False
-        # No await between final source checks and the durable ownership cutoff.
+        # Own source reads too; no await through the durable ownership cutoff.
         with operation_owned_connection(item.database):
-            item.accepted = item.context.ledger.accept_chat_start(
-                request.attempt_id,
-                owner_id=item.context.owner_id,
-                limits=AutomaticWorkLimits.from_settings(),
-            )
+            if (
+                not self.authorizes(item, request.session_id)
+                or item.accepted
+                or not self._source_live(request)
+                or not self._target_unchanged(request)
+                or not self._controller._fleet_wake.try_claim_automatic_primary(
+                    request.session_id, item.token
+                )
+            ):
+                return False
+            with item.database.connection() as conn:
+                previous_timeout = int(
+                    conn.execute("PRAGMA busy_timeout").fetchone()[0]
+                )
+                conn.execute("PRAGMA busy_timeout=0")
+                try:
+                    # Assign custody before fallible timeout/handle restoration.
+                    item.accepted = item.context.ledger.accept_chat_start(
+                        request.attempt_id,
+                        owner_id=item.context.owner_id,
+                        limits=AutomaticWorkLimits.from_settings(),
+                    )
+                except sqlite3.OperationalError as exc:
+                    if (getattr(exc, "sqlite_errorcode", 0) & 0xFF) in {
+                        sqlite3.SQLITE_BUSY,
+                        sqlite3.SQLITE_LOCKED,
+                    }:
+                        item.withdrawal_reason = "ledger_contended"
+                    raise
+                finally:
+                    conn.execute(f"PRAGMA busy_timeout={previous_timeout}")
         return item.accepted
 
     async def confirm_receipt(
@@ -493,7 +663,7 @@ class ConsoleChatStartCoordinator:
             raise PermissionError("chat start receipt mismatch")
         item.context.mark_accepted()
         item.receipted = True
-        await self._resolve(item, "started")
+        await self._resolve(item, HANDOFF_LAUNCH_STARTED)
 
     def withdraw_prepared(self, session_id: str, reason: str) -> bool:
         """Withdraw target or source preparations; accepted targets stay independent."""

@@ -26,11 +26,18 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
+
+
+HANDOFF_LAUNCH_DRAFT = "draft"
+HANDOFF_LAUNCH_NOT_STARTED = "not_started"
+HANDOFF_LAUNCH_STARTED = "started"
+HANDOFF_LAUNCH_REVIEW_REQUIRED = "review_required"
+AgentHandoffLaunchStatus = Literal["draft", "not_started", "started", "review_required"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,15 +45,15 @@ class AgentHandoffLaunchMetadata:
     """Bounded saved launch display facts; never execution authorization."""
 
     mode: str
-    status: str
+    status: AgentHandoffLaunchStatus
     reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.mode not in {"draft", "start"} or self.status not in {
-            "draft",
-            "not_started",
-            "started",
-            "review_required",
+            HANDOFF_LAUNCH_DRAFT,
+            HANDOFF_LAUNCH_NOT_STARTED,
+            HANDOFF_LAUNCH_STARTED,
+            HANDOFF_LAUNCH_REVIEW_REQUIRED,
         }:
             raise ValueError("invalid handoff launch status")
         if self.reason is not None and (
@@ -59,10 +66,10 @@ class AgentHandoffLaunchMetadata:
     def label(self) -> str:
         """Return existing status vocabulary without revealing draft text."""
         return {
-            "draft": "Draft",
-            "not_started": "Not started",
-            "started": "Started",
-            "review_required": "Review required",
+            HANDOFF_LAUNCH_DRAFT: "Draft",
+            HANDOFF_LAUNCH_NOT_STARTED: "Not started",
+            HANDOFF_LAUNCH_STARTED: "Started",
+            HANDOFF_LAUNCH_REVIEW_REQUIRED: "Review required",
         }[self.status]
 
     @classmethod
