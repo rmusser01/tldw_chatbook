@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 01:00'
+updated_date: '2026-10-04 02:12'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -312,6 +312,22 @@ The current published 8dd613d4e7aa387c6c9b519cd1bcd8c3ce93bf1a is clean and Qodo
 6. Close AC3/Done through CLI only after approval; update only the four owned canonical Markdown records and authenticate preservation of all reviewed source/deletion/tree outside those four. Read fresh8dd Qodo/refs/live protection, publish ONCE with EXACT observed8dd613d lease and concise body, then verify actual remote/GitHub/head/body without a second push after lag. Wait for fresh current-head Qodo/no actionable threads and ALL FOUR jobs before any next strict-base action or normal protected --match-head-commit merge. Verify MERGED actual parents/tree/current concurrency proportionately, then pause the heartbeat and report completion.
 
 No full suite, live provider/user key, physical Ctrl+Q/relaunch, real voice service/provision/download/playback, installation, Windows/native Linux, aggregate-resource, package/index/installed/native-release or wider-audit qualification. No admin bypass, weakened pins/checks/ceilings/counts/work/warmup/timeouts, shared stash or foreign cleanup.
+
+## Strict-base TASK33940 follow-up records preservation — October 4
+
+ADR required: no
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md
+Reason: this integration preserves three incoming Backlog Markdown additions without changing an existing runtime, authority, storage, schema, dependency or UI boundary.
+
+All FOUR exact published a303d41af3b48b6d5ac9407786e035032f9464a4 jobs passed and exact-head Qodo remained clear, with all four historical threads resolved and complete pagination, before base inspection. During the final merge preread, actual dev advanced from qualified01a2020981c6197e5cd9945e5287567ad977edfe to0001eba40419859ce39ed4952f0f8df7b40639bd (PR2997). GitHub's earlier baseRefOid lag was retained; the actual remote-ref assertion stopped before any merge attempt. Live strict up-to-date protection enforced for administrators requires a preserving update. Source authentication completed for all1352 hashes/modes/blobs and27549 full tree/index paths before that stop.
+
+1. Prospectively reopen TASK33664 AC3/In Progress through CLI with AC4 checked and commit this plan before the preserving rebase onto exact0001eba. Preserve every historical result, metadata limit and separate task state.
+2. Rebase once. The only three incoming paths are TASK34350, TASK34351 and TASK34352, all To Do with16 unchecked criteria and no prior manifest or feature overlap. Preserve all three byte-exact and all1352 prior reviewed hashes, modes, blob addresses, capture_cloud.py deletion and the full tree/index outside the two prospective plan/task records.
+3. Authenticate application/native/packages/Packaging/Tests/Performance/scripts/.github/CSS source identity and both prior/incoming full trees. Carry the already approved canonical five original budgets and functional/static source qualification only by exact source identity; do not repeat completed budget runs or claim any new runtime, follow-up behavior, provider, physical UI or aggregate certification.
+4. Run supported task-ID/path/readability and owned whitespace guards. Obtain independent immutable source/artifact/evidence preservation approval. Close AC3/Done through CLI only after approval, then append qualification to only the four owned canonical Markdown records and authenticate all1355 records and full27552 tree/index outside four.
+5. Read fresh current a303 Qodo/refs/protection; publish once with EXACT observed a303d41af3b48b6d5ac9407786e035032f9464a4 lease and concise body. Verify actual GitHub/remote/body without a second push after lag. Fresh new-head Qodo/no actionable threads and ALL FOUR jobs precede any further strict-base action or normal protected --match-head-commit merge. Verify actual MERGED parents/tree/current concurrency before pausing heartbeat/reporting.
+
+The three follow-ups remain separately open: compaction prompt/automatic/alert at send, workspace-root-retirement copy, and explicit staged-evidence collaborators. Their descriptions and owner-ruling text remain incoming task records; no implementation or root live verification of those follow-ups is included. All prior source and evidence limits remain, with no broader task closure, full suite, live provider/user keys, physical CtrlQ/relaunch, real voice provisioning/service/download/playback, native Linux/Windows/aggregate/package/index/installed/native-release/wider audit, admin bypass, weakened gates, shared stash or foreign cleanup.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
