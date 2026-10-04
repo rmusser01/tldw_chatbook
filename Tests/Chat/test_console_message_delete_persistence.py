@@ -1625,16 +1625,15 @@ def test_deleting_an_unsaved_message_tombstones_the_saved_rows_under_it():
 
 
 def test_deleting_an_interstitial_note_tombstones_the_saved_reply_under_it():
-    """The UI path: an unsaved note the turn appends mid-chain, a saved reply.
+    """An unsaved note the send appends mid-turn, with a saved reply under it.
 
-    A skipped-skill note is a SYSTEM row appended with no saved id between a
-    saved prompt and its reply; the reply is saved under the prompt (its
-    nearest saved ancestor). Delete on the note removes the reply with it.
+    An @-reference summary or a skipped-skill note is a SYSTEM row appended
+    with no saved id between a saved prompt and its reply; the reply is saved
+    under the prompt (its nearest saved ancestor). The transcript offers no
+    Delete on a SYSTEM row -- Resend reaches this shape (next test) -- but the
+    store's subtree delete still takes the saved reply, and Undo restores both.
     """
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
-    from tldw_chatbook.Chat.console_message_actions import (
-        ConsoleMessageActionService,
-    )
     from tldw_chatbook.Chat.console_message_delete import (
         console_delete_scope,
         delete_subtree_for_undo,
@@ -1658,13 +1657,9 @@ def test_deleting_an_interstitial_note_tombstones_the_saved_reply_under_it():
     )
     saved_prompt = store.get_message(prompt.id).persisted_message_id
     saved_reply = store.get_message(reply.id).persisted_message_id
-    # Preconditions: the note is unsaved and offers Delete; the reply is saved
-    # under the prompt, so reopen shows the prompt and reply without the note.
+    # Preconditions: the note is unsaved; the reply is saved under the prompt,
+    # so reopen shows the prompt and reply without the note.
     assert store.get_message(note.id).persisted_message_id is None
-    actions = ConsoleMessageActionService(
-        canvas_enabled_reader=lambda: False
-    ).available_actions(store.get_message(note.id))
-    assert "delete" in {action.action_id for action in actions}
     assert db.get_message_by_id(saved_reply)["parent_message_id"] == saved_prompt
     reopened, reopened_session, _ = _open_store(db, conversation_id)
     reopened_before = _visible(reopened, reopened_session)
@@ -1690,6 +1685,75 @@ def test_deleting_an_interstitial_note_tombstones_the_saved_reply_under_it():
     ]
     reopened, reopened_session, _ = _open_store(db, conversation_id)
     assert _visible(reopened, reopened_session) == reopened_before
+
+
+async def test_resend_through_an_interstitial_note_tombstones_the_broken_reply(
+    monkeypatch,
+):
+    """The UI path: Resend clears a broken turn by deleting the unsaved note.
+
+    A send with an @-reference appends its audit note, unsaved, between the
+    prompt and the reply; the reply is saved under the prompt. Stopped before
+    any text, the turn offers Resend, which clears the rows after the prompt
+    by deleting the first one -- the note -- with its subtree. When that
+    delete skipped the database the stopped reply stayed live, so reopen
+    showed it again as a second reply ("2/2") beside the re-run, a sibling
+    Resend promises never to create.
+    """
+    import asyncio
+
+    from tldw_chatbook.Chat import console_references
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_turn_resend import resend_target_id, resend_turn
+
+    # @diff always leaves the audit note; keep git itself out of the test.
+    monkeypatch.setattr(console_references, "run_git_reference", lambda _token: "")
+    db = CharactersRAGDB(":memory:", "unsaved-delete")
+    conversation_id = _seed(db, _CHAIN)
+    controller, gateway, store, session_id, _native = await _open_console(
+        db, conversation_id
+    )
+    started = asyncio.Event()
+
+    async def _hang(_resolution, _messages, **_kwargs):
+        started.set()
+        await asyncio.Event().wait()
+        yield ""  # pragma: no cover - cancelled by Stop before any text
+
+    monkeypatch.setattr(gateway, "stream_chat", _hang)
+    task = asyncio.create_task(controller.submit_draft("say blue @diff"))
+    await asyncio.wait_for(started.wait(), 5)
+    assert controller.stop_active_run() is True
+    await asyncio.wait_for(task, 5)
+    monkeypatch.undo()
+    prompt, note, reply = store.messages_for_session(session_id)[4:7]
+    saved_prompt = prompt.persisted_message_id
+    saved_reply = reply.persisted_message_id
+    # Preconditions: an unsaved note between the prompt and a saved, stopped,
+    # empty reply under the prompt; the turn offers Resend on the prompt.
+    assert (prompt.role, note.role, reply.role) == (
+        ConsoleMessageRole.USER,
+        ConsoleMessageRole.SYSTEM,
+        ConsoleMessageRole.ASSISTANT,
+    )
+    assert note.content.startswith("@-references:")
+    assert note.persisted_message_id is None
+    assert (reply.status, reply.content) == ("stopped", "")
+    assert db.get_message_by_id(saved_reply)["parent_message_id"] == saved_prompt
+    assert resend_target_id(store.messages_for_session(session_id)) == prompt.id
+
+    result = await resend_turn(controller, prompt.id)
+
+    assert result.accepted, result.visible_copy
+    assert _deleted(db, [saved_prompt, saved_reply]) == [0, 1]
+    shown = _transcript(store, session_id)
+    assert shown[-2:] == [("user", "say blue @diff"), ("assistant", "reply 1")]
+    _controller, _gateway, reopened, reopened_session, _ = await _open_console(
+        db, conversation_id
+    )
+    assert _transcript(reopened, reopened_session) == shown
+    rerun = reopened.messages_for_session(reopened_session)[-1]
+    assert reopened.siblings_at(rerun.id)[2] == 1
 
 
 # --- TASK-33628.12: a voice exchange sent before the first message -------------
