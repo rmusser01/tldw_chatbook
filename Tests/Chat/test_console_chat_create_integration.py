@@ -1637,3 +1637,506 @@ def test_new_chat_tool_and_controller_reject_before_authority_or_execution(
         controller.prepare_agent_chat_create(arguments)
     assert str(captured.value).startswith(category + ":")
     assert "secret-payload" not in str(captured.value)
+
+
+@pytest.fixture(params=["primary", "subagent"])
+def creation_validation_rig(child_new_chat_rig, request):
+    """Actual prepared ownership, including a child surviving its parent turn."""
+    from tldw_chatbook.Agents.run_context import CurrentRunActor, use_run_actor
+    from tldw_chatbook.Chat.console_chat_store import ConsoleMessageRole
+
+    controller, db, runs, source, child, payload = child_new_chat_rig
+    if request.param == "primary":
+        actor = CurrentRunActor("primary", child.parent_run_id, None)
+        payload = {**payload, "source_run_id": actor.run_id}
+        controller.store.append_message(
+            source.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            message_id="parent-message",
+        )
+    else:
+        actor = child
+        controller._active_cancel_events.pop(source.id)
+        controller._active_assistant_message_ids.pop(source.id)
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+        assert controller._chat_creation_source_live(prepared)
+    yield controller, db, runs, source, actor, prepared
+    prepared["_creation_token"].close()
+
+
+@pytest.mark.parametrize("retire", ["close", "revoke"])
+def test_creation_sql_read_does_not_block_retirement(
+    creation_validation_rig, monkeypatch, retire
+):
+    """A delayed real connection must not hold up committed Close/revocation."""
+    from contextlib import contextmanager
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, _db, runs, source, actor, prepared = creation_validation_rig
+    entered, release, retired = threading.Event(), threading.Event(), threading.Event()
+    connection = runs.connection
+    results, errors = [], []
+    reads = 0
+    controller.set_pending_chat_create = lambda card: pytest.fail(
+        "retired source armed a card"
+    )
+
+    @contextmanager
+    def parked_connection():
+        nonlocal reads
+        with connection() as conn:
+            if threading.current_thread().name == "creation-reader":
+                reads += 1
+                if reads == 2:  # First read is requester attribution, not validation.
+                    entered.set()
+                    assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+            yield conn
+
+    monkeypatch.setattr(runs, "connection", parked_connection)
+
+    def read():
+        try:
+            with use_run_actor(actor):
+                results.append(controller.request_chat_create_confirm(prepared))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            runs.close()
+
+    def release_after_deadline():
+        if not retired.wait(1):
+            release.set()
+
+    reader = threading.Thread(target=read, name="creation-reader", daemon=True)
+    watchdog = threading.Thread(target=release_after_deadline, daemon=True)
+    reader.start()
+    try:
+        assert entered.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        watchdog.start()
+        # Close owns the UI/runtime thread; the SQL reader is a real worker.
+        if retire == "close":
+            controller.begin_session_close(
+                source.id,
+                expected_revision=controller.lifecycle_impact(
+                    session_id=source.id
+                ).revision,
+            )
+        else:
+            controller.revoke_approval_rounds_for_run(actor.run_id)
+        completed_while_read_parked = not release.is_set()
+        retired.set()
+    finally:
+        release.set()
+        retired.set()
+        reader.join(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        if watchdog.ident is not None:
+            watchdog.join(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+    assert not reader.is_alive() and not watchdog.is_alive()
+    assert not errors
+    assert completed_while_read_parked, "SQLite read held the retirement registry lock"
+    assert results == [{"allow": False, "remember": False}]
+    assert not controller._chat_creation_records
+    assert not controller._chat_create_session_grants.get(source.id)
+
+
+@pytest.mark.parametrize("path", ["wrapper", "confirm", "remembered"])
+def test_creation_validation_reads_outside_registry_lock(
+    creation_validation_rig, monkeypatch, path
+):
+    """All validation phases keep actual SQL reads outside the pending lock."""
+    from contextlib import contextmanager
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, _db, runs, source, actor, prepared = creation_validation_rig
+    connection = runs.connection
+    lock_states, cards = [], []
+
+    @contextmanager
+    def observed_connection():
+        lock_states.append(controller._pending_chat_create_lock.locked())
+        with connection() as conn:
+            yield conn
+
+    monkeypatch.setattr(runs, "connection", observed_connection)
+
+    def approve(card):
+        if card:
+            cards.append(card)
+            controller.resolve_pending_chat_create(True, True, card["request_id"])
+
+    controller.set_pending_chat_create = approve
+    if path == "remembered":
+        controller._chat_create_session_grants[source.id] = {prepared["_grant_scope"]}
+    with use_run_actor(actor):
+        if path == "wrapper":
+            assert controller._chat_creation_record(prepared) is not None
+        else:
+            assert controller.request_chat_create_confirm(prepared) == {
+                "allow": True,
+                "remember": actor.kind == "primary",
+            }
+            assert len(cards) == (
+                0 if path == "remembered" and actor.kind == "primary" else 1
+            )
+    assert lock_states and not any(lock_states)
+
+
+def test_creation_database_observation_is_rechecked_before_save(
+    creation_validation_rig, monkeypatch
+):
+    """Independent SQL writers can race observation; pre-save reads anew."""
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, _source, actor, prepared = creation_validation_rig
+    controller.set_pending_chat_create = lambda card: (
+        controller.resolve_pending_chat_create(True, False, card["request_id"])
+        if card
+        else None
+    )
+    with use_run_actor(actor):
+        assert controller.request_chat_create_confirm(prepared)["allow"]
+    original = runs.get_run
+    mutated = False
+
+    def read_then_finish(run_id):
+        nonlocal mutated
+        row = original(run_id)
+        if run_id == actor.run_id and not mutated:
+            mutated = True
+            # A separate connection commits AFTER the returned row was copied.
+            import sqlite3
+
+            with sqlite3.connect(str(runs.db_path)) as conn:
+                conn.execute(
+                    "UPDATE agent_runs SET status='done' WHERE id=?", (run_id,)
+                )
+        return row
+
+    monkeypatch.setattr(runs, "get_run", read_then_finish)
+    before = _live_conversation_count(db)
+    with use_run_actor(actor):
+        # Both the original locked getter and split validation observe running.
+        assert controller._chat_creation_record(prepared) is not None
+        assert original(actor.run_id)["status"] == "done"
+        result = controller.execute_agent_chat_create(prepared)
+    assert mutated
+    assert not result["ok"] and result["kind"] == "approval_required"
+    assert _live_conversation_count(db) == before
+    assert not controller._chat_creation_records
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "retire",
+        "replace_record",
+        "payload",
+        "record_payload",
+        "source",
+        "bridge",
+        "database",
+        "incarnation",
+        "conversation",
+        "workspace",
+        "actor",
+        "closed",
+        "revoked",
+    ],
+)
+def test_creation_rechecks_runtime_identity_after_row_copy(
+    creation_validation_rig, monkeypatch, mutation
+):
+    """An observation cannot authorize a replaced or retired runtime owner."""
+    import copy
+    from dataclasses import replace
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, _db, _runs, source, actor, prepared = creation_validation_rig
+    record = controller._chat_creation_records[prepared["_creation_token"]]
+    actor_change = replace(actor, run_id="other-run")
+    read = controller._read_chat_creation_source
+    changed_actor = None
+
+    def after_copy(observation):
+        nonlocal changed_actor
+        observed = read(observation)
+        assert observed is not None and observed.row["status"] == "running"
+        if mutation == "retire":
+            prepared["_creation_token"].close()
+        elif mutation == "replace_record":
+            with controller._pending_chat_create_lock:
+                controller._chat_creation_records[prepared["_creation_token"]] = dict(
+                    record
+                )
+        elif mutation == "payload":
+            prepared["opening_prompt"] = "different approval"
+        elif mutation == "record_payload":
+            record["payload"] = {
+                **record["payload"],
+                "opening_prompt": "different approval",
+            }
+        elif mutation == "source":
+            controller.store._sessions[source.id] = copy.copy(source)
+        elif mutation == "bridge":
+            controller._agent_bridge = copy.copy(controller._agent_bridge)
+        elif mutation == "database":
+            monkeypatch.setattr(controller._agent_bridge, "runs_db", object())
+        elif mutation == "incarnation":
+            source.incarnation_id = "replacement-incarnation"
+        elif mutation == "conversation":
+            source.persisted_conversation_id = "other-conversation"
+        elif mutation == "workspace":
+            source.workspace_id = "other-workspace"
+        elif mutation == "closed":
+            controller.begin_session_close(
+                source.id,
+                expected_revision=controller.lifecycle_impact(
+                    session_id=source.id
+                ).revision,
+            )
+        elif mutation == "revoked":
+            controller.revoke_approval_rounds_for_run(actor.run_id)
+        else:
+            changed_actor = use_run_actor(actor_change)
+            changed_actor.__enter__()
+        return observed
+
+    monkeypatch.setattr(controller, "_read_chat_creation_source", after_copy)
+    with use_run_actor(actor):
+        try:
+            assert controller._chat_creation_record(prepared) is None
+        finally:
+            if changed_actor is not None:
+                changed_actor.__exit__(None, None, None)
+    assert not record["approved"]
+    assert not controller._chat_create_session_grants.get(source.id)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "terminal",
+        "missing",
+        "conversation",
+        "kind",
+        "parent",
+        "missing_parent",
+        "parent_conversation",
+        "read_error",
+    ],
+)
+def test_creation_post_wait_observes_changed_rows(
+    child_new_chat_rig, monkeypatch, mutation
+):
+    """Approving the actual card must read authority rows again after the wait."""
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    controller._active_cancel_events.pop(source.id)
+    controller._active_assistant_message_ids.pop(source.id)
+    cards, results, errors = [], [], []
+    armed = threading.Event()
+
+    def show(card):
+        if card:
+            cards.append(card)
+            armed.set()
+
+    def mutate_rows():
+        with runs.transaction() as conn:
+            if mutation == "terminal":
+                conn.execute(
+                    "UPDATE agent_runs SET status='done' WHERE id=?", (actor.run_id,)
+                )
+            elif mutation == "missing":
+                conn.execute("DELETE FROM agent_runs WHERE id=?", (actor.run_id,))
+            elif mutation == "conversation":
+                conn.execute(
+                    "UPDATE agent_runs SET conversation_id='other' WHERE id=?",
+                    (actor.run_id,),
+                )
+            elif mutation == "kind":
+                conn.execute(
+                    "UPDATE agent_runs SET agent_kind='primary' WHERE id=?",
+                    (actor.run_id,),
+                )
+            elif mutation == "parent":
+                conn.execute(
+                    "UPDATE agent_runs SET parent_run_id=NULL WHERE id=?",
+                    (actor.run_id,),
+                )
+            elif mutation == "missing_parent":
+                conn.execute(
+                    "DELETE FROM agent_runs WHERE id=?", (actor.parent_run_id,)
+                )
+            elif mutation == "parent_conversation":
+                conn.execute(
+                    "UPDATE agent_runs SET conversation_id='other' WHERE id=?",
+                    (actor.parent_run_id,),
+                )
+        if mutation == "read_error":
+
+            def failed_read(run_id):
+                raise OSError("test read failure")
+
+            monkeypatch.setattr(runs, "get_run", failed_read)
+
+    controller.set_pending_chat_create = show
+    before = _live_conversation_count(db)
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+
+    def confirm():
+        try:
+            with use_run_actor(actor):
+                results.append(controller.request_chat_create_confirm(prepared))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            runs.close()
+
+    worker = threading.Thread(target=confirm, daemon=True)
+    worker.start()
+    resolved = False
+    try:
+        assert armed.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        assert worker.is_alive() and not results
+        mutate_rows()
+        controller.resolve_pending_chat_create(True, True, cards[0]["request_id"])
+        resolved = True
+    finally:
+        if cards and not resolved:
+            controller.resolve_pending_chat_create(False, False, cards[0]["request_id"])
+        worker.join(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+    assert not worker.is_alive() and not errors
+    assert results == [{"allow": False, "remember": False}]
+    assert len(cards) == 1
+    assert not controller._chat_creation_records
+    assert not controller._chat_create_session_grants.get(source.id)
+    assert _live_conversation_count(db) == before
+
+
+def test_creation_terminal_at_final_save_check_creates_no_row(
+    creation_validation_rig, monkeypatch
+):
+    """A terminal row after entry approval still prevents the durable save."""
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, _source, actor, prepared = creation_validation_rig
+    controller.set_pending_chat_create = lambda card: (
+        controller.resolve_pending_chat_create(True, False, card["request_id"])
+        if card
+        else None
+    )
+    with use_run_actor(actor):
+        assert controller.request_chat_create_confirm(prepared)["allow"]
+    destination = controller._chat_creation_destination_available
+    changed = []
+
+    def finish_before_save(**kwargs):
+        available = destination(**kwargs)
+        assert available
+        assert runs.set_status(actor.run_id, "done")
+        changed.append(actor.run_id)
+        return available
+
+    monkeypatch.setattr(
+        controller, "_chat_creation_destination_available", finish_before_save
+    )
+    before = _live_conversation_count(db)
+    with use_run_actor(actor):
+        outcome = controller.execute_agent_chat_create(prepared)
+    assert changed == [actor.run_id]
+    assert not outcome["ok"] and outcome["kind"] == "creation_refused"
+    assert _live_conversation_count(db) == before
+    assert not controller._chat_creation_records
+
+
+@pytest.mark.parametrize(
+    "mutation", ["cancel", "missing_cancel", "assistant", "primary"]
+)
+def test_creation_primary_owner_changes_after_row_copy(
+    child_new_chat_rig, monkeypatch, mutation
+):
+    """The copied primary row never replaces current turn ownership checks."""
+    from tldw_chatbook.Agents.run_context import CurrentRunActor, use_run_actor
+
+    controller, _db, _runs, source, child, payload = child_new_chat_rig
+    actor = CurrentRunActor("primary", child.parent_run_id, None)
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(
+            {**payload, "source_run_id": actor.run_id}
+        )
+    read = controller._read_chat_creation_source
+
+    def change_owner(observation):
+        observed = read(observation)
+        assert observed is not None
+        if mutation == "cancel":
+            controller._active_cancel_events[source.id].set()
+        elif mutation == "missing_cancel":
+            controller._active_cancel_events.pop(source.id)
+        elif mutation == "assistant":
+            controller._active_assistant_message_ids[source.id] = "other-message"
+        else:
+            controller._agent_bridge.live_primary_run_id = lambda conversation: (
+                "other-run"
+            )
+        return observed
+
+    monkeypatch.setattr(controller, "_read_chat_creation_source", change_owner)
+    try:
+        with use_run_actor(actor):
+            assert controller._chat_creation_record(prepared) is None
+    finally:
+        prepared["_creation_token"].close()
+
+
+@pytest.mark.parametrize("survives", [False, True])
+def test_creation_child_parent_cancel_changes_after_row_copy(
+    child_new_chat_rig, monkeypatch, survives
+):
+    """Captured parent Stop remains binding even if the child survives the turn."""
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, _db, _runs, source, actor, payload = child_new_chat_rig
+    parent_cancel = controller._active_cancel_events[source.id]
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+    read = controller._read_chat_creation_source
+
+    def stop_parent(observation):
+        observed = read(observation)
+        assert observed is not None
+        parent_cancel.set()
+        if survives:
+            controller._active_assistant_message_ids.pop(source.id)
+            controller._active_cancel_events.pop(source.id)
+        return observed
+
+    monkeypatch.setattr(controller, "_read_chat_creation_source", stop_parent)
+    try:
+        with use_run_actor(actor):
+            assert controller._chat_creation_record(prepared) is None
+    finally:
+        prepared["_creation_token"].close()
+
+
+def test_creation_missing_row_status_fails_closed(creation_validation_rig, monkeypatch):
+    """Copying an incomplete row must preserve the original missing-key refusal."""
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, _db, runs, _source, actor, prepared = creation_validation_rig
+    read = runs.get_run
+
+    def incomplete_row(run_id):
+        row = read(run_id)
+        if run_id == actor.run_id:
+            row.pop("status")
+        return row
+
+    monkeypatch.setattr(runs, "get_run", incomplete_row)
+    with use_run_actor(actor):
+        assert controller._chat_creation_record(prepared) is None

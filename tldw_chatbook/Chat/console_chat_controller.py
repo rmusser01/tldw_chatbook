@@ -4785,6 +4785,23 @@ class _ChatCreationToken:
             self._owner._chat_creation_records.pop(self, None)
 
 
+@dataclass(frozen=True, slots=True)
+class _ChatCreationObservation:
+    """One validation phase's identities and unlocked durable observations."""
+
+    payload: dict[str, Any]
+    record: dict[str, Any] | None
+    source: Any
+    bridge: Any
+    runs_db: Any
+    incarnation: str
+    conversation_id: str | None
+    workspace_id: str | None
+    actor: Any
+    row: dict[str, Any] | None = None
+    parent: dict[str, Any] | None = None
+
+
 class ConsoleChatController:
     """Coordinate native Console chat state between store and provider gateway."""
 
@@ -19540,13 +19557,76 @@ class ConsoleChatController:
             )
         return enriched
 
+    def _capture_chat_creation_source(
+        self, payload: Mapping[str, Any], record: dict[str, Any] | None = None
+    ) -> _ChatCreationObservation | None:
+        """Capture local identities without reading storage."""
+        source = self.store._sessions.get(str(payload.get("session_id") or ""))
+        bridge = self._agent_bridge
+        runs_db = getattr(bridge, "runs_db", None)
+        if source is None or runs_db is None:
+            return None
+        return _ChatCreationObservation(
+            payload=dict(payload),
+            record=record,
+            source=source,
+            bridge=bridge,
+            runs_db=runs_db,
+            incarnation=source.incarnation_id,
+            conversation_id=source.persisted_conversation_id,
+            workspace_id=source.workspace_id,
+            actor=current_run_actor(),
+        )
+
+    def _read_chat_creation_source(
+        self, observation: _ChatCreationObservation | None
+    ) -> _ChatCreationObservation | None:
+        """Observe run rows with no registry lock; never reuse across phases."""
+        if observation is None:
+            return None
+        payload = observation.payload
+        try:
+            row = observation.runs_db.get_run(payload.get("source_run_id"))
+            parent_id = payload.get("source_parent_run_id")
+            parent = (
+                observation.runs_db.get_run(parent_id)
+                if payload.get("source_agent_kind") == "subagent" and parent_id
+                else None
+            )
+            fields = ("conversation_id", "agent_kind", "parent_run_id", "status")
+            return replace(
+                observation,
+                row={key: row[key] for key in fields if key in row} if row else None,
+                parent={key: parent[key] for key in fields if key in parent}
+                if parent
+                else None,
+            )
+        except Exception:
+            return None
+
     def _chat_creation_source_live(self, payload: Mapping[str, Any]) -> bool:
-        """Require the captured primary or child execution and source lifetime."""
+        """Read anew, then require the captured source and current runtime owner."""
+        observation = self._read_chat_creation_source(
+            self._capture_chat_creation_source(payload)
+        )
+        return observation is not None and self._chat_creation_source_matches(
+            observation
+        )
+
+    def _chat_creation_source_matches(
+        self, observation: _ChatCreationObservation
+    ) -> bool:
+        """Check copied row fields and live memory only; never enter SQLite."""
+        payload = observation.payload
         session = self.store._sessions.get(str(payload.get("session_id") or ""))
         run_id = payload.get("source_run_id")
         bridge = self._agent_bridge
         if (
             self._disposed
+            or session is not observation.source
+            or bridge is not observation.bridge
+            or getattr(bridge, "runs_db", None) is not observation.runs_db
+            or current_run_actor() != observation.actor
             or session is None
             or not self._chat_create_source_is_open(session.id)
             or not run_id
@@ -19555,12 +19635,15 @@ class ConsoleChatController:
         ):
             return False
         if (
-            payload.get("source_incarnation", session.incarnation_id)
+            session.incarnation_id != observation.incarnation
+            or session.persisted_conversation_id != observation.conversation_id
+            or session.workspace_id != observation.workspace_id
+            or payload.get("source_incarnation", session.incarnation_id)
             != session.incarnation_id
         ):
             return False
         try:
-            row = bridge.runs_db.get_run(run_id)
+            row = observation.row
             if not row or row["conversation_id"] != session.persisted_conversation_id:
                 return False
             if payload.get("source_agent_kind") == "subagent":
@@ -19568,7 +19651,7 @@ class ConsoleChatController:
                 # the trusted child actor, never the session's next primary.
                 actor = current_run_actor()
                 parent_id = payload.get("source_parent_run_id")
-                parent = bridge.runs_db.get_run(parent_id) if parent_id else None
+                parent = observation.parent
                 cancel = self._active_cancel_events.get(session.id)
                 owns_parent_turn = self._active_assistant_message_ids.get(
                     session.id
@@ -19789,24 +19872,46 @@ class ConsoleChatController:
             }
         return prepared
 
+    def _observe_chat_creation_record(
+        self, payload: Mapping[str, Any]
+    ) -> _ChatCreationObservation | None:
+        """Capture the exact registry entry, release its lock, then read rows."""
+        with self._pending_chat_create_lock:
+            record = self._chat_creation_records.get(payload.get("_creation_token"))
+            if record is None or any(
+                payload.get(key) != value for key, value in record["payload"].items()
+            ):
+                return None
+            observation = self._capture_chat_creation_source(record["payload"], record)
+        return self._read_chat_creation_source(observation)
+
     def _chat_creation_record(
         self, payload: Mapping[str, Any]
     ) -> dict[str, Any] | None:
+        observation = self._observe_chat_creation_record(payload)
         with self._pending_chat_create_lock:
-            return self._chat_creation_record_locked(payload)
+            return self._chat_creation_record_locked(payload, observation)
 
     def _chat_creation_record_locked(
-        self, payload: Mapping[str, Any]
+        self,
+        payload: Mapping[str, Any],
+        observation: _ChatCreationObservation | None,
     ) -> dict[str, Any] | None:
-        """Validate exact preparation while the caller holds the registry lock."""
+        """Recheck exact identity and current fences with no storage under lock."""
         record = self._chat_creation_records.get(payload.get("_creation_token"))
-        if record is None or any(
-            payload.get(key) != value for key, value in record["payload"].items()
+        if (
+            observation is None
+            or record is None
+            or record is not observation.record
+            or record["payload"] != observation.payload
+            or any(
+                payload.get(key) != value for key, value in record["payload"].items()
+            )
         ):
             return None
         source = self.store._sessions.get(record["payload"]["session_id"])
         if (
-            not self._chat_creation_source_live(record["payload"])
+            not self._chat_creation_source_matches(observation)
             or (
                 record.get("source_cancel_event") is not None
                 and record["source_cancel_event"].is_set()
@@ -20141,10 +20246,13 @@ class ConsoleChatController:
             "parent_run_id": requesting_parent,
             "agent_task": requesting_task,
         }
+        observation = (
+            self._observe_chat_creation_record(payload) if tool == "new_chat" else None
+        )
         # Decide a remembered grant atomically with Close and revocation.
         with self._pending_chat_create_lock:
             record = (
-                self._chat_creation_record_locked(payload)
+                self._chat_creation_record_locked(payload, observation)
                 if tool == "new_chat"
                 else None
             )
@@ -20271,6 +20379,12 @@ class ConsoleChatController:
             # `decision` at all -- an Allow delivered just after the child
             # was cancelled must not authorize the create. Mirrors the
             # sibling bridges' identical post-wait guard.
+            # Human approval is a new observation phase; never reuse its entry rows.
+            observation = (
+                self._observe_chat_creation_record(payload)
+                if tool == "new_chat" and decision.get("allow", False)
+                else None
+            )
             with self._pending_chat_create_lock:
                 if (
                     chat_create_round_state.get("revoked")
@@ -20284,7 +20398,10 @@ class ConsoleChatController:
                 # Decide and remember atomically with the Close/revocation sweep.
                 # A remembered deny must never become a standing grant.
                 if allow and tool == "new_chat":
-                    allow = self._chat_creation_record_locked(payload) is record
+                    allow = (
+                        self._chat_creation_record_locked(payload, observation)
+                        is record
+                    )
                     if allow:
                         record["approved"] = True
                 if allow and remember:
