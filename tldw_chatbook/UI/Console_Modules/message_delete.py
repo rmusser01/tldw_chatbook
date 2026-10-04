@@ -153,7 +153,7 @@ async def _delete(host: Any, store: Any, scope: ConsoleDeleteScope) -> None:
     host._console_delete_scope = None
     done: dict[str, tuple[ConsoleDeletedSubtree, tuple[str, ...]]] = {}
 
-    async def delete() -> None:
+    async def delete() -> int:
         # Original-attempt previews are in-memory only, so they are cleared
         # when the delete becomes final (_finalize), never before: Undo
         # restores the same node objects and nothing else could rebuild them.
@@ -172,18 +172,23 @@ async def _delete(host: Any, store: Any, scope: ConsoleDeleteScope) -> None:
             await host._sync_native_console_chat_ui()
             raise
         deleted = done["delete"][0]
-        host._invalidate_console_fork_image_selections(scope.subtree_ids)
-        # TASK-251: a deleted message can change what the browser row shows
-        # for this conversation (title/updated_at) -- invalidate so the next
-        # sync reflects it immediately.
-        host._invalidate_console_persisted_rows_cache()
-        host._last_console_action = ConsoleActionResult(
-            action_id="delete",
-            status="completed",
-            visible_copy=console_delete_receipt_copy(deleted.count),
-            target_message_id=message_id,
-        )
-        await host._sync_native_console_chat_ui()
+        # Saved: from here on Undo is owed whatever the refresh does.
+        try:
+            host._invalidate_console_fork_image_selections(scope.subtree_ids)
+            # TASK-251: a deleted message can change what the browser row
+            # shows for this conversation (title/updated_at) -- invalidate so
+            # the next sync reflects it immediately.
+            host._invalidate_console_persisted_rows_cache()
+            host._last_console_action = ConsoleActionResult(
+                action_id="delete",
+                status="completed",
+                visible_copy=console_delete_receipt_copy(deleted.count),
+                target_message_id=message_id,
+            )
+            await host._sync_native_console_chat_ui()
+        except Exception as exc:  # noqa: BLE001 - the outcome is the save's
+            _refresh_failed(exc)
+        return deleted.count
 
     async def undo() -> str:
         deleted = done["delete"][0]
@@ -194,17 +199,21 @@ async def _delete(host: Any, store: Any, scope: ConsoleDeleteScope) -> None:
             # Retryable: nothing changed, so keep Undo on offer.
             return "retry" if exc.retryable else "final"
         noun = "message" if deleted.count == 1 else "messages"
-        host._last_console_action = ConsoleActionResult(
-            action_id="delete",
-            status="completed",
-            visible_copy=f"Restored {deleted.count} {noun}.",
-            target_message_id=deleted.root_id,
-        )
-        host._invalidate_console_persisted_rows_cache()
-        # Land the reader on what came back (applied when the transcript
-        # ingests the restored rows).
-        host._pending_console_swipe_selection = deleted.root_id
-        await host._sync_native_console_chat_ui()
+        # Restored: from here on the receipt closes whatever the refresh does.
+        try:
+            host._last_console_action = ConsoleActionResult(
+                action_id="delete",
+                status="completed",
+                visible_copy=f"Restored {deleted.count} {noun}.",
+                target_message_id=deleted.root_id,
+            )
+            host._invalidate_console_persisted_rows_cache()
+            # Land the reader on what came back (applied when the transcript
+            # ingests the restored rows).
+            host._pending_console_swipe_selection = deleted.root_id
+            await host._sync_native_console_chat_ui()
+        except Exception as exc:  # noqa: BLE001 - the outcome is the save's
+            _refresh_failed(exc)
         host.app_instance.notify(
             f"Restored {deleted.count} {noun}.", severity="information"
         )
@@ -258,6 +267,19 @@ async def _finalize(
         if pending and warning:
             host.app_instance.notify(warning, severity="warning")
     await host._sync_native_console_chat_ui()
+
+
+def _refresh_failed(exc: BaseException) -> None:
+    """Log a Console refresh that failed after a delete or Undo was saved.
+
+    The save's outcome stands -- the receipt still offers Undo after a saved
+    delete, and closes after a saved Undo -- so this only records why the
+    view may be stale until the next refresh.
+    """
+    logger.warning(
+        "Console refresh after a saved delete or Undo failed: {}",
+        type(exc).__name__,
+    )
 
 
 def _settled_release(pending: bool | None, error: BaseException | None) -> bool:

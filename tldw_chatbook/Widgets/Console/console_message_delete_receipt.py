@@ -62,15 +62,16 @@ class ConsoleMessageDeleteReceiptModal(SafeModalDismissMixin, ModalScreen[str | 
         self,
         *,
         count: int,
-        delete: Callable[[], Awaitable[None]] | None = None,
+        delete: Callable[[], Awaitable[int | None]] | None = None,
         undo: Callable[[], Awaitable[str]] | None = None,
     ) -> None:
         """Build the receipt.
 
         Args:
             count: How many messages the delete removes.
-            delete: Saves the delete; raises when it did not happen (having
-                said why). ``None``: the delete is already saved.
+            delete: Saves the delete and returns how many messages it
+                removed (the receipt then counts those); raises when it did
+                not happen (having said why). ``None``: already saved.
             undo: Restores the messages and returns ``"restored"``,
                 ``"retry"`` (nothing changed; offer Undo again) or
                 ``"final"`` (Undo is impossible; the delete stands). ``None``:
@@ -173,11 +174,13 @@ class ConsoleMessageDeleteReceiptModal(SafeModalDismissMixin, ModalScreen[str | 
     async def _run_delete(self) -> None:
         assert self._delete is not None
         try:
-            await self._delete()
+            saved = await self._delete()
         except Exception:  # noqa: BLE001 - the flow already told the user why
             self._working = None
             self.dismiss_safe_once_when_on_top("failed")
             return
+        if isinstance(saved, int):
+            self._count = saved
         await self._show_receipt()
 
     async def _run_undo(self) -> None:

@@ -2780,8 +2780,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 1,
-      "diagnostic_digest": "d1f0c2ea9165c1c5eefe",
+      "call_count": 2,
+      "diagnostic_digest": "a6efbb623aa66bc60789",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/message_delete.py",
       "reason": "remaining Chatbook production diagnostic owner"
