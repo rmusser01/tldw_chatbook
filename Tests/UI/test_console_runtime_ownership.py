@@ -1645,6 +1645,8 @@ def _post_reconciliation_admission_screen(monkeypatch, live_reason=None):
         _pending_console_delete_message_id=None,
     )
     screen._session = SimpleNamespace(
+        consume_pending_vllm_console_intent=no_op,
+        consume_pending_llamacpp_console_intent=no_op,
         _sync_console_session_draft=no_op,
         _ensure_active_console_session_settings=lambda *_a, **_k: None,
     )
