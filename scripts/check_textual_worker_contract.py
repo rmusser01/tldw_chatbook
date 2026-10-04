@@ -69,9 +69,13 @@ W003 (census ratchet, TASK-33621.13)
 
     The same wait by hand counts too: ``push_screen(..., callback=done)``
     in a function that also awaits a future or event it created (matched by
-    shape: a push is left out only when ``done`` provably settles nothing
-    but OTHER fresh futures that function created -- see ``_settled_by``;
-    anything unproved counts). No
+    shape: a push is left out only when ``done`` visibly settles nothing but
+    OTHER fresh futures that function created, and those futures reach
+    nothing -- no done-callback, relay, handoff or rebinding could chain
+    them to the awaited one, for a ``self`` future anywhere in the package;
+    see ``_settled_by``. Settling a different future alone is not enough,
+    and anything not shown counts. The check is syntactic: ``getattr`` and
+    ``__dict__`` access are not seen). No
     ``NoActiveWorker`` -- but Textual runs ``done`` through the requester
     pump's ``call_next``, and from a handler that pump is the one blocked on
     the await, so it deadlocks. PR #2922's
@@ -173,6 +177,7 @@ from __future__ import annotations
 import argparse
 import ast
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -497,8 +502,17 @@ _FUTURE_WAITERS = {"wait_for", "shield"}
 _COMPLETERS = {"set_result", "set_exception", "set", "cancel"}
 
 #: A future's or event's methods that only read it: a callback may call these
-#: on what it settles and still settle nothing else.
+#: on what it settles and still settle nothing else. Anywhere else a read is a
+#: way to hand the future's state on (a relay polling ``done()``), so it is
+#: treated like any other use.
 _FUTURE_READERS = {"done", "cancelled", "result", "exception", "is_set"}
+
+#: Calls that hand on every local of the function making them
+#: (``chain(**locals())``, ``vars()``; ``vars(self)`` hands on ``self``'s).
+_SCOPE_READERS = {"locals", "vars"}
+
+#: The shared, never-mutated default of ``_Function.fresh_self_stores``.
+_NO_STORES: dict[str, int] = {}
 
 #: A callable reference: ``("self", name)`` for ``self.name``, ``("name",
 #: name)`` for a bare name, ``("attr", name)`` for ``anything.name``, and
@@ -608,7 +622,12 @@ def _result_awaited(node: ast.AST) -> ast.Call | None:
 
 
 def _completion(callback: ast.AST) -> "frozenset[str] | _Ref | None":
-    """Which future a ``push_screen`` result callback settles.
+    """Which futures a ``push_screen`` result callback settles, as far as
+    the callback expression alone shows.
+
+    This says only WHAT the callback settles. Whether those futures are
+    independent of the one awaited -- nothing chains them to it -- is
+    decided later (:func:`_settled_by`, ``_WaitGraph._contained``).
 
     Args:
         callback: The callback expression handed to ``push_screen``.
@@ -622,7 +641,8 @@ def _completion(callback: ast.AST) -> "frozenset[str] | _Ref | None":
         the module is collected (see :func:`_settled_by`), or ``None`` when
         even that is unknown -- including a lambda whose parameter shadows
         the name it settles or calls (``lambda r, fut=answer:
-        fut.set_result(r)``), or whose arguments make a call of their own.
+        fut.set_result(r)``, ``lambda r, self=self._peer: self._settle(r)``),
+        or whose arguments make a call of their own.
     """
     target = callback
     shadowed: set[str] = set()
@@ -650,7 +670,10 @@ def _completion(callback: ast.AST) -> "frozenset[str] | _Ref | None":
             if future.partition(".")[0] in shadowed:
                 return None
             return frozenset((future,))
-    return _ref(callback)
+    ref = _ref(callback)
+    if ref is not None and ref[0] == "self" and "self" in shadowed:
+        return None  # `self` is the lambda's own default, not the method's
+    return ref
 
 
 class _Function:
@@ -698,26 +721,37 @@ class _Function:
         self.wait_pushes = 0
         # `push_screen(..., callback=...)`, and the futures/events this
         # function creates and awaits: together, a hand-rolled wait. Each
-        # push's entry says which futures its callback PROVABLY settles
-        # (`None`: unknown; a `("self", name)` reference: resolved per graph
-        # -- see `_settled_by`). `push_settles` is that list as one graph
-        # resolved it.
+        # push's entry names the futures its callback settles when they are
+        # fresh futures of this function that its body hands on nowhere
+        # (`None`: unknown or unshown; a `("self", name)` reference: resolved
+        # per graph -- see `_settled_by`). `push_settles` is that list as one
+        # graph resolved it, with each `self.X` entry also checked against
+        # every use of `.X` in the package (`_WaitGraph._contained`).
         self.callback_pushes = 0
         self.push_callbacks: list[frozenset[str] | _Ref | None] = []
         self.push_settles: list[frozenset[str] | _Ref | None] = []
         # `fut.set_result(...)`/`event.set()` in this body: what it settles
         # when it is itself a push's callback ...
         self.completes: set[str] = set()
-        # ... and what that provably amounts to, when it settles nothing
-        # else visible: called as a nested def (every name it settles is
-        # free, read from the enclosing def) or as a method (every name is
-        # `self.X`). `None`: not provable. Set by `_collect_module`.
+        # ... whether settling (and inspecting) those is ALL its body
+        # visibly does -- `None` if not -- ...
+        self.settles_only: frozenset[str] | None = None
+        # ... and what that amounts to in its caller's names: called as a
+        # nested def (every name it settles is free, read from the enclosing
+        # def) or as a method (every name is `self.X`). `None`: not shown.
+        # Set by `_collect_module`.
         self.settles_as_nested: frozenset[str] | None = None
         self.settles_as_method: frozenset[str] | None = None
         self.futures: set[str] = set()
-        # The created futures whose name this function only ever binds to a
-        # fresh future, so no other name or object can be one of them.
+        # The created futures that are this function's alone: every binding
+        # of the name is a single-target fresh-future assignment, and its
+        # body (nested defs and lambdas included) reads it nowhere but to
+        # settle it -- so no other name, object or relay can reach one.
         self.fresh_futures: frozenset[str] = frozenset()
+        # How many of those bindings each `self.X` among them has: the graph
+        # accepts such a future only when they are every use of `.X` in the
+        # package. Shared and empty until `_collect_module` sets it.
+        self.fresh_self_stores: dict[str, int] = _NO_STORES
         self.awaited_futures: set[str] = set()
         # The futures it hands back: `return fut` (TASK-33621.33).
         self.returned_futures: set[str] = set()
@@ -754,15 +788,23 @@ class _Function:
         return f"{self.module.rel}::{owner}{self.name}"
 
     def _pushes_settling(self, futures: set[str]) -> int:
-        """This body's callback pushes that may settle one of ``futures``.
+        """This body's callback pushes that may settle one of ``futures``,
+        or a future that one of them is chained to.
 
-        Every push counts unless its callback PROVABLY settles only other
-        futures: fresh ones this function created, named in its own scope,
-        with nothing else visible in the callback (see :func:`_settled_by`).
-        A callback whose effect is unknown, or that settles a name this
-        function cannot prove is a different future -- a helper's
-        parameter, a local alias -- counts by shape (recall over precision,
-        PR #2987 review round 2)."""
+        Every push counts unless its callback visibly settles nothing but
+        other fresh futures this function created, named in its own scope,
+        and none of those can reach anything else: read nowhere but to
+        settle them (or, inside a callback that settles one alone, to
+        inspect it), and for a ``self`` future, no other use of that
+        attribute name in the package (see :func:`_settled_by` and
+        ``_WaitGraph._contained``). Settling a DIFFERENT future is not
+        enough: a done-callback, a relay or a handoff can chain it to the
+        awaited one, which then hangs just the same (PR #2987 review,
+        round 3). A callback whose effect is unknown, or that settles a name
+        this function cannot show is a separate, contained future -- a
+        helper's parameter, a local alias -- counts by shape (recall over
+        precision, round 2). The check is syntactic: dynamic access
+        (``getattr``, ``__dict__``) is not seen."""
         if not futures:
             return 0
         return sum(
@@ -788,9 +830,10 @@ class _Function:
         (TASK-33621.33). An ``async def`` returning it is not: ``await
         helper()`` only obtains the future (see :attr:`pending_pushes`).
 
-        Only a push whose callback may settle THAT future counts: one whose
-        callback provably settles only a different future leaves this await
-        to be settled elsewhere (PR #2987 review; :meth:`_pushes_settling`).
+        Only a push whose callback may settle THAT future, or one chained to
+        it, counts: one whose callback settles only a different, contained
+        future leaves this await to be settled elsewhere (PR #2987 review;
+        :meth:`_pushes_settling`).
         """
         settled = self.awaited_futures
         if not self.is_async:
@@ -872,6 +915,17 @@ class _Module:
         self.handoffs: list[
             tuple[_Ref, int, _Ref, str | None, _Function | None, str | None]
         ] = []
+        # Every `.X` attribute node in the module, by `X`, except the
+        # receiver of a settle call (`self.X.set_result`) and an inspection
+        # (`self.X.done()`) inside a def that settles `self.X` alone: the
+        # uses that can hand a future stored at `.X` on, or rebind it.
+        self.attr_uses: dict[str, int] = {}
+        # Names an instance or a class can bind OVER a method of the same
+        # name: every attribute stored or deleted (`self.x = ...`, `obj.x =
+        # ...`) and every name a class body binds other than by `def`
+        # (assignment, import, nested class -- a comprehension's or a
+        # lambda's own names too, which only over-counts).
+        self.rebound_members: set[str] = set()
 
 
 def _call_name(call: ast.Call) -> str | None:
@@ -1195,11 +1249,14 @@ _ScopeFacts = tuple[
 
 
 def _scope_facts(node: ast.FunctionDef | ast.AsyncFunctionDef) -> _ScopeFacts:
-    """What a def's OWN scope binds and calls: the facts that prove which
-    future a push's callback settles (PR #2987 review, round 2).
+    """What a def's OWN scope binds and calls: the facts that show which
+    future a push's callback settles, and that the name is only ever that
+    future in this scope (PR #2987 review, round 2). Whether the future
+    reaches anything else is :func:`_escaping_names`'s question.
 
     Read only for the defs that push with a callback or settle a future --
-    a handful in the package -- while their module's tree is still alive.
+    a few hundred in the package (206 defs push with a callback) -- while
+    their module's tree is still alive.
 
     Args:
         node: The ``def``/``async def``.
@@ -1209,11 +1266,13 @@ def _scope_facts(node: ast.FunctionDef | ast.AsyncFunctionDef) -> _ScopeFacts:
         many times its body binds each bare name and ``self.attr``
         (assignment, ``for``/``with``/``except``/``import``/``match``
         targets, nested ``def``/``class`` names, ``global``/``nonlocal``,
-        and a nested def's ``nonlocal`` rebinding); how many of those
-        bindings are one fresh future alone (``x = loop.create_future()``,
-        not ``x = y = loop.create_future()``); each call's ``(receiver,
-        method)`` -- ``(None, None)`` for a bare call; and whether the body
-        runs code this does not read (a class body).
+        and a nested def's ``nonlocal`` rebinding -- a nested def's
+        ``self.attr`` store is left to the package-wide use count); how many
+        of those bindings are one fresh future alone (``x =
+        loop.create_future()``, not ``x = y = loop.create_future()``); each
+        call's ``(receiver, method)`` -- ``(None, None)`` for a bare call;
+        and whether calling it runs code this does not read (a class body,
+        or a decorator, which may replace the def or wrap it in anything).
     """
     args = node.args
     params = {
@@ -1226,7 +1285,7 @@ def _scope_facts(node: ast.FunctionDef | ast.AsyncFunctionDef) -> _ScopeFacts:
     bound: dict[str, int] = {}
     fresh: dict[str, int] = {}
     calls: set[tuple[str | None, str | None]] = set()
-    opaque = False
+    opaque = bool(node.decorator_list)
 
     def bind(name: str) -> None:
         bound[name] = bound.get(name, 0) + 1
@@ -1296,14 +1355,21 @@ def _scope_facts(node: ast.FunctionDef | ast.AsyncFunctionDef) -> _ScopeFacts:
 
 
 def _prove_settles(function: _Function, facts: _ScopeFacts) -> None:
-    """Set what ``function``, used as a push's callback, provably settles.
+    """Set what ``function``, used as a push's callback, settles -- when
+    its body shows that settling is all it does.
 
-    Only when settling is ALL it visibly does: every call it makes settles
-    or reads a future it settles, and it defines no class. Then, called as
-    a nested def, it settles the enclosing def's futures of those names
-    when every one is free here -- not a parameter, local or default of its
-    own; called as a method, it settles ``self`` futures when ``self`` is
-    its untouched first parameter.
+    That is: every call it makes settles or inspects a future it settles,
+    and it has no class body and no decorator. Then, called as a nested
+    def, it settles the enclosing def's futures of those names when every
+    one is free here -- not a parameter, local or default of its own;
+    called as a method, it settles ``self`` futures when ``self`` is its
+    untouched first parameter. ``settles_only`` records either answer, so
+    an inspection there (``if not fut.done()``) is not counted as handing
+    ``fut`` on (:func:`_escaping_names`, ``_Module.attr_uses``).
+
+    This shows WHAT the callback settles, not that the awaited future is
+    independent of it: that needs the settled futures to be contained too
+    (:func:`_settled_by`).
     """
     params, bound, _, calls, opaque = facts
     settled = function.completes
@@ -1326,6 +1392,78 @@ def _prove_settles(function: _Function, facts: _ScopeFacts) -> None:
         and all(name.startswith("self.") for name in settled)
     ):
         function.settles_as_method = frozenset(settled)
+    if function.settles_as_nested is not None or function.settles_as_method is not None:
+        function.settles_only = frozenset(settled)
+
+
+def _escaping_names(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    settles_only: Callable[[ast.AST], frozenset[str] | None],
+) -> set[str] | None:
+    """The bare names a def's subtree may hand on: every name it loads,
+    nested defs, lambdas and class bodies included, except as the receiver
+    of a settle call (``fut.set_result``, ``event.set``, called or not),
+    and of an inspection (``fut.done()``) inside a nested def whose whole
+    effect is settling that one name (:func:`_prove_settles`).
+
+    A future the push's callback settles must not be among them. Textual
+    runs the callback through the requester's ``call_next``, so while the
+    handler awaits, that future is never settled -- and an awaited future
+    chained to it by a done-callback, a relay that awaits or polls it, or a
+    handoff (``watch(closed, answer)``) hangs just the same (PR #2987
+    review, round 3). Settling it again elsewhere (``fut.cancel()``) hands
+    nothing on, so it does not count.
+
+    Args:
+        node: The pushing ``def``/``async def``.
+        settles_only: A nested def node's ``_Function.settles_only``.
+
+    Returns:
+        Those names, or ``None`` when the body hands on EVERY local --
+        ``locals()``, ``vars()``.
+    """
+    escaped: set[str] = set()
+    stack: list[tuple[ast.AST, ast.AST | None]] = [(stmt, node) for stmt in node.body]
+    while stack:
+        child, owner = stack.pop()
+        kind = type(child)
+        if kind is ast.Name:
+            if child.ctx.__class__ is ast.Load:
+                escaped.add(child.id)
+            continue
+        if kind is ast.Attribute:
+            value = child.value
+            if value.__class__ is ast.Name:
+                if child.attr in _COMPLETERS:
+                    continue
+                if child.attr in _FUTURE_READERS:
+                    if owner is None or settles_only(owner) != {value.id}:
+                        escaped.add(value.id)
+                    continue
+            stack.append((value, owner))
+            continue
+        if (
+            kind is ast.Call
+            and child.func.__class__ is ast.Name
+            and child.func.id in _SCOPE_READERS
+        ):
+            return None
+        # A nested def's body reads for that def; a lambda's or a class
+        # body's for no def, so an inspection there always hands on.
+        scoped = kind in _DEFS or kind is ast.Lambda or kind is ast.ClassDef
+        inner = child if kind in _DEFS else None
+        for field in child._fields:
+            if field == "ctx":
+                continue
+            value = getattr(child, field, None)
+            reader = inner if scoped and field == "body" else owner
+            if value.__class__ is list:
+                stack.extend(
+                    (item, reader) for item in value if isinstance(item, ast.AST)
+                )
+            elif isinstance(value, ast.AST):
+                stack.append((value, reader))
+    return escaped
 
 
 def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function]]:
@@ -1349,6 +1487,9 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
     nodes: dict[_Function, ast.FunctionDef | ast.AsyncFunctionDef] = {}
     # `id()` of each dead def node: the tree outlives this pass.
     dead: set[int] = set()
+    # `self.X.done()` and the like: (the def it is in, `self.X`, `X`) --
+    # not a use of `.X` only if that def settles `self.X` alone.
+    inspected: list[tuple[_Function, str, str]] = []
     AST = ast.AST
     stack: list[
         tuple[
@@ -1361,6 +1502,8 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
         if kind is ast.ClassDef:
             module.classes.setdefault(node.name, {})
             module.bases.setdefault(node.name, []).extend(_base_names(node))
+            if fn is None and cls is not None:
+                module.rebound_members.add(node.name)  # a class in a class body
             if fn is not None:
                 outer = fn
             module.class_scopes[node.name] = outer
@@ -1385,6 +1528,34 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
         elif kind is ast.Lambda:
             sink = None
         else:
+            if kind is ast.Attribute:
+                # Every `.X`, dead code included (counting more only keeps
+                # a push), less the receivers of a settle -- `.X.set_result`
+                # -- whose own node is counted when it is visited next.
+                attr = node.attr
+                uses = module.attr_uses
+                uses[attr] = uses.get(attr, 0) + 1
+                if node.ctx.__class__ is not ast.Load:
+                    module.rebound_members.add(attr)
+                value = node.value
+                if value.__class__ is ast.Attribute:
+                    if attr in _COMPLETERS:
+                        uses[value.attr] = uses.get(value.attr, 0) - 1
+                    elif attr in _FUTURE_READERS and sink is not None:
+                        future = _future_name(value)
+                        if future is not None:
+                            inspected.append((sink, future, value.attr))
+            elif fn is None and cls is not None:
+                # A class body's own binding, in any branch: `_settle =
+                # make_settler()` there is what `self._settle` dispatches to,
+                # whatever a base class's `def _settle` does.
+                if kind is ast.Name:
+                    if node.ctx.__class__ is not ast.Load:
+                        module.rebound_members.add(node.id)
+                elif kind is ast.alias:
+                    module.rebound_members.add(
+                        (node.asname or node.name).partition(".")[0]
+                    )
             # A binding made in dead code never happens.
             inert = (fn is not None and not fn.live) or (
                 outer is not None and not outer.live
@@ -1481,55 +1652,89 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
     for function, scope in facts.items():
         if function.completes:
             _prove_settles(function, scope)
-    for function, (params, bound, fresh, _, _) in facts.items():
-        if not function.push_callbacks:
-            continue
+    # An inspection inside a def that settles that `self` future alone hands
+    # nothing on: it is not a use of the attribute.
+    uses = module.attr_uses
+    for sink, future, attr in inspected:
+        if sink.settles_only == {future}:
+            uses[attr] -= 1
+    pushers = [function for function in facts if function.push_callbacks]
+    by_node = {id(node): owner for owner, node in nodes.items()} if pushers else {}
+
+    def settles_only(node: ast.AST) -> frozenset[str] | None:
+        return by_node[id(node)].settles_only
+
+    for function in pushers:
+        params, bound, fresh, _, _ = facts[function]
+        escaped = _escaping_names(nodes[function], settles_only)
         rebinds_self = "self" in bound
         function.fresh_futures = frozenset(
             name
             for name in function.futures
-            if name not in params
+            if escaped is not None
+            and name not in params
+            and name not in escaped
             and bound.get(name, 0) == fresh.get(name, 0)
             and not (rebinds_self and name.startswith("self."))
         )
+        stores = {
+            name: fresh[name]
+            for name in function.fresh_futures
+            if name.startswith("self.")
+        }
+        if stores:
+            function.fresh_self_stores = stores
         function.push_callbacks = [
-            _settled_by(settles, function, bound)
+            _settled_by(settles, function, params, bound)
             for settles in function.push_callbacks
         ]
     return module, functions
 
 
 def _settled_by(
-    settles: "frozenset[str] | _Ref | None", fn: _Function, bound: dict[str, int]
+    settles: "frozenset[str] | _Ref | None",
+    fn: _Function,
+    params: set[str],
+    bound: dict[str, int],
 ) -> "frozenset[str] | _Ref | None":
-    """What a push's callback PROVABLY settles, now that every def in its
+    """What a push's callback settles, when it can only be futures that
+    ``fn`` created and nothing else can reach, now that every def in its
     module is known.
 
-    A push is left out of a future's wait only on this proof, so anything
+    A push is left out of a future's wait only on that showing, so anything
     short of it is ``None`` -- unknown, matched by shape (recall over
-    precision). The first cut compared the names a callback's body settles
-    with ``fn``'s own future names across scopes, and so took a helper's
-    parameter (``partial(settle, answer)``), a callback's local alias
-    (``fut = answer``) or a pusher-side alias (``answer = self._answer``)
-    for "a different future", and dropped pushes 5918cfd1df caught while
-    the real-tree census stayed byte-identical (PR #2987 review, round 2).
+    precision). Settling a different future is not enough on its own: a
+    done-callback, a relay or a handoff can chain that future to the
+    awaited one, and Textual never settles it while the handler awaits
+    (PR #2987 review, round 3) -- hence :attr:`_Function.fresh_futures`
+    requires the future to escape nowhere. The first cut compared the names
+    a callback's body settles with ``fn``'s own future names across scopes,
+    and so took a helper's parameter (``partial(settle, answer)``), a
+    callback's local alias (``fut = answer``) or a pusher-side alias
+    (``answer = self._answer``) for "a different future", and dropped
+    pushes 5918cfd1df caught while the real-tree census stayed
+    byte-identical (round 2).
 
     Args:
         settles: The push's entry from :func:`_completion`.
         fn: The function holding the push.
+        params: ``fn``'s parameter names (:func:`_scope_facts`).
         bound: How often ``fn``'s body binds each name (:func:`_scope_facts`).
 
     Returns:
-        The futures settled, named in ``fn``'s scope, when every one is a
-        fresh future ``fn`` created (:attr:`_Function.fresh_futures`) and
-        settling them is all the callback visibly does -- a future's own
-        ``set_result``, or a def nested in ``fn`` (bound once there) whose
-        settled names are all free (:func:`_prove_settles`). A
-        ``("self", name)`` reference is returned as is: what ``self.name``
-        dispatches to depends on the subclasses in the whole package, so
-        each graph resolves it (``_WaitGraph._self_settles``). ``None`` for
-        anything else -- a module function's or a method's bare names are
-        never ``fn``'s locals.
+        The futures settled, named in ``fn``'s scope, when every one is in
+        :attr:`_Function.fresh_futures` -- every binding of the name is a
+        single-target fresh-future assignment, not a parameter, and the
+        body hands it on nowhere -- and settling them is all the callback
+        visibly does: a future's own ``set_result``, or a def nested in
+        ``fn`` that is the name's only binding (not a parameter it may
+        leave in place) and whose settled names are all free
+        (:func:`_prove_settles`). A ``("self", name)`` reference is returned
+        as is: what ``self.name`` dispatches to depends on the subclasses in
+        the whole package, so each graph resolves it, and checks every
+        ``self.X`` it settles against the package's uses of ``.X``
+        (``_WaitGraph._contained``). ``None`` for anything else -- a module
+        function's or a method's bare names are never ``fn``'s locals.
     """
     if settles is None:
         return None
@@ -1541,7 +1746,7 @@ def _settled_by(
     if kind != "name" and kind != "lambda":
         return None
     callee = fn.nested.get(name)
-    if callee is None or bound.get(name, 0) != 1:
+    if callee is None or name in params or bound.get(name, 0) != 1:
         return None
     proved = callee.settles_as_nested
     if proved is None or not proved <= fn.fresh_futures:
@@ -1633,15 +1838,21 @@ class _WaitGraph:
                         (module, cls)
                     )
         self._self_cache: dict[tuple[str, str, str], list[_Target]] = {}
-        # What each callback push provably settles, with `callback=self.x`
-        # resolved through every class `self` can be -- per graph, since a
-        # module swapped into another collection can add an override.
+        # Package-wide facts about attribute names (see `_Module.attr_uses`
+        # and `rebound_members`), read for the few callback pushes that
+        # settle a `self` future or call a `self` method.
+        self._attr_uses: dict[str, int] = {}
+        self._rebound_members: set[str] = set().union(
+            *(module.rebound_members for module in self.modules)
+        )
+        # What each callback push settles, with `callback=self.x` resolved
+        # through every class `self` can be -- per graph, since a module
+        # swapped into another collection can add an override or a use.
         for fn in self.functions:
             fn.push_settles = fn.push_callbacks
-            if any(entry.__class__ is tuple for entry in fn.push_callbacks):
+            if any(entry is not None for entry in fn.push_callbacks):
                 fn.push_settles = [
-                    self._self_settles(entry, fn) if entry.__class__ is tuple else entry
-                    for entry in fn.push_callbacks
+                    self._contained(entry, fn) for entry in fn.push_callbacks
                 ]
         # `obj.f(x)` matched by name: the same answer for every call of `f`
         # at one position, and most of the package's handoffs are this shape.
@@ -2211,20 +2422,65 @@ class _WaitGraph:
             self._self_cache[key] = cached
         return cached
 
+    def _contained(
+        self, entry: "frozenset[str] | _Ref | None", fn: _Function
+    ) -> frozenset[str] | None:
+        """A push's entry (:func:`_settled_by`) as this graph settles it:
+        the futures its callback settles, when nothing else can reach them,
+        else ``None``.
+
+        A ``callback=self.x`` reference is resolved first
+        (:meth:`_self_settles`). Then each ``self.X`` it settles must have no
+        use of ``.X`` anywhere in the package beyond ``fn``'s own fresh
+        stores -- settle calls aside (``_Module.attr_uses``). Another
+        method's ``self.X = self._answer``, a nested def's, a done-callback
+        on ``self.X`` or a relay awaiting it each chain it to what the
+        handler awaits, and ``fn``'s own scope shows none of them (PR #2987
+        review, round 3). Matched by name, not by class: an unrelated
+        class's ``.X`` keeps the push too (recall over precision).
+        """
+        if entry is None:
+            return None
+        if entry.__class__ is tuple:
+            entry = self._self_settles(entry, fn)
+            if entry is None:
+                return None
+        for name in entry:
+            if name.startswith("self.") and self._attr_use_count(
+                name[5:]
+            ) != fn.fresh_self_stores.get(name):
+                return None
+        return entry
+
+    def _attr_use_count(self, attr: str) -> int:
+        count = self._attr_uses.get(attr)
+        if count is None:
+            count = sum(module.attr_uses.get(attr, 0) for module in self.modules)
+            self._attr_uses[attr] = count
+        return count
+
     def _self_settles(self, ref: _Ref, fn: _Function) -> frozenset[str] | None:
-        """What a ``callback=self.name`` push in ``fn`` provably settles.
+        """What a ``callback=self.name`` push in ``fn`` settles, when every
+        definition ``self.name`` can dispatch to settles ``self`` futures
+        alone.
 
         ``self.name`` runs whatever the instance's class dispatches it to,
         so this is the union over everything :meth:`_self_targets` resolves
         -- ``fn``'s class, its bases and every in-package subclass -- and
-        only when each one is a method that provably settles ``self``
-        futures alone (:func:`_prove_settles`) and all of them are fresh
-        futures ``fn`` created. Reading only the class's own method missed
-        a subclass override that settles the awaited future (PR #2987
-        review, round 2). ``None`` otherwise.
+        only when each one is a method whose whole visible effect is
+        settling ``self`` futures (:func:`_prove_settles`) and all of them
+        are fresh futures ``fn`` created. Reading only the class's own
+        method missed a subclass override that settles the awaited future
+        (PR #2987 review, round 2). ``None`` otherwise, and whenever
+        anything in the package can bind ``name`` over those methods: an
+        attribute store (``self._settle = self._finish`` in ``__init__``)
+        or a class body's non-``def`` binding (a subclass's ``_settle =
+        make_settler()``), which dispatch reads before the class's method
+        (round 3). Whether those futures are contained is
+        :meth:`_contained`'s question.
         """
         cls = self._class_of(fn)
-        if cls is None:
+        if cls is None or ref[1] in self._rebound_members:
             return None
         settled: set[str] = set()
         for target in self._self_targets(fn.module, cls, ref[1]):

@@ -3454,6 +3454,50 @@ class S(Base):
         self.app.push_screen(Review(), callback=self._settle)
 """
     + _AWAIT_STORED,
+    "a-partial-of-its-completer": """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    other = asyncio.get_running_loop().create_future()
+    screen.app.push_screen(Review(), callback=partial(other.set_result))
+    answer.set_result(None)
+    return await answer
+"""
+    + _AWAIT_REVIEW,
+    "an-event-a-lambda-sets": """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    closed = asyncio.Event()
+    screen.app.push_screen(Review(), callback=lambda _: closed.set())
+    answer.set_result(None)
+    return await answer
+"""
+    + _AWAIT_REVIEW,
+    # Settling it again elsewhere hands nothing on: no reader can see it.
+    "settled-again-on-the-way-out": """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    other = asyncio.get_running_loop().create_future()
+    screen.app.push_screen(Review(), callback=other.set_result)
+    answer.set_result(None)
+    try:
+        return await answer
+    finally:
+        other.cancel()
+"""
+    + _AWAIT_REVIEW,
+    "a-method-inspecting-the-future-it-settles": """
+class S:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._other = asyncio.get_running_loop().create_future()
+        self._answer.set_result(None)
+        self.app.push_screen(Review(), callback=self._settle)
+
+    def _settle(self, result):
+        if not self._other.done():
+            self._other.set_result(result)
+"""
+    + _AWAIT_STORED,
 }
 
 
@@ -3461,9 +3505,352 @@ class S(Base):
 def test_w003_a_callback_settling_only_another_future_still_does_not_wait(shape):
     """The precision the PR #2987 review asked for still holds: a callback
     whose whole effect is settling a different future the pushing function
-    created -- inspecting that future first, behind a forwarding lambda, or
-    as a method ``self`` inherits -- adds no wait."""
+    created -- directly, through ``partial`` or a lambda, inspecting that
+    future first (in a nested def or a method), behind a forwarding lambda,
+    or as a method ``self`` inherits -- adds no wait, and neither does
+    settling that future again elsewhere, which hands nothing on."""
     assert _w003(_SETTLES_ONLY_ANOTHER_FUTURE[shape]) == []
+
+
+# Settling a DIFFERENT future does not make the push unrelated to the
+# awaited one. Textual runs the callback through the requester's
+# `call_next`, so while the handler awaits, nothing the callback would
+# settle is ever settled -- and any awaited future that is chained to one
+# of those futures hangs too. 511b3ddd49 asked only whether the settled
+# name was bound fresh, never whether that future ESCAPES: is read anywhere
+# other than to settle it, or (inside a callback that settles it and nothing
+# else) to inspect it. Each shape below is a row on 5918cfd1df and was
+# silent on 511b3ddd49 (PR #2987 review, round 3).
+
+#: (source, row): the settled future feeds the awaited one.
+_SETTLED_FUTURE_FEEDS_THE_AWAITED_ONE = {
+    "a-done-callback-chains-it": (
+        """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    closed = asyncio.get_running_loop().create_future()
+    closed.add_done_callback(lambda f: answer.set_result(f.result()))
+    screen.app.push_screen(Review(), callback=closed.set_result)
+    return await answer
+"""
+        + _AWAIT_REVIEW,
+        ("S.on_button_pressed", "review"),
+    ),
+    "a-relay-task-awaits-it": (
+        """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    closed = asyncio.Event()
+
+    async def relay():
+        await closed.wait()
+        answer.set_result(True)
+
+    asyncio.create_task(relay())
+    screen.app.push_screen(Review(), callback=lambda _: closed.set())
+    return await answer
+"""
+        + _AWAIT_REVIEW,
+        ("S.on_button_pressed", "review"),
+    ),
+    "a-relay-task-polls-it": (
+        """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    closed = asyncio.get_running_loop().create_future()
+
+    async def relay():
+        while not closed.done():
+            await asyncio.sleep(0.05)
+        answer.set_result(closed.result())
+
+    asyncio.create_task(relay())
+    screen.app.push_screen(Review(), callback=closed.set_result)
+    return await answer
+"""
+        + _AWAIT_REVIEW,
+        ("S.on_button_pressed", "review"),
+    ),
+    "it-is-handed-on": (
+        """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    closed = asyncio.get_running_loop().create_future()
+    screen.watch_closed(closed, answer)
+    screen.app.push_screen(Review(), callback=closed.set_result)
+    return await answer
+"""
+        + _AWAIT_REVIEW,
+        ("S.on_button_pressed", "review"),
+    ),
+    "every-local-is-handed-on": (
+        """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    closed = asyncio.get_running_loop().create_future()
+    screen.chain(**locals())
+    screen.app.push_screen(Review(), callback=closed.set_result)
+    return await answer
+"""
+        + _AWAIT_REVIEW,
+        ("S.on_button_pressed", "review"),
+    ),
+    "a-done-callback-chains-the-stored-future": (
+        """
+class S:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._closed = asyncio.get_running_loop().create_future()
+        self._closed.add_done_callback(self._relay)
+        self.app.push_screen(Review(), callback=self._closed.set_result)
+
+    def _relay(self, closed):
+        self._answer.set_result(closed.result())
+"""
+        + _AWAIT_STORED,
+        ("S.on_button_pressed", "S._open"),
+    ),
+    "a-relay-method-awaits-the-stored-future": (
+        """
+class S:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._closed = asyncio.Event()
+        asyncio.create_task(self._relay())
+        self.app.push_screen(Review(), callback=lambda _: self._closed.set())
+
+    async def _relay(self):
+        await self._closed.wait()
+        self._answer.set_result(True)
+"""
+        + _AWAIT_STORED,
+        ("S.on_button_pressed", "S._open"),
+    ),
+    "a-timer-polls-the-stored-future": (
+        """
+class S:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._closed = asyncio.get_running_loop().create_future()
+        self.set_interval(0.05, self._poll)
+        self.app.push_screen(Review(), callback=self._closed.set_result)
+
+    def _poll(self):
+        if self._closed.done() and not self._answer.done():
+            self._answer.set_result(self._closed.result())
+"""
+        + _AWAIT_STORED,
+        ("S.on_button_pressed", "S._open"),
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_SETTLED_FUTURE_FEEDS_THE_AWAITED_ONE))
+def test_w003_a_callback_settling_a_future_the_awaited_one_hangs_on_still_waits(
+    shape,
+):
+    """A done-callback, a relay that awaits or polls it, a handoff, or
+    ``locals()`` can chain the settled future to the awaited one, and then
+    the await hangs exactly as if the callback settled it directly. A push
+    is left out only when the settled future cannot reach anything: it is
+    read nowhere but as the receiver of a settle call, or of an inspection
+    inside a callback that settles it alone -- for a ``self`` future, on
+    every attribute of that name in the package."""
+    source, (root, site) = _SETTLED_FUTURE_FEEDS_THE_AWAITED_ONE[shape]
+    assert _w003(source) == [_row(root, site)]
+
+
+#: (source, row): the proof's own premises -- "this name is only ever that
+#: fresh future", "this callback is that def or method" -- do not hold.
+_SETTLING_PROOF_PREMISE_FAILS = {
+    "a-nested-def-rebinds-the-settled-attribute": (
+        """
+class S:
+    async def on_button_pressed(self, event):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._other = asyncio.get_running_loop().create_future()
+
+        def link():
+            self._other = self._answer
+
+        link()
+        self.app.push_screen(Review(), callback=self._other.set_result)
+        await self._answer
+""",
+        ("S.on_button_pressed", None),
+    ),
+    "another-method-rebinds-the-settled-attribute": (
+        """
+class S:
+    async def on_button_pressed(self, event):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._other = asyncio.get_running_loop().create_future()
+        self._link()
+        self.app.push_screen(Review(), callback=self._other.set_result)
+        await self._answer
+
+    def _link(self):
+        self._other = self._answer
+""",
+        ("S.on_button_pressed", None),
+    ),
+    "another-method-rebinds-what-the-callback-method-settles": (
+        """
+class S:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._other = asyncio.get_running_loop().create_future()
+        self._link()
+        self.app.push_screen(Review(), callback=self._settle)
+
+    def _link(self):
+        self._other = self._answer
+
+    def _settle(self, result):
+        self._other.set_result(result)
+"""
+        + _AWAIT_STORED,
+        ("S.on_button_pressed", "S._open"),
+    ),
+    "a-decorated-nested-callback": (
+        """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    other = asyncio.get_running_loop().create_future()
+
+    @also_settle(answer)
+    def done(result):
+        other.set_result(result)
+
+    screen.app.push_screen(Review(), callback=done)
+    return await answer
+"""
+        + _AWAIT_REVIEW,
+        ("S.on_button_pressed", "review"),
+    ),
+    "a-decorated-callback-method": (
+        """
+class S:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._other = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Review(), callback=self._settle)
+
+    @also_settle("_answer")
+    def _settle(self, result):
+        self._other.set_result(result)
+"""
+        + _AWAIT_STORED,
+        ("S.on_button_pressed", "S._open"),
+    ),
+    "an-instance-attribute-shadows-the-callback-method": (
+        """
+class S:
+    def __init__(self):
+        self._settle = self._finish
+
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._other = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Review(), callback=self._settle)
+
+    def _settle(self, result):
+        self._other.set_result(result)
+
+    def _finish(self, result):
+        self._answer.set_result(result)
+"""
+        + _AWAIT_STORED,
+        ("S.on_button_pressed", "S._open"),
+    ),
+    "a-built-instance-attribute-shadows-the-callback-method": (
+        """
+class S:
+    def __init__(self):
+        self._settle = self._settler()
+
+    def _settler(self):
+        return lambda result: self._answer.set_result(result)
+
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._other = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Review(), callback=self._settle)
+
+    def _settle(self, result):
+        self._other.set_result(result)
+"""
+        + _AWAIT_STORED,
+        ("S.on_button_pressed", "S._open"),
+    ),
+    "a-subclass-body-rebinds-the-callback-method": (
+        """
+class S:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._other = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Review(), callback=self._settle)
+
+    def _settle(self, result):
+        self._other.set_result(result)
+"""
+        + _AWAIT_STORED
+        + """
+
+class Sub(S):
+    _settle = make_settler("_answer")
+""",
+        ("S.on_button_pressed", "S._open"),
+    ),
+    "a-lambda-shadows-self": (
+        """
+class S:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._other = asyncio.get_running_loop().create_future()
+        self.app.push_screen(
+            Review(), callback=lambda result, self=self._peer: self._settle(result)
+        )
+
+    def _settle(self, result):
+        self._other.set_result(result)
+"""
+        + _AWAIT_STORED,
+        ("S.on_button_pressed", "S._open"),
+    ),
+    "a-nested-def-may-not-rebind-the-callback-parameter": (
+        """
+async def review(screen, flag, done=None):
+    answer = asyncio.get_running_loop().create_future()
+    other = asyncio.get_running_loop().create_future()
+    if flag:
+        def done(result):
+            other.set_result(result)
+
+    screen.app.push_screen(Review(), callback=done)
+    return await answer
+
+
+class S:
+    async def on_button_pressed(self, event):
+        await review(self, self.flag)
+""",
+        ("S.on_button_pressed", "review"),
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_SETTLING_PROOF_PREMISE_FAILS))
+def test_w003_a_settling_proof_whose_premise_fails_still_waits(shape):
+    """The proof assumes the settled name is only ever its fresh future and
+    the callback is the def or method it names. A nested def or another
+    method can rebind the settled ``self`` attribute; a decorator can wrap
+    the callback; an instance attribute (assigned anything) or a subclass
+    body can shadow the callback method; a lambda can rebind ``self``; a
+    def that only MAY rebind a parameter leaves the caller's value in place.
+    Each of these hid a push 5918cfd1df reported."""
+    source, (root, site) = _SETTLING_PROOF_PREMISE_FAILS[shape]
+    assert _w003(source) == [_row(root, site)]
 
 
 # --------------------------------------------------------------------------
