@@ -11,8 +11,10 @@ intermediate leaks and inherited broader failures remain in the receipt.
 Native/full-corpus/performance qualification is not complete.
 The [native qualification checklist](native-qualification-checklist.md) is
 prepared but remains HOLD pending a frozen synthetic-data launch packet.
-The [fixture rebuild proposal](fixture-rebuild-proposal.md) describes the next
-checkpoint; the old ignored corpus/launcher is unavailable here.
+The approved [fixture rebuild plan](fixture-rebuild-proposal.md) and
+[fresh tooling checkpoint](fixture-rebuild-2026-10-04.md) provide the reviewed
+builder/guarded launcher and fresh-source commands. Tiny automated evidence is
+not scale/native acceptance; the old ignored corpus/launcher remains unavailable.
 
 The [2026-09-07 switcher follow-up](switcher-reuse-and-mode-follow-up.md) records
 the duplicate-tab and selected-mode corrections reported during manual QA.

@@ -1,0 +1,17 @@
+[general]
+default_tab = "chat"
+log_level = "INFO"
+
+[first_run]
+setup_completed = true
+
+[splash_screen]
+enabled = false
+
+[model_catalog]
+auto_refresh_enabled = false
+refresh_consent_recorded = false
+use_models_dev = false
+
+[web_search]
+enabled = false

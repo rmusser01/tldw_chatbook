@@ -1,6 +1,7 @@
-# Reproducible qualification fixture — proposed next checkpoint
+# Reproducible qualification fixture — approved checkpoint
 
-Status: proposed, not implemented or qualified. The old ignored
+Status: approved by the user on 2026-10-04; implementation in progress, not yet
+qualified. The old ignored
 `.superpowers/sdd/2026-09-05-character-keyword-release-isolation` corpus and
 launcher are unavailable in this task checkout. The committed historical
 Keyword JSON is a receipt, not the database or a current-head pass.
