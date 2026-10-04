@@ -1791,7 +1791,9 @@ def _voice_summary_row(app_config: Mapping[str, object]) -> "SummaryRow":
         return SummaryRow("Voice", ROW_CONFIGURED, f"{label} (default voice)")
     if saved.preset == voice_state.VOICE_PRESET_OMNIVOICE or saved.draft.use_as_default:
         return SummaryRow("Voice", ROW_CONFIGURED, label)
-    return SummaryRow("Voice", ROW_CONFIGURED, f"{label} (saved, not the default voice)")
+    return SummaryRow(
+        "Voice", ROW_CONFIGURED, f"{label} (saved, not the default voice)"
+    )
 
 
 def build_summary_rows(

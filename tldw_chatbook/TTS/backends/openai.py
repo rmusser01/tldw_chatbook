@@ -223,7 +223,9 @@ class OpenAITTSBackend(APITTSBackend):
 
         if self.pocket_tts_native:
             headers.pop("Content-Type")
-            body_kwargs: Dict[str, Any] = {"data": pocket_tts_form(request.input, voice)}
+            body_kwargs: Dict[str, Any] = {
+                "data": pocket_tts_form(request.input, voice)
+            }
         else:
             body_kwargs = {"json": payload}
         native_body = bytearray()
