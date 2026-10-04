@@ -406,6 +406,19 @@ Task11 final integrated source a5bce3259069cf5bf59aba8b9a8f9cf025dcfd75 descends
 
 Independent Task11 review /root/pr2995_task11_integration_review: Spec Compliant, Quality Approved; no blocking findings. Recorded Minor cleanup warnings stay disclosed. Scope closes integration/fixture evidence only; Task9 caps/final loading/current-head external gates remain root conditions. Earlier broad feature review plus exact source/QA carry resolves unchanged feature invariants without a duplicate broad review.
 
+### Task 12: Integrate latest dev delete, approval and activation contracts
+
+ADR required: no new ADR
+ADR path: backlog/decisions/067-indefinite-human-approval-waits.md; backlog/decisions/092-console-chat-fork-copy-and-authority-boundary.md; backlog/decisions/120-console-voice-promotion.md; backlog/decisions/219-console-chat-destinations-and-bounded-starts.md; backlog/decisions/220-console-human-decision-coordination-ownership.md.
+Reason: preserve26 newly landed commits/46paths across eleven existing runtime owners; no boundary, schema or authority decision is added.
+
+- [ ] After Task9 independent review closes, retain its exact final source3025df959c and249 artifact pins, all prior scoped reviews/maps/pass receipts, and the shared dirty checkout. Root preflight/fetch observes7d155170dc95557736a239a1ce7427981f4d50ec from previous dev1b12. Preserve recovery ref/bundle, then rebase once onto that pinned dev. No blanket ours/theirs or replacement with older5c0 preflight bytes.
+- [ ] Read task-12-authorized-selection.json and exact preflight delta/map. Preserve PR3004 durable hidden/unsaved subtree deletion/Undo/real Resend/root voice markers and exact retry metadata, bounded content-free root paging/parent-index queryplans; PR3008 inbound exact-ID cancellation/confirmation expiry/indefinite missing defaults and positive timeout/schema gates; PR3009 exact transcript await/ready proof/owned cold cancellation rollback. Three changed store methods and all other incoming methods match exactdev AST; every unaffected feature/Task7/8/9/10 method retains actual final AST. Moved host timeout route stays its existing live getter, incoming controller change is comment only.
+- [ ] Preserve all upstream tests/docs/workflow/derived rows and current feature overlays. Record the new timeout-policy bare constructor six-case setup failure before the test-only adapter, then import/use existing make_interrupt_host(controller) immediately after its original seam=None assignment. Preserve every original parameter/configpatch/assertion; no new profile/policy/skip/deadline.
+- [ ] Run only exact selected80 proposed behavior cases plus narrow CI targetset/two store ratchets/two derived scripts, with actual argv/source hashes recorded before execution. Carry earlier unchanged source/receipts, do not repeat whole fork/feature/schema/provider/scanner/MCP suites or final startup early. Freeze any new failure and immutable-dev attribution before source expansion.
+- [ ] Qualify only actual incoming formatter hunks (store two blanklines and legacy-flat four) and retain unrelated inherited formatter debt. Actual candidate store22334/cap22344, controller29327/cap29367, screen/host/compaction unchanged; no threshold raised. Keep incoming UIcensus floor136/geometry target and queryplanpins. Run scoped fatal Ruff/whitespace/source/QA union; original safe evidence remains byte exact, record upstream QA append exceptions honestly.
+- [ ] Freeze exact rebase union/source/case/QA maps and safe report/manifest, commit only source/test/required derived overlays, return clean closed-process handoff for independent Task12 scoped review. Root final loading/publication/current-head Qodo/CI/latest ancestry/normal merge remain subsequent gates.
+
 ## External review and publication
 
 - [x] Independent task review of Task1, then whole-branch review of the rebased PR. Package diffs before dispatch; reviewers do not repeat completed test runs.
