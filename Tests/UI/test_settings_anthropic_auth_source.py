@@ -1,7 +1,8 @@
 """Settings > Providers > Anthropic: sign in with an API key or the Claude subscription.
 
 TASK-34201, owner-approved design (2026-10-03): a "Sign in with" select at the
-top of Credentials, Anthropic only; choosing the subscription disables, but
+top of Credentials (since TASK-33007.2, directly above the API key row in
+Connect), Anthropic only; choosing the subscription disables, but
 keeps visible, the API key and Env var rows; a guidance line, no confirm.
 Saves go through the captured atomic writer, never a real config file.
 """
@@ -258,9 +259,12 @@ async def test_switching_a_saved_subscription_back_to_api_key_shows_the_stored_k
         await pilot.pause()
 
         assert clear.disabled is False
-        status = str(screen.query_one("#settings-provider-credential-status", Static).content)
-        assert "Claude subscription" not in status
-        assert "local config key saved" in status
+        # TASK-33007.2 folded the credential status line into the API key
+        # row: its Source word and help line say where the key comes from.
+        source = str(screen.query_one("#settings-provider-key-status", Static).content)
+        help_line = str(screen.query_one("#settings-provider-api-key-help", Static).content)
+        assert "Claude subscription" not in help_line
+        assert source == "saved in config"
 
 
 @pytest.mark.asyncio
@@ -274,5 +278,7 @@ async def test_an_unsaved_subscription_choice_shows_in_the_credential_status():
         _choose(screen, "claude_subscription")
         await pilot.pause()
 
-        status = str(screen.query_one("#settings-provider-credential-status", Static).content)
-        assert "Claude subscription" in status
+        source = str(screen.query_one("#settings-provider-key-status", Static).content)
+        help_line = str(screen.query_one("#settings-provider-api-key-help", Static).content)
+        assert source == "subscription"
+        assert "Claude subscription" in help_line

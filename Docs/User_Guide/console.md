@@ -304,7 +304,7 @@ proves nothing about your key.
 
 A known connection failure blocks sending too. When a connection test of
 this chat's server — **Test connection & list models** in Chat settings, or
-**Test Provider** in Settings — was refused or timed out, the Console reads,
+the Key check's **Test (t)** in Settings — was refused or timed out, the Console reads,
 for example, "Not ready · refused :9099" (the header badge, the Model
 section, the Chat settings rows and this card's "Reconnect the
 provider server" step), and the composer reads "Send blocked — retry the

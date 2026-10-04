@@ -1,7 +1,7 @@
 """Pure presentation records for task-oriented provider Settings."""
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, Protocol
 
@@ -23,10 +23,13 @@ from ...Chat.custom_endpoint_registry import (
     validate_entry,
 )
 from ...Chat.provider_catalog import PROVIDER_CUSTOM_GROUP_KEYS, provider_display_name
-from ...Chat.provider_readiness import provider_config_key
+from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
 from ...config import (
+    DEFAULT_CONFIG_FROM_TOML,
+    ProviderSettingsError,
     delete_settings_from_cli_config,
     normalize_provider_config_key,
+    provider_settings_for_key,
     save_settings_to_cli_config,
 )
 from ...Utils.input_validation import validate_env_var_reference
@@ -145,6 +148,10 @@ _PROVIDER_GROUPS = (
     ("local", "Local"),
     ("custom", "Custom & legacy aliases"),
 )
+#: TASK-33007.2: providers the user set up lead the picker.
+_CONFIGURED_GROUP = ("configured", "Configured")
+#: How many configured providers the picker summary names before "+N".
+_SUMMARY_NAMED_PROVIDERS = 2
 
 
 def _overview_rows(
@@ -192,15 +199,32 @@ def build_provider_picker_groups(
     catalog: Sequence[ProviderCatalogEntry],
     saved_provider: object,
     query: object,
+    configured: Collection[str] = (),
 ) -> tuple[ProviderPickerGroup, ...]:
-    """Build stable searchable provider groups without normalizing saved display text."""
+    """Build stable searchable provider groups without normalizing saved display text.
+
+    TASK-33007.2: providers in ``configured`` lead in a "Configured" group,
+    then Cloud, Local, and Custom & legacy aliases. A configured custom slot
+    leads too; a legacy alias always stays last (task-180, ADR-066).
+
+    Args:
+        catalog: Selectable provider catalog entries.
+        saved_provider: The saved provider text, kept verbatim when unknown.
+        query: Filter text matched against display name and provider id.
+        configured: Provider keys, any spelling, that have a credential or
+            an endpoint of the user's own.
+
+    Returns:
+        The non-empty groups in display order, ending with the manual action.
+    """
 
     normalized_query = str(query or "").strip().casefold()
+    configured_keys = {normalize_provider_config_key(key) for key in configured}
     known_provider_keys = {
         normalize_provider_config_key(entry.readiness_key) for entry in catalog
     }
     grouped: dict[str, list[ProviderPickerOption]] = {
-        group_id: [] for group_id, _label in _PROVIDER_GROUPS
+        group_id: [] for group_id, _label in (_CONFIGURED_GROUP, *_PROVIDER_GROUPS)
     }
     for entry in catalog:
         provider_id = str(entry.readiness_key)
@@ -210,8 +234,15 @@ def build_provider_picker_groups(
             label=label,
             search_text=f"{label} {provider_id}".casefold(),
         )
-        if _matches_query(option, normalized_query):
-            grouped[_provider_group_id(entry)].append(option)
+        if not _matches_query(option, normalized_query):
+            continue
+        group_id = _provider_group_id(entry)
+        provider_key = normalize_provider_config_key(provider_id)
+        if provider_key in configured_keys and (
+            group_id != "custom" or provider_key in _CONVERTIBLE_SLOT_IDS
+        ):
+            group_id = _CONFIGURED_GROUP[0]
+        grouped[group_id].append(option)
 
     groups: list[ProviderPickerGroup] = []
     saved_text = str(saved_provider or "")
@@ -230,7 +261,7 @@ def build_provider_picker_groups(
                 ProviderPickerGroup("saved", "Saved provider", (saved_option,))
             )
 
-    for group_id, label in _PROVIDER_GROUPS:
+    for group_id, label in (_CONFIGURED_GROUP, *_PROVIDER_GROUPS):
         options = tuple(
             sorted(
                 grouped[group_id],
@@ -258,6 +289,85 @@ def build_provider_picker_groups(
         )
     )
     return tuple(groups)
+
+
+def provider_picker_summary(groups: Sequence[ProviderPickerGroup]) -> str:
+    """Say in one line how the unfiltered provider list is ordered.
+
+    Args:
+        groups: ``build_provider_picker_groups`` output for an empty query.
+
+    Returns:
+        E.g. "configured: Anthropic, OpenAI · 24 more" -- the list leads with
+        those; it labels legacy aliases, which it lists last.
+    """
+    names = [
+        option.label
+        for group in groups
+        if group.group_id == _CONFIGURED_GROUP[0]
+        for option in group.options
+    ]
+    rest = sum(
+        len(group.options)
+        for group in groups
+        if group.group_id in {group_id for group_id, _label in _PROVIDER_GROUPS}
+    )
+    if not names:
+        return f"none configured yet · {rest} providers"
+    shown = ", ".join(names[:_SUMMARY_NAMED_PROVIDERS])
+    if len(names) > _SUMMARY_NAMED_PROVIDERS:
+        shown += f" +{len(names) - _SUMMARY_NAMED_PROVIDERS}"
+    return f"configured: {shown} · {rest} more"
+
+
+def configured_provider_keys(
+    catalog: Sequence[ProviderCatalogEntry],
+    app_config: Mapping[str, object],
+    endpoint_keys: Sequence[str],
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> frozenset[str]:
+    """Return the catalog providers the user has set up (TASK-33007.2 AC#2).
+
+    A provider counts when it has a credential (a key saved in config or one
+    its env var resolves) or an endpoint the user changed. Every profile
+    carries the shipped template's localhost endpoints, so an endpoint equal
+    to the template's proves nothing (``any_provider_configured``'s rule).
+
+    Args:
+        catalog: The provider catalog to check.
+        app_config: The live configuration snapshot.
+        endpoint_keys: The ``api_settings`` fields that hold an endpoint.
+        environ: Environment mapping, injectable for tests.
+
+    Returns:
+        The normalized keys of the configured providers.
+    """
+    api_settings = app_config.get("api_settings")
+    shipped_settings = DEFAULT_CONFIG_FROM_TOML.get("api_settings")
+    configured: set[str] = set()
+    for entry in catalog:
+        provider_key = normalize_provider_config_key(entry.readiness_key)
+        readiness = get_provider_readiness(
+            entry.readiness_key,
+            app_config,
+            environ=environ,
+            background_credentials=True,
+        )
+        if readiness.api_key_source:
+            configured.add(provider_key)
+            continue
+        try:
+            own = provider_settings_for_key(api_settings, provider_key)
+            shipped = provider_settings_for_key(shipped_settings, provider_key)
+        except ProviderSettingsError:
+            continue
+        if any(
+            str(own.get(key) or "").strip() and own.get(key) != shipped.get(key)
+            for key in endpoint_keys
+        ):
+            configured.add(provider_key)
+    return frozenset(configured)
 
 
 #: User-facing family labels for the custom endpoints overview rows.

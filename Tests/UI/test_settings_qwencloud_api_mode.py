@@ -843,9 +843,16 @@ async def test_qwencloud_malformed_canonical_table_uses_canonical_recovery_witho
         assert "Advanced Config" in recovery
         assert "config.toml" in recovery
         assert env_var.value == ""
-        assert "Provider settings invalid" in screen._provider_key_status("QwenCloud")
-        assert "ALIAS-SECRET-CANARY" not in screen._provider_key_status("QwenCloud")
-        assert "ALIAS_ENV_CANARY" not in screen._provider_key_status("QwenCloud")
+        # TASK-33007.2, rewritten on purpose: the API key row (Source word and
+        # help) replaces _provider_key_status's readiness-block line.
+        from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+            api_key_row_copy,
+        )
+
+        key_row = " ".join(api_key_row_copy(screen, "QwenCloud"))
+        assert key_row == "invalid repair in Advanced Config or config.toml"
+        assert "ALIAS-SECRET-CANARY" not in key_row
+        assert "ALIAS_ENV_CANARY" not in key_row
         assert app.app_config["api_settings"] == original_api_settings
 
 
@@ -979,7 +986,14 @@ async def test_qwencloud_alias_only_malformed_table_uses_canonical_recovery_owne
         assert (
             screen.query_one("#settings-provider-credential-env-var", Input).value == ""
         )
-        assert "SECRET-CANARY" not in screen._provider_key_status("QwenCloud")
+        # TASK-33007.2, rewritten on purpose: the API key row's copy.
+        from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+            api_key_row_copy,
+        )
+
+        assert "SECRET-CANARY" not in " ".join(
+            api_key_row_copy(screen, "QwenCloud")
+        )
         assert app.app_config["api_settings"] == original_api_settings
 
 

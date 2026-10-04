@@ -39,9 +39,11 @@ def _assert_projection(screen, provider, model, endpoint):
     picker = screen.query_one("#settings-provider-picker", OptionList)
     assert picker.highlighted is not None
     assert picker.get_option_at_index(picker.highlighted).provider_id == provider
-    readiness = str(screen.query_one("#settings-provider-readiness", Static).renderable)
-    assert screen._provider_display_name(provider) in readiness
-    assert model in readiness
+    # TASK-33007.2, rewritten on purpose: the readiness block's "Provider /
+    # model" line is gone; the Provider control names the provider.
+    assert screen.query_one(
+        "#settings-provider-search", Input
+    ).value == screen._provider_display_label(provider)
     detail, _, _ = screen._provider_readiness_test_report()
     assert screen._provider_display_name(provider).casefold() in detail.casefold()
     # TASK-33002.2: the Test result is labelled rows, not "model=<id>".
@@ -95,7 +97,8 @@ async def test_clean_settings_follows_changed_saved_provider(theme, size, return
                 is not previous_model_widget
             )
             assert "re-run" in host.screen._provider_test_result.lower()
-        assert "Saved chat defaults" in str(
+        # TASK-33007.2, rewritten on purpose: the Provider row's Source word.
+        assert "new-chat default" == str(
             host.screen.query_one("#settings-provider-source", Static).renderable
         )
 

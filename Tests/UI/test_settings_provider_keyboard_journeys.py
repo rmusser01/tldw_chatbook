@@ -86,13 +86,18 @@ async def test_provider_keyboard_edit_revert_save_and_return(theme, size, monkey
         await _settle(host, pilot)
         screen = host.screen
         assert not screen._category_has_unsaved_changes(CATEGORY)
-        await _edit(host, pilot, "#settings-model-value", MODEL)
-        # Model -> Endpoint is an actual keyboard traversal through the form.
+        await _edit(host, pilot, "#settings-provider-endpoint-value", ENDPOINT)
+        # TASK-33007.2, rewritten on purpose: Connect ends in the Key check
+        # row and Model moved under "Default model for new chats", so the
+        # actual keyboard traversal runs Endpoint -> Test (t) -> Model.
         await pilot.press("tab")
         await _settle(host, pilot)
-        assert screen.focused is screen.query_one("#settings-provider-endpoint-value")
+        assert screen.focused is screen.query_one("#settings-test-provider")
+        await pilot.press("tab")
+        await _settle(host, pilot)
+        assert screen.focused is screen.query_one("#settings-model-value")
         _assert_painted(screen, screen.focused)
-        await _edit(host, pilot, "#settings-provider-endpoint-value", ENDPOINT)
+        await _edit(host, pilot, "#settings-model-value", MODEL)
         assert screen._category_has_unsaved_changes(CATEGORY)
         assert mutations == []
         assert app.app_config["chat_defaults"]["model"] == "model-a"

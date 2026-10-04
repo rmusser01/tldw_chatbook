@@ -67,7 +67,10 @@ NON_SETTING_CONTROLS: frozenset[tuple[str, str]] = frozenset(
         ("advanced-config", "settings-advanced-config-editor"),
         # Search boxes filter content; they are not settings.
         ("internal-prompts", "internal-prompts-search"),
-        ("providers-models", "settings-provider-search"),
+        # TASK-33007.2, rewritten on purpose: the Provider control
+        # (settings-provider-search) is now the indexed field, and the Select
+        # it drives is a hidden adapter holding the provider key.
+        ("providers-models", "settings-provider-value"),
         # Transient discovery output picker, not a persisted setting.
         ("providers-models", "settings-discovered-models-list"),
         # Manual-provider entry is the fallback leg of the already-indexed
@@ -80,13 +83,14 @@ NON_SETTING_CONTROLS: frozenset[tuple[str, str]] = frozenset(
         # actions, not settings.
         ("providers-models", "settings-provider-api-key-clear"),
         ("providers-models", "settings-model-context-window-reset"),
+        # TASK-33007.2: the Key check row's test action (t), not a setting.
+        ("providers-models", "settings-test-provider"),
         # "Use Official OpenAI" preset button: a one-shot action that fills
         # the adjacent (indexed) Base URL field -- an action, not a setting.
         ("speech-tts", "settings-speech-openai-official-preset"),
         # TASK-32948 Task 7: the picker's theme-name filter box narrows the
-        # visible list; same pattern as internal-prompts-search /
-        # settings-provider-search above -- it filters content, it is not
-        # itself a persisted setting.
+        # visible list; same pattern as internal-prompts-search above -- it
+        # filters content, it is not itself a persisted setting.
         ("theme", "settings-theme-filter"),
     }
 )

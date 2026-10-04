@@ -99,8 +99,14 @@ async def _wait_for_stable_provider_picker(
     settings: SettingsScreen,
     pilot,
 ) -> OptionList:
+    """Return the provider list once its painted Provider control is stable.
+
+    TASK-33007.2, rewritten on purpose: the list is hidden until the user
+    types in the one-row Provider control, so the control is what paints.
+    """
     for _ in range(300):
         try:
+            provider_control = settings.query_one("#settings-provider-search", Input)
             provider_picker = settings.query_one(
                 "#settings-provider-picker", OptionList
             )
@@ -108,9 +114,9 @@ async def _wait_for_stable_provider_picker(
             await pilot.pause(0.01)
             continue
         if (
-            provider_picker.is_mounted
-            and provider_picker.region.width > 0
-            and provider_picker.region.height > 0
+            provider_control.is_mounted
+            and provider_control.region.width > 0
+            and provider_control.region.height > 0
         ):
             await pilot.pause()
             if (
@@ -341,7 +347,10 @@ async def test_settings_save_preserves_user_session(
                 "#settings-provider-search",
                 Input,
             )
-            provider_search.value = "anthropic"
+            # TASK-33007.2, rewritten on purpose: typed into the focused
+            # Provider control; the list never takes focus, Enter chooses.
+            provider_search.focus()
+            await pilot.press(*"anthropic")
             await _wait_until(
                 pilot,
                 lambda: (
@@ -357,7 +366,6 @@ async def test_settings_save_preserves_user_session(
                 ),
                 "the provider picker did not highlight Anthropic",
             )
-            provider_picker.focus()
             await pilot.press("enter")
             await _wait_until(
                 pilot,
