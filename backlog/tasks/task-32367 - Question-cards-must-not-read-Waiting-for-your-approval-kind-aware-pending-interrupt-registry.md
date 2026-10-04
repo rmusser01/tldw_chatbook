@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-04 08:17'
+updated_date: '2026-10-04 08:24'
 labels:
   - console
   - approvals
@@ -159,6 +159,15 @@ Latest-dev DB owner integration (PR #3002), planned before rebase:
 4. Publish safely and require final-head review plus all five hosted gates (both UI shards), then final task-metadata qualification before protected normal merge.
 ADR required: no new ADR; existing ADR208 (backlog/decisions/208-migration-sql-files-are-the-executed-source.md), Library ADR076 and Console ADR094/097/150/195/212 apply.
 Reason: integration of existing owner DB contracts; no new selected Console architecture or acceptance change.
+
+Latest-dev encryption owner integration (PR #3000), planned before rebase:
+1. Read TASK34100.4 owner part1 notes and its separate TASK34100.4.1 boundary; preserve incoming config lifecycle, one strict-decrypt startup unlock, normal admission, provider readiness and canonical Settings card exactly. Deferred wizard and non-LLM credential work is outside the selected three Console tasks.
+2. Rebase with auto-merge off and snapshot; prove all owned Console runtime/native bytes and metadata patches unchanged, incoming non-composed paths exact dev; regenerate actual combined diagnostic inventory and source-pin delta.
+3. Run the six owner encryption suites, modified Privacy hub cases and affected Console/provider contracts, complete owned Console UI, real Delete/Undo→Library, startup/latency and CI/preflight with unchanged profile/getter/admission/worker/canary/budget/cap guards. Earlier database receipts retain their actual457-pin anchor; no new full-suite, Library/Architecture A-B, native/Auth/live-key claim.
+4. Publish safely; require final-head clean/resolved Qodo and all5 hosted gates including both UI shards, then fresh Done-metadata qualification before protected normal merge.
+ADR required: no new ADR; direct integration of existing owner config/encryption/admission boundaries and selected Console ADR094/097/150/195/212; prior database ADR208 remains applicable.
+ADR path: existing Console ADRs and backlog/decisions/208-migration-sql-files-are-the-executed-source.md.
+Reason: no new selected architecture or acceptance change; preserve owner contracts rather than extend deferred encryption scope.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
