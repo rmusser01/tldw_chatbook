@@ -366,8 +366,20 @@ def _detached_receiver_before(node: ast.AST, receiver: str, line: int) -> bool:
                 elif child.value is not None:
                     escape(object_names(child.value))
         elif isinstance(child, ast.Call):
-            if _expr_text(child.func) == "setattr":
-                continue
+            if (
+                _expr_text(child.func) == "setattr"
+                and len(child.args) == 3
+                and not child.keywords
+            ):
+                receiver_kind = kind(child.args[0])
+                if receiver_kind and receiver_kind[0] in {
+                    "ConsoleChatMessage",
+                    "_ConsoleSettingsPersistenceDrain",
+                }:
+                    # Mutating the detached receiver does not publish it, but
+                    # the assigned value may publish another message or alias.
+                    escape(object_names(child.args[2]))
+                    continue
             escape(
                 set().union(
                     *(object_names(arg) for arg in child.args),
@@ -1552,6 +1564,49 @@ def test_unpublished_message_scan_rejects_live_rebinding_or_publication(change):
         + "\n    message.parent_message_id = 'changed'\n"
     )
     assert _mutation_events(node)
+
+
+@pytest.mark.parametrize(
+    "published,mutated",
+    (
+        ("message", "message"),
+        ("alias", "message"),
+        ("message", "alias"),
+        ("alias", "alias"),
+    ),
+)
+def test_setattr_publication_invalidates_message_and_alias(published, mutated):
+    node = _synthetic_method(
+        "def mutate(self, session_id):\n"
+        "    message = ConsoleChatMessage()\n"
+        "    alias = message\n"
+        f"    setattr(self, 'published', {published})\n"
+        f"    {mutated}.content = 'changed'\n"
+    )
+    assert _mutation_events(node) == ((5, None),)
+
+
+def test_setattr_on_detached_receiver_still_checks_assigned_message_escape():
+    node = _synthetic_method(
+        "def mutate(self, session_id):\n"
+        "    message = ConsoleChatMessage()\n"
+        "    alias = message\n"
+        "    holder = ConsoleChatMessage()\n"
+        "    setattr(holder, 'published', alias)\n"
+        "    message.content = 'changed'\n"
+    )
+    assert _mutation_events(node) == ((6, None),)
+
+
+def test_setattr_scalar_keeps_unpublished_message_detached():
+    node = _synthetic_method(
+        "def mutate(self, session_id):\n"
+        "    message = ConsoleChatMessage()\n"
+        "    alias = message\n"
+        "    setattr(alias, 'content', 'staged')\n"
+        "    message.parent_message_id = 'staged-parent'\n"
+    )
+    assert _mutation_events(node) == ()
 
 
 def test_message_construction_scan_preserves_live_session_assignment():
