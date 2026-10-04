@@ -14,7 +14,10 @@ import ipaddress
 import socket
 from urllib.parse import urlsplit
 
-from tldw_chatbook.TTS.pocket_tts_native import is_pocket_tts_native_url
+from tldw_chatbook.TTS.pocket_tts_native import (
+    POCKET_TTS_DEFAULT_PORT,
+    is_pocket_tts_native_url,
+)
 from tldw_chatbook.UI.Wizards import first_run_voice_prefill as prefill
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as vs
 
@@ -114,6 +117,21 @@ def probe_endpoint_reachable(url: str) -> bool | None:
         return False
 
 
+def _pocket_tts_serve(endpoint: str) -> str:
+    """The command that starts pocket-tts where ``endpoint`` points.
+
+    Review round 1 (G8-V1-F5): plain ``pocket-tts serve`` listens on 8000, so
+    for another port the advice must carry ``--port``.
+    """
+    try:
+        port = urlsplit(endpoint).port
+    except ValueError:
+        port = None
+    if port is None or port == POCKET_TTS_DEFAULT_PORT:
+        return "pocket-tts serve"
+    return f"pocket-tts serve --port {port}"
+
+
 def service_status_copy(
     preset: str,
     *,
@@ -154,6 +172,11 @@ def service_status_copy(
         return (
             f"PocketTTS — not running at {host}. It is a separate local server: "
             "start it with pocket-tts serve, or pick another service."
+        )
+    if reachable is False and is_pocket_tts_native_url(endpoint):
+        return (
+            f"Custom — PocketTTS isn't running at {host}. Start it with "
+            f"{_pocket_tts_serve(endpoint)}, or check Endpoint under Advanced."
         )
     if reachable is False:
         return f"Custom — nothing answers at {host}. Check Endpoint under Advanced."
@@ -244,8 +267,8 @@ def voice_test_failure_copy(
         if preset == vs.VOICE_PRESET_POCKET_TTS or is_pocket_tts_native_url(endpoint):
             return (
                 f"Test failed — PocketTTS isn't running at {host}. It is a "
-                "separate local server: start it with pocket-tts serve, or pick "
-                "another service."
+                f"separate local server: start it with {_pocket_tts_serve(endpoint)}, "
+                "or pick another service."
             )
         return (
             f"Test failed — the speech server isn't running at {host}. Start it, "

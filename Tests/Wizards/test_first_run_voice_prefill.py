@@ -468,7 +468,9 @@ def test_a_pocket_tts_address_on_another_port_keeps_the_pocket_tts_advice() -> N
     assert custom_pocket.startswith(
         "Test failed — PocketTTS isn't running at 127.0.0.1:19399."
     )
-    assert "pocket-tts serve" in custom_pocket
+    # Review round 1 (G8-V1-F5): plain "pocket-tts serve" listens on 8000,
+    # which still would not answer at this address.
+    assert "pocket-tts serve --port 19399" in custom_pocket
     assert custom_openai.startswith(
         "Test failed — the speech server isn't running at 127.0.0.1:19399."
     )
@@ -537,6 +539,24 @@ def test_probe_is_one_short_connect() -> None:
         assert status.probe_endpoint_reachable(url) is True
     finally:
         listener.close()
+
+
+def test_pocket_tts_start_advice_names_a_non_default_port() -> None:
+    """Review round 1 (G8-V1-F5)."""
+    default = status.voice_test_failure_copy(
+        vs.VoiceSampleError("not_running", host="127.0.0.1:8000"),
+        preset=vs.VOICE_PRESET_POCKET_TTS,
+        endpoint=vs.POCKET_TTS_ENDPOINT,
+    )
+    assert "start it with pocket-tts serve," in default
+    assert "--port" not in default
+    custom_line = status.service_status_copy(
+        vs.VOICE_PRESET_CUSTOM, endpoint="http://127.0.0.1:19555/tts", reachable=False
+    )
+    assert custom_line == (
+        "Custom — PocketTTS isn't running at 127.0.0.1:19555. Start it with "
+        "pocket-tts serve --port 19555, or check Endpoint under Advanced."
+    )
 
 
 def test_service_status_lines_say_whether_a_service_will_work() -> None:
