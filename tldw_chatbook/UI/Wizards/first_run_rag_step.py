@@ -46,7 +46,9 @@ class RagStep(SetupStep):
         with Vertical(classes="setup-rag"):
             yield Static("Search & RAG", classes="setup-title")
             yield Static("", id="setup-rag-status", classes="setup-subtitle")
-            with SetupRadioSet(id="setup-rag-model-choice", classes="setup-choice-list"):
+            with SetupRadioSet(
+                id="setup-rag-model-choice", classes="setup-choice-list"
+            ):
                 for model_id in self._embedding_model_ids():
                     # The id comes from the user's `[embedding_config] models`
                     # table, so it must not be handed to a markup parser: a

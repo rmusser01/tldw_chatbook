@@ -195,8 +195,7 @@ def discovery_is_reusable(owner: object, discovery_key: object) -> bool:
     return (
         discovery_key is not None
         and getattr(owner, "_selected_discovery_key", None) == discovery_key
-        and getattr(owner, "_selected_discovery_state", "")
-        in REUSABLE_DISCOVERY_STATES
+        and getattr(owner, "_selected_discovery_state", "") in REUSABLE_DISCOVERY_STATES
     )
 
 

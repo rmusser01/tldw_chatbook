@@ -1257,9 +1257,7 @@ class SpeechSetupStep(SetupStep):
         )
         self.refresh(recompose=True)
 
-    @wizard_work(
-        thread=True, group="setup-speech-install", exclusive=True
-    )
+    @wizard_work(thread=True, group="setup-speech-install", exclusive=True)
     def _preflight_install(self) -> None:
         import asyncio
 
@@ -1306,9 +1304,7 @@ class SpeechSetupStep(SetupStep):
             return
         self._provision_install()
 
-    @wizard_work(
-        thread=True, group="setup-speech-install", exclusive=True
-    )
+    @wizard_work(thread=True, group="setup-speech-install", exclusive=True)
     def _provision_install(self) -> None:
         import asyncio
 
@@ -1403,9 +1399,7 @@ class SpeechSetupStep(SetupStep):
         self.refresh(recompose=True)
         self._activate_model()
 
-    @wizard_work(
-        thread=True, group="setup-speech-lifecycle", exclusive=True
-    )
+    @wizard_work(thread=True, group="setup-speech-lifecycle", exclusive=True)
     def _activate_model(self) -> None:
         try:
             self._service_for_worker().activate(self._reference)
@@ -1456,9 +1450,7 @@ class SpeechSetupStep(SetupStep):
         self.refresh(recompose=True)
         self._delete_model()
 
-    @wizard_work(
-        thread=True, group="setup-speech-lifecycle", exclusive=True
-    )
+    @wizard_work(thread=True, group="setup-speech-lifecycle", exclusive=True)
     def _delete_model(self) -> None:
         try:
             self._service_for_worker().delete(self._reference)

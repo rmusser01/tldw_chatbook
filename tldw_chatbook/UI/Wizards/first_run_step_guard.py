@@ -550,11 +550,15 @@ def restore_fenced_focus(container: Any) -> None:
                 held.is_attached
                 and held.focusable
                 and held.screen is screen
-                and all(getattr(node, "display", True) for node in held.ancestors_with_self)
+                and all(
+                    getattr(node, "display", True) for node in held.ancestors_with_self
+                )
             ):
                 screen.set_focus(held)
                 return
-            heal = _bound(container.steps[container.current_step], "_heal_orphaned_focus")
+            heal = _bound(
+                container.steps[container.current_step], "_heal_orphaned_focus"
+            )
         except Exception:  # noqa: BLE001 - the wizard is gone: nothing to restore.
             return
         if heal is not None:
@@ -740,8 +744,10 @@ def run_wizard_worker(
                 raise
 
         target = run_on_loop
-    label = name or getattr(work, "__name__", "") or getattr(
-        getattr(work, "func", None), "__name__", ""
+    label = (
+        name
+        or getattr(work, "__name__", "")
+        or getattr(getattr(work, "func", None), "__name__", "")
     )
     return node.run_worker(
         target,
@@ -829,9 +835,7 @@ def wizard_work(
 
     def decorator(method: Callable[..., Any]) -> Callable[..., "Worker[Any]"]:
         if not thread and not inspect.iscoroutinefunction(method):
-            raise TypeError(
-                f"{method.__name__} must be async def, or use thread=True"
-            )
+            raise TypeError(f"{method.__name__} must be async def, or use thread=True")
 
         @functools.wraps(method)
         def launch(self: Any, *args: Any, **kwargs: Any) -> "Worker[Any]":

@@ -97,7 +97,6 @@ SUMMARY_KEY_HINTS = "Ctrl+B back · choose an action below to finish"
 
 
 class SetupWizardProgress(WizardProgress):
-
     #: TASK-21148 (UAT F-2/F-3): the stacked number+title layout. Declared
     #: as BUNDLED_CSS so build_css.py lifts it into the widget-defaults
     #: tier of the app bundle — a class-level DEFAULT_CSS would register
@@ -2277,8 +2276,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
     @on(Button.Pressed, "#setup-skip-entirely")
     def handle_skip_entirely(self) -> None:
         run_wizard_worker(
-            self,
-            self._skip_entirely(), exclusive=True, group="setup-wizard-advance"
+            self, self._skip_entirely(), exclusive=True, group="setup-wizard-advance"
         )
 
     async def _skip_entirely(self) -> None:

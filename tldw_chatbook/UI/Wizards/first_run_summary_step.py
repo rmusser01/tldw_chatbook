@@ -150,9 +150,7 @@ class SummaryStep(SetupStep):
             with Horizontal(classes="setup-summary-actions-row"):
                 # task-32140: a local-first user who came for notes was
                 # told the only thing they could do needed an API key.
-                yield Button(
-                    "Write your first note", id="setup-exit-library-notes"
-                )
+                yield Button("Write your first note", id="setup-exit-library-notes")
                 yield Button("Explore Home", id="setup-exit-home")
                 yield Button("Review settings", id="setup-exit-settings")
 
@@ -457,9 +455,7 @@ class SummaryStep(SetupStep):
             try:
                 self.wizard.request_model_catalog_refresh()
             except Exception:
-                logger.debug(
-                    "Model catalog refresh request skipped", exc_info=True
-                )
+                logger.debug("Model catalog refresh request skipped", exc_info=True)
         return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:

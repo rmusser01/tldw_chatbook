@@ -158,7 +158,7 @@ _BUDGETS: dict[str, int] = {
     # fence through finishing (3,181); round 3 shared the discovery reuse rule
     # (3,179). The wizard keeps the container, progress, nav bar, dialog and
     # screen.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3179,
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3177,
     # TASK-34100.1: the step modules the split left at 1,000 lines or more
     # are pinned at their exact size, so the split cannot regrow a god module
     # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
@@ -171,7 +171,7 @@ _BUDGETS: dict[str, int] = {
     # Provider 2,461 -> 2,458: the Qodo round moved the handoff clear into
     # first_run_model_discovery.drop_unreusable_handoff.
     "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2458,
-    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1716,
+    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1708,
     "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1070,
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,

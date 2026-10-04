@@ -207,8 +207,7 @@ class AppearanceStep(SetupStep):
         for card_name in names:
             button = SetupRadioButton(
                 self._card_display_name(card_name),
-                value=bool(card_name)
-                and card_name == self.selected_splash_card,
+                value=bool(card_name) and card_name == self.selected_splash_card,
             )
             button._card_name = card_name
             yield button
