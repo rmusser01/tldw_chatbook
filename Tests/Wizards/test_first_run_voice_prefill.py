@@ -8,7 +8,6 @@ failed sample is explained. The mounted behaviour is pinned in
 
 from __future__ import annotations
 
-import asyncio
 import io
 import socket
 import threading
@@ -626,6 +625,68 @@ def test_the_default_help_line_says_which_voice_replies_use(kwargs, lead) -> Non
     ) == (status.DEFAULT_HELP_COPY)
 
 
-def test_probe_runs_off_the_event_loop() -> None:
-    """The probe is a blocking connect; callers must run it in a worker."""
-    assert not asyncio.iscoroutinefunction(status.probe_endpoint_reachable)
+def test_probe_passes_its_sub_second_timeout_to_one_connect(monkeypatch) -> None:
+    """Review round 2 (F3): a closed loopback port refuses at once, so the
+    timeout was never exercised; pin that the one connect carries it."""
+    calls: list[tuple[object, object]] = []
+
+    class _Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    def connect(address, timeout=None, *_args, **_kwargs):
+        calls.append((address, timeout))
+        return _Connection()
+
+    monkeypatch.setattr(status.socket, "create_connection", connect)
+
+    assert status.probe_endpoint_reachable("http://127.0.0.1:8000/tts") is True
+    [(address, timeout)] = calls
+    assert address == ("127.0.0.1", 8000)
+    assert isinstance(timeout, float) and timeout < 1.0
+
+
+@pytest.mark.parametrize(
+    "url",
+    (
+        "http://tts.example.invalid:9000/v1/audio/speech",
+        "https://speech.lan/v1/audio/speech",
+    ),
+)
+def test_probe_never_waits_on_dns(monkeypatch, url) -> None:
+    """Review round 1 (F7): create_connection's timeout covers neither the
+    name lookup nor more than one address, so a typed Custom hostname queued
+    unbounded DNS lookups on every typing pause. Names that need DNS are not
+    probed; Test and Hear checks them."""
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("the probe must not resolve or connect here")
+
+    monkeypatch.setattr(status.socket, "create_connection", forbidden)
+    monkeypatch.setattr(status.socket, "getaddrinfo", forbidden)
+
+    assert status.probe_endpoint_reachable(url) is None
+    copy = status.service_status_copy(
+        vs.VOICE_PRESET_CUSTOM, endpoint=url, reachable=None
+    )
+    assert "Test and Hear checks it" in copy
+
+
+@pytest.mark.parametrize(
+    "url",
+    ("http://localhost:8000/tts", "http://[::1]:8000/tts", "http://10.0.0.5/tts"),
+)
+def test_loopback_names_and_ip_literals_are_probed(monkeypatch, url) -> None:
+    calls: list[object] = []
+
+    def refuse(address, timeout=None, *_args, **_kwargs):
+        calls.append(address)
+        raise ConnectionRefusedError
+
+    monkeypatch.setattr(status.socket, "create_connection", refuse)
+
+    assert status.probe_endpoint_reachable(url) is False
+    assert len(calls) == 1

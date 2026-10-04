@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
+import threading
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -527,9 +528,13 @@ async def test_service_line_reports_the_probe_and_the_probe_is_one_worker_connec
     monkeypatch,
 ) -> None:
     calls: list[str] = []
+    on_main_thread: list[bool] = []
 
     def probe(url: str) -> bool:
+        # Review round 2 (F1) / round 1 (F12): a probe run on the event loop
+        # would block the step; pin that it runs in a worker thread.
         calls.append(url)
+        on_main_thread.append(threading.current_thread() is threading.main_thread())
         return False
 
     monkeypatch.setattr(voice_step_module, "probe_endpoint_reachable", probe)
@@ -542,6 +547,7 @@ async def test_service_line_reports_the_probe_and_the_probe_is_one_worker_connec
         line = str(step.query_one("#setup-voice-service-status", Static).render())
         assert line.startswith("PocketTTS — not running at 127.0.0.1:8000.")
         assert calls == [voice_state.POCKET_TTS_ENDPOINT]
+        assert on_main_thread == [False]
 
         monkeypatch.setattr(
             voice_step_module, "probe_endpoint_reachable", lambda _u: True

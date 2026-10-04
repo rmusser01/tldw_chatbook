@@ -10,6 +10,7 @@ failed test starts "Test failed —" and names the cause.
 
 from __future__ import annotations
 
+import ipaddress
 import socket
 from urllib.parse import urlsplit
 
@@ -51,17 +52,39 @@ LEAVE_MESSAGE = (
 )
 
 
-def probe_endpoint_reachable(url: str) -> bool:
+def _hostname(url: str) -> str:
+    try:
+        return urlsplit(url).hostname or ""
+    except ValueError:
+        return ""
+
+
+def _needs_dns(host: str) -> bool:
+    """Whether connecting to ``host`` would wait on a name lookup."""
+    if host.lower() == "localhost":
+        return False  # the hosts file answers it
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return False
+
+
+def probe_endpoint_reachable(url: str) -> bool | None:
     """Return whether anything accepts a TCP connection at ``url``'s host.
 
     Blocking by design (one ``create_connection`` with a sub-second timeout):
-    call it from a worker thread.
+    call it from a worker thread. Review round 1 (F7): that timeout bounds
+    neither a DNS lookup nor a walk over several resolved addresses, so a
+    host name that needs DNS is not probed at all (None) -- Test and Hear
+    checks it. Only IP literals and ``localhost`` are connected to.
 
     Args:
         url: A speech endpoint URL.
 
     Returns:
-        True when the connect succeeded.
+        True when the connect succeeded, False when it failed, None when the
+        host was not probed.
     """
     try:
         parts = urlsplit(url)
@@ -71,6 +94,8 @@ def probe_endpoint_reachable(url: str) -> bool:
         return False
     if not host:
         return False
+    if _needs_dns(host):
+        return None
     try:
         with socket.create_connection((host, port), timeout=PROBE_TIMEOUT_SECONDS):
             return True
@@ -121,6 +146,8 @@ def service_status_copy(
         )
     if reachable is False:
         return f"Custom — nothing answers at {host}. Check Endpoint under Advanced."
+    if host and reachable is None and _needs_dns(_hostname(endpoint)):
+        return f"Custom — {host}: Test and Hear checks it."
     return (
         f"Custom — {host or 'set Endpoint under Advanced'}: any OpenAI-compatible "
         "speech endpoint, or a PocketTTS /tts address."

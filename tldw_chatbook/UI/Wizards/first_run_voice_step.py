@@ -585,7 +585,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
         reachable = probe_endpoint_reachable(url)
         self.app.call_from_thread(self._apply_probe, generation, reachable)
 
-    def _apply_probe(self, generation: int, reachable: bool) -> None:
+    def _apply_probe(self, generation: int, reachable: bool | None) -> None:
         if generation != self._probe_generation:
             return
         self._reachable = reachable
