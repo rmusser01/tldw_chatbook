@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 16:13'
+updated_date: '2026-10-04 16:45'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -433,6 +433,21 @@ Fresh prepublication pagination found owner comment IC_kwDOOcyyl88AAAABZH5Iqg up
 ### Schema-expectation incident evidence
 
 Before final immutable review, append the verified owner-comment incident to lessons-testing-evidence.md, preserving its complete approved prefix. Record that prior migration/catalog qualification missed the independent table-column literal, existing76 RED failed2.306s at the intended fleet table omission, and corrected76 replay plus actual constructor/catalog equality passed2cases3.109s. Preserve both27late cleanup/PyAudio onlyRED/NOpydub receipts. This is lesson-only evidence alongside the one test literal; application/runtime/guard/MAX bytes and the already-completed original5PASS96.382 qualification remain exact and carried, not remeasured.
+
+## Required post-columns latest-dev integration qualification — October 4
+
+ADR required: no new ADR
+ADR path: backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md; backlog/decisions/067-indefinite-human-approval-waits.md; backlog/decisions/111-mcp-remote-transport-and-client-dependency.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; backlog/decisions/208-migration-sql-files-are-the-executed-source.md; existing flat-message persistence, recovery and boot-budget ADR097/126/150/211 apply.
+Reason: preserve already accepted incoming flat-delete/voice-root, guarded-modal quit/video-cancel and MCP default0/correlated cancellation fixes with the approved orchestration work. No new root owner, storage/schema/authority/dependency/interface/permission decision or gate/ceiling change is planned.
+
+ALL FOUR exact published0f7424a8 conceptual gates, including BOTH UI Fast Lane shards, passed at16:38; edited Qodo remains exact-head fourzero/fourresolved/full-pagination/oldernested unchanged. Only afterward live strict up-to-date/admin-enforced/conversation-resolution protection required the BEHIND update. Fetch authenticates exactdev7446e3a6270473a5cb248bfe5af3827ded01fff7, previously qualifiedf800. Incoming129net/128present/one renamed-task oldpath deletion;42 prior manifest overlaps/seven actual feature overlaps. All three production overlaps controller/store/ChaChaNotesDB have EMPTY changed-function intersection; controller's only incoming edit is the existing MCP default comment. Both shared lessons and index inventory require exact preserving composition. Incoming schema remains76; ownprogress77 stays qualified, while conditional future2995/v78 remains unqualified until an actual later integration is required. TASK34360 older-backup policy stays separately To Do/six unchecked, seven reading-desk implementation slices To Do/42unchecked; owner-approved reading-desk design/ADRs are incoming only, not implemented or root live-certified.
+
+1. Preserve all prior0f publication/source/dd022 owner literal, finalReady and originala016 budget/raw/XML/source approvals; all historical positive/NON-GREEN/baseline/interrupted/unexecuted/metadata/warnings/style/size/FD/optional/physical/wider limits remain. Incoming renamed TASK32564 oldpath caused a read-only git-show128 before mutation; corrected present-record reader authenticates exact incoming task states. Record prospective CLI AC3InProgress/unchecked with AC4checked and this plan commit BEFORE preserving source mutation.
+2. Rebase onto ONLY exact7446, preserving complete both-side lessons/User Guide, prior3709 approved records outside genuine incoming overlaps and all incoming nonoverlaps; independently reproduce each clean three-way overlap and record any real conflict stages/resolution. Preserve current77 Notes75to76/progress76to77/file-backed SQL/CAS/current recovery gates, frozen AgentRuns18/21/22/current23, exact AGENT_WAKE refusal/refund/nonreplay, child/scoped tools/peers, finite admitted SQL custody/typed Console privacy/Close reverse rollback+native retirement and all three deferred Resend imports. Generated inventory must reproduce from composed source, not manually change a pin.
+3. Run only proportionate unchanged incoming owning selections: actual SQLite root-row pages/descendant index plans, flat Delete/Undo/unsaved-note Resend and voice root commit/reconcile; MCP timeout default/positive expiry/real cancellation frames/sibling request custody; guarded-modal quit census/choke point, close-under-question/in-flight hooks and video capacity/cancel consumers. Add an exact unchanged current schema/fresh recovery gate and existing Close/Resend/diagnostic privacy neighbor selection where overlap warrants it. Keep real task-owned full-process HOME/USERPROFILE/TLDW/XDG, exact candidate cwd/PYTHONPATH and existing supported fixtures; no marker/config/readiness/provider adapter or production/test masking. Preserve every result, warning/setup failure and any exact incoming failed-node baseline separately; never sum overlapping selections or attribute unrecorded causes. A real actionable repair requires prospective plan/AC refinement before mutation and immutable review.
+4. Authenticate full HEAD/index/tree/Git modes/recomputed disk blobs, prior and incoming function/assertion AST preservation, exact incoming task/ADR states, complete lesson sides and capture deletion. Target changed-source fatal/added-line and inherited whole-file style/format comparison proportionately, diagnostic/worker inventory, incoming CI+census contract, taskID/path readability, owned whitespace, and twelve CSS artifacts by relevant source identity or reproduction as warranted. Original guard/MAX/pin sources must remain exact; inherited size/style debt remains disclosed without blanket architecture/style claims.
+5. Independent immutable source/targeted-functional/artifact review Ready/no findings/all activity settled precedes any new-source original budget measurement. Production/UI/MCP incoming source changes warrant the original unchanged five current-source guards ONCE on the newly approved composition, exact REPO_ROOT cwd/PYTHONPATH/default pytest temp depth/full outer profile through teardown; fresh raw/XML/counts/storage phase sidecar/warnings and postrun source authentication, supplemental independent budget approval. NEVER rerun completed a016/dd/earlier budgets, targeted tests or scripts; new receipts name this distinct source/run. No pin/ceiling/count/work/warmup/timeout change.
+6. Only after approvals CLIAC3Done/AC4checked and FOUR owned canonical Markdown closure preserving all immutable source/deletion/fulltree/history. Fresh0f Qodo/current jobs/actual refs/liveprotection precede ONE exactobserved0flease publication/body and actual local/remote/GitHub/body verification without second push for lag. Require fresh new-head Qodo/no actionable/BOTH UI shards and ALL FOUR conceptual gates before any later concurrency inspection/rebase or normal protected match-head merge. Verify actual MERGED parents/tree/current concurrency before pause/completion. No admin bypass/fullsuite/liveproviderskeys/physicalkeysrelaunch/realvoiceinstallserviceprovisiondownloadplayback/nativeLinuxWindowsaggregatepackageindexinstalledreleasewideraudit/sharedstash/foreigncleanup.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
