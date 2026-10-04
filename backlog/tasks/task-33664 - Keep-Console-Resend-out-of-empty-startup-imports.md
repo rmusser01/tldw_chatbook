@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 04:14'
+updated_date: '2026-10-04 05:43'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -346,6 +346,21 @@ All FOUR exact published cac73ef5fef507e7cf26acb727b107aa2fd664da jobs passed at
 No full suite, live provider/user keys, physical reboot/CtrlQ/relaunch, real voice installation/provision/service/download/playback, native Linux/Windows/aggregate/package/index/installed-native-release/wider audit, admin bypass, weakened gate/pin/ceiling/count/work/time/warmup, shared stash or foreign cleanup. Incoming wider sweeps and owner incidents are historical records, not new root execution or certification.
 
 Verification amendment before final immutable review: the broader178-case selection was interrupted after discovering the unchanged native_package fixture builds and target-installs a local wheel. Retain exit130/no XML,88 raw progress dots without a completed-selection certificate, its task-owned wheel/target receipt, and both excluded wheel cases. Continue only the89 uncompleted source cases, without replaying the observed prefix or overriding a fixture. Record this incident in an append-only testing-evidence lesson, preserving the complete prior prefix; all application/test/guard source stays exact. Preserve the unrecovered historical generic followups-published-tree scratch serialization replacement separately from unchanged immutable reviews/raw/XML and authenticated Git contents. Re-authenticate the three owned documentation changes and obtain fresh immutable independent approval before the original five budgets once. ADR required: no; the existing ADR126/097/199 boundaries remain.
+
+## Prospective credit-program / auth-choice / shelf preserving integration — October 4
+
+ADR required: no
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; backlog/decisions/126-complete-local-backup-and-recovery.md; backlog/decisions/211-ephemeral-provider-failure-presentation.md; incoming accepted ADR206/207 retained as shipped.
+Reason: integrate existing upstream fixes and formatter reflow without adding a boundary, dependency, permission, schema or ceiling. Incoming accepted decisions and their limitations remain separate from orchestration qualification.
+
+1. Preserve published 13a5f54262c63c30c78fee1ff3bda1bb05a8aa44, immutable ba1 approvals, all original raw/XML/retry/cancellation evidence and every positive/NON-GREEN/baseline/interrupted/unexecuted/metadata/warning/physical/wider limit. At05:32 all FOUR current13a jobs PASS and exact-head Qodo has four zero counters/four resolved threads/full pagination; only afterward inspect live strict/admin/conversation protection and fetch exact dev ca2992cb10b24307fbae050643472ffb0a4388e7 from qualified81c7. Original UI cancellation remains NON-GREEN; its one retry passes945 tests with5 warnings; the PR fast-lane result is carried, not rerun. No other retry or merge occurred.
+2. Reopen TASK33664 AC3/In Progress through CLI while AC4 stays checked, commit this prospective plan BEFORE preserving rebase. Authenticate1,368 current prior records/full27,554 published tree and1,863 incoming paths. There are25 feature-patch overlaps. Nineteen overlapping Python modules are AST-equal upstream formatter reflow; the two remaining Python modules add two controller-test bootstrap enrollments and four ChaChaNotes DB IMMEDIATE writers, with no changed leaf-function intersection with the orchestration patch. A class-level AST intersection is not a changed-method intersection.
+3. Perform a preserving rebase onto exact ca2992. Resolve only actual conflicts. For formatter conflicts independently format the ancestor/ours/theirs scratch copies with the existing pinned Ruff configuration, merge those three formatted inputs, and prove statement/function/assertion ASTs preserve both changes. Preserve all comments and both complete lesson additions; resolve generated diagnostic inventory only by its existing generator against composed source. Do not blanket-replace a runtime module or carry an old inventory digest. Retain upstream-only files/modes/blobs exactly and prior non-overlap records/deletion exactly; compare the entire planned+incoming+explicit-composition tree/index/disk. Preserve schema76/stamps/frozen AgentRuns, preacceptance AGENT_WAKE refusal/refund/guards/nonreplay, child scoped tools/peers, app revocation/finite SQL custody, shared Send/hooks/readiness/HELD recovery and the three deferred Resend imports.
+4. Qualify only necessary composition and directly affected consumers: incoming Console shelf recovery/projection, Anthropic saved/readiness auth-choice fake-client controls, real SQLite changed writer controls, two newly admitted Console controller tests and orchestration wake/refund/child/custody/typed-audit neighbors. Keep incoming security/Library/realtime/RAG fixes and task states exact with their shipped evidence; do not replay their broad sweeps or claim new live/security/native/provider behavior. Use task-owned outer HOME/USERPROFILE/TLDW_CONFIG_PATH/XDG through teardown, unchanged actual sources/fixtures/markers/gates, targeted selections only, authenticated raw/XML/command/exit and unsummed counts. If a case is blocked, retain NON-GREEN and proportionate exact incoming/source controls without masking or invented cause.
+5. Check proportional fatal/Ruff/format/whitespace/task-ID/path/readability, relevant whole-module and leaf-function ASTs, original guard/ceiling ASTs, generated diagnostic/worker inventory and CSS/size identity. Preserve inherited debt separately. Obtain independent immutable source/functional/artifact/evidence Ready approval. Only after ALL activity settles, run the ORIGINAL five storage/app-import/UI-ready/boot-CSS cases ONCE on the newly composed source, with exact REPO_ROOT cwd/PYTHONPATH/default pytest depth/full outer profile and original guards/ceilings/work/timeouts. Read actual counts/warnings, authenticate source/tree after run and obtain supplemental independent budget approval. Never replay any completed prior test/budget/preparation/rebase/closure/publication/retry script.
+6. Only after approvals, close AC3/Done via CLI (AC4 checked); append only the four owned canonical Markdown records, preserving all reviewed source/deletion and full tree outside four. Read fresh13a Qodo/current jobs/actualrefs/protection, then publish ONCE with exact observed13a lease and concise body; verify actual remote/GitHub/body after lag without a second push. Approvals qualify ONLYca2992; later dev remains separately unqualified. Require fresh new-head Qodo/no actionable threads/ALL FOUR jobs before any later concurrency inspection/fetch/rebase or normal protected --match-head-commit merge. Verify actual MERGED parents/tree/concurrency before heartbeat pause/completion report.
+
+No full suite/live providers/user keys/physical CtrlQ/relaunch/real voice provisioning/service/download/playback/native-Linux/Windows/aggregate/package/index/installed-native-release/wider-audit certification; no admin bypass, weakened gates/pins/ceilings/counts/time/warmup/work, shared stash or foreign cleanup. Incoming task statuses, ADR statuses and all historical evidence remain as shipped; no unrelated task closure is authorized. The unrecovered historical followups-published-tree serialized-byte limitation remains, with logical Git-tree authentication separate. App automation API update remains unavailable; authoritative scratch handoff supersedes its stale cac prompt.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
