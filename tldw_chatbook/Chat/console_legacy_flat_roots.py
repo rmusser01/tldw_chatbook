@@ -317,7 +317,9 @@ def _was_chained(
     """Whether the flat repair hung this saved row under another node.
 
     A restored node's ``parent_message_id`` is its saved parent; a chained
-    root's native parent is the previous flat root instead.
+    root's native parent is the previous flat root instead, which is saved.
+    A saved row under an unsaved node (an interstitial note) is saved under
+    its nearest saved ancestor; that is not a chain.
     """
     node = nodes.get(node_id)
     parent = nodes.get(store._native_parent_by_message.get(node_id))
@@ -325,6 +327,7 @@ def _was_chained(
         node is not None
         and node.persisted_message_id
         and parent is not None
+        and parent.persisted_message_id
         and node.parent_message_id != parent.persisted_message_id
     )
 

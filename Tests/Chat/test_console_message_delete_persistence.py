@@ -1561,6 +1561,52 @@ def test_threaded_delete_reads_no_root_rows_and_leaves_a_hidden_root(
     assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
 
 
+def test_threaded_delete_over_an_unsaved_note_reads_no_root_rows(monkeypatch):
+    """A saved reply under an unsaved note is not a chained flat root.
+
+    The reply is saved under its nearest saved ancestor, not under the note,
+    which has no saved id. That is no flat repair, so deleting the first
+    message of a parent-linked conversation still reads no root rows and
+    leaves the parentless tool row alone.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_message_delete import delete_subtree_for_undo
+
+    rows = [
+        ("c0", "user", None, "c0 text"),
+        ("c1", "assistant", "c0", "c1 text"),
+        _TOOL_ROW,
+        ("c2", "user", "c1", "c2 text"),
+    ]
+    db = CharactersRAGDB(":memory:", "threaded-delete")
+    conversation_id = _seed_flat(db, rows, leaf="c2")
+    store, session_id, native = _open_store(db, conversation_id)
+    store.append_message(
+        session_id, role=ConsoleMessageRole.SYSTEM, content="Skipped skill: demo"
+    )
+    reply = store.append_message(
+        session_id, role=ConsoleMessageRole.ASSISTANT, content="c3 text", persist=True
+    )
+    saved_reply = store.get_message(reply.id).persisted_message_id
+    assert db.get_message_by_id(saved_reply)["parent_message_id"] == "c2"
+    ids = [*(row[0] for row in rows), saved_reply]
+    removed = {"c0", "c1", "c2", saved_reply}
+    reads: list[str] = []
+    read_rows = db.get_message_tree_rows_for_conversation
+
+    def _counted(conversation, *args, **kwargs):
+        reads.append(conversation)
+        return read_rows(conversation, *args, **kwargs)
+
+    monkeypatch.setattr(db, "get_message_tree_rows_for_conversation", _counted)
+
+    deleted, _held = delete_subtree_for_undo(store, native["c0"])
+
+    assert reads == []
+    assert {message_id for message_id, _version in deleted.tombstones} == removed
+    assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
+
+
 # --- TASK-33628.9: Delete of an unsaved message with saved rows under it -------
 #
 # A message with no saved id can still have saved rows beneath it in memory:
