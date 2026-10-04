@@ -629,3 +629,50 @@ async def test_a_llamacpp_400_that_is_not_an_overflow_still_falls_back() -> None
     _exc, sent = await _llamacpp_stream_failure('{"error": "streaming disabled"}')
 
     assert len(sent) == 2
+
+
+@pytest.mark.parametrize(
+    ("provider", "exc", "joined"),
+    [
+        (
+            "anthropic",
+            _raised_from_http(
+                ChatAuthenticationError(provider="anthropic", message="Auth failed."),
+                401,
+                ANTHROPIC_INVALID_KEY_401,
+            ),
+            "“invalid x-api-key”. Update the API key",
+        ),
+        (
+            "llama_cpp",
+            _raised_from_http(
+                ChatBadRequestError(
+                    provider="llama_cpp", message="Bad request.", status_code=400
+                ),
+                400,
+                LLAMACPP_CONTEXT_OVERFLOW_400,
+            ),
+            "try increasing it”. Start the server",
+        ),
+        (
+            "openrouter",
+            _raised_from_http(
+                ChatAuthenticationError(provider="openrouter", message="Auth failed."),
+                401,
+                OPENROUTER_EXPIRED_KEY_401,
+            ),
+            "“API key expired.” Update the API key",
+        ),
+    ],
+)
+def test_a_reason_without_final_punctuation_still_ends_its_sentence(
+    provider, exc, joined
+) -> None:
+    """Review round 2 live re-check (g5-r2b-local 05): llama.cpp's reason has no
+    final period, so the fix ran on: '... try increasing it” Start the server
+    ...'. A reason that ends without punctuation gets a period after its
+    closing quote; one that already ends a sentence gets none."""
+    copy = safe_provider_error_copy(provider, exc)
+
+    assert joined in copy, copy
+    assert ".”." not in copy

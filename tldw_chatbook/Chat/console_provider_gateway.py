@@ -1544,8 +1544,11 @@ def safe_provider_error_copy(
     if reason:
         # Review round 1 (F2): a reason the sanitizer rejects (a masked key
         # fragment, a hex id) drops alone -- never the category or the fix.
+        # A reason with no final punctuation still ends its sentence before
+        # the fix ("... try increasing it”. Start the server ...").
+        quote_end = "”" if reason[-1:] in ".!?…" else "”."
         with_reason = _sanitized_provider_diagnostic(
-            f"{head} {provider_copy} says: “{reason}”{action_copy}",
+            f"{head} {provider_copy} says: “{reason}{quote_end}{action_copy}",
             known_credentials=known_credentials,
         )
         if with_reason != _PROVIDER_REQUEST_FAILED_COPY:
