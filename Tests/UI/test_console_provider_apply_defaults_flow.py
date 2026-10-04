@@ -1369,8 +1369,10 @@ def _install_ready_vllm_target(app, *, generation: int = 7):
     return owner, target
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_vllm_console_handoff_replaces_only_active_session_without_config_write(
+    request,
     monkeypatch,
 ) -> None:
     """Calling any durable writer or rebasing from saved vLLM loses this contract."""
@@ -1446,10 +1448,11 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_vllm_console_session_endpoint_never_enters_conversation_metadata() -> (
-    None
-):
+async def test_vllm_console_session_endpoint_never_enters_conversation_metadata(
+    request,
+) -> None:
     """The verified endpoint stays live-only through persist, message, and reload."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -1535,10 +1538,11 @@ async def test_vllm_console_session_endpoint_never_enters_conversation_metadata(
         assert "http://127.0.0.1:8111/v1/chat/completions" in ordinary_metadata
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint() -> (
-    None
-):
+async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint(
+    request,
+) -> None:
     """A later first persist and message never serialize the live endpoint."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -1591,10 +1595,11 @@ async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint(
         assert resumed_store.session_ephemeral_endpoint_policy(resumed.id) is None
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_defaults() -> (
-    None
-):
+async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_defaults(
+    request,
+) -> None:
     """Atomic temporary promotion cannot serialize either live endpoint."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -1641,10 +1646,11 @@ async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_de
         assert resumed_store.session_ephemeral_endpoint_policy(resumed.id) is None
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy() -> (
-    None
-):
+async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy(
+    request,
+) -> None:
     """A durable fork transfers live policy without pinning either URL."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -1711,8 +1717,10 @@ async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy
         assert resumed_store.session_ephemeral_endpoint_policy(resumed.id) is None
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
+    request,
     monkeypatch,
 ) -> None:
     """A sync exception after store mutation must restore every active projection."""
@@ -1789,8 +1797,10 @@ async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_vllm_console_handoff_blocks_endpoint_when_durable_rollback_fails(
+    request,
     monkeypatch,
 ) -> None:
     """A failed compensation is disclosed and cannot leave a sendable endpoint."""
@@ -1866,8 +1876,10 @@ async def test_vllm_console_handoff_blocks_endpoint_when_durable_rollback_fails(
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
+    request,
     monkeypatch,
 ) -> None:
     """A concurrent SQLite winner survives while the adopted session fails closed."""
@@ -1962,12 +1974,14 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
             await gateway.aclose()
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "failing_sync",
     ("_sync_console_chat_core_state", "_sync_console_settings_summary"),
 )
 async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fails(
+    request,
     monkeypatch,
     failing_sync,
 ) -> None:
@@ -2001,9 +2015,41 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
         summary_before = summary_widget.state
         original_sync = getattr(console, failing_sync)
         calls = 0
+        pending_phase = None
+        entered = []
+        failed_phases = []
+        original_adopt = session_store.adopt_session_ephemeral_endpoint
+        original_rollback = session_store.rollback_session_ephemeral_endpoint_adoption
+
+        def adopt_endpoint(*args, **kwargs):
+            nonlocal pending_phase
+            receipt = original_adopt(*args, **kwargs)
+            entered.append(session_store.effective_session_settings(session_id))
+            pending_phase = "forward"
+            return receipt
+
+        def rollback_endpoint(*args, **kwargs):
+            nonlocal pending_phase
+            outcome = original_rollback(*args, **kwargs)
+            assert outcome.value == "restored"
+            pending_phase = "rollback"
+            return outcome
+
+        monkeypatch.setattr(
+            session_store, "adopt_session_ephemeral_endpoint", adopt_endpoint
+        )
+        monkeypatch.setattr(
+            session_store,
+            "rollback_session_ephemeral_endpoint_adoption",
+            rollback_endpoint,
+        )
 
         def apply_forward_then_fail_rollback():
-            nonlocal calls
+            nonlocal calls, pending_phase
+            if pending_phase is None:
+                return original_sync()
+            failed_phases.append(pending_phase)
+            pending_phase = None
             calls += 1
             if calls == 1:
                 original_sync()
@@ -2018,6 +2064,13 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
         assert console.consume_pending_vllm_console_intent() is False
         monkeypatch.setattr(console, failing_sync, original_sync)
         assert calls == 2
+        assert failed_phases == ["forward", "rollback"]
+        assert len(entered) == 1
+        assert (entered[0].provider, entered[0].model, entered[0].base_url) == (
+            "vllm",
+            target.model_id,
+            target.api_url,
+        )
         assert session_store.session_settings(session_id) == before
         assert (
             controller.provider,
@@ -2030,10 +2083,11 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay() -> (
-    None
-):
+async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
+    request,
+) -> None:
     """Dropping the claim on a stale owner or failed replace loses user intent."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
@@ -2108,9 +2162,11 @@ async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
     assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("release_failure", ("false", "exception"))
 async def test_vllm_console_failed_release_survives_for_later_readoption(
+    request,
     monkeypatch,
     release_failure,
 ) -> None:

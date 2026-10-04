@@ -7951,6 +7951,7 @@ class ChatScreen(BaseAppScreen):
     ) -> bool:
         """Reuse the exact session adoption and compensation transaction."""
 
+        provider_name = "vLLM" if provider == "vllm" else "llama.cpp"
         store = getattr(self.app_instance, "pending_handoffs", None)
         if type(store) is not PendingHandoffStore:
             return False
@@ -7982,11 +7983,11 @@ class ChatScreen(BaseAppScreen):
         replacement_started = False
         try:
             intent = claim.value
-            if type(intent) is not VllmConsoleIntent:
-                raise TypeError("vLLM Console handoff was not exact")
-            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
-            if not owner_has_current_intent(owner, intent):
-                raise ValueError("vLLM Console handoff is stale")
+            if type(intent) is not intent_type:
+                raise TypeError(f"{provider_name} Console handoff was not exact")
+            owner = getattr(self.app_instance, owner_attribute, None)
+            if not current_intent(owner, intent):
+                raise ValueError(f"{provider_name} Console handoff is stale")
             if not self.is_attached:
                 raise RuntimeError("Console is detached")
             session_store = self._ensure_console_chat_store()
@@ -7994,6 +7995,21 @@ class ChatScreen(BaseAppScreen):
             session_id = session_store.active_session_id
             if session_id is None:
                 raise RuntimeError("Console active session is unavailable")
+            rebase_controller = self._console_chat_controller
+            if rebase_controller is None:
+                rebase_controller = self._ensure_console_chat_controller()
+            current_summary_state = self._build_console_settings_summary_state()
+            if (
+                not self.is_attached
+                or session_store.active_session_id != session_id
+                or not current_intent(owner, intent)
+            ):
+                raise RuntimeError("Console handoff changed before adoption")
+            # Controller initialization can synchronize live settings. Capture
+            # compensation only after that synchronization has completed.
+            current = session_store.session_settings(session_id)
+            if current is None:
+                raise RuntimeError("Console active session settings are unavailable")
             active_session = session_store.ensure_session()
             if active_session.id != session_id:
                 raise RuntimeError("Console active session changed before adoption")
@@ -8003,21 +8019,30 @@ class ChatScreen(BaseAppScreen):
             )
             current_controller = self._console_chat_controller
             current_provider_selection = self._build_console_provider_selection()
-            current_summary_state = self._build_console_settings_summary_state()
-            configured_vllm = build_target_default_console_session_settings(
+            configured_provider = build_target_default_console_session_settings(
                 self._provider_readiness_app_config(),
-                "vllm",
+                provider,
                 intent.model_id,
             )
-            next_settings = replace(
+            draft = self._console_settings_initial_draft(
                 current,
-                provider="vllm",
+                session_store.session_context_policy_overrides(session_id),
+                exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+            )
+            rebased = rebase_controller.rebase_console_settings_draft(
+                draft,
+                provider=provider,
                 model=intent.model_id,
-                base_url=configured_vllm.base_url,
+                app_config=self._provider_readiness_app_config(),
+                exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+            )
+            next_settings = replace(
+                rebased.settings,
+                base_url=configured_provider.base_url,
                 source="user",
             )
             endpoint_policy = ConsoleEphemeralEndpointPolicy(
-                provider="vllm",
+                provider=provider,
                 model=intent.model_id,
                 base_url=intent.api_url,
             )
@@ -8026,7 +8051,9 @@ class ChatScreen(BaseAppScreen):
                 app_config=self._provider_readiness_app_config(),
             )
             if errors:
-                raise ValueError("vLLM Console session settings are invalid")
+                raise ValueError(
+                    f"{provider_name} Console session settings are invalid"
+                )
             adoption_receipt = session_store.adopt_session_ephemeral_endpoint(
                 session_id,
                 settings=next_settings,
@@ -8038,10 +8065,12 @@ class ChatScreen(BaseAppScreen):
             if (
                 not self.is_attached
                 or session_store.active_session_id != session_id
-                or not owner_has_current_intent(owner, intent)
+                or not current_intent(owner, intent)
                 or not store.acknowledge_current(claim)
             ):
-                raise RuntimeError("vLLM Console handoff changed during adoption")
+                raise RuntimeError(
+                    f"{provider_name} Console handoff changed during adoption"
+                )
         except BaseException as error:
             if (
                 replacement_started
@@ -8065,7 +8094,7 @@ class ChatScreen(BaseAppScreen):
                     )
                     if outcome is ConsoleEndpointRollbackOutcome.LOST_SESSION_FENCE:
                         raise RuntimeError(
-                            "vLLM Console rollback lost its session fence"
+                            f"{provider_name} Console rollback lost its session fence"
                         )
                     if (
                         outcome is ConsoleEndpointRollbackOutcome.RESTORED
@@ -8097,7 +8126,7 @@ class ChatScreen(BaseAppScreen):
                         and session_store.active_session_id == session_id
                     ):
                         self.app_instance.notify(
-                            "vLLM session endpoint blocked because the prior "
+                            f"{provider_name} session endpoint blocked because the prior "
                             "conversation metadata could not be restored. Retry "
                             "the handoff or choose a provider before sending.",
                             severity="error",
@@ -8106,13 +8135,13 @@ class ChatScreen(BaseAppScreen):
                         self._sync_console_settings_summary()
                 except BaseException as rollback_error:
                     logger.warning(
-                        "vLLM Console handoff rollback failed "
+                        f"{provider_name} Console handoff rollback failed "
                         "(revision={}, exception_category={})",
                         claim.revision,
                         type(rollback_error).__name__,
                     )
                     self.app_instance.notify(
-                        "vLLM session handoff could not restore its exact prior "
+                        f"{provider_name} session handoff could not restore its exact prior "
                         "state. Review the current provider before sending.",
                         severity="error",
                     )
@@ -8123,7 +8152,7 @@ class ChatScreen(BaseAppScreen):
                 released = False
                 release_failure = "exception"
                 logger.warning(
-                    "vLLM Console handoff claim release failed "
+                    f"{provider_name} Console handoff claim release failed "
                     "(revision={}, exception_category={})",
                     claim.revision,
                     type(release_error).__name__,
@@ -8138,13 +8167,13 @@ class ChatScreen(BaseAppScreen):
                     )
                 except BaseException as retention_error:
                     logger.warning(
-                        "vLLM Console handoff cleanup ownership transfer failed "
+                        f"{provider_name} Console handoff cleanup ownership transfer failed "
                         "(revision={}, exception_category={})",
                         claim.revision,
                         type(retention_error).__name__,
                     )
                 self.app_instance.notify(
-                    "vLLM session handoff could not be re-queued yet. Console "
+                    f"{provider_name} session handoff could not be re-queued yet. Console "
                     "retained cleanup ownership and will retry before adoption.",
                     severity="error",
                 )
@@ -8154,7 +8183,7 @@ class ChatScreen(BaseAppScreen):
             ):
                 raise
             logger.warning(
-                "vLLM Console handoff will retry "
+                f"{provider_name} Console handoff will retry "
                 "(channel={}, revision={}, exception_category={})",
                 claim.channel.value,
                 claim.revision,
@@ -8162,7 +8191,7 @@ class ChatScreen(BaseAppScreen):
             )
             return False
         self.app_instance.notify(
-            "Using the verified vLLM target for this Console session only.",
+            f"Using the verified {provider_name} target for this Console session only.",
             severity="information",
         )
         return True
@@ -16965,6 +16994,10 @@ class ChatScreen(BaseAppScreen):
                 self.CONSUMER_SETTLE_HEDGE_SECONDS,
                 self.consume_pending_vllm_console_intent,
             )
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self.consume_pending_llamacpp_console_intent,
+            )
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
             # link (staged while Console was not mounted) and switch to the
             # settled conversation's session. Same 0.15s settle hedge as the
@@ -24019,6 +24052,10 @@ class ChatScreen(BaseAppScreen):
                 self.set_timer(
                     self.CONSUMER_SETTLE_HEDGE_SECONDS,
                     self.consume_pending_vllm_console_intent,
+                ),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self.consume_pending_llamacpp_console_intent,
                 ),
                 # PR3a-2 Task 4: mirrors the on_mount claim -- a completion
                 # staged while the user was on another screen is claimed on
