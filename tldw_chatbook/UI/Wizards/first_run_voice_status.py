@@ -38,6 +38,12 @@ KEY_NEEDED_COPY = (
     "OpenAI voice needs an OpenAI API key. Paste one below, pick another "
     'service, or choose "No voice for now".'
 )
+#: Next's refusal shows on the pinned strip at the bottom of the step, below
+#: the key field, and Next alone cannot fix it (review round 1, G8-V1-F4).
+KEY_REFUSAL_COPY = (
+    "OpenAI voice needs an OpenAI API key. Paste it in the OpenAI API key field "
+    'above, pick another service, or choose "No voice for now".'
+)
 DEFAULT_HELP_COPY = "Turn on Speak replies in Console to hear answers automatically."
 #: The auth option names the key; this line says where it comes from (the
 #: long label was cut to "…from the Provider st…" even at 160 columns).
@@ -274,6 +280,7 @@ __all__ = [
     "DEFAULT_STATUS_COPY",
     "KEY_HINTS_WITH_SAMPLE",
     "KEY_NEEDED_COPY",
+    "KEY_REFUSAL_COPY",
     "LEAVE_MESSAGE",
     "LEAVE_TITLE",
     "NO_VOICE_COPY",

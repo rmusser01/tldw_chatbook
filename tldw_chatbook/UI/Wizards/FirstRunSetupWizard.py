@@ -2119,10 +2119,9 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                     return
                 ok, error = await step.commit()
                 if not ok:
-                    # TASK-21140 (UAT F-1 follow-on): the old suffix offered
-                    # "Skip this step", a control that does not exist. Name
-                    # only affordances that are on screen.
-                    step.show_step_error(f"{error}  Retry with Next, or go Back.")
+                    # TASK-21140: name only affordances that are on screen;
+                    # TASK-34100.8: the step words its own refusal's escapes.
+                    step.show_step_error(step.refusal_message(error))
                     return
             if isinstance(step, WelcomeStep):
                 self.select_track(step.chosen_track())

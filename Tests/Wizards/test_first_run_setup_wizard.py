@@ -1012,7 +1012,11 @@ async def test_official_voice_without_key_is_actionable_and_cannot_test_or_save(
         await pilot.pause()
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
-        assert status == voice_status.KEY_NEEDED_COPY
+        # Review round 2 (F6): pin the words, not the constant, so the
+        # in-wizard escapes cannot be edited away unnoticed.
+        assert "Paste one below" in status  # the key field sits below it
+        assert "pick another service" in status
+        assert '"No voice for now"' in status
         assert len(status) <= 120
         # TASK-34100.8 (voice-speech-04): an inline masked key field and the
         # leave-for-Settings button, not a dead end.
@@ -1026,9 +1030,40 @@ async def test_official_voice_without_key_is_actionable_and_cannot_test_or_save(
 
         ok, error = await step.commit()
         assert ok is False
-        assert error == voice_status.KEY_NEEDED_COPY
-        assert "No voice for now" in error
+        # Review round 1 (G8-V1-F4): the refusal shows on the pinned strip at
+        # the bottom of the step, BELOW the key field.
+        assert "OpenAI API key field above" in error
+        assert "below" not in error
+        assert "pick another service" in error
+        assert '"No voice for now"' in error
         assert sample_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_refused_voice_next_without_a_key_offers_no_futile_retry(
+    monkeypatch,
+) -> None:
+    """G8-V1-F4 (SF3 stage 3): "Retry with Next" appears only when a retry
+    can succeed; Next without a key cannot."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    wizard = _make_wizard()
+    app = _HostApp(wizard)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        index = container._step_index_for_id(STEP_VOICE)
+        container.show_step(index)
+        await pilot.pause()
+        step = container.steps[index]
+        step._select_preset_button("setup-voice-preset-official")
+        await pilot.pause()
+
+        await container._advance()
+        await pilot.pause()
+        pinned = str(wizard.query_one("#setup-step-error-pinned", Static).render())
+        assert pinned.startswith("OpenAI voice needs an OpenAI API key.")
+        assert "Retry with Next" not in pinned
+        assert container.current_step == index
 
 
 @pytest.mark.asyncio

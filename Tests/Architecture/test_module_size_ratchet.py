@@ -165,8 +165,9 @@ _BUDGETS: dict[str, int] = {
     # fence through finishing (3,181); round 3 shared the discovery reuse rule
     # (3,179). The wizard keeps the container, progress, nav bar, dialog and
     # screen. TASK-34100.8: the Voice resume restore moved onto the step
-    # (VoiceSetupStep.restore_checkpoint) -> 3,145.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3145,
+    # (VoiceSetupStep.restore_checkpoint) -> 3,145; review round 1 moved the
+    # refused-Next suffix onto SetupStep.refusal_message -> 3,144.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3144,
     # TASK-34100.1: the step modules the split left at 1,000 lines or more
     # are pinned at their exact size, so the split cannot regrow a god module
     # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and

@@ -834,7 +834,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
             else None
         )
         if draft.authentication_mode == "api_key" and found is None:
-            return False, voice_status.KEY_NEEDED_COPY
+            return False, voice_status.KEY_REFUSAL_COPY
         credential = found[0] if found is not None and found[1] else None
         request_id = self._next_save_request_id
         self._next_save_request_id += 1
@@ -868,6 +868,12 @@ class VoiceSetupStep(OmniVoiceStepBase):
             if callable(note):
                 note()  # Protect now offers to encrypt the saved key.
         return outcome
+
+    def refusal_message(self, error: str) -> str:
+        """No "Retry with Next" when Next alone cannot succeed (G8-V1-F4)."""
+        if error == voice_status.KEY_REFUSAL_COPY:
+            return error
+        return super().refusal_message(error)
 
     def busy_label(self) -> str:
         """What a slow Next from Voice is doing: the save can take 30 s."""
