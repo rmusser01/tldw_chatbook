@@ -104,12 +104,14 @@ def _assert_required_aggregation(workflow: dict) -> None:
     assert "needs.ui-fast-lane.result" in ui_verdict["run"]
     assert "exit 1" in ui_verdict["run"]
 
-    # The UI lane is bounded the same way the fast lane is: one serial job,
+    # The UI lane is bounded the same way the fast lane is: serial jobs,
     # minimal install, its own timeout. TASK-32908 put it in its own job
-    # precisely so it cannot eat pr-fast-lane's 30-minute budget.
+    # precisely so it cannot eat pr-fast-lane's 30-minute budget; TASK-34353
+    # split it into contiguous shards so the census fits that timeout. A
+    # matrix job's `needs.<job>.result` is success only when every shard is.
     ui = workflow["jobs"]["ui-fast-lane"]
     assert ui["runs-on"] == "ubuntu-latest"
-    assert "strategy" not in ui
+    assert list(ui["strategy"]["matrix"]) == ["shard"]
     assert ui["timeout-minutes"] <= 20
     assert not ui.get("continue-on-error", False)
     assert all(not step.get("continue-on-error", False) for step in ui["steps"])
