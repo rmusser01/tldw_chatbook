@@ -1,15 +1,16 @@
 """Real captured agent retries must outlive an intermediate provider failure."""
 
 import json
+
 import pytest
 
 from Tests.Chat.test_console_project_instruction_traces import _project_console
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError, ChatRateLimitError
-from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleResolvedDestination,
 )
+from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderResolution
 
 pytestmark = pytest.mark.bootstrap_profile
 

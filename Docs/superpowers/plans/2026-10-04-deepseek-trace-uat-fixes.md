@@ -66,3 +66,19 @@ Code starts at fetched dev `8f83422dde2a5b95da648882b8f7e09da5b41f08` in
   storage latency remains unresolved. The test build remains open on localhost.
   The user requested a PR against dev on 2026-10-04; the fix branch is being
   published after verification, followed by a separate pause/root-cause investigation.
+
+## PR shepherding and provider audit (2026-10-04)
+
+- Reproduced changed retry target/settings bypass in 14 both-wire cases.
+  Compare durable provider/model/endpoint/generation/response/reasoning and
+  tool/literal components before dispatch; route transition remains valid.
+- Six affected PR modules: 58 passed; production Ruff retains 33 unchanged
+  diagnostics in trace service, changed test modules lint/format clean.
+- Independent review found no remaining Critical/Important issue.
+- Cross-provider actual-adapter probes: 10 failures across Groq, OpenRouter,
+  Together, Fireworks and Cerebras; six baseline controls passed. Followups
+  TASK-34367.1 through TASK-34367.5 remain To Do.
+  Evidence: `Docs/superpowers/qa/2026-10-04-provider-response-audit/audit.md`.
+- ADR required: no new ADR. ADR path: backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md. Reason: complete its existing exact-request retry contract; provider followups implement ADR-179.
+
+Broader targeted trace runtime/service/system-prompt run: **160 passed, two failed**. Both failing cases are `test_failed_rollback_releases_observers_and_reports_ambiguous_outcome[False/True]`: the unchanged test constructs a transaction manager and exits without entering, so `_maintenance_context` is absent and masks its intended rollback/commit error. The same two failures reproduced after temporarily restoring trace_service from origin/dev; the DB and test files are byte-identical to origin/dev. The repaired service was restored afterward. These pre-existing test-fixture failures were not silently excluded or repaired in this provider PR.
