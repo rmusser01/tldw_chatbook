@@ -1,9 +1,10 @@
 ---
 id: TASK-399.8.3
 title: B1b3 Integrate writable lifecycle and open the B1 release gate
-status: To Do
+status: Won't Do
 assignee: []
 created_date: '2026-07-23 15:37'
+updated_date: '2026-10-04'
 labels:
   - notes
   - filesystem
@@ -36,3 +37,13 @@ Integrate read/write mode transitions, safe Unlink and Forget lifecycle barriers
 - [ ] #7 Large files above the interactive ceiling, unsupported manifests or security metadata, network or non-APFS roots, and ambiguous path identity remain read-only with exact copy or export rather than exposing a partial writable path.
 - [ ] #8 Release tests prove no File path mutates through Database-note services, no legacy filesystem pass runs while File Notes owns exclusive mutation, and Git staging, commit, and push controls remain absent.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Closed superseded, not implemented as written. There is no read/write
+transition and no release gate to open: under ADR-029 the feature shipped
+writable directly (TASK-969, PR #992), so the RW upgrade/downgrade barriers,
+manifest-gated admission, writable Unlink/Forget lifecycle, and the
+all-or-nothing B1 gate specified above were never built.
+
+Superseded by: ADR-029 (backlog/decisions/029-file-notes-disk-authority.md) via TASK-969 (PR #992).

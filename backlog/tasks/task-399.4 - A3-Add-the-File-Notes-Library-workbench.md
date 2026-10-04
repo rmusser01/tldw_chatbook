@@ -1,9 +1,10 @@
 ---
 id: TASK-399.4
 title: A3 Add the File Notes Library workbench
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-23 14:23'
+updated_date: '2026-10-04'
 labels:
   - notes
   - library
@@ -41,3 +42,22 @@ Make linked files usable from Library without replacing or duplicating the exist
 - [ ] #11 File workbench route, mode, query generation, selection, expansion, focus target, and scroll anchor are saved and restored when the user leaves Library and later returns, without changing the independently retained Database Notes state.
 - [ ] #12 Every filename, root/relative path, search snippet, status detail, and error derived from a linked file is rendered as literal user content and cannot inject Rich/Textual markup or alter surrounding controls.
 <!-- AC:END -->
+
+## Closeout 2026-10-04
+
+Done — landed as the "Folder files" workbench. Evidence:
+`tldw_chatbook/Widgets/Library/library_file_notes_workspace.py` (the Library
+Database | Files workspace: tree/search, read-only vs editable bodies,
+narrow/wide layouts, leave guards, route/selection/focus/scroll restore), the
+user guide `Docs/User_Guide/library/file-notes.md`, and the w4 battery
+(`Tests/UI/test_library_notes_w4_file_notes.py`,
+`test_library_notes_w4_layout.py`,
+`test_library_notes_w4_console_handoff.py`,
+`test_library_notes_w4_data_truth.py`). Children TASK-399.4.1 through
+TASK-399.4.4 are already Done.
+
+Deliberate deviations from the AC text above (design decisions under ADR-029,
+not gaps): the source-switch/reload-confirmation coverage replaced the grouped
+combined-search paging contract, and the workbench shipped default-on rather
+than behind a default-off A release gate. The AC text describes the superseded
+ADR-021 rollout; the outcome landed per ADR-029 (TASK-969, PR #992).
