@@ -409,7 +409,7 @@ Independent Task11 review /root/pr2995_task11_integration_review: Spec Compliant
 ### Task 12: Integrate latest dev delete, approval and activation contracts
 
 ADR required: no new ADR
-ADR path: backlog/decisions/067-indefinite-human-approval-waits.md; backlog/decisions/092-console-chat-fork-copy-and-authority-boundary.md; backlog/decisions/120-console-voice-promotion.md; backlog/decisions/219-console-chat-destinations-and-bounded-starts.md; backlog/decisions/220-console-human-decision-coordination-ownership.md.
+ADR path: backlog/decisions/067-indefinite-human-approval-waits.md; backlog/decisions/092-console-chat-fork-copy-and-authority-boundary.md; backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md; backlog/decisions/219-console-chat-destinations-and-bounded-starts.md; backlog/decisions/220-console-human-decision-coordination-ownership.md.
 Reason: preserve26 newly landed commits/46paths across eleven existing runtime owners; no boundary, schema or authority decision is added.
 
 - [ ] After Task9 independent review closes, retain its exact final source3025df959c and249 artifact pins, all prior scoped reviews/maps/pass receipts, and the shared dirty checkout. Root preflight/fetch observes7d155170dc95557736a239a1ce7427981f4d50ec from previous dev1b12. Preserve recovery ref/bundle, then rebase once onto that pinned dev. No blanket ours/theirs or replacement with older5c0 preflight bytes.
