@@ -151,8 +151,29 @@ _BUDGETS: dict[str, int] = {
     # `origin/dev` 9e33252708 — see the module docstring's second pass.
     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14324,
     # TASK-33921: 10,854 on dev 2026-10-03 (over by 450); the Voice step moved
-    # to UI/Wizards/first_run_voice_step.py.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 9866,
+    # to UI/Wizards/first_run_voice_step.py. TASK-34100.1: every other step
+    # moved to its own module (9,866 -> 3,149), then the busy line and the
+    # worker helper's call sites landed (3,183); review round 1 moved the
+    # fence's focus hold into first_run_step_guard.py (3,182); round 2 held the
+    # fence through finishing (3,181); round 3 shared the discovery reuse rule
+    # (3,179). The wizard keeps the container, progress, nav bar, dialog and
+    # screen.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3177,
+    # TASK-34100.1: the step modules the split left at 1,000 lines or more
+    # are pinned at their exact size, so the split cannot regrow a god module
+    # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
+    # Model. New code for one of them goes in a helper module beside the step
+    # (first_run_<step>_<topic>.py), never in a raised row. The smaller step
+    # modules and helpers (Welcome, RAG, Tools, Notes, Appearance, Protect,
+    # Summary, the shared widgets, the discovery helpers, the busy line and
+    # the step guard) have no row: this file pins hand-picked god modules, and
+    # a row on a small module would stop the next fix adding even one line.
+    # Provider 2,461 -> 2,458: the Qodo round moved the handoff clear into
+    # first_run_model_discovery.drop_unreusable_handoff.
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2458,
+    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1708,
+    "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1070,
+    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
 }

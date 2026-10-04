@@ -66,7 +66,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     is_untouched_default_session,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-    CLOUD_PROBE_TIMEOUT_SECONDS,
     AppearanceStep,
     FirstRunSetupWizard,
     ModelStep,
@@ -81,10 +80,27 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     SummaryStep,
     ToolsStep,
     VoiceSetupStep,
+)
+from tldw_chatbook.UI.Wizards.first_run_provider_step import (
+    CLOUD_PROBE_TIMEOUT_SECONDS,
     _probe_first_run_provider_connection,
     _provider_group_option_id,
     _provider_options,
 )
+
+#: TASK-34100.1 AC#1 (the wizard slice of TASK-33621.36): the mounted steps
+#: read and write config through the ADR-126 admission (Model's curated
+#: fallback calls get_cli_providers_and_models, the provider-rotation tests
+#: call apply_settings_mutation_to_cli_config). Under the per-test sandbox the
+#: bound selection no longer matches, so 41 `-k provider` nodes (119 in the
+#: file) failed with RecoveryRequired('raw_source_selection_changed') before
+#: reaching an assertion. Keep the collection-time profile, the same per-file
+#: opt-in Tests/conftest.py documents for config participants. Re-selecting a
+#: fresh source per test (install_config_source) left 20 red, because the
+#: wizard's module-level config imports stay bound to the old module.
+#: Tests/Wizards/conftest.py restores the shared config.toml after each test,
+#: so one test's writes cannot leak into the next.
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _first_chat_store_snapshot(store: ConsoleChatStore) -> list[dict[str, object]]:
@@ -8099,7 +8115,7 @@ async def test_provider_step_probe_budgets_cloud_vs_local(monkeypatch):
     from unittest.mock import AsyncMock
 
     from tldw_chatbook.UI.Screens import settings_endpoint_probe
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_provider_step import (
         _probe_first_run_provider_connection,
     )
 
@@ -9302,9 +9318,11 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
     from unittest.mock import AsyncMock
 
     import tldw_chatbook.config as config_module
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_model_discovery as model_discovery_module
 
-    monkeypatch.setattr(wizard_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(
+        model_discovery_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05
+    )
     monkeypatch.setattr(
         config_module,
         "get_cli_providers_and_models",
@@ -9314,7 +9332,9 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
     cancelled = asyncio.Event()
     release_late_result = asyncio.Event()
     late_result_returned = asyncio.Event()
-    asyncio.get_running_loop().call_later(3, release_late_result.set)
+    # A safety valve only: the test releases the late result itself. It used
+    # to fire at 3 s, racing the failure line on a loaded machine.
+    asyncio.get_running_loop().call_later(30, release_late_result.set)
 
     async def cancellation_resistant_discovery(**_kwargs):
         started.set()
@@ -9356,8 +9376,18 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
         assert container.current_step == model_index
         model_step = container.steps[model_index]
         assert isinstance(model_step, ModelStep)
-        for _ in range(30):
-            if list(model_step.query("#setup-model-connection-failed")):
+        # Wait on the condition, not a fixed 30 x 0.05 s (1.5 s) window, which
+        # flaked under load (TASK-34100.1 review). The failure row mounts
+        # before Retry is unhidden, so wait for both.
+        def failure_rendered() -> bool:
+            retry_buttons = list(model_step.query("#setup-model-retry"))
+            return bool(list(model_step.query("#setup-model-connection-failed"))) and (
+                bool(retry_buttons) and "hidden" not in retry_buttons[0].classes
+            )
+
+        deadline = asyncio.get_running_loop().time() + 10
+        while asyncio.get_running_loop().time() < deadline:
+            if failure_rendered():
                 break
             await pilot.pause(0.05)
 
@@ -9517,7 +9547,7 @@ async def test_mounted_provider_handoff_is_fenced_after_model_navigation_and_unm
 
 
 def test_real_discovery_result_extracts_exact_safe_unique_model_ids():
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -9533,7 +9563,7 @@ def test_real_discovery_result_rejects_malformed_or_unsafe_models(malformed):
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
         DiscoveredModel,
     )
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -9631,9 +9661,11 @@ async def test_model_step_discovery_timeout_keeps_manual_entry_and_retry(monkeyp
     from types import SimpleNamespace
 
     import tldw_chatbook.config as config_module
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_model_discovery as model_discovery_module
 
-    monkeypatch.setattr(wizard_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(
+        model_discovery_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05
+    )
     monkeypatch.setattr(
         config_module,
         "get_cli_providers_and_models",
@@ -9657,7 +9689,23 @@ async def test_model_step_discovery_timeout_keeps_manual_entry_and_retry(monkeyp
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         step.on_show()
-        await pilot.pause(0.3)
+
+        # Wait on the condition, not one fixed 0.3 s pause, which flaked under
+        # load (TASK-34100.1 review round 2, as the owner-timeout test above).
+        def timeout_rendered() -> bool:
+            rows = list(step.query_one("#setup-model-choice", RadioSet).query(RadioButton))
+            retry = step.query_one("#setup-model-retry", Button)
+            return (
+                len(rows) == 1
+                and "timeout" in str(rows[0].label)
+                and not retry.has_class("hidden")
+            )
+
+        deadline = asyncio_module.get_running_loop().time() + 10
+        while asyncio_module.get_running_loop().time() < deadline:
+            if timeout_rendered():
+                break
+            await pilot.pause(0.05)
         radio_set = step.query_one("#setup-model-choice", RadioSet)
         [status] = list(radio_set.query(RadioButton))
         assert status.disabled
@@ -9955,7 +10003,9 @@ async def test_protect_keys_failure_leaves_step_skippable_with_inline_error():
         assert ok2, error  # the step itself never blocks Next
 
 
-def test_protect_keys_password_worker_uses_dedicated_group_not_wizard_advance():
+def test_protect_keys_password_worker_uses_dedicated_group_not_wizard_advance(
+    monkeypatch,
+):
     """Parked Task-5 finding (deviation from the task-10 brief's pseudocode):
     "setup-wizard-advance" is the CONTAINER's own advance/finalize worker
     group. Reusing it here for the password-apply worker would let a slow
@@ -9978,11 +10028,15 @@ def test_protect_keys_password_worker_uses_dedicated_group_not_wizard_advance():
     )
     calls = []
 
-    def _fake_run_worker(coro, **kwargs):
+    def _fake_run_wizard_worker(node, coro, **kwargs):
+        # TASK-34100.1: the group is chosen at the run_wizard_worker call.
+        assert node is step
         coro.close()
         calls.append(kwargs)
 
-    step.run_worker = _fake_run_worker
+    import tldw_chatbook.UI.Wizards.first_run_protect_step as protect_module
+
+    monkeypatch.setattr(protect_module, "run_wizard_worker", _fake_run_wizard_worker)
     step._on_password_result("hunter2-long-password")
     assert calls, "expected a worker to be scheduled for the password result"
     assert calls[0]["group"] == "setup-protect-encrypt"
@@ -10060,14 +10114,14 @@ async def test_summary_default_speech_check_skips_service_construction_when_stor
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_summary_step as summary_step_module
 
     absent_root = tmp_path / "never-created"
     monkeypatch.setattr(
-        wizard_module, "managed_model_artifact_root", lambda: absent_root
+        summary_step_module, "managed_model_artifact_root", lambda: absent_root
     )
     probe = MagicMock()
-    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", probe)
+    monkeypatch.setattr(summary_step_module, "active_managed_parakeet_dir", probe)
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -10104,15 +10158,15 @@ async def test_summary_default_speech_check_still_checks_when_store_root_exists(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_summary_step as summary_step_module
 
     existing_root = tmp_path / "already-there"
     existing_root.mkdir()
     monkeypatch.setattr(
-        wizard_module, "managed_model_artifact_root", lambda: existing_root
+        summary_step_module, "managed_model_artifact_root", lambda: existing_root
     )
     probe = MagicMock(return_value=None)
-    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", probe)
+    monkeypatch.setattr(summary_step_module, "active_managed_parakeet_dir", probe)
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -10653,7 +10707,7 @@ async def test_down_space_selects_provider_with_no_tab_presses():
         assert provider_step.selected_provider_key != ""
 
 
-def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance():
+def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance(monkeypatch):
     """F-B fix pin: _handle_complete() runs synchronously from inside
     complete_wizard(), itself called synchronously from _advance() -- the
     body of the CURRENTLY-RUNNING "setup-wizard-advance" worker whenever the
@@ -10669,11 +10723,15 @@ def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance():
     real_container = SetupWizardContainer(app_instance)
     calls = []
 
-    def _fake_run_worker(coro, **kwargs):
+    def _fake_run_wizard_worker(node, coro, **kwargs):
+        # TASK-34100.1: the group is chosen at the run_wizard_worker call.
+        assert node is real_container
         coro.close()  # never actually scheduled; avoid a "never awaited" warning
         calls.append(kwargs)
 
-    real_container.run_worker = _fake_run_worker
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    monkeypatch.setattr(wizard_module, "run_wizard_worker", _fake_run_wizard_worker)
     real_container._handle_complete({"summary": {"exit_route": None}})
     assert calls, "expected _handle_complete to schedule the finalize worker"
     assert calls[0]["group"] == "setup-wizard-finalize"
@@ -11002,7 +11060,12 @@ async def test_finalize_and_dismiss_screen_never_double_dismiss():
         summary = container.steps[container.current_step]
         assert isinstance(summary, SummaryStep)
         summary._exit_home()
-        await pilot.pause(0.3)
+        # Wait on the dismiss, not one fixed 0.3 s pause: the completion
+        # write took longer than that under load (TASK-34100.1 review round 2).
+        for _ in range(200):
+            if dismiss_calls:
+                break
+            await pilot.pause(0.05)
         assert len(dismiss_calls) == 1
         assert container._finalized is True
 
@@ -12539,12 +12602,18 @@ class TestComposeCrashPolicy:
             monkeypatch.setattr(app, "post_message", capture_posted_message)
             recovery_tasks = []
 
-            def independently_run_worker(coroutine, **_kwargs):
+            def independently_run_worker(node, coroutine, **_kwargs):
+                assert node is container
                 task = asyncio.create_task(coroutine)
                 recovery_tasks.append(task)
                 return task
 
-            monkeypatch.setattr(container, "run_worker", independently_run_worker)
+            # TASK-34100.1: recovery work starts through run_wizard_worker.
+            import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+            monkeypatch.setattr(
+                wizard_module, "run_wizard_worker", independently_run_worker
+            )
 
             wizard.query_one(action_selector, Button).press()
             await asyncio.wait_for(started.wait(), timeout=2)
@@ -13338,7 +13407,7 @@ def test_real_sized_provider_catalog_reaches_the_picker_intact():
     from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
         DISCOVERED_MODEL_MAX_COUNT,
     )
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -13375,7 +13444,7 @@ def test_typed_catalog_over_the_discovery_ceiling_is_rejected():
     from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
         DISCOVERED_MODEL_MAX_COUNT,
     )
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -13392,7 +13461,7 @@ def test_malformed_entry_in_the_tail_is_still_rejected():
     """Every entry is validated, not just those before a truncation point."""
     from dataclasses import replace
 
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -13444,7 +13513,7 @@ def test_handed_off_auth_failure_keeps_its_authentication_category():
     user needs (the key lives one step Back).
     """
     from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _handed_off_failure_category,
     )
 
@@ -13467,7 +13536,7 @@ def test_handed_off_auth_failure_keeps_its_authentication_category():
 def test_handed_off_failure_without_a_recorded_outcome_stays_generic():
     """Without a typed outcome there is nothing more specific to say."""
     from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _handed_off_failure_category,
     )
 
@@ -13482,7 +13551,7 @@ def test_handed_off_failure_without_a_recorded_outcome_stays_generic():
 
 def test_handed_off_failure_category_survives_a_malformed_outcome():
     """A junk recorded outcome degrades to the generic wording, never raises."""
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _handed_off_failure_category,
     )
 
@@ -13499,7 +13568,7 @@ def test_provider_connection_ui_draft_cannot_be_pickled():
     """
     import pickle
 
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_provider_step import (
         _ProviderConnectionUiDraft,
     )
 

@@ -27,6 +27,31 @@ and Next goes on without a provider, as if you had skipped the step. A
 failure after the new provider is already selected leaves it selected, and
 the line then names no other provider.
 
+While a Next is saving, **← Back**, **Next →** and **Skip setup** / **Exit
+setup** are disabled and drawn dimmed. A Next that is still working after
+about half a second also shows a line just above them that names the work:
+"Preparing the Full setup…" after Welcome, "Saving the OpenAI connection…"
+after Provider, "Saving the provider and model…" after Model, "Saving voice
+settings…" after Voice (that save can take up to 30 seconds), "Finishing
+setup…" after a Summary button, and "Saving *step* settings…" elsewhere. After
+two seconds the line also counts the seconds ("Saving voice settings… 4 s").
+It goes away as soon as the next step opens, setup closes, or the step
+explains why it can't move on. A quick Next shows no line at all. When a step does refuse to move on (a missing API key, say), the keyboard
+stays where it was, on **Next →** if you pressed it, so once you have fixed
+the problem, Enter there (or Ctrl+N anywhere) tries again.
+The search for local servers that the Provider step starts runs in the
+background, so the screen keeps responding while it looks.
+
+The model list that the Provider step fetches is kept for that provider, key
+and address, so going Back to Provider and forward again reuses it. Only a
+list that arrived is kept. After a check that failed (the server wasn't
+running yet, say), setup asks the server again in the background the next
+time it needs the list: when you go Back to Provider, when you press **Next →**
+there, when you come Back to the Model step from a later step, and when you
+press **Retry** on the Model step. A model list that arrives after a failed
+**Test connection** replaces that test's result. A different key or address
+always counts as a new check.
+
 The Provider step lists the same providers as Settings ▸ Providers & Models:
 Popular first, then Cloud, Local and Other. Every row can be picked with the
 arrow keys and set up here, hosted presets included (Together, Fireworks,

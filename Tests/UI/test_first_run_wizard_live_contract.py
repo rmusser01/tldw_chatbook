@@ -99,7 +99,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     build_first_run_model_discovery_key,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-    _PICKER_MODEL_LIMIT,
     FirstRunSetupWizard,
     ModelStep,
     NotesSyncStep,
@@ -110,6 +109,7 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     VoiceSetupStep,
     _SettlingGuardedConfirmationDialog,
 )
+from tldw_chatbook.UI.Wizards.first_run_model_step import _PICKER_MODEL_LIMIT
 
 
 #: Ceiling for a settle wait, not a performance assertion (TASK-24652).
@@ -1373,7 +1373,10 @@ async def test_resume_target_change_before_after_refresh_keeps_attempt_marker(
             assert callback.__name__ == "_clear_resume_attempt_after_target_mount"
             callback(*args)
             if scheduled:
-                await scheduled.pop()
+                # TASK-34100.1: run_wizard_worker hands run_worker a callable
+                # that wraps the coroutine; calling it gives the coroutine.
+                work = scheduled.pop()
+                await (work() if callable(work) else work)
             await pilot.pause(0.2)
 
             assert app.app_config["first_run"]["resume_attempted"] is True

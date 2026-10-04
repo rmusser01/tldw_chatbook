@@ -163,6 +163,21 @@ def test_production_routes_share_the_canonical_local_note_authority() -> None:
         "UI/Tools_Settings_Window.py",
         "UI/Wizards/FirstRunSetupWizard.py",
         "UI/Wizards/first_run_setup_state.py",
+        # TASK-34100.1 moved the wizard's steps and their shared widgets out
+        # of FirstRunSetupWizard.py; scan every module the code went to, so
+        # this guard covers what it covered before the move.
+        "UI/Wizards/first_run_setup_widgets.py",
+        "UI/Wizards/first_run_model_discovery.py",
+        "UI/Wizards/first_run_welcome_step.py",
+        "UI/Wizards/first_run_provider_step.py",
+        "UI/Wizards/first_run_model_step.py",
+        "UI/Wizards/first_run_rag_step.py",
+        "UI/Wizards/first_run_speech_step.py",
+        "UI/Wizards/first_run_tools_step.py",
+        "UI/Wizards/first_run_notes_step.py",
+        "UI/Wizards/first_run_appearance_step.py",
+        "UI/Wizards/first_run_protect_step.py",
+        "UI/Wizards/first_run_summary_step.py",
     ),
 )
 def test_retired_product_surfaces_do_not_read_or_write_legacy_sync_config(
