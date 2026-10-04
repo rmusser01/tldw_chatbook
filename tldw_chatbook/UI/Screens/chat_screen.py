@@ -5775,11 +5775,36 @@ class ChatScreen(BaseAppScreen):
                     ConsoleDefaultSavePhase.CACHE_PUBLICATION,
                 )
 
-        await asyncio.gather(
-            persist_conversation(),
-            persist_default(),
-            persist_display_name(),
-        )
+        display_name_task = asyncio.create_task(persist_display_name())
+        primary_error: BaseException | None = None
+        try:
+            await asyncio.gather(
+                persist_conversation(),
+                persist_default(),
+                display_name_task,
+            )
+        except BaseException as exc:
+            primary_error = exc
+            raise
+        finally:
+            # The coordinator retains custody if the child never starts or a
+            # sibling fails. The child's serialized owner drains physical work.
+            cancellation: asyncio.CancelledError | None = None
+            while not display_name_task.done():
+                try:
+                    await asyncio.shield(display_name_task)
+                except asyncio.CancelledError as exc:
+                    cancellation = exc
+                except Exception:
+                    break
+            if display_name_plan is not None:
+                try:
+                    store.abandon_roleplay_projection_plan(display_name_plan)
+                except Exception:
+                    if primary_error is None:
+                        raise
+            if primary_error is None and cancellation is not None:
+                raise cancellation
 
     def _record_console_default_failure(
         self,

@@ -20,6 +20,12 @@ CONTROLLER_PATH = Path("tldw_chatbook/Chat/console_chat_controller.py")
 # are listed separately so a future rename cannot silently remove the owner.
 DIRECT_TRANSITION_ROUTES = frozenset(
     {
+        "publish_first_persisted_conversation",
+        "rebind_persisted_conversation",
+        "commit_console_settings_live",
+        "prepare_session_user_display_name_override_for_commit",
+        "seed_persona_roleplay",
+        "set_session_assistant_name",
         "add_variant",
         "adopt_session_ephemeral_endpoint",
         "accept_roleplay_projection_persistence_result",
@@ -92,6 +98,7 @@ DIRECT_TRANSITION_ROUTES = frozenset(
 )
 
 DELEGATED_TRANSITION_ROUTES = {
+    "set_session_user_display_name_override_for_commit": "set_session_user_display_name_override",
     "confirm_auto_speak_destination": "_set_speech_preferences",
     "pause_auto_speak": "_set_speech_preferences",
     "resume_auto_speak": "_set_speech_preferences",
@@ -288,6 +295,97 @@ def _root_name(node: ast.expr) -> str | None:
     return current.id if isinstance(current, ast.Name) else None
 
 
+def _detached_receiver_before(node: ast.AST, receiver: str, line: int) -> bool:
+    """Prove a local DTO's construction; unknown rebinding/escape stays live."""
+    bindings: dict[str, tuple[str, int]] = {}
+    invalid: set[str] = set()
+
+    def kind(value: ast.expr | None) -> tuple[str, int] | None:
+        if isinstance(value, ast.Name) and value.id not in invalid:
+            return bindings.get(value.id)
+        if isinstance(value, ast.Call):
+            if isinstance(value.func, ast.Name) and value.func.id in {
+                "ConsoleChatMessage",
+                "_ConsoleSettingsPersistenceDrain",
+                "_ConsoleSettingsPersistenceLifecycle",
+            }:
+                return value.func.id, value.lineno
+            if (
+                _expr_text(value.func)
+                == "self._settings_persistence_lifecycles.setdefault"
+                and len(value.args) == 2
+                and isinstance(value.args[1], ast.Call)
+                and _expr_text(value.args[1].func)
+                == "_ConsoleSettingsPersistenceLifecycle"
+            ):
+                return "_ConsoleSettingsPersistenceLifecycle", value.lineno
+        if isinstance(value, ast.Attribute) and value.attr == "drain":
+            owner = kind(value.value)
+            if owner and owner[0] == "_ConsoleSettingsPersistenceLifecycle":
+                return "_ConsoleSettingsPersistenceDrain", owner[1]
+        return None
+
+    def object_names(value: ast.AST) -> set[str]:
+        if isinstance(value, ast.Name):
+            return {value.id}
+        if isinstance(value, ast.Attribute) and value.attr == "id":
+            return set()  # The immutable identifier cannot publish its DTO.
+        return set().union(
+            *(object_names(child) for child in ast.iter_child_nodes(value))
+        )
+
+    def escape(names: set[str]) -> None:
+        escaped = {
+            bindings[name]
+            for name in names
+            if name in bindings and bindings[name][0] == "ConsoleChatMessage"
+        }
+        invalid.update(name for name, value in bindings.items() if value in escaped)
+
+    for child in _executed_nodes(node):
+        if getattr(child, "lineno", line) >= line:
+            continue
+        if isinstance(child, (ast.Assign, ast.AnnAssign)):
+            targets = child.targets if isinstance(child, ast.Assign) else [child.target]
+            value_kind = kind(child.value)
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    if (
+                        isinstance(child.value, ast.Constant)
+                        and child.value.value is None
+                    ):
+                        continue  # Optional DTO cleared to None cannot become live.
+                    if value_kind is None:
+                        invalid.add(target.id)
+                    elif target.id not in invalid:
+                        prior = bindings.get(target.id)
+                        if prior and prior[0] != value_kind[0]:
+                            invalid.add(target.id)
+                        else:
+                            bindings[target.id] = value_kind
+                elif child.value is not None:
+                    escape(object_names(child.value))
+        elif isinstance(child, ast.Call):
+            if _expr_text(child.func) == "setattr":
+                continue
+            escape(
+                set().union(
+                    *(object_names(arg) for arg in child.args),
+                    *(object_names(kw.value) for kw in child.keywords),
+                )
+            )
+            if isinstance(child.func, ast.Attribute) and isinstance(
+                child.func.value, ast.Name
+            ):
+                escape({child.func.value.id})
+        elif isinstance(child, ast.Return) and child.value is not None:
+            escape(object_names(child.value))
+    return receiver not in invalid and bindings.get(receiver, (None,))[0] in {
+        "ConsoleChatMessage",
+        "_ConsoleSettingsPersistenceDrain",
+    }
+
+
 def _mutation_events(node: ast.AST) -> tuple[tuple[int, str | None], ...]:
     bindings = _owner_bindings(node)
     parameter_names = set()
@@ -332,6 +430,8 @@ def _mutation_events(node: ast.AST) -> tuple[tuple[int, str | None], ...]:
             if not attrs & FORK_FIELD_ASSIGNMENTS:
                 continue
             root = _root_name(target)
+            if root and _detached_receiver_before(node, root, child.lineno):
+                continue
             owner = bindings.get(root or "")
             if owner is None and root == "self":
                 owner = default_owner
@@ -427,7 +527,10 @@ def _covered(
 def _roleplay_lease_transitioned(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
     """Recognize the one deliberately detached, token-owned transition lease."""
 
-    if node.name != "prepare_session_roleplay_projection_refresh":
+    if node.name not in {
+        "prepare_session_roleplay_projection_refresh",
+        "prepare_session_user_display_name_override_for_commit",
+    }:
         return False
     calls = _self_call_records(node)
 
@@ -457,13 +560,22 @@ def _roleplay_lease_transitioned(node: ast.FunctionDef | ast.AsyncFunctionDef) -
     def is_token_return(statement: ast.stmt) -> bool:
         return (
             isinstance(statement, ast.Return)
-            and isinstance(statement.value, ast.Call)
-            and isinstance(statement.value.func, ast.Name)
-            and statement.value.func.id == "replace"
+            and isinstance(
+                returned := (
+                    statement.value.elts[1]
+                    if isinstance(statement.value, ast.Tuple)
+                    and len(statement.value.elts) == 2
+                    and _expr_text(statement.value.elts[0]) == "session"
+                    else statement.value
+                ),
+                ast.Call,
+            )
+            and isinstance(returned.func, ast.Name)
+            and returned.func.id == "replace"
             and any(
                 keyword.arg == "fork_transition_token"
                 and _expr_text(keyword.value) == "transition_token"
-                for keyword in statement.value.keywords
+                for keyword in returned.keywords
             )
         )
 
@@ -528,7 +640,7 @@ def _roleplay_lease_transitioned(node: ast.FunctionDef | ast.AsyncFunctionDef) -
         for call in calls
         if isinstance(call.func, ast.Attribute)
         and call.func.attr == "_materialize_roleplay_projections_live"
-        and _call_owner(call) == "session_id"
+        and _call_owner(call) in {"session_id", "session.id"}
     ]
     returned_tokens = [
         child
@@ -603,7 +715,10 @@ def _roleplay_lease_transitioned(node: ast.FunctionDef | ast.AsyncFunctionDef) -
     ):
         return False
     begin_line = begins[0].lineno
-    return all(call.lineno > begin_line for call in materializations)
+    return all(call.lineno > begin_line for call in materializations) and all(
+        lifecycle_try.lineno < line <= lifecycle_try.end_lineno
+        for line, _owner in _mutation_events(node)
+    )
 
 
 def _transitioned(
@@ -1205,6 +1320,9 @@ def test_public_fork_transition_inventory_is_bidirectional() -> None:
         assert _transitioned(methods[route], methods=methods), route
     for route, owner in DELEGATED_TRANSITION_ROUTES.items():
         assert owner in _called_attributes(methods[route])
+        assert not _mutation_events(methods[route]), route
+        if route == "set_session_user_display_name_override_for_commit":
+            assert _transitioned(methods[owner], methods=methods), owner
         assert "_fork_source_transition" in _called_attributes(methods[owner])
 
     detached = methods["persist_roleplay_projection_plan"]
@@ -1226,6 +1344,62 @@ def test_every_public_direct_fork_field_assignment_is_fenced_or_classified() -> 
     assert mutation_routes - transitioned_assignments == (
         SAFE_NON_TRANSITION_ASSIGNMENTS | frozenset(DELEGATED_TRANSITION_ROUTES)
     )
+
+
+def _rollback_contract(tree: ast.AST) -> tuple[tuple[str, tuple[str, ...], str], ...]:
+    """Pin each optimistic-echo rollback to its owning submission branch."""
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    records = []
+    for call in ast.walk(tree):
+        if not (
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "rollback_transient_send"
+        ):
+            continue
+        current = call
+        guards = []
+        owner = ""
+        while current in parents:
+            child = current
+            current = parents[current]
+            if isinstance(current, ast.If):
+                branch = "else " if child in current.orelse else ""
+                guards.append(branch + ast.unparse(current.test))
+            elif isinstance(current, ast.ExceptHandler):
+                guards.append("except " + ast.unparse(current.type))
+            elif isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                owner = current.name
+                break
+        records.append((owner, tuple(guards), ast.unparse(call)))
+    return tuple(sorted(records))
+
+
+_ROLLBACK_CALL = (
+    "self.store.rollback_transient_send(session.id, echoed_user.id, "
+    "title=pre_send_title, persisted_conversation_id=pre_send_conversation_id)"
+)
+EXPECTED_ROLLBACK_CONTRACT = tuple(
+    sorted(
+        ("_submit_draft_body", guards, _ROLLBACK_CALL)
+        for guards in (
+            ("echoed_user is not None", "thinking_block is not None"),
+            (
+                "echoed_user is not None",
+                "resumed_preparation is None and session.ephemeral "
+                "and (origin is ConsoleSubmissionOrigin.QUEUED) "
+                "and (capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON)",
+            ),
+            (
+                "self._shutdown_requested.is_set()",
+                "echoed_user is not None",
+                "except BaseException",
+            ),
+        )
+    )
+)
 
 
 def test_external_console_modules_do_not_write_live_fork_fields_directly() -> None:
@@ -1253,14 +1427,7 @@ def test_external_console_modules_do_not_write_live_fork_fields_directly() -> No
     }
 
     controller = ast.parse(CONTROLLER_PATH.read_text(encoding="utf-8"))
-    rollback_calls = [
-        child
-        for child in ast.walk(controller)
-        if isinstance(child, ast.Call)
-        and isinstance(child.func, ast.Attribute)
-        and child.func.attr == "rollback_transient_send"
-    ]
-    assert len(rollback_calls) == 2
+    assert _rollback_contract(controller) == EXPECTED_ROLLBACK_CONTRACT
 
 
 def test_external_writer_scan_follows_alias_setattr_and_holder_mutations() -> None:
@@ -1366,3 +1533,129 @@ def test_external_rag_writer_uses_one_store_transition_and_publication_seam() ->
     assert "fork_source_transition" in _called_attributes(owner)
     assert "_apply_console_retrieval_scope_save_transition" in _called_attributes(owner)
     assert "set_session_rag_scope" in _called_attributes(delegated)
+
+
+@pytest.mark.parametrize(
+    "change", ("rebind", "alias_rebind", "publish", "publish_alias", "branch_rebind")
+)
+def test_unpublished_message_scan_rejects_live_rebinding_or_publication(change):
+    statements = {
+        "rebind": "message = self._message_or_raise(message_id)",
+        "alias_rebind": "alias = self._message_or_raise(message_id)\n    message = alias",
+        "publish": "self._register_tree_node(session_id, message)",
+        "publish_alias": "alias = message\n    self._register_tree_node(session_id, alias)",
+        "branch_rebind": "if flag:\n        message = self._message_or_raise(message_id)\n    else:\n        message = ConsoleChatMessage()",
+    }
+    node = _synthetic_method(
+        "def mutate(self, session_id, message_id):\n    message = ConsoleChatMessage()\n    "
+        + statements[change]
+        + "\n    message.parent_message_id = 'changed'\n"
+    )
+    assert _mutation_events(node)
+
+
+def test_message_construction_scan_preserves_live_session_assignment():
+    node = _synthetic_method("""
+def mutate(self, session_id):
+    message = ConsoleChatMessage()
+    alias = message
+    alias.parent_message_id = "staged"
+    session = self._session_or_raise(session_id)
+    session.title = "live"
+""")
+    assert _mutation_events(node) == ((7, "session_id"),)
+
+
+@pytest.mark.parametrize("rebind", (False, True))
+def test_settings_drain_scan_requires_typed_lifecycle_provenance(rebind):
+    source = """
+def mutate(self, session_id):
+    lifecycle = self._settings_persistence_lifecycles.setdefault(session_id, _ConsoleSettingsPersistenceLifecycle())
+    drain = lifecycle.drain
+    if drain is None:
+        drain = _ConsoleSettingsPersistenceDrain()
+"""
+    if rebind:
+        source += "    drain = self._session_or_raise(session_id)\n"
+    source += "    drain.context_policy_overrides = None\n"
+    assert bool(_mutation_events(_synthetic_method(source))) is rebind
+
+
+@pytest.mark.parametrize(
+    "before,after",
+    (
+        ("echoed_user.id", "other.id"),
+        ("title=pre_send_title,", "title=session.title,"),
+        ("self._shutdown_requested.is_set()", "True"),
+        ("thinking_block is not None", "thinking_block is None"),
+        ("_submit_draft_body", "unrelated_owner"),
+    ),
+)
+def test_rollback_contract_rejects_changed_owner_branch_or_arguments(before, after):
+    source = CONTROLLER_PATH.read_text(encoding="utf-8")
+    assert (
+        _rollback_contract(ast.parse(source.replace(before, after)))
+        != EXPECTED_ROLLBACK_CONTRACT
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "prepare_session_roleplay_projection_refresh",
+        "prepare_session_user_display_name_override_for_commit",
+    ),
+)
+def test_roleplay_token_scan_rejects_live_write_before_lease(name):
+    node = _store_methods()[name]
+    mutation = ast.parse("session.title = 'outside lease'").body[0]
+    # Add a real assignment before the begin, then regenerate source locations.
+    node.body.insert(1, mutation)
+    parsed = _synthetic_callable(ast.unparse(ast.fix_missing_locations(node)))
+    assert not _roleplay_lease_transitioned(parsed)
+
+
+def test_settings_drain_registry_preserves_typed_dto_provenance():
+    tree = ast.parse(STORE_PATH.read_text(encoding="utf-8"))
+    registry = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AnnAssign)
+        and _expr_text(node.target) == "self._settings_persistence_lifecycles"
+    ]
+    assert len(registry) == 1
+    assert (
+        _expr_text(registry[0].annotation)
+        == "dict[str, _ConsoleSettingsPersistenceLifecycle]"
+    )
+    assert _expr_text(registry[0].value) == "{}"
+    lifecycle = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "_ConsoleSettingsPersistenceLifecycle"
+    )
+    drain = next(
+        node
+        for node in lifecycle.body
+        if isinstance(node, ast.AnnAssign) and _expr_text(node.target) == "drain"
+    )
+    assert _expr_text(drain.annotation) == "_ConsoleSettingsPersistenceDrain | None"
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and _expr_text(node.func)
+            == "self._settings_persistence_lifecycles.setdefault"
+        ):
+            assert len(node.args) == 2
+            assert _expr_text(node.args[1]) == "_ConsoleSettingsPersistenceLifecycle()"
+        if isinstance(node, ast.Assign):
+            assert all(
+                _expr_text(target) != "self._settings_persistence_lifecycles"
+                and not (
+                    isinstance(target, ast.Subscript)
+                    and _expr_text(target.value)
+                    == "self._settings_persistence_lifecycles"
+                )
+                for target in node.targets
+            )

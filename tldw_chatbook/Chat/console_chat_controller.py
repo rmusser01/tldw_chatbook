@@ -19956,9 +19956,9 @@ class ConsoleChatController:
                         assistant_id=startup.assistant_id,
                         persona_memory_mode=startup.persona_memory_mode,
                         assistant_default_notice=startup.notice,
-                    )
-                    created_session.project_instruction_state = (
-                        ProjectInstructionControlState.new_session()
+                        initial_project_instruction_state=(
+                            ProjectInstructionControlState.new_session()
+                        ),
                     )
                     self.store._project_workspace_membership_after_commit(
                         created_session

@@ -2916,6 +2916,7 @@ class ConsoleChatStore:
         remote_active: bool = False,
         activate: bool = True,
         prepared_data: ConsoleConversationHydrationData | None = None,
+        initial_project_instruction_state: ProjectInstructionControlState | None = None,
     ) -> ConsoleChatSession:
         """Create and activate a native session from persisted conversation data.
 
@@ -2955,12 +2956,21 @@ class ConsoleChatStore:
                 prompt immediately after an explicitly empty active path, or
                 ``None`` for ordinary selected/unset cursor state.
             settings: Optional provider/model settings snapshot for the session.
+            initial_project_instruction_state: Owner-supplied controls for a newly
+                created conversation, applied at session construction. When absent,
+                retain the durable controls or the legacy disabled default.
             prepared_data: Optional unpublished bulk reads for this conversation.
                 Policy reconciliation and all store publication remain on the caller.
 
         Returns:
             The newly created and activated Console session.
         """
+        if initial_project_instruction_state is not None and not isinstance(
+            initial_project_instruction_state, ProjectInstructionControlState
+        ):
+            raise TypeError(
+                "initial_project_instruction_state must be ProjectInstructionControlState"
+            )
         # A restored session comes FROM durable storage, so it is by
         # definition not temporary. Refuse rather than silently produce a
         # session that is both temporary and persisted -- the one state the
@@ -2990,6 +3000,8 @@ class ConsoleChatStore:
                 project_instruction_state = decode_project_context_json(
                     raw_project_context
                 )
+        if initial_project_instruction_state is not None:
+            project_instruction_state = initial_project_instruction_state
         prior_active_session_id = self.active_session_id
         session = self.create_session(
             title=title,
@@ -8488,12 +8500,13 @@ class ConsoleChatStore:
         current = session.persisted_conversation_id
         if current is not None and current != conversation_id:
             raise RuntimeError("A persisted Console session cannot be rebound.")
-        session.persisted_conversation_id = conversation_id
-        self._record_console_settings_binding_revision(
-            session_id,
-            session.conversation_binding_revision,
-        )
-        return session
+        with self._fork_source_transition(session_id):
+            session.persisted_conversation_id = conversation_id
+            self._record_console_settings_binding_revision(
+                session_id,
+                session.conversation_binding_revision,
+            )
+            return session
 
     def rebind_persisted_conversation(
         self,
@@ -8506,21 +8519,22 @@ class ConsoleChatStore:
         ):
             raise ValueError("conversation_id must be non-empty text or None")
         session = self._session_or_raise(session_id)
-        if session.persisted_conversation_id != conversation_id:
-            session.conversation_binding_revision = (
-                self._advance_console_settings_binding_revision(
-                    session_id,
-                    session.conversation_binding_revision,
+        with self._fork_source_transition(session_id):
+            if session.persisted_conversation_id != conversation_id:
+                session.conversation_binding_revision = (
+                    self._advance_console_settings_binding_revision(
+                        session_id,
+                        session.conversation_binding_revision,
+                    )
                 )
-            )
-            session.persisted_conversation_id = conversation_id
-            session.settings_persistence_failures.clear()
-            session.generation_durable_snapshot = None
-            session.context_policy_durable_revision = None
-            lifecycle = self._settings_persistence_lifecycles.get(session_id)
-            if lifecycle is not None:
-                lifecycle.component_revisions.clear()
-        return session
+                session.persisted_conversation_id = conversation_id
+                session.settings_persistence_failures.clear()
+                session.generation_durable_snapshot = None
+                session.context_policy_durable_revision = None
+                lifecycle = self._settings_persistence_lifecycles.get(session_id)
+                if lifecycle is not None:
+                    lifecycle.component_revisions.clear()
+            return session
 
     def session_settings(self, session_id: str) -> ConsoleSessionSettings | None:
         """Return in-memory settings for a native Console session."""
@@ -8670,34 +8684,35 @@ class ConsoleChatStore:
                 raise ValueError("Chat closed; nothing applied.")
             if submission.submission_id in session.applied_settings_submission_ids:
                 raise ValueError("Console settings submission was already applied.")
-            session.applied_settings_submission_ids.append(submission.submission_id)
-            self.replace_session_settings(session.id, settings)
-            if current_settings is None or (
-                current_settings.provider,
-                current_settings.model,
-            ) != (settings.provider, settings.model):
-                session.updated_at = _utc_now_iso()  # a new pair is a use (RECENT)
-            self._replace_session_context_policy_live(
-                session,
-                submission.draft.context_policy_overrides,
-            )
-            session.staged_context_policy_failure_label = (
-                self._console_settings_policy_failure_label(submission.surface)
-            )
-            session.staged_context_policy_failure_revision = (
-                session.context_policy_revision
-            )
-            return ConsoleSettingsLiveCommit(
-                submission_id=submission.submission_id,
-                session_id=session.id,
-                persisted_conversation_id=session.persisted_conversation_id,
-                conversation_binding_revision=session.conversation_binding_revision,
-                generation_revision=session.generation_settings_revision,
-                context_policy_revision=session.context_policy_revision,
-                settings=settings,
-                context_policy_overrides=session.context_policy_overrides,
-                accepted_submission=submission,
-            )
+            with self._fork_source_transition(session.id):
+                session.applied_settings_submission_ids.append(submission.submission_id)
+                self.replace_session_settings(session.id, settings)
+                if current_settings is None or (
+                    current_settings.provider,
+                    current_settings.model,
+                ) != (settings.provider, settings.model):
+                    session.updated_at = _utc_now_iso()  # a new pair is a use (RECENT)
+                self._replace_session_context_policy_live(
+                    session,
+                    submission.draft.context_policy_overrides,
+                )
+                session.staged_context_policy_failure_label = (
+                    self._console_settings_policy_failure_label(submission.surface)
+                )
+                session.staged_context_policy_failure_revision = (
+                    session.context_policy_revision
+                )
+                return ConsoleSettingsLiveCommit(
+                    submission_id=submission.submission_id,
+                    session_id=session.id,
+                    persisted_conversation_id=session.persisted_conversation_id,
+                    conversation_binding_revision=session.conversation_binding_revision,
+                    generation_revision=session.generation_settings_revision,
+                    context_policy_revision=session.context_policy_revision,
+                    settings=settings,
+                    context_policy_overrides=session.context_policy_overrides,
+                    accepted_submission=submission,
+                )
 
     def _replace_session_context_policy_live(
         self,
@@ -12819,26 +12834,40 @@ class ConsoleChatStore:
         normalized = normalize_chat_display_name(value, blank_means_none=True)
         if session.user_display_name_override == normalized:
             return session, None
-        session.user_display_name_override = normalized
-        self._bump_identity_revision(session.id)
-        context_write = self._snapshot_roleplay_context_write(session)
-        plan = self._materialize_roleplay_projections_live(
-            session.id,
-            global_default=global_default,
-        )
-        if plan is None:
-            plan = ConsoleRoleplayProjectionPersistencePlan(
-                session_id=session.id,
-                generation=session.identity_revision,
-                persisted_conversation_id=session.persisted_conversation_id,
-                conversation_binding_revision=(session.conversation_binding_revision),
-                system_prompt_write=None,
-                message_writes=(),
-                context_write=context_write,
+        session_id = session.id
+        transition_token = str(uuid4())
+        self._begin_fork_source_transition(session_id)
+        with self._fork_source_lock:
+            self._roleplay_fork_transition_leases[transition_token] = session_id
+        try:
+            session.user_display_name_override = normalized
+            self._bump_identity_revision(session.id)
+            context_write = self._snapshot_roleplay_context_write(session)
+            plan = self._materialize_roleplay_projections_live(
+                session.id,
+                global_default=global_default,
             )
-        else:
-            plan = replace(plan, context_write=context_write)
-        return session, plan
+            if plan is None:
+                plan = ConsoleRoleplayProjectionPersistencePlan(
+                    session_id=session.id,
+                    generation=session.identity_revision,
+                    persisted_conversation_id=session.persisted_conversation_id,
+                    conversation_binding_revision=(
+                        session.conversation_binding_revision
+                    ),
+                    system_prompt_write=None,
+                    message_writes=(),
+                    context_write=context_write,
+                )
+            else:
+                plan = replace(plan, context_write=context_write)
+            return session, replace(plan, fork_transition_token=transition_token)
+        except BaseException:
+            self._release_roleplay_fork_transition(
+                transition_token,
+                expected_session_id=session_id,
+            )
+            raise
 
     @_fork_session_transition
     def refresh_session_roleplay_projections(
@@ -12979,16 +13008,17 @@ class ConsoleChatStore:
             if isinstance(system_template, str) and system_template.strip()
             else None
         )
-        source_changed = session.persona_system_template != source
-        session.persona_system_template = source
-        if source_changed:
-            self._bump_identity_revision(session_id)
-        context_persisted = self._persist_roleplay_context(session)
-        self._materialize_roleplay_projections(
-            session_id, global_default=global_default
-        )
-        if not context_persisted:
-            logger.warning("Failed to persist seeded Console persona context.")
+        with self._fork_source_transition(session_id):
+            source_changed = session.persona_system_template != source
+            session.persona_system_template = source
+            if source_changed:
+                self._bump_identity_revision(session_id)
+            context_persisted = self._persist_roleplay_context(session)
+            self._materialize_roleplay_projections(
+                session_id, global_default=global_default
+            )
+            if not context_persisted:
+                logger.warning("Failed to persist seeded Console persona context.")
 
     def swap_session_character_roleplay(
         self,
@@ -13175,14 +13205,15 @@ class ConsoleChatStore:
         new_name = normalized or None
         if session.assistant_name == new_name:
             return session, True
-        session.assistant_name = new_name
-        if new_name is not None:
-            session.character_name = None
-        self._bump_identity_revision(session_id)
-        persisted = self._materialize_roleplay_projections(
-            session_id, global_default=global_default
-        )
-        return session, persisted
+        with self._fork_source_transition(session_id):
+            session.assistant_name = new_name
+            if new_name is not None:
+                session.character_name = None
+            self._bump_identity_revision(session_id)
+            persisted = self._materialize_roleplay_projections(
+                session_id, global_default=global_default
+            )
+            return session, persisted
 
     def _bump_identity_revision(self, session_id: str) -> None:
         session = self._session_or_raise(session_id)
