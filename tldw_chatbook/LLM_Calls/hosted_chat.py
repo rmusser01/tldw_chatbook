@@ -818,7 +818,11 @@ def owned_json_post(
                     continue
                 if status >= 400:
                     _raise_http_error(
-                        config.provider, status, label=label, response=response
+                        config.provider,
+                        status,
+                        label=label,
+                        response=response,
+                        known_credentials=(config.api_key,),
                     )
                 if streaming:
                     stream = OwnedSSEStream(response=response, session=session)
@@ -1438,6 +1442,7 @@ def _raise_http_error(
     *,
     label: str | None = None,
     response: object | None = None,
+    known_credentials: tuple[str, ...] = (),
 ) -> Never:
     name = label or provider
     if status in {401, 403}:
@@ -1478,7 +1483,9 @@ def _raise_http_error(
     # as data on the exception; the chain stays severed (no body in str()).
     from tldw_chatbook.Chat.provider_error_reason import attach_provider_reason
 
-    raise attach_provider_reason(error, response) from None
+    raise attach_provider_reason(
+        error, response, known_credentials=known_credentials
+    ) from None
 
 
 #: task-32805.4: an upper bound on a provider-supplied Retry-After. api_base_url

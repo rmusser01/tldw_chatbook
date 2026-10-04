@@ -28,9 +28,10 @@ PROVIDER_REASON_MAX_CHARS = 200
 #: Read at most this much of an error body; error JSON is small.
 _MAX_BODY_BYTES = 65536
 
-#: A key-shaped token: a known prefix, or any run with a masked middle.
+#: A key-shaped token: a known prefix (``-`` or ``_`` after it: Groq's
+#: ``gsk_``, Hugging Face's ``hf_``), or any run with a masked middle.
 _KEY_SHAPED = re.compile(
-    r"(?:\b(?:sk|pk|rk|xai|gsk|sk-ant|sk-or)-[A-Za-z0-9_\-*]{4,}"
+    r"(?:\b(?:sk|pk|rk|xai|gsk|hf|sk-ant|sk-or)[-_][A-Za-z0-9_\-*]{4,}"
     r"|\bAIza[0-9A-Za-z_\-]{10,}"
     r"|\b[A-Za-z0-9_\-]{2,}\*{3,}[A-Za-z0-9_\-*]*"
     r"|\b(?:Bearer|bearer)\s+[A-Za-z0-9_\-.=]{8,})"
@@ -153,9 +154,26 @@ def provider_reason_for_exception(
     return ""
 
 
-def attach_provider_reason(exc: BaseException, response: object) -> BaseException:
-    """Record a response's allowlisted reason on ``exc`` (returns ``exc``)."""
+def attach_provider_reason(
+    exc: BaseException,
+    response: object,
+    *,
+    known_credentials: Iterable[str] = (),
+) -> BaseException:
+    """Record a response's allowlisted reason on ``exc`` (returns ``exc``).
+
+    Nothing is recorded for a sensitive request (the policy every other
+    error-detail path honours), and the exact credentials the request
+    carried are replaced before the reason is kept.
+    """
+    from tldw_chatbook.Utils.sensitive_llm_logging import is_sensitive_llm_request
+
+    if is_sensitive_llm_request():
+        return exc
     reason = reason_from_error_body(bounded_response_body(response))
+    for credential in known_credentials:
+        if credential and len(credential) >= 6:
+            reason = reason.replace(credential, "(key hidden)")
     if reason:
         try:
             exc.provider_reason = reason  # type: ignore[attr-defined]

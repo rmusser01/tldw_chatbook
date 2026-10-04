@@ -1464,12 +1464,19 @@ def _cap_automatic_prepared(
     )
 
 
-def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
+def safe_provider_error_copy(
+    provider: str,
+    exc: BaseException,
+    *,
+    known_credentials: tuple[str, ...] = (),
+) -> str:
     """Return safe user-visible provider failure copy.
 
     Args:
         provider: Provider name associated with the failed request.
         exc: Exception raised by the provider adapter.
+        known_credentials: The exact credentials the request carried; an
+            echo of one in the provider's reason is hidden.
 
     Returns:
         Redacted user-facing error text that categorizes the failure without
@@ -1520,18 +1527,40 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
         provider_reason_for_exception,
     )
 
-    reason = provider_reason_for_exception(exc)
-    reason_copy = f" {provider_copy} says: “{reason}”" if reason else ""
+    reason = provider_reason_for_exception(exc, known_credentials=known_credentials)
     action_copy = (
         " Update the API key in Settings ▸ Providers & Models, or run "
         "Ctrl+P ▸ Setup: Run setup wizard."
         if category == "authentication failed"
         else ""
     )
-    return _sanitized_provider_diagnostic(
-        f"Provider error from {provider_copy}: {category}.{status_copy}"
-        f"{reason_copy}{action_copy}"
-    )
+    head = f"Provider error from {provider_copy}: {category}.{status_copy}"
+    if reason:
+        # Review round 1 (F2): a reason the sanitizer rejects (a masked key
+        # fragment, a hex id) drops alone -- never the category or the fix.
+        with_reason = _sanitized_provider_diagnostic(
+            f"{head} {provider_copy} says: “{reason}”{action_copy}",
+            known_credentials=known_credentials,
+        )
+        if with_reason != _PROVIDER_REQUEST_FAILED_COPY:
+            return with_reason
+    return _sanitized_provider_diagnostic(f"{head}{action_copy}")
+
+
+def _error_copy_for(copy_fn: Any, resolution: Any, exc: BaseException) -> str:
+    """Run ``copy_fn``, handing the default the credential the call carried.
+
+    Review round 1 (F3): an echo of the exact key is then hidden in place
+    rather than collapsing the whole line. An injected formatter keeps its
+    two-argument contract.
+    """
+    if copy_fn is safe_provider_error_copy:
+        return safe_provider_error_copy(
+            resolution.provider,
+            exc,
+            known_credentials=(getattr(resolution, "api_key", None) or "",),
+        )
+    return copy_fn(resolution.provider, exc)
 
 
 def adapter_wire_kwargs(kwargs: Mapping[str, Any]) -> dict[str, Any]:
@@ -5401,7 +5430,7 @@ class ConsoleProviderGateway:
             else:
                 status_code = getattr(exc, "status_code", 502)
             raise ChatProviderError(
-                safe_provider_error_copy(provider, exc),
+                _error_copy_for(safe_provider_error_copy, resolution, exc),
                 provider=provider,
                 status_code=status_code if isinstance(status_code, int) else 502,
             ) from None
@@ -6701,7 +6730,9 @@ class ConsoleProviderGateway:
                 raw_status = getattr(exc, "status_code", None)
                 status_code = raw_status if type(raw_status) is int else None
                 try:
-                    raw_error_copy = self._safe_error_copy(resolution.provider, exc)
+                    raw_error_copy = _error_copy_for(
+                        self._safe_error_copy, resolution, exc
+                    )
                 except BaseException:  # failure context can contain credentials
                     raw_error_copy = _PROVIDER_REQUEST_FAILED_COPY
                 try:

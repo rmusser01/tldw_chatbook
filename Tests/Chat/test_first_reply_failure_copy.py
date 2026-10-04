@@ -247,3 +247,181 @@ def test_an_agent_failure_reason_that_ends_a_sentence_gets_no_second_period() ->
 
     assert copy.endswith("try a smaller model."), copy
     assert not copy.endswith("..")
+
+
+# --- Review round 1 -----------------------------------------------------------
+
+#: DeepSeek's 401 body shape: the provider echoes a masked key fragment.
+DEEPSEEK_MASKED_KEY_401 = json.dumps(
+    {
+        "error": {
+            "message": "Authentication Fails, Your api key: ****abcd is invalid",
+            "type": "authentication_error",
+            "param": None,
+            "code": "invalid_request_error",
+        }
+    }
+)
+
+
+def test_a_reason_the_sanitizer_rejects_drops_only_the_reason() -> None:
+    """F2: the whole copy -- category, status, fix -- used to collapse to
+    'Provider request failed.' whenever the provider's sentence tripped the
+    credential sanitizer. Only the reason goes; the rest stays."""
+    from tldw_chatbook.LLM_Calls.hosted_chat import _raise_http_error
+
+    response = requests.models.Response()
+    response.status_code = 401
+    response._content = DEEPSEEK_MASKED_KEY_401.encode()
+    with pytest.raises(ChatAuthenticationError) as caught:
+        _raise_http_error("deepseek", 401, label="DeepSeek", response=response)
+
+    copy = safe_provider_error_copy("deepseek", caught.value)
+
+    assert copy.startswith("Provider error from DeepSeek: authentication failed.")
+    assert "Status: 401." in copy
+    assert "Update the API key" in copy
+    assert "abcd" not in copy and "****" not in copy
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "gsk_abcdefghijklmnopqrstuvwxyz0123456789ABCD",
+        "hf_abcdefghijklmnopqrstuvwxyz0123456789",
+        "xai-abcdefghijklmnopqrstuvwxyz0123456789",
+    ],
+)
+def test_underscore_and_vendor_prefixed_keys_are_hidden(secret: str) -> None:
+    """F3: ``gsk_`` (Groq) and ``hf_`` keys passed both scrubbers."""
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _sanitized_provider_diagnostic,
+    )
+    from tldw_chatbook.Chat.provider_error_reason import safe_provider_reason
+
+    shown = _sanitized_provider_diagnostic(
+        safe_provider_reason(f"Invalid API Key {secret}")
+    )
+
+    assert secret not in shown
+    assert secret[6:20] not in shown
+
+
+def test_the_exact_credential_is_hidden_even_when_it_has_no_key_shape() -> None:
+    """F3: the gateway knows the key it sent; a provider echo of it is
+    hidden whatever its shape, and the rest of the copy survives."""
+    credential = "plainlocaltoken0123456789"
+    body = json.dumps({"error": {"message": f"Token {credential} is not allowed"}})
+    exc = _raised_from_http(
+        ChatAuthenticationError(provider="openai", message="Auth failed."), 401, body
+    )
+
+    copy = safe_provider_error_copy("openai", exc, known_credentials=(credential,))
+
+    assert credential not in copy
+    assert copy.startswith("Provider error from OpenAI: authentication failed.")
+    assert "Update the API key" in copy
+
+
+def test_a_sensitive_request_attaches_no_provider_reason() -> None:
+    """F3: every other error-detail path honours is_sensitive_llm_request()."""
+    from tldw_chatbook.LLM_Calls.hosted_chat import _raise_http_error
+    from tldw_chatbook.Utils.sensitive_llm_logging import sensitive_llm_request
+
+    response = requests.models.Response()
+    response.status_code = 401
+    response._content = OPENROUTER_EXPIRED_KEY_401.encode()
+    with sensitive_llm_request(), pytest.raises(ChatAuthenticationError) as caught:
+        _raise_http_error("openrouter", 401, label="OpenRouter", response=response)
+
+    assert getattr(caught.value, "provider_reason", None) is None
+    assert "says:" not in safe_provider_error_copy("openrouter", caught.value)
+
+
+def test_the_hosted_transport_carries_a_streamed_error_body_to_the_copy(
+    monkeypatch,
+) -> None:
+    """C-F2: the production raise site. A real error response arrives
+    streamed (``stream=True``), so the body is read through ``iter_content``
+    -- nothing preloaded into ``_content``."""
+    import io
+
+    from tldw_chatbook.LLM_Calls import hosted_chat
+
+    class _Session:
+        def mount(self, *_args, **_kwargs):
+            return None
+
+        def post(self, *_args, **_kwargs):
+            response = requests.models.Response()
+            response.status_code = 401
+            response.raw = io.BytesIO(OPENROUTER_EXPIRED_KEY_401.encode())
+            assert response._content is False  # nothing preloaded
+            return response
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(hosted_chat, "create_default_session", lambda: _Session())
+    config = hosted_chat.HostedHTTPTransportConfig(
+        provider="openrouter",
+        base_url="https://openrouter.ai/api/v1",
+        api_key="sk-or-v1-0000000000000000000000000000",
+        timeout=12.0,
+        retries=0,
+        retry_delay=0.0,
+        display_name="OpenRouter",
+    )
+
+    with pytest.raises(ChatAuthenticationError) as caught:
+        hosted_chat.owned_json_post(
+            config=config,
+            route="chat/completions",
+            payload={"model": "openai/gpt-4.1-nano", "messages": []},
+            streaming=False,
+        )
+
+    copy = safe_provider_error_copy("openrouter", caught.value)
+    assert "OpenRouter says: “API key expired.”" in copy
+
+
+@pytest.mark.asyncio
+async def test_the_stream_path_hides_the_sent_key_and_keeps_the_copy() -> None:
+    """F3: the gateway threads the credential it resolved into the copy, so an
+    echo of it is hidden in place -- the category and fix survive instead of
+    the whole line collapsing to 'Provider request failed.'"""
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderResolution,
+    )
+
+    credential = "plainlocaltoken0123456789"
+
+    def failing_call(**_kwargs):
+        error = ChatAuthenticationError(provider="openai", message="Auth failed.")
+        error.provider_reason = f"Token {credential} is not allowed"
+        raise error
+
+    resolution = ConsoleProviderResolution(
+        provider="openai",
+        base_url="https://api.openai.com/v1",
+        model="gpt-4.1",
+        ready=True,
+        execution_key="openai",
+        api_key=credential,
+        streaming=False,
+    )
+    gateway = ConsoleProviderGateway(chat_api_call_fn=failing_call)
+
+    with pytest.raises(ChatProviderError) as caught:
+        _ = [
+            item
+            async for item in gateway.stream_chat(
+                resolution, [{"role": "user", "content": "q"}]
+            )
+        ]
+
+    copy = str(caught.value)
+    assert credential not in copy
+    assert "authentication failed" in copy, copy
+    assert "(key hidden)" in copy
