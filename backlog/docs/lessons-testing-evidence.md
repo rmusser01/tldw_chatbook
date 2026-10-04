@@ -1,5 +1,28 @@
 # Lessons: what counts as evidence a change works
 
+## The function a review timed is not what the user waits for (TASK-33628.5, 2026-10-04)
+
+**Incident.** The task said Console Delete blocks the UI because the subtree
+delete issues one UPDATE per row (0.67 s at 1,000 messages, 7.4 s at 3,000).
+Timing the whole interaction on the event loop told a different story. On dev
+7d155170dc with a file-backed database, the durable delete was 0.15-1.1 s and
+the durable Undo 0.1-1.8 s at 3,000 messages. Selecting the first message of
+a 3,000-message chain to delete it mounted all 3,000 rows: 24,085 widgets, and
+183 s before the loop went quiet. With those rows mounted, one focus-paint
+class toggle cost 29-37 s. The first probe also measured too early: it started
+its delete timer while that selection was still mounting rows, and charged the
+delete with 31-56 s blocks. Batching the writes and moving them off the loop
+was still the right fix for the task. Most of what a user of a long chat
+waits for is elsewhere (TASK-33628.5.1, .5.2).
+
+**What to do.** Before optimising the function a finding names, measure the
+whole interaction on the loop. Run a heartbeat task (`await asyncio.sleep`
+in a loop, recording each overshoot) through the action, with timing spans on
+the named function, and wait until the loop is quiet (no gap over ~50 ms for
+a second or more) before starting the clock. Put a control action beside it:
+arming the same Delete, which writes nothing, blocked the loop for 0.2-0.8 s.
+That marks the floor no change to the write can go below.
+
 ## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
 
 **TASK-14876 audit, 2026-09-30.** Checking whether the 2026-08-09 xdist
