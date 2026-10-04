@@ -130,6 +130,14 @@ On published `ae297322cd7be531b70192d62e910a4cc068c521`, PR Fast Lane passed 124
 
 The follow-up reuses PR2918's exact one-line third-shard change, as prescribed by the existing CI capacity task. Every census file still runs exactly once, in census order within its shard. The20-minute cap, minimal dependency set, fail-fast:false and aggregate requirement for every shard to succeed remain unchanged. Existing ADR103 applies; no new ADR boundary. The two targeted CI contract files pass, including real partition commands for1,2,3,5shards and failure enforcement; independent review found no actionable findings. No product, test assertion or human/native/voice UAT change. Fresh hosted results are required for the new publication. Receipt: `artifacts/buddy-uat-20261003/pr3011-ui-shard-budget-20261004.json`.
 
+## Current merge-rule integration — 2026-10-04
+
+Rebased onto dev `a78a9a900b4901e33c031f830dd2d80224d5147d` after PR3015's literal-text repairs and PR2996's dark merge queue landed. GitHub reported a rebase conflict; local resolution retained every nonblank line from both sides of the append-only lessons. The complete resolved working tree matches the deterministic combination of the previous publication and current dev. All fifteen owned tests are byte-identical to the previous publication. Seven of eight Buddy modules are unchanged; the coordinator adopts dev's `markup=False` error toast so imported error text cannot be treated as live markup.
+
+**144 targeted integration cases passed in 8.53 seconds**: Buddy coordinator and error-toast behavior plus the affected CI contracts. All eight Buddy modules compile, the coordinator has zero Ruff findings on both arms, and Backlog readability/IDs (4998 records), profile paths, diagnostics and whitespace checks pass. Independent integration review found no actionable issue. The three UI shards, twenty-minute cap, complete census and required success enforcement remain intact.
+
+The newly documented merge procedure requires rebasing. `MERGE_QUEUE` is unset, so the queue is off; auto-merge was disabled before the sync. Fresh hosted gates and resolved review threads still govern the protected merge. This integration does not repeat accepted human/native/voice UAT or provider/audio calls. Historical receipts retain their tested sources. Existing ADR094/139/147/103/218 apply. [Separate rebase receipt](artifacts/buddy-uat-20261003/pr3011-rebase-dev-20261004.json).
+
 ## Coverage limits and retained attempts
 
 - TASK-32108 is closed against its four recorded qualification outcomes. TASK-31585 AC9 retains the separate exact-native-revision and full application-configured OpenAI human realtime coverage limits. Earlier Chatbook native and local human voice acceptance is preserved; server React evidence remains separate.
