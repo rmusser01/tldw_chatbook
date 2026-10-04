@@ -116,6 +116,8 @@ The model-validation recommendation was checked against both behavioral consumer
 
 The earlier334 passes and22 integration repeats remain historical, source-attributed evidence. This fresh49-case qualification covers the review repairs and adds no new human microphone/playback or native claim. Accepted voice/native UAT remains accepted. The [separate review receipt](artifacts/buddy-uat-20261003/pr3011-review-20261004.json) records source hashes, passing runs, valid negative controls and unsuccessful setup/exploratory attempts separately. Existing ADR094/139/147 apply; no new architectural boundary.
 
+Final strict-dev integration merged `8f83422dde2a5b95da648882b8f7e09da5b41f08` cleanly at `6c2e08116e32a351d5e9017ac36092e8d3162664`. All nine repaired Screen methods are AST-identical across the merge. The incoming blocked-send changes are qualified by **nine targeted integration checks passing in 192.36 seconds**, including both controlled Buddy send/draft cases, cold/reused saved identity, shutdown and ordered Resume. Compile and zero-introduced diagnostic comparisons pass again. The [separate final-dev receipt](artifacts/buddy-uat-20261003/pr3011-final-dev-20261004.json) retains exact source and log hashes; these repeated cases are not added to the49-case total.
+
 ## Coverage limits and retained attempts
 
 - TASK-32108 is closed against its four recorded qualification outcomes. TASK-31585 AC9 retains the separate exact-native-revision and full application-configured OpenAI human realtime coverage limits. Earlier Chatbook native and local human voice acceptance is preserved; server React evidence remains separate.
