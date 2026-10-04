@@ -136,7 +136,24 @@ whether the callback ran, and that `set_result` raises when it did. Round 5
 accepts only a bare LOCAL future (reading a local runs no code), drops
 `partial` (only its name made it `functools.partial`), and exempts a settle
 elsewhere only as a `cancel()`/`set()` statement. The real tree still has
-no direct-form callback, so none of it moved a row.
+no direct-form callback, so none of it moved a row. **And a sixth time, on
+round 5's own fix.** A `cancel()` statement inside a NESTED def or
+generator still counted as "no read", but the nested scope holds the future
+in a closure cell that `__closure__`, `inspect.getclosurevars` or a
+generator's locals read without loading the name; and a task's
+`get_stack()` or `sys._current_frames()` reaches the pusher's frame through
+APIs the list did not name. Eight more shapes that were rows on origin/dev
+and 5918cfd1df went silent, census byte-identical.
+
+**The outcome (round 6, 2026-10-04): the rule was removed.** Every callback
+push counts by shape again, exactly as 5918cfd1df counted it, and the
+thread's precision gap -- a callback that settles only a different future
+still makes a wait row -- is kept on purpose: every former precision
+control for it (25 cases) is now an expected row in one test of accepted
+false positives. No version of the rule ever dropped a real-tree push, so
+all it bought was the chance to lose recall, and each of its five versions
+lost some. A false row costs one census line a reviewer can annotate; a
+missed wait is a frozen UI.
 
 **For a precision fix:** run the old and new checker over the shapes the
 fix drops, write down what dropping a match actually requires (here: the
@@ -144,11 +161,12 @@ awaited future cannot depend on the callback running at all), and check
 that the rule establishes THAT -- not a weaker neighbour of it. A name
 match in another scope proves nothing, neither does "it settles something
 else", and neither does "its calls only settle" -- nor "its effect is
-visible in the expression" when the expression reads an attribute. **And
-when each review
-round needs another premise, count what the rule buys on the real tree:**
-a precision rule that drops nothing there pays for itself with recall
-only, and every premise is one more place to lose it.
+visible in the expression" when the expression reads an attribute, nor
+"nothing loads the name" when a closure or a frame can reach it. **And
+before the second review round, count what the rule drops on the real
+tree:** a precision rule that drops nothing there pays only in recall,
+and every premise it needs is one more place to lose some. Remove it
+rather than patch it again.
 
 ## A provider preset's own tests never touched the surfaces users set it up with
 
