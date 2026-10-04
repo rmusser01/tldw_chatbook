@@ -368,6 +368,10 @@ jobs:
     # would never wake the queue. The script itself only acts on the armed line. NOT a required
     # check and NOT in the aggregate's needs: a queue failure can never turn `Derived artifacts
     # reproduce from their sources` red. Pushes to dev are merge-queue.yml's job.
+    # Security (spec section 9): a queue dispatch runs the PR branch's copy of this file, so the
+    # branch controls these write permissions, exactly as a same-repo pull_request run already
+    # does. The difference is the actor (github-actions[bot] skips GitHub's Dependabot and
+    # agent-push gates), which is why the queue only queues PRs opened by a user.
     # Spec: Docs/superpowers/specs/2026-10-03-merge-queue-design.md
     name: Merge queue tick
     needs: [derived-artifacts]

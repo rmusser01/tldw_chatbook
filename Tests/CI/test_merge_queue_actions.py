@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,10 +32,11 @@ def _no_real_run_id(monkeypatch):
 
 
 def _node(number, *, head=OLD, armed="2026-10-03T10:00:00Z", state="BEHIND", repo=None, draft=False,
-          committed="2026-10-03T09:00:00Z", ref=None, threads=()):
+          committed="2026-10-03T09:00:00Z", ref=None, threads=(), author="User"):
     return {
         "number": number, "id": f"PR_{number}", "isDraft": draft, "headRefOid": head,
         "headRefName": ref or f"feat/{number}", "mergeStateStatus": state,
+        "author": {"__typename": author} if author else None,
         "headRepository": {"nameWithOwner": repo or mq.REPO},
         "autoMergeRequest": {"enabledAt": armed} if armed else None,
         "commits": {"nodes": [{"commit": {"committedDate": committed}}]},
@@ -55,10 +58,15 @@ class FakeGh:
     branch moves a moment later: the first `rebase_lag` single-PR rereads after a successful
     rebase still show the old head, later ones show NEW. `rebase_lag=None`: it never moves.
     `events` holds the recorded calls interleaved with ("read_pr", head) for every single-PR read.
+    A `reread` value may be a list: successive single-PR reads walk it, the last entry sticks.
+    Lists page like the real API: the PR line `line_page_size` at a time through a cursor, REST
+    lists `mq.PER_PAGE` at a time. `late_runs[sha]` joins the head's runs from its second
+    unfiltered runs read on, i.e. a run another queue run started after this one decided.
     """
 
     def __init__(self, nodes, *, checks=None, runs=None, comments=None, rebase_error=False,
-                 reread=None, dispatch_refused=(), rebase_lag=1, disarm_error=False):
+                 reread=None, dispatch_refused=(), rebase_lag=1, disarm_error=False,
+                 line_page_size=None, late_runs=None):
         self.nodes = {n["number"]: n for n in nodes}
         self.checks = checks or {}
         self.runs = runs or {}
@@ -68,10 +76,15 @@ class FakeGh:
         self.dispatch_refused = set(dispatch_refused)
         self.rebase_lag = rebase_lag
         self.disarm_error = disarm_error
+        self.line_page_size = line_page_size
+        self.late_runs = late_runs or {}
+        self.runs_reads = {}
+        self.reread_counts = {}
         self.rereads_since_rebase = None
         self.calls = []
         self.events = []
         self.reads = 0
+        self.line_cursors = []
 
     def _record(self, call):
         self.calls.append(call)
@@ -95,6 +108,10 @@ class FakeGh:
             return {"data": {"repository": {"pullRequest": {"comments": {"nodes": [{"body": b} for b in bodies]}}}}}
         if "pullRequest(number" in query:
             node = self.reread.get(v["number"], self.nodes[v["number"]])
+            if isinstance(node, list):
+                seen = self.reread_counts.get(v["number"], 0)
+                self.reread_counts[v["number"]] = seen + 1
+                node = node[min(seen, len(node) - 1)]
             if self.rereads_since_rebase is not None:
                 self.rereads_since_rebase += 1
                 if self.rebase_lag is not None and self.rereads_since_rebase > self.rebase_lag:
@@ -102,20 +119,38 @@ class FakeGh:
             self.events.append(("read_pr", node["headRefOid"]))
             return {"data": {"repository": {"pullRequest": node}}}
         if "pullRequests(" in query:
-            return {"data": {"repository": {"pullRequests": {"nodes": list(self.nodes.values())}}}}
+            nodes = list(self.nodes.values())
+            self.line_cursors.append(v.get("after"))
+            size = self.line_page_size or len(nodes) or 1
+            start = int(v.get("after") or 0)
+            more = start + size < len(nodes)
+            return {"data": {"repository": {"pullRequests": {
+                "pageInfo": {"hasNextPage": more, "endCursor": str(start + size) if more else None},
+                "nodes": nodes[start:start + size],
+            }}}}
         raise AssertionError(f"unexpected query {query[:60]!r}")
+
+    @staticmethod
+    def _page(items, path):
+        page = int(re.search(r"[?&]page=(\d+)", path).group(1))
+        assert f"per_page={mq.PER_PAGE}" in path
+        return items[(page - 1) * mq.PER_PAGE:page * mq.PER_PAGE]
 
     def rest(self, method, path, fields=None):
         if method == "GET" and "/check-runs" in path:
             self.reads += 1
-            return {"check_runs": self.checks.get(path.split("/commits/")[1].split("/")[0], [])}
+            return {"check_runs": self._page(self.checks.get(path.split("/commits/")[1].split("/")[0], []), path)}
         if method == "GET" and "/actions/runs?" in path:
             self.reads += 1
             sha = path.split("head_sha=")[1].split("&")[0]
             runs = self.runs.get(sha, [])
             if "status=action_required" in path:
                 runs = [r for r in runs if r.get("conclusion") == "action_required"]
-            return {"workflow_runs": runs}
+            elif "page=1" in re.findall(r"[?&](page=\d+)", path):
+                self.runs_reads[sha] = self.runs_reads.get(sha, 0) + 1
+            if self.runs_reads.get(sha, 0) >= 2 and "status=" not in path:
+                runs = runs + self.late_runs.get(sha, [])
+            return {"workflow_runs": self._page(runs, path)}
         if method == "POST" and path.endswith("/dispatches"):
             workflow = path.split("/workflows/")[1].split("/")[0]
             self._record(("dispatch", workflow, dict(fields or {})))
@@ -435,3 +470,166 @@ def test_gh_argument_typing():
     assert graphql_args[graphql_args.index("-F") + 1] == "number=5"
     assert "id=X" in graphql_args
     assert "ref=feat/1" in dispatch_args and "inputs[pr]=7" in dispatch_args
+
+
+def _required_run(rid, status="in_progress", conclusion=None):
+    return {"id": rid, "path": ".github/workflows/derived-artifacts.yml", "event": "workflow_dispatch",
+            "status": status, "conclusion": conclusion, "html_url": f"https://run/{rid}"}
+
+
+def test_line_is_read_across_pages_and_the_oldest_armed_pr_leads():
+    """Qodo #1: with more open PRs than one page, the oldest armed PR may sit on a later page."""
+    gh = FakeGh([
+        _node(1, armed="2026-10-03T11:00:00Z", state="DIRTY"),
+        _node(2, armed="2026-10-03T11:30:00Z", state="DIRTY"),
+        _node(3, armed="2026-10-03T09:00:00Z", state="DIRTY"),
+    ], line_page_size=2)
+    decisions = _run(gh, "dry")
+    assert [n for n, _ in decisions] == [3, 1, 2]
+    assert gh.line_cursors == [None, "2"]
+
+
+def test_a_line_longer_than_the_page_cap_fails_instead_of_deciding_on_part_of_it():
+    gh = FakeGh([_node(i, state="DIRTY") for i in range(1, mq.MAX_PAGES + 2)], line_page_size=1)
+    with pytest.raises(mq.GhError, match="partial line"):
+        _run(gh, "dry")
+
+
+def test_a_failure_on_the_second_page_of_check_runs_is_seen():
+    """Qodo #6: 100 cancelled runs fill page 1; the failure on page 2 must still count."""
+    cancelled = [_check("cancelled", url=f"https://run/c{i}") for i in range(mq.PER_PAGE)]
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: cancelled + [_check("failure", url="https://run/f")]})
+    decision = _run(gh, "dry")[0][1]
+    assert decision.kind == "retry" and decision.links == ("https://run/f",)
+
+
+def test_a_live_required_run_on_the_second_page_of_workflow_runs_is_seen():
+    """Qodo #6: a live required run behind 100 other runs on the head still means 'in flight'."""
+    others = [{"id": 1000 + i, "path": ".github/workflows/perf-guard.yml", "event": "pull_request",
+               "status": "completed", "conclusion": "success"} for i in range(mq.PER_PAGE)]
+    gh = FakeGh([_node(1, state="BLOCKED")], runs={OLD: others + [_required_run(77)]})
+    assert _run(gh)[0][1].kind == "wait"
+    assert not any(c[0] == "dispatch" for c in gh.calls)
+
+
+@pytest.mark.parametrize(("checks", "decided"), [([_check("failure")], "retry"), ([], "dispatch")])
+def test_refused_ci_dispatch_evicts_and_the_line_moves_on(checks, decided):
+    """Qodo #3: a branch whose derived-artifacts.yml refuses dispatch (HTTP 422) must not stall
+    the line: evict it with the error, then decide for the next PR in the same run."""
+    gh = FakeGh([_node(1, state="BLOCKED"), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")],
+                checks={OLD: checks}, dispatch_refused={"derived-artifacts.yml"})
+    decisions = _run(gh)
+    assert [(n, a.kind) for n, a in decisions] == [(1, decided), (2, "evict")]
+    assert ("disarm", "PR_1") in gh.calls and ("disarm", "PR_2") in gh.calls
+    comment = next(c for c in gh.calls if c[0] == "comment" and c[1] == 1)
+    assert f"<!-- merge-queue:evict-dispatch:{OLD} -->" in comment[2]
+    assert "CI dispatch failed: HTTP 422: Workflow does not have" in comment[2]
+    assert not any(c[0] == "comment" and "merge-queue:retry:" in c[2] for c in gh.calls)
+
+
+def test_refused_ci_dispatch_after_a_rebase_evicts_on_the_new_head():
+    runs = {OLD: [{"id": 12, "path": ".github/workflows/perf-guard.yml", "event": "pull_request",
+                   "status": "in_progress", "conclusion": None}]}
+    gh = FakeGh([_node(1), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")], runs=runs,
+                dispatch_refused={"derived-artifacts.yml"})
+    decisions = _run(gh)
+    assert [(n, a.kind) for n, a in decisions] == [(1, "rebase"), (2, "evict")]
+    comment = next(c for c in gh.calls if c[0] == "comment" and c[1] == 1)
+    assert f"<!-- merge-queue:evict-dispatch:{NEW} -->" in comment[2]
+    assert "CI dispatch failed: HTTP 422" in comment[2]
+    assert not any(c[0] == "cancel" for c in gh.calls), "an evicted PR's old runs are left alone"
+    assert not any(c[0] == "comment" and "merge-queue:rebased:" in c[2] for c in gh.calls)
+
+
+@pytest.mark.parametrize("checks", [[], [_check("failure")]], ids=["dispatch", "retry"])
+def test_a_required_run_that_appeared_since_the_decision_stops_the_dispatch(checks):
+    """Qodo #4: merge-queue.yml and a queue-tick can decide the same dispatch for one head. The
+    one that dispatches second re-reads the live runs first and stands down."""
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, late_runs={OLD: [_required_run(88)]})
+    decisions = _run(gh)
+    assert decisions[0][1].kind in ("dispatch", "retry")
+    assert gh.calls == []
+
+
+def test_refused_rebase_rereads_once_more_before_counting_it_as_a_failure():
+    """The parked race: a racing run's rebase was accepted, but the ref moves about 1 s later. Our
+    pinned-head mutation is refused inside that window; the first reread still shows the old head.
+    One more look after REBASE_POLL_S sees the moved head: no comment, no eviction."""
+    sleeps = []
+    gh = FakeGh([_node(1)], rebase_error=True,
+                reread={1: [_node(1, state="BEHIND"), _node(1, head=NEW, state="BLOCKED")]})
+    mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
+    assert [c[0] for c in gh.calls] == ["rebase"]
+    assert sleeps == [mq.REBASE_POLL_S]
+
+
+def test_bot_authored_prs_are_never_queued():
+    """Spec section 9: a queue dispatch runs as github-actions[bot], so it would skip the token
+    cap GitHub puts on Dependabot runs and the approval gate on agent pushes. Bot PRs are told
+    once and left for a maintainer; the next user PR is the front."""
+    gh = FakeGh([_node(1, author="Bot"), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")])
+    decisions = _run(gh)
+    assert [n for n, _ in decisions] == [2]
+    bot_comment = next(c for c in gh.calls if c[0] == "comment" and c[1] == 1)
+    assert f"<!-- merge-queue:bot:{OLD} -->" in bot_comment[2] and "bot or app" in bot_comment[2]
+    assert not any(c[0] in ("rebase", "dispatch", "disarm") and "PR_1" in c for c in gh.calls)
+    assert _run(FakeGh([_node(1, author=None)]), "dry") == [], "a deleted (ghost) author is not a user"
+
+
+def test_main_drives_the_real_gh_argv_end_to_end(monkeypatch, tmp_path):
+    """Qodo #7: main() through the real Gh and _run_gh down to the subprocess argv, with canned
+    JSON for a BEHIND front PR: line query, pinned-head rebase, poll reread, CI dispatch with the
+    PR input, comment."""
+    owner, name = mq.REPO.split("/")
+    node = _node(7, ref="feat/queue-me")
+    seen = []
+
+    def fake_subprocess_run(argv, **kwargs):
+        assert kwargs == {"capture_output": True, "text": True, "check": False}
+        seen.append(argv)
+        args = argv[1:]
+        if args[:2] == ["api", "graphql"]:
+            query = args[3].removeprefix("query=")
+            out = {
+                mq.LINE_QUERY: {"data": {"repository": {"pullRequests": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [node]}}}},
+                mq.REBASE_MUTATION: {"data": {"updatePullRequestBranch": {"pullRequest": {"headRefOid": OLD}}}},
+                mq.PR_QUERY: {"data": {"repository": {"pullRequest": dict(node, headRefOid=NEW,
+                                                                          mergeStateStatus="BLOCKED")}}},
+                mq.COMMENTS_QUERY: {"data": {"repository": {"pullRequest": {"comments": {"nodes": []}}}}},
+            }[query]
+        elif args[2] == "GET":
+            out = {"total_count": 0, "check_runs": [], "workflow_runs": []}
+        elif args[3].endswith("/dispatches"):
+            out = None  # 204 No Content
+        else:
+            out = {"id": 1}
+        return subprocess.CompletedProcess(argv, 0, stdout="" if out is None else json.dumps(out), stderr="")
+
+    monkeypatch.setattr(mq.subprocess, "run", fake_subprocess_run)
+    monkeypatch.setattr(mq, "REBASE_POLL_S", 0)
+    monkeypatch.setenv("MERGE_QUEUE", "on")
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+
+    assert mq.main() == 0
+
+    repo = f"repos/{owner}/{name}"
+    runs_old = f"{repo}/actions/runs?head_sha={OLD}&per_page=100&page=1"
+    who = ["-f", f"owner={owner}", "-f", f"name={name}"]
+    assert seen[:-1] == [
+        ["gh", "api", "graphql", "-f", f"query={mq.LINE_QUERY}", *who],
+        ["gh", "api", "-X", "GET", f"{repo}/commits/{OLD}/check-runs"
+         "?check_name=Derived%20artifacts%20reproduce%20from%20their%20sources&filter=all&per_page=100&page=1"],
+        ["gh", "api", "-X", "GET", runs_old],
+        ["gh", "api", "-X", "GET", f"{repo}/actions/runs?head_sha={OLD}&status=action_required&per_page=100&page=1"],
+        ["gh", "api", "graphql", "-f", f"query={mq.REBASE_MUTATION}", "-f", "id=PR_7", "-f", f"oid={OLD}"],
+        ["gh", "api", "graphql", "-f", f"query={mq.PR_QUERY}", *who, "-F", "number=7"],
+        ["gh", "api", "-X", "GET", runs_old],
+        ["gh", "api", "-X", "POST", f"{repo}/actions/workflows/derived-artifacts.yml/dispatches",
+         "-f", "ref=feat/queue-me", "-f", "inputs[pr]=7"],
+        ["gh", "api", "graphql", "-f", f"query={mq.COMMENTS_QUERY}", *who, "-F", "number=7"],
+    ]
+    assert seen[-1][:6] == ["gh", "api", "-X", "POST", f"{repo}/issues/7/comments", "-f"]
+    assert seen[-1][6].startswith(f"body=<!-- merge-queue:rebased:{NEW} -->\nMerge queue: this PR is next.")
+    assert "| #7 | rebase | behind dev |" in summary.read_text(encoding="utf-8")

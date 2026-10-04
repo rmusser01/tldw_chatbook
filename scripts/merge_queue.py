@@ -40,6 +40,10 @@ UNKNOWN_SLEEP_S = 10
 # updatePullRequestBranch returns the PRE-rebase head; the branch moves about 1 s later (spike).
 REBASE_POLLS = 10
 REBASE_POLL_S = 3
+# Every list read follows pages to the end. A list longer than this fails the run rather than
+# deciding on a partial view (an armed PR or a live run on a later page would be invisible).
+PER_PAGE = 100
+MAX_PAGES = 10
 PASSING = frozenset({"success", "neutral", "skipped"})
 LIVE_RUN_STATUSES = frozenset({"queued", "in_progress", "waiting", "requested", "pending"})
 BROKEN_RUN_CONCLUSIONS = frozenset({"failure", "startup_failure", "timed_out"})
@@ -47,7 +51,15 @@ BROKEN_RUN_CONCLUSIONS = frozenset({"failure", "startup_failure", "timed_out"})
 
 @dataclass(frozen=True)
 class CheckRun:
-    """One run of the required check on a commit."""
+    """One run of the required check on a commit.
+
+    Attributes:
+        status: The run's status (`queued`, `in_progress`, `completed`, ...).
+        conclusion: The conclusion once completed (`success`, `failure`, ...), else None.
+        completed_at: When it completed, else None.
+        url: The run's web URL, quoted in comments.
+        suite_id: The check suite it belongs to, which links it to its workflow run.
+    """
 
     status: str
     conclusion: str | None
@@ -58,7 +70,22 @@ class CheckRun:
 
 @dataclass(frozen=True)
 class PrState:
-    """What the queue needs to know about one open PR into dev."""
+    """What the queue needs to know about one open PR into dev.
+
+    Attributes:
+        number: The PR number.
+        node_id: The PR's GraphQL node id, used by mutations.
+        head_sha: The current head commit.
+        head_ref: The head branch name, the ref workflows are dispatched on.
+        same_repo: Whether the head branch lives in this repository (not a fork).
+        armed_at: When auto-merge was enabled, or None if it is not armed.
+        is_draft: Whether the PR is a draft.
+        merge_state: GitHub's `mergeStateStatus` (`BEHIND`, `CLEAN`, `DIRTY`, ...).
+        head_committed_at: The head commit's date.
+        checks: Required-check runs on the head, plus live or failed workflow-run stand-ins.
+        unresolved_threads: How many review threads are unresolved.
+        human_author: Whether a user, not a bot or app, opened the PR (spec section 9).
+    """
 
     number: int
     node_id: str
@@ -71,6 +98,7 @@ class PrState:
     head_committed_at: datetime
     checks: tuple[CheckRun, ...] = ()
     unresolved_threads: int = 0
+    human_author: bool = True
 
 
 @dataclass(frozen=True)
@@ -79,6 +107,12 @@ class Action:
 
     `slug` names an eviction's cause in its comment marker (`evict-<slug>`), so a re-armed PR
     evicted again on the same head for a different reason is still told why.
+
+    Attributes:
+        kind: `wait`, `rebase`, `dispatch`, `retry` or `evict`.
+        reason: A human-readable cause, logged and quoted in comments.
+        links: Run URLs quoted in the comment (the failed runs).
+        slug: An eviction's cause, used in its comment marker.
     """
 
     kind: str
@@ -88,7 +122,7 @@ class Action:
 
 
 def line_of(prs: list[PrState]) -> list[PrState]:
-    """Return the queue: armed, non-draft, same-repo PRs, oldest arming first.
+    """Return the queue: armed, non-draft, same-repo, user-authored PRs, oldest arming first.
 
     Args:
         prs: Every open PR into dev.
@@ -96,7 +130,7 @@ def line_of(prs: list[PrState]) -> list[PrState]:
     Returns:
         The PRs in queue order.
     """
-    eligible = [p for p in prs if p.armed_at is not None and not p.is_draft and p.same_repo]
+    eligible = [p for p in prs if p.armed_at is not None and not p.is_draft and p.same_repo and p.human_author]
     return sorted(eligible, key=lambda p: (p.armed_at, p.number))
 
 
@@ -146,15 +180,42 @@ def decide_front(pr: PrState, now: datetime) -> Action:
 
 
 class GhError(RuntimeError):
-    """A gh CLI call failed."""
+    """A gh CLI call failed, or a list read was longer than the queue will page through."""
 
 
 class GhApi(Protocol):
     """What the queue needs from GitHub; `Gh` in production, a fake in tests."""
 
-    def graphql(self, query: str, **variables: object) -> dict: ...
+    def graphql(self, query: str, **variables: object) -> dict:
+        """Run a GraphQL query or mutation.
 
-    def rest(self, method: str, path: str, fields: dict[str, str] | None = None) -> object: ...
+        Args:
+            query: The GraphQL document.
+            **variables: Its variables; ints are sent typed, everything else as strings.
+
+        Returns:
+            The decoded response (`{"data": ...}`).
+
+        Raises:
+            GhError: The call failed.
+        """
+        ...
+
+    def rest(self, method: str, path: str, fields: dict[str, str] | None = None) -> object:
+        """Call a REST endpoint.
+
+        Args:
+            method: The HTTP method.
+            path: The path relative to the API root, query string included.
+            fields: String fields sent as the request body.
+
+        Returns:
+            The decoded JSON response, or None for an empty body.
+
+        Raises:
+            GhError: The call failed.
+        """
+        ...
 
 
 def _run_gh(args: list[str]) -> str:
@@ -165,18 +226,29 @@ def _run_gh(args: list[str]) -> str:
 
 
 class Gh:
-    """Thin wrapper over the gh CLI (preinstalled on hosted runners; auth via GH_TOKEN)."""
+    """Thin wrapper over the gh CLI (preinstalled on hosted runners; auth via GH_TOKEN).
+
+    Only ever runs `gh api`; see `GhApi` for the method contracts.
+    """
 
     def __init__(self, runner: Callable[[list[str]], str] | None = None) -> None:
+        """Create the wrapper.
+
+        Args:
+            runner: Runs `gh` with the given arguments and returns its stdout; defaults to a
+                subprocess call that raises GhError on a non-zero exit.
+        """
         self._run = runner or _run_gh
 
     def graphql(self, query: str, **variables: object) -> dict:
+        """See `GhApi.graphql`."""
         args = ["api", "graphql", "-f", f"query={query}"]
         for key, value in variables.items():
             args += ["-F" if isinstance(value, int) else "-f", f"{key}={value}"]
         return json.loads(self._run(args))
 
     def rest(self, method: str, path: str, fields: dict[str, str] | None = None) -> object:
+        """See `GhApi.rest`."""
         args = ["api", "-X", method, path]
         for key, value in (fields or {}).items():
             args += ["-f", f"{key}={value}"]
@@ -186,14 +258,16 @@ class Gh:
 
 PR_FIELDS = """
   number id isDraft headRefOid headRefName mergeStateStatus
+  author { __typename }
   headRepository { nameWithOwner }
   autoMergeRequest { enabledAt }
   commits(last: 1) { nodes { commit { committedDate } } }
   reviewThreads(first: 100) { nodes { isResolved } }
 """
 LINE_QUERY = (
-    "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {"
-    f' pullRequests(states: OPEN, baseRefName: "{BASE}", first: 100) {{ nodes {{ {PR_FIELDS} }} }} }} }}'
+    "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) {"
+    f' pullRequests(states: OPEN, baseRefName: "{BASE}", first: {PER_PAGE}, after: $after) {{'
+    f" pageInfo {{ hasNextPage endCursor }} nodes {{ {PR_FIELDS} }} }} }} }}"
 )
 PR_QUERY = (
     "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {"
@@ -236,36 +310,105 @@ def _parse_pr(node: dict) -> PrState:
         merge_state=node["mergeStateStatus"],
         head_committed_at=_ts(commits[0]["commit"]["committedDate"]) if commits else datetime.now(timezone.utc),
         unresolved_threads=sum(1 for t in node["reviewThreads"]["nodes"] if not t["isResolved"]),
+        human_author=(node.get("author") or {}).get("__typename") == "User",
     )
 
 
 def read_prs(gh: GhApi) -> list[PrState]:
+    """Read every open PR into dev, following the GraphQL cursor to the last page.
+
+    Args:
+        gh: The GitHub client.
+
+    Returns:
+        Every open PR into dev, in API order.
+
+    Raises:
+        GhError: A call failed, or there are more than MAX_PAGES pages of open PRs.
+    """
     owner, name = _owner_name()
-    data = gh.graphql(LINE_QUERY, owner=owner, name=name)
-    return [_parse_pr(n) for n in data["data"]["repository"]["pullRequests"]["nodes"]]
+    prs: list[PrState] = []
+    cursor = None
+    for _ in range(MAX_PAGES):
+        variables = {"owner": owner, "name": name}
+        if cursor:
+            variables["after"] = cursor
+        page = gh.graphql(LINE_QUERY, **variables)["data"]["repository"]["pullRequests"]
+        prs += [_parse_pr(n) for n in page["nodes"]]
+        if not page["pageInfo"]["hasNextPage"]:
+            return prs
+        cursor = page["pageInfo"]["endCursor"]
+    raise GhError(f"more than {MAX_PAGES * PER_PAGE} open PRs into {BASE}; refusing to decide on a partial line")
 
 
 def read_pr(gh: GhApi, number: int) -> PrState:
+    """Read one PR's current state.
+
+    Args:
+        gh: The GitHub client.
+        number: The PR number.
+
+    Returns:
+        The PR's state, without checks.
+
+    Raises:
+        GhError: The call failed.
+    """
     owner, name = _owner_name()
     data = gh.graphql(PR_QUERY, owner=owner, name=name, number=number)
     return _parse_pr(data["data"]["repository"]["pullRequest"])
 
 
+def _rest_pages(gh: GhApi, path: str, key: str) -> list[dict]:
+    """Every item of a paged REST list: pages are followed while a full page comes back."""
+    items: list[dict] = []
+    for page in range(1, MAX_PAGES + 1):
+        batch = (gh.rest("GET", f"{path}&per_page={PER_PAGE}&page={page}") or {}).get(key, [])
+        items += batch
+        if len(batch) < PER_PAGE:
+            return items
+    raise GhError(f"more than {MAX_PAGES * PER_PAGE} {key} for {path}; refusing to decide on a partial view")
+
+
 def read_checks(gh: GhApi, sha: str) -> tuple[CheckRun, ...]:
-    path = f"repos/{REPO}/commits/{sha}/check-runs?check_name={quote(REQUIRED_CHECK)}&filter=all&per_page=100"
-    data = gh.rest("GET", path) or {}
+    """Read every run of the required check on a commit.
+
+    Args:
+        gh: The GitHub client.
+        sha: The commit.
+
+    Returns:
+        The required check's runs, all pages.
+
+    Raises:
+        GhError: A call failed, or there are more than MAX_PAGES pages.
+    """
+    path = f"repos/{REPO}/commits/{sha}/check-runs?check_name={quote(REQUIRED_CHECK)}&filter=all"
     return tuple(
         CheckRun(c["status"], c.get("conclusion"), _ts(c.get("completed_at")), c["html_url"],
                  (c.get("check_suite") or {}).get("id"))
-        for c in data.get("check_runs", [])
+        for c in _rest_pages(gh, path, "check_runs")
     )
 
 
 def runs_on(gh: GhApi, sha: str, status: str | None = None) -> list[dict]:
-    path = f"repos/{REPO}/actions/runs?head_sha={sha}&per_page=100"
+    """Read every workflow run on a commit.
+
+    Args:
+        gh: The GitHub client.
+        sha: The head commit.
+        status: Only runs with this status (e.g. `action_required`), if given.
+
+    Returns:
+        The workflow runs, all pages, as the API returns them.
+
+    Raises:
+        GhError: A call failed, or there are more than MAX_PAGES pages.
+    """
+    path = f"repos/{REPO}/actions/runs?head_sha={sha}"
     if status:
         path += f"&status={status}"
-    return (gh.rest("GET", path) or {}).get("workflow_runs", [])
+    return _rest_pages(gh, path, "workflow_runs")
 
 
 def _workflow_name(run: dict) -> str:
@@ -288,6 +431,17 @@ def required_run_stand_ins(gh: GhApi, sha: str, checks: tuple[CheckRun, ...]) ->
 
     A workflow-run conclusion is only ever read as a failure here, never as a merge signal
     (spec section 6). The queue's own run (GITHUB_RUN_ID) is never counted.
+
+    Args:
+        gh: The GitHub client.
+        sha: The head commit.
+        checks: The required check's runs on that head, from `read_checks`.
+
+    Returns:
+        One stand-in per live run and per failed run that reported no required check.
+
+    Raises:
+        GhError: A call failed.
     """
     own_run_id = int(os.environ.get("GITHUB_RUN_ID", "0") or 0)
     reported_suites = {c.suite_id for c in checks if c.suite_id is not None}
@@ -314,8 +468,18 @@ def _best_effort(log: Callable[[str], None], what: str, fn: Callable[[], object]
 def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool:
     """Post a comment unless one of this kind already exists for this head.
 
+    Args:
+        gh: The GitHub client.
+        number: The PR number.
+        kind: The comment's kind, part of its hidden marker.
+        sha: The head the comment is about, part of its hidden marker.
+        body: The visible text.
+
     Returns:
         True if it posted, False if the marker was already there.
+
+    Raises:
+        GhError: A call failed.
     """
     marker = f"<!-- merge-queue:{kind}:{sha} -->"
     owner, name = _owner_name()
@@ -328,6 +492,17 @@ def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool
 
 
 def dispatch(gh: GhApi, workflow: str, ref: str, pr_number: int | None = None) -> None:
+    """Start a workflow_dispatch run.
+
+    Args:
+        gh: The GitHub client.
+        workflow: The workflow file's basename.
+        ref: The branch to run it on (its copy of the workflow is the one that runs).
+        pr_number: Sent as the `pr` input, if given (only the required workflow takes it).
+
+    Raises:
+        GhError: GitHub refused the dispatch (e.g. HTTP 422, no workflow_dispatch trigger).
+    """
     fields = {"ref": ref}
     if pr_number is not None:
         fields["inputs[pr]"] = str(pr_number)
@@ -349,7 +524,7 @@ def _workflows_to_redispatch(runs: list[dict]) -> list[str]:
     return sorted(names)
 
 
-def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -> None:
+def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -> bool:
     # Best-effort: a merge fires both push:dev and pull_request:closed, so two racing runs can
     # evict the same PR and the second disarm hits an already-disarmed PR.
     _best_effort(log, f"disarm #{pr.number}", lambda: gh.graphql(DISARM_MUTATION, id=pr.node_id))
@@ -360,28 +535,45 @@ def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -
         f"re-arm with `gh pr merge {pr.number} --auto --merge` to rejoin at the back.{links}",
     )
     log(f"  evicted #{pr.number}: {action.reason}")
+    return True
 
 
-def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None]) -> None:
+def _dispatch_required(gh: GhApi, pr: PrState, log: Callable[[str], None]) -> bool:
+    """Dispatch the required check on the PR's head; a refused dispatch evicts the PR.
+
+    Returns True if the PR was evicted (the line moves on), False if the run was started.
+    """
+    try:
+        dispatch(gh, REQUIRED_WORKFLOW, pr.head_ref, pr.number)
+    except GhError as exc:
+        return _evict(gh, pr, Action("evict", f"CI dispatch failed: {str(exc)[:200]}", slug="dispatch"), log)
+    return False
+
+
+def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None]) -> bool:
     try:
         gh.graphql(REBASE_MUTATION, id=pr.node_id, oid=pr.head_sha)
     except GhError as exc:
         fresh = read_pr(gh, pr.number)
+        if fresh.head_sha == pr.head_sha and fresh.merge_state != "DIRTY":
+            # A racing run's rebase may have been accepted with its ref update still landing
+            # (about 1 s): look once more before counting this as our own failure.
+            sleep(REBASE_POLL_S)
+            fresh = read_pr(gh, pr.number)
         if fresh.head_sha != pr.head_sha:
             log(f"  rebase skipped: head moved to {fresh.head_sha[:10]}")
-        elif fresh.merge_state == "DIRTY":
-            _evict(gh, fresh, Action("evict", "conflicts with dev (rebase refused)", slug="conflict"), log)
-        else:
-            error = str(exc)[:200]
-            posted = comment_once(
-                gh, pr.number, "rebase-failed", pr.head_sha,
-                f"Merge queue: rebasing onto dev failed ({error}); will retry once, then remove from the line.",
-            )
-            if posted:
-                log(f"  rebase failed, will retry once: {exc}")
-            else:
-                _evict(gh, fresh, Action("evict", f"rebase onto dev keeps failing: {error}", slug="rebase"), log)
-        return
+            return False
+        if fresh.merge_state == "DIRTY":
+            return _evict(gh, fresh, Action("evict", "conflicts with dev (rebase refused)", slug="conflict"), log)
+        error = str(exc)[:200]
+        posted = comment_once(
+            gh, pr.number, "rebase-failed", pr.head_sha,
+            f"Merge queue: rebasing onto dev failed ({error}); will retry once, then remove from the line.",
+        )
+        if posted:
+            log(f"  rebase failed, will retry once: {exc}")
+            return False
+        return _evict(gh, fresh, Action("evict", f"rebase onto dev keeps failing: {error}", slug="rebase"), log)
     # The mutation returns the PRE-rebase headRefOid and the branch moves about 1 s later, so
     # wait for the new head to appear before dispatching CI on it.
     new_head = None
@@ -393,13 +585,14 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
             break
     if new_head is None:
         log(f"  rebase of #{pr.number} accepted but the head never moved; a later tick recovers it")
-        return
+        return False
     old_runs = runs_on(gh, pr.head_sha)
     # Dispatch the required check *before* cancelling anything on the old head: queue-tick runs
     # inside its own derived-artifacts run, and an auto_merge_enabled-triggered merge-queue.yml
     # run shares this same head too. Cancelling first would kill the run executing this script
     # (spec section 7).
-    dispatch(gh, REQUIRED_WORKFLOW, pr.head_ref, pr.number)
+    if _dispatch_required(gh, replace(pr, head_sha=new_head), log):
+        return True
     own_run_id = int(os.environ.get("GITHUB_RUN_ID", "0") or 0)
     for run in old_runs:
         if run.get("status") not in LIVE_RUN_STATUSES:
@@ -421,30 +614,60 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[
         f"Merge queue: this PR is next. Rebased onto `{BASE}` (head `{new_head[:10]}`) and started CI.{note}",
     )
     log(f"  rebased #{pr.number} {pr.head_sha[:10]} -> {new_head[:10]}")
+    return False
 
 
 def apply(
     gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], sleep: Callable[[float], None],
-) -> None:
-    """Perform one decided action (spec section 7)."""
+) -> bool:
+    """Perform one decided action (spec section 7).
+
+    Args:
+        gh: The GitHub client.
+        pr: The front PR, as decided on.
+        action: The decided action.
+        log: Receives one line per notable step.
+        sleep: Waits between rereads (injected by tests).
+
+    Returns:
+        True if the PR left the line (evicted, by decision or because an action failed), so
+        the caller moves on to the next front; False otherwise.
+
+    Raises:
+        GhError: A read or a non-best-effort call failed.
+    """
     if action.kind == "rebase":
-        _rebase(gh, pr, log, sleep)
-    elif action.kind in ("dispatch", "retry"):
-        dispatch(gh, REQUIRED_WORKFLOW, pr.head_ref, pr.number)
+        return _rebase(gh, pr, log, sleep)
+    if action.kind in ("dispatch", "retry"):
+        # Two queue runs (merge-queue.yml and a queue-tick) can decide the same dispatch for the
+        # same head. Whoever dispatches first makes a live run; the other sees it here and stands
+        # down. The window left is the seconds between this read and the POST (spec section 7).
+        if any(c.status != "completed" for c in required_run_stand_ins(gh, pr.head_sha, ())):
+            log(f"  #{pr.number}: a required run appeared on {pr.head_sha[:10]} since the decision; not dispatching")
+            return False
+        if _dispatch_required(gh, pr, log):
+            return True
         if action.kind == "retry":
             comment_once(
                 gh, pr.number, "retry", pr.head_sha,
                 f"Merge queue: the required check failed once on `{pr.head_sha[:10]}`; retrying with a fresh run. "
                 f"Failed run: {action.links[0]}",
             )
-    elif action.kind == "evict":
-        _evict(gh, pr, action, log)
+        return False
+    if action.kind == "evict":
+        return _evict(gh, pr, action, log)
+    return False
 
 
 def cleanup_approval_runs(gh: GhApi, pr: PrState, log: Callable[[str], None]) -> None:
     """Delete the empty approval-pending runs our own token rebase created (spec F4, V1).
 
     Best-effort end to end: a failed listing must not abort the tick.
+
+    Args:
+        gh: The GitHub client.
+        pr: The front PR; runs on its head are cleaned.
+        log: Receives a line per failed best-effort call.
     """
     try:
         runs = runs_on(gh, pr.head_sha, status="action_required")
@@ -458,23 +681,52 @@ def cleanup_approval_runs(gh: GhApi, pr: PrState, log: Callable[[str], None]) ->
                      lambda rid=run["id"]: gh.rest("DELETE", f"repos/{REPO}/actions/runs/{rid}"))
 
 
-def comment_forks(gh: GhApi, prs: list[PrState], mode: str, log: Callable[[str], None]) -> None:
+UNQUEUED_NOTES = {
+    "fork": "Merge queue: fork PRs are not queued, because GitHub cannot dispatch workflows on a fork's branch. "
+            "A maintainer merges this one by hand.",
+    "bot": "Merge queue: PRs opened by a bot or app are not queued, because a queue dispatch would run this "
+           "branch's workflows without the token limits and approval gates GitHub applies to bot-authored "
+           "runs. A maintainer merges this one by hand.",
+}
+
+
+def comment_unqueued(gh: GhApi, prs: list[PrState], mode: str, log: Callable[[str], None]) -> None:
+    """Tell armed fork and bot-authored PRs, once per head, that the queue skips them.
+
+    Best-effort: a failed comment never aborts the run.
+
+    Args:
+        gh: The GitHub client.
+        prs: Every open PR into dev.
+        mode: `dry` only logs; `on` also comments.
+        log: Receives one line per skipped PR.
+    """
     for pr in prs:
-        if pr.armed_at is None or pr.same_repo:
+        if pr.armed_at is None or (pr.same_repo and pr.human_author):
             continue
-        log(f"#{pr.number}: fork PR armed; not queued")
+        kind = "fork" if not pr.same_repo else "bot"
+        log(f"#{pr.number}: {kind} PR armed; not queued")
         if mode == "on":
             _best_effort(
-                log, f"comment on fork PR #{pr.number}",
-                lambda p=pr: comment_once(
-                    gh, p.number, "fork", p.head_sha,
-                    "Merge queue: fork PRs are not queued, because GitHub cannot dispatch workflows on a fork's "
-                    "branch. A maintainer merges this one by hand.",
-                ),
+                log, f"comment on {kind} PR #{pr.number}",
+                lambda p=pr, k=kind: comment_once(gh, p.number, k, p.head_sha, UNQUEUED_NOTES[k]),
             )
 
 
 def settle_unknown(gh: GhApi, pr: PrState, sleep: Callable[[float], None]) -> PrState:
+    """Re-read a PR whose merge state is UNKNOWN until it settles, up to UNKNOWN_REREADS times.
+
+    Args:
+        gh: The GitHub client.
+        pr: The front PR.
+        sleep: Waits between rereads (injected by tests).
+
+    Returns:
+        The latest state read; still UNKNOWN if it never settled.
+
+    Raises:
+        GhError: A reread failed.
+    """
     for _ in range(UNKNOWN_REREADS):
         if pr.merge_state != "UNKNOWN":
             return pr
@@ -490,13 +742,27 @@ def run(
     sleep: Callable[[float], None] = time.sleep,
     log: Callable[[str], None] = print,
 ) -> list[tuple[int, Action]]:
-    """One queue pass. Returns the (PR, action) decisions taken or, in dry mode, proposed."""
+    """One queue pass: decide for the front PR and, in `on` mode, act; repeat after evictions.
+
+    Args:
+        gh: The GitHub client.
+        mode: The MERGE_QUEUE value; only `dry` and `on` (any case or padding) do anything.
+        now: The clock (injected by tests).
+        sleep: Waits between rereads (injected by tests).
+        log: Receives the run's log lines.
+
+    Returns:
+        The (PR number, action) decisions taken or, in dry mode, proposed.
+
+    Raises:
+        GhError: A read or a non-best-effort call failed; the next event retries.
+    """
     mode = (mode or "").strip().lower()
     if mode not in ("dry", "on"):
         log("merge queue is off (MERGE_QUEUE is not 'dry' or 'on')")
         return []
     prs = read_prs(gh)
-    comment_forks(gh, prs, mode, log)
+    comment_unqueued(gh, prs, mode, log)
     decisions: list[tuple[int, Action]] = []
     for pr in line_of(prs)[:MAX_FRONTS_PER_RUN]:
         pr = settle_unknown(gh, pr, sleep)
@@ -507,15 +773,21 @@ def run(
         action = decide_front(pr, now())
         decisions.append((pr.number, action))
         log(f"#{pr.number}: {action.kind} - {action.reason}")
+        left_line = action.kind == "evict"
         if mode == "on":
             cleanup_approval_runs(gh, pr, log)
-            apply(gh, pr, action, log, sleep)
-        if action.kind != "evict":
+            left_line = apply(gh, pr, action, log, sleep)
+        if not left_line:
             break
     return decisions
 
 
 def main() -> int:
+    """Run one queue pass with the real gh CLI and append the decisions to the job summary.
+
+    Returns:
+        The process exit code (0; a failed call raises instead).
+    """
     decisions = run(Gh(), os.environ.get("MERGE_QUEUE"))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:

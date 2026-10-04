@@ -32,7 +32,18 @@ TIMELINE = """query($n: Int!) { repository(owner: "rmusser01", name: "tldw_chatb
 
 
 def classify(run: dict, sync_oids: set[str], rebase_oids: set[str]) -> str | None:
-    """Return the cause of one required-workflow run, or None if it never ran."""
+    """Return the cause of one required-workflow run.
+
+    Args:
+        run: A workflow run as the REST API returns it (`event`, `conclusion`, `head_sha`,
+            `triggering_actor`).
+        sync_oids: Head commits that are merge commits bringing dev in.
+        rebase_oids: Head commits that arrived by force-push.
+
+    Returns:
+        `queue`, `sync`, `rebase` or `content`; None for a run that never ran (approval-pending)
+        or an orphan of the queue's own token rebase.
+    """
     if run.get("conclusion") == "action_required":
         return None
     if run.get("event") == "pull_request" and (run.get("triggering_actor") or {}).get("login") == "github-actions[bot]":
@@ -47,7 +58,15 @@ def classify(run: dict, sync_oids: set[str], rebase_oids: set[str]) -> str | Non
 
 
 def summarize(per_pr: list[dict[str, int]]) -> dict[str, float]:
-    """Totals plus the re-sync median and the re-sync runs beyond one per PR."""
+    """Totals plus the re-sync median and the re-sync runs beyond one per PR.
+
+    Args:
+        per_pr: One cause-to-count map per merged PR, from `classify`.
+
+    Returns:
+        `prs` (PR count), `runs` (all counted runs), `resync_median` (median of sync + rebase +
+        queue runs per PR) and `resync_beyond_one` (those runs beyond one per PR, summed).
+    """
     resync = [p.get("sync", 0) + p.get("rebase", 0) + p.get("queue", 0) for p in per_pr]
     return {
         "prs": len(per_pr),
@@ -63,6 +82,17 @@ def _gh(*args: str) -> object:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Print required-workflow runs per recently merged PR into dev, by cause.
+
+    Args:
+        argv: Command-line arguments (`--prs`, `--since`); defaults to sys.argv.
+
+    Returns:
+        The process exit code (0).
+
+    Raises:
+        subprocess.CalledProcessError: A gh call failed.
+    """
     parser = argparse.ArgumentParser(description="Required-workflow runs per merged PR into dev, by cause.")
     parser.add_argument("--prs", type=int, default=80, help="how many recent merged PRs (default 80)")
     parser.add_argument("--since", help="only PRs merged at or after this ISO date, e.g. 2026-10-05")
