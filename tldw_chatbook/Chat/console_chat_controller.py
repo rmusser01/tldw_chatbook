@@ -158,12 +158,6 @@ from tldw_chatbook.Chat.console_compaction_failure import (
     compaction_failure_copy,
     transaction_failure_copy,
 )
-from tldw_chatbook.Chat.console_context_budget_copy import (
-    MODEL_WINDOW_SETTING,
-    ContextOverflowCause,
-    compaction_prompt_copy,
-    context_overflow_alert_copy,
-)
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     CompactionAdmission,
@@ -199,6 +193,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ConsoleContextCapacity,
     ConsoleContextPolicyOverrides,
     ContextCarryForwardMode,
+    ContextCompactionMode,
     ContextCompactionRepresentation,
     context_policy_overrides_from_console_config,
     merge_context_policy,
@@ -390,6 +385,7 @@ from tldw_chatbook.Chat.prompt_history import PromptHistory
 
 if TYPE_CHECKING:
     from tldw_chatbook.Agents.agent_lesson_promotion import ManagedSkillProposalGate
+    from tldw_chatbook.Chat.console_context_budget_copy import ContextOverflowCause
     from tldw_chatbook.Agents.hook_permissions import HookPermissions
     from tldw_chatbook.Agents.persona_policy import PersonaToolPolicy
     from tldw_chatbook.Persona_Buddy.console_adapter import PersonaBuddyConsoleAdapter
@@ -2859,11 +2855,17 @@ def watchlists_operation_receipt_ids(
     )
 
 
+def _request_fingerprint(messages: list[dict[str, Any]]) -> tuple[int, int]:
+    """Cheap identity of an assembled request's size (rows, content length)."""
+
+    return len(messages), sum(len(str(row.get("content", ""))) for row in messages)
+
+
 def _context_overflow_cause(
     decision: CompactionDecision,
     resolved: Any,
     capacity: Any,
-) -> ContextOverflowCause | None:
+) -> "ContextOverflowCause | None":
     """Name why compacting cannot make an over-limit send fit (TASK-34350).
 
     Args:
@@ -2874,6 +2876,9 @@ def _context_overflow_cause(
     Returns:
         The cause, or ``None`` when the window itself is unknown.
     """
+
+    # Lazy (ADR-097 UI-ready census): needed only when a send cannot fit.
+    from tldw_chatbook.Chat.console_context_budget_copy import ContextOverflowCause
 
     window = capacity.context_window_tokens
     if (
@@ -4987,6 +4992,9 @@ class ConsoleChatController:
         # without compacting), which must not be asked about again.
         self._context_compaction_holds: dict[str, ContextCompactionHold] = {}
         self._compaction_hold_answered: set[str] = set()
+        # Held after skills / retrieval / hooks already ran (rare, late check):
+        # the resumed pass must not append their notes and events again.
+        self._compaction_hold_after_effects: set[str] = set()
         self._durable_postcommit_continuations: dict[
             str, _DurablePostcommitContinuation
         ] = {}
@@ -9419,6 +9427,12 @@ class ConsoleChatController:
             self._prepared_send_continuations.pop(preparation_id, None)
             self._trace_call_boundaries_by_preparation.pop(preparation_id, None)
             self._context_compaction_holds.pop(preparation_id, None)
+            self._compaction_hold_after_effects.discard(preparation_id)
+            if ConsoleTurnPreparationState.CANCELLED in expected_states:
+                # A cancelled or abandoned send never reaches the stream that
+                # consumes its answer (Qodo #6). An accepted one keeps it:
+                # the durable path drops the preparation before streaming.
+                self._compaction_hold_answered.discard(preparation_id)
             fingerprint = self.store.durable_acceptance_fingerprint_for(preparation_id)
             if (
                 fingerprint is None
@@ -11392,6 +11406,26 @@ class ConsoleChatController:
                 else:
                     raise ValueError("hook_continuation_input_missing")
             trace_source_messages = tuple(dict(row) for row in provider_messages)
+            # TASK-34350 (owner ruling 2026-10-03): a composer send over the
+            # compaction threshold under Ask is held HERE -- before skills,
+            # retrieval or hooks run and before anything is committed -- so a
+            # resumed send repeats none of them. Nothing is marked Failed and
+            # no dispatch checkpoint exists (TASK-33621.4). The Ask trigger
+            # counts conversation history, which is all present already.
+            early_request = _request_fingerprint(provider_messages)
+            stop = await self._compaction_admission_check(
+                session=session,
+                preparation=preparation,
+                origin=origin,
+                preserve_composer=preserve_composer,
+                resolution=resolution,
+                provider_messages=provider_messages,
+                echoed_user=echoed_user,
+                queue_entry_id=queue_entry_id,
+                after_side_effects=False,
+            )
+            if stop is not None:
+                return stop
             # TASK-33940.4: a custodied turn that needed no preparation (e.g. a
             # "/" or "$" draft with Capture off) has no continuation to carry
             # its staged launch, so it gets its own lease -- captured on the
@@ -11428,7 +11462,13 @@ class ConsoleChatController:
                 if preparation is not None:
                     self._abandon_preparation(preparation.preparation_id)
                 return self._block(session.id, refuse)
-            for note in skill_notes:
+            # TASK-34350: a send held AFTER this point already appended its
+            # notes and retrieval events once; its resumed pass must not.
+            repeated_pass = (
+                preparation is not None
+                and preparation.preparation_id in self._compaction_hold_after_effects
+            )
+            for note in () if repeated_pass else skill_notes:
                 # An embedded skipped-skill note is never an abort: append the
                 # same system-row copy `_block` would, then let the turn proceed.
                 self.store.append_message(
@@ -11524,7 +11564,7 @@ class ConsoleChatController:
                     provider_messages,
                     citation_context,
                 )
-            if citation_context and echoed_user is not None:
+            if citation_context and echoed_user is not None and not repeated_pass:
                 trace_prefix = f"console-trace:{echoed_user.id}:retrieval"
                 retrieval_event_id = f"{trace_prefix}:retrieval_completed"
                 attached_event_id = f"{trace_prefix}:context_attached"
@@ -11639,41 +11679,6 @@ class ConsoleChatController:
                     "content": clean_draft,
                 },
             ]
-        # TASK-34350 (owner ruling 2026-10-03): a composer send over the
-        # compaction threshold under Ask is held HERE -- before any hook fires
-        # and before anything is committed -- so the user can compact and
-        # send, send without compacting, or cancel. Nothing is marked Failed
-        # and no dispatch checkpoint exists to recover (TASK-33621.4).
-        if (
-            origin is ConsoleSubmissionOrigin.MANUAL
-            and preparation is not None
-            and not preserve_composer
-            and preparation.preparation_id not in self._compaction_hold_answered
-            and isinstance(resolution, ConsoleProviderResolution)
-        ):
-            hold, alert = await self._assess_context_compaction(
-                session_id=session.id,
-                resolution=resolution,
-                provider_messages=provider_messages,
-                uncommitted_user_message_id=(
-                    echoed_user.id if echoed_user is not None else None
-                ),
-            )
-            if alert is not None:
-                # Compacting cannot make it fit: refuse before commit, so the
-                # alert is not buried under a dispatch-recovery panel and the
-                # message stays recoverable (live 2026-10-04).
-                if echoed_user is not None:
-                    self._mark_transient_echo_blocked(echoed_user.id)
-                self._abandon_preparation(preparation.preparation_id)
-                return self._block(session.id, alert)
-            if hold is not None:
-                return self._hold_send_for_compaction(
-                    preparation,
-                    hold,
-                    origin=origin,
-                    queue_entry_id=queue_entry_id,
-                )
         hook_owner = getattr(self, "_hooks_v2_submissions", {}).get(
             asyncio.current_task()
         )
@@ -11761,6 +11766,24 @@ class ConsoleChatController:
                 *provider_messages,
                 {"role": ConsoleMessageRole.USER.value, "content": hook_context},
             ]
+        if _request_fingerprint(provider_messages) != early_request:
+            # Skills, retrieved evidence or hook context grew the request
+            # after the early check (Qodo #1 on PR #3003): check again before
+            # commit, so a request they push past the limit is refused or
+            # held here rather than blocked after acceptance.
+            stop = await self._compaction_admission_check(
+                session=session,
+                preparation=preparation,
+                origin=origin,
+                preserve_composer=preserve_composer,
+                resolution=resolution,
+                provider_messages=provider_messages,
+                echoed_user=echoed_user,
+                queue_entry_id=queue_entry_id,
+                after_side_effects=True,
+            )
+            if stop is not None:
+                return stop
         if preparation is not None:
             current_preparation = self._preparation_by_id(preparation.preparation_id)
             if current_preparation is None or (
@@ -25317,6 +25340,10 @@ class ConsoleChatController:
 
         if lease is None or lease.launch is None:
             return None, None, None, None
+        if lease.capture_result is not None:
+            # TASK-34350: a send held after capture resumes with the exact
+            # evidence it already captured; the Library is not searched again.
+            return self._normalize_rag_capture(lease.capture_result)
         provider = lease.capture
         try:
             captured = await provider(
@@ -26965,6 +26992,12 @@ class ConsoleChatController:
             is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
         ):
             return None
+        # Lazy (ADR-097 UI-ready census): needed only when a send cannot fit.
+        from tldw_chatbook.Chat.console_context_budget_copy import (
+            MODEL_WINDOW_SETTING,
+            context_overflow_alert_copy,
+        )
+
         cause = _context_overflow_cause(decision, resolved, capacity)
         if cause is not None:
             return context_overflow_alert_copy(
@@ -27058,6 +27091,70 @@ class ConsoleChatController:
             ),
         )
 
+    async def _compaction_admission_check(
+        self,
+        *,
+        session: Any,
+        preparation: ConsoleTurnPreparation | None,
+        origin: ConsoleSubmissionOrigin,
+        preserve_composer: bool,
+        resolution: Any,
+        provider_messages: list[dict[str, Any]],
+        echoed_user: Any,
+        queue_entry_id: str | None,
+        after_side_effects: bool,
+    ) -> ConsoleSubmitResult | None:
+        """Hold or refuse one composer send before commit (TASK-34350).
+
+        Returns:
+            The result to return for a held or refused send, else ``None``.
+        """
+
+        if (
+            origin is not ConsoleSubmissionOrigin.MANUAL
+            or preparation is None
+            or preserve_composer
+            or preparation.preparation_id in self._compaction_hold_answered
+            or not isinstance(resolution, ConsoleProviderResolution)
+            or self._compaction_mode_for(session) is ContextCompactionMode.OFF
+        ):
+            return None
+        hold, alert = await self._assess_context_compaction(
+            session_id=session.id,
+            resolution=resolution,
+            provider_messages=provider_messages,
+            uncommitted_user_message_id=(
+                echoed_user.id if echoed_user is not None else None
+            ),
+        )
+        if alert is not None:
+            # Compacting cannot make it fit: refuse before commit, so the
+            # alert is not buried under a dispatch-recovery panel and the
+            # message stays recoverable (live 2026-10-04).
+            if echoed_user is not None:
+                self._mark_transient_echo_blocked(echoed_user.id)
+            self._abandon_preparation(preparation.preparation_id)
+            return self._block(session.id, alert)
+        if hold is None:
+            return None
+        if after_side_effects:
+            self._compaction_hold_after_effects.add(preparation.preparation_id)
+        return self._hold_send_for_compaction(
+            preparation, hold, origin=origin, queue_entry_id=queue_entry_id
+        )
+
+    def _compaction_mode_for(self, session: Any) -> ContextCompactionMode:
+        """This session's effective compaction mode (Off skips the checks)."""
+
+        try:
+            global_overrides = self._global_context_policy_overrides()
+        except Exception:
+            global_overrides = None
+        return merge_context_policy(
+            global_overrides=global_overrides,
+            conversation_overrides=session.context_policy_overrides,
+        ).compaction_mode
+
     async def _assess_context_compaction(
         self,
         *,
@@ -27147,6 +27244,10 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
             )
         self._context_compaction_holds[preparation.preparation_id] = hold
+        from tldw_chatbook.Chat.console_context_budget_copy import (
+            compaction_prompt_copy,
+        )
+
         visible_copy = compaction_prompt_copy(
             used_tokens=hold.used_tokens,
             budget_tokens=hold.budget_tokens,
@@ -27405,7 +27506,13 @@ class ConsoleChatController:
         logger.info("console_context_policy_decision")
         if decision in {CompactionDecision.OFF, CompactionDecision.BELOW_TRIGGER}:
             return _flatten_preflight_messages(semantic), None
-        if decision is CompactionDecision.ASK and ask_bypassed:
+        if ask_bypassed and decision in {
+            CompactionDecision.ASK,
+            CompactionDecision.AUTOMATIC,
+        }:
+            # The user's answer was "do not compact this send" (or "compacted
+            # already"); a policy changed to Automatic meanwhile must not
+            # compact it anyway (Qodo #2 on PR #3003).
             return _flatten_preflight_messages(semantic), None
         if decision is CompactionDecision.ASK:
             # A composer send is held before it is committed (TASK-34350);

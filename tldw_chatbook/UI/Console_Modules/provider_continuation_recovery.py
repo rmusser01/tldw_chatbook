@@ -15,7 +15,6 @@ from textual.widget import Widget
 from textual.widgets import Button, Static
 
 from ...Chat.console_chat_models import ConsoleChatMessage
-from ...Chat.console_context_budget_copy import compaction_hold_detail
 from ...Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ContextCompactionHold,
@@ -260,6 +259,12 @@ class TraceCallRecoveryCallout(Vertical):
         if len(detail_rows) >= 3:
             if hold is not None:
                 # A deliberate policy hold, not a failure: no Problem/Impact.
+                # Lazy: this module mounts at UI-ready (ADR-097 census) and the
+                # copy is needed only while a send is actually held.
+                from ...Chat.console_context_budget_copy import (
+                    compaction_hold_detail,
+                )
+
                 usage, choices = compaction_hold_detail(
                     used_tokens=hold.used_tokens,
                     budget_tokens=hold.budget_tokens,

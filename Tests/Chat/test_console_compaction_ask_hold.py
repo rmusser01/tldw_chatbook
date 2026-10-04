@@ -341,3 +341,196 @@ async def test_a_runtime_send_that_cannot_fit_keeps_the_message_recoverable(
     recoveries = runtime.recoveries_for_session("session-1")
     assert [entry.draft for entry in recoveries] == [draft]
     assert gateway.stream_calls == 0
+
+
+# --- Qodo review on PR #3003 ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_without_compacting_holds_even_if_the_policy_turned_automatic(
+    tmp_path: Path,
+) -> None:
+    """Qodo #2: the answer is "do not compact this send", whatever the mode."""
+    from tldw_chatbook.Chat.console_context_policy import (
+        ConsoleContextPolicyOverrides,
+    )
+
+    db, store, controller, gateway = _live_controller(tmp_path, overrides=_ASK)
+    draft, held = await _send_until_held(controller, gateway)
+    store.set_session_context_policy_overrides(
+        "session-1", replace(_ASK, compaction_mode=ContextCompactionMode.AUTOMATIC)
+    )
+    streams = gateway.stream_calls
+
+    result = await controller.send_without_compacting(held.preparation_id)
+
+    assert result.accepted is True
+    assert gateway.auxiliary_calls == 0
+    assert _active_memory_count(db) == 0
+    assert gateway.stream_calls == streams + 1
+    assert _user_texts(store).count(draft) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_abandoned_resumed_hold_leaves_no_answered_id_behind(
+    tmp_path: Path,
+) -> None:
+    """Qodo #6: an answered hold that never reaches the stream must not leak."""
+    _db, store, controller, gateway = _live_controller(tmp_path, overrides=_ASK)
+    _draft, held = await _send_until_held(controller, gateway)
+
+    async def destination_changed(_selection):
+        raise RuntimeError("provider unavailable")
+
+    gateway.resolve_for_send = destination_changed  # the resumed send re-resolves
+    await controller.send_without_compacting(held.preparation_id)
+    paused = store.preparation_for_session("session-1")
+    assert paused is not None
+    controller.cancel_library_preparation(paused.preparation_id)
+
+    assert held.preparation_id not in controller._compaction_hold_answered
+    assert store.preparation_for_session("session-1") is None
+
+
+class _RecordingGateway(_LiveProviderGateway):
+    """Record the prepared request that reaches the provider."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.sent: list = []
+
+    async def stream_chat(self, resolution, prepared, **kwargs):
+        self.sent.append(prepared)
+        async for chunk in super().stream_chat(resolution, prepared, **kwargs):
+            yield chunk
+
+
+@pytest.mark.asyncio
+async def test_send_without_compacting_past_the_ceiling_drops_older_turns_to_fit(
+    tmp_path: Path,
+) -> None:
+    """Qodo #3: an over-ceiling chat sent uncompacted is windowed, not sent whole.
+
+    "Send without compacting" means what compaction mode Off means for that
+    one send: the real request preparation drops whole older turns until the
+    request fits the input ceiling.
+    """
+    gateway = _RecordingGateway()
+    _db, store, controller, _gateway = _live_controller(
+        tmp_path, gateway=gateway, overrides=_ASK
+    )
+    draft, held = await _send_until_held(controller, gateway)
+    assert controller.context_compaction_hold(held.preparation_id) is not None
+    # Shrink the window so the chat is past the input ceiling (1,500 - Max
+    # tokens 120 - 512 margin = 868) while the held message alone still fits.
+    gateway.context_window = 1_500
+
+    result = await controller.send_without_compacting(held.preparation_id)
+
+    assert result.accepted is True
+    prepared = gateway.sent[-1]
+    assert prepared.known_overflow is False
+    assert prepared.dropped_units, "older turns were not windowed out"
+    assert prepared.accounting.total_input_tokens <= (
+        prepared.capacity.effective_input_ceiling_tokens
+    )
+    assert draft in str(prepared.messages_payload)
+
+
+def _context_hook_engine(tmp_path: Path, context_chars: int):
+    """A real RunHooksEngine whose UserPromptSubmit hook adds model context."""
+    import sys
+
+    from Tests.Agents.hook_test_utils import trusted_hook_engine
+    from tldw_chatbook.Agents.run_hooks import load_hooks_config
+
+    config = load_hooks_config(
+        {
+            "hooks": {
+                "hook": [
+                    {
+                        "event": "UserPromptSubmit",
+                        "command": [
+                            sys.executable,
+                            "-c",
+                            f"print('hook context ' * {context_chars // 13})",
+                        ],
+                    }
+                ]
+            }
+        }
+    )
+    return trusted_hook_engine(
+        config_provider=lambda: config, cwd_provider=lambda: str(tmp_path)
+    )
+
+
+@pytest.mark.asyncio
+async def test_hook_context_that_cannot_fit_is_refused_before_commit(
+    tmp_path: Path,
+) -> None:
+    """Qodo #1: the check also runs after hooks add model-visible context."""
+    gateway = _RecordingGateway(context_window=1_200)
+    _db, store, controller, _gateway = _live_controller(
+        tmp_path, gateway=gateway, overrides=_ASK
+    )
+    await controller.submit_draft("question-0: hello.", session_id="session-1")
+    # 1,200 - Max tokens 120 - 512 margin leaves 568 input tokens. History
+    # and the draft fit (the early check passes); the hook's context, capped
+    # at HOOK_IO_BUDGET_CHARS (~615 tokens), does not.
+    controller._ensure_run_hooks = lambda: _context_hook_engine(tmp_path, 4_000)
+    streams = gateway.stream_calls
+    draft = "A short question the hook makes too large."
+
+    result = await controller.submit_draft(draft, session_id="session-1")
+
+    assert result.accepted is False
+    assert result.visible_copy.startswith("Your message was not sent:")
+    assert gateway.stream_calls == streams
+    assert store.dispatch_recovery_for_session("session-1") is None
+    assert store.preparation_for_session("session-1") is None
+    assert draft not in [
+        message.content
+        for message in store.messages_for_session("session-1")
+        if message.role is ConsoleMessageRole.USER and message.status != "failed"
+    ]
+
+
+
+@pytest.mark.asyncio
+async def test_a_hold_after_hooks_resumes_without_repeating_its_side_effects(
+    tmp_path: Path,
+) -> None:
+    """Qodo #1/#4: hook context that pushes a send past the Ask trigger holds
+    it before commit. That rare late hold resumes without re-appending notes
+    or retrieval events (skills and retrieval ran once already)."""
+    gateway = _RecordingGateway(context_window=32_000)
+    _db, store, controller, _gateway = _live_controller(
+        tmp_path, gateway=gateway, overrides=_ASK
+    )
+    for index in range(2):
+        await controller.submit_draft(f"question-{index}.", session_id="session-1")
+    # 1,700-token window, measured with the real probe: without the hook the
+    # trigger is 843 against 468 tokens of history (no hold); the hook's
+    # context cuts the window-capped budget to 448, trigger 358 (Ask).
+    gateway.context_window = 1_700
+    controller._ensure_run_hooks = lambda: _context_hook_engine(tmp_path, 4_000)
+    streams = gateway.stream_calls
+    draft = "question-2: one more, please."
+
+    held = await controller.submit_draft(draft, session_id="session-1")
+
+    assert held.accepted is False, held.visible_copy
+    assert controller.context_compaction_hold(held.preparation_id) is not None
+    assert held.preparation_id in controller._compaction_hold_after_effects
+    assert store.dispatch_recovery_for_session("session-1") is None
+    system_rows_at_hold = _system_rows(store)
+
+    result = await controller.send_without_compacting(held.preparation_id)
+
+    assert result.accepted is True
+    assert gateway.stream_calls == streams + 1
+    assert _user_texts(store).count(draft) == 1
+    new_rows = _system_rows(store)[len(system_rows_at_hold):]
+    assert len(new_rows) == len(set(new_rows)), new_rows
+    assert held.preparation_id not in controller._compaction_hold_after_effects
