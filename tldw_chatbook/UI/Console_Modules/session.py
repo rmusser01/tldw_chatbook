@@ -4909,13 +4909,16 @@ class ConsoleSessionController:
         if session.agent_handoff_state != "consumed":
             return
         self._visible_agent_handoff_draft = None
+        live_snapshot = composer.capture_draft_snapshot()
         if (
             self._console_visible_draft_session_id == session_id
             and session.agent_handoff_revision == revision + 1
-            and composer.capture_draft_snapshot() == snapshot
+            and live_snapshot.generation == snapshot.generation
+            and live_snapshot.edit_serial == snapshot.edit_serial
+            and live_snapshot.segments == snapshot.segments
         ):
-            # The widget's own revision commit fences generation/edit serial;
-            # no later edit, replacement widget or source draft is consumed.
+            # Caret/selection navigation does not author a new draft. Keep
+            # widget generation, authored revision and segment identity fenced.
             if composer.commit_captured_draft(composer.capture_draft_for_send()):
                 self._console_draft_switch_snapshot = None
 

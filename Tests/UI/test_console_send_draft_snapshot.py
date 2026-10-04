@@ -18,6 +18,7 @@ from textual.widgets import Button
 
 from Tests.UI.test_console_native_chat_flow import (
     BlockedGateway,
+    _configure_native_ready_console,
     _build_console_send_test_app,
     _persist_console_provider_config,
     _select_llamacpp_console,
@@ -235,6 +236,7 @@ async def test_mouse_send_completion_preserves_text_typed_after_acceptance(monke
 @pytest.mark.asyncio
 async def test_console_pre_durable_failure_keeps_newer_typing_and_recovery():
     app = _build_console_send_test_app()
+    _configure_native_ready_console(app, model="test-model")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
@@ -302,7 +304,10 @@ async def test_console_unknown_command_hint_restores_draft(monkeypatch):
 async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
     monkeypatch,
 ):
-    """Typing during the unknown-command check belongs to the next draft."""
+    """Skill parsing retains the captured send and preserves later typing.
+
+    Hook review's separate unchanged-draft gate is isolated in this case.
+    """
 
     app = _ready_openai_app(monkeypatch, "unused")
     host = ConsoleHarness(app)
@@ -321,6 +326,12 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         composer.load_draft(armed)
         store.set_session_draft(session.id, armed)
         console._console_unknown_send_armed = armed
+        for _ in range(100):
+            if console._console_attach_reconciled:
+                break
+            await pilot.pause(0.05)
+        assert console._console_attach_reconciled
+        assert console._console_runtime().view is console
 
         entered = asyncio.Event()
         release = asyncio.Event()
@@ -344,7 +355,20 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
             "_console_skill_blocked_match_response",
             no_blocked_match,
         )
+
+        # Isolate the pre-skill snapshot boundary from hook review's later
+        # unchanged-draft gate (covered by test_console_hook_admission).
+        # The real button handler and queue/runtime custody route stay live.
+        async def dispatch_without_hook_review(draft, *, session_id, stash, dispatch):
+            assert draft == armed and stash.text == armed
+            return await dispatch()
+
+        monkeypatch.setattr(console._hooks, "dispatch", dispatch_without_hook_review)
         requests: list[object] = []
+        notices: list[str] = []
+        monkeypatch.setattr(
+            app, "notify", lambda message, **_kwargs: notices.append(str(message))
+        )
 
         def record_accept(request):
             requests.append(request)
@@ -360,7 +384,7 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
         composer.insert_text(" suffix")
         release.set()
 
-        assert await send_task
+        assert await send_task, notices
         assert len(requests) == 1
         assert requests[0].draft == armed
         assert composer.draft_text() == " suffix"
@@ -370,6 +394,7 @@ async def test_console_armed_unknown_mouse_send_snapshots_before_skill_await(
 @pytest.mark.asyncio
 async def test_console_blocked_send_retains_exact_recovery_after_runtime_custody():
     app = _build_console_send_test_app()
+    _configure_native_ready_console(app, model="test-model")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway

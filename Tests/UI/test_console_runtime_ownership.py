@@ -3186,7 +3186,15 @@ async def test_prepared_native_start_allows_mounted_manual_send(tmp_path):
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "later_edit", ["unchanged", "replacement", "same_text", "switch_away"]
+    "later_edit",
+    [
+        "unchanged",
+        "caret_only",
+        "selection_only",
+        "replacement",
+        "same_text",
+        "switch_away",
+    ],
 )
 async def test_native_acceptance_consumes_only_open_target_revision(
     tmp_path, later_edit
@@ -3301,6 +3309,23 @@ async def test_native_acceptance_consumes_only_open_target_revision(
                         target.id
                     ),
                 }
+                original_snapshot = composer.capture_draft_snapshot()
+                if later_edit == "caret_only":
+                    await pilot.press("left")
+                elif later_edit == "selection_only":
+                    await pilot.press("ctrl+a")
+                if later_edit in {"caret_only", "selection_only"}:
+                    navigated = composer.capture_draft_snapshot()
+                    assert navigated != original_snapshot
+                    assert navigated.segments == original_snapshot.segments
+                    assert navigated.edit_serial == original_snapshot.edit_serial
+                    assert navigated.generation == original_snapshot.generation
+                    if later_edit == "caret_only":
+                        assert navigated.cursor_index != original_snapshot.cursor_index
+                        assert navigated.selection == original_snapshot.selection
+                    else:
+                        assert navigated.selection != original_snapshot.selection
+                        assert navigated.cursor_index == original_snapshot.cursor_index
                 publish = store.publish_agent_handoff_consumed
 
                 def after_receipt(session_id, revision):
@@ -3327,6 +3352,8 @@ async def test_native_acceptance_consumes_only_open_target_revision(
                 )
                 expected = {
                     "unchanged": "",
+                    "caret_only": "",
+                    "selection_only": "",
                     "replacement": "later target edit",
                     "same_text": "original",
                     "switch_away": "",
@@ -3352,7 +3379,12 @@ async def test_native_acceptance_consumes_only_open_target_revision(
 
                 painted = composer.query_one("#console-command-visible-text", Static)
                 assert painted.region.width > 0
-                if later_edit in {"unchanged", "switch_away"}:
+                if later_edit in {
+                    "unchanged",
+                    "caret_only",
+                    "selection_only",
+                    "switch_away",
+                }:
                     assert "original" not in str(painted.content)
                 await asyncio.gather(*controller._chat_start.tasks())
                 assert app.focused is composer

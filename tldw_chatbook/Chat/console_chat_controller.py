@@ -160,10 +160,6 @@ from tldw_chatbook.Chat.console_history_budget import (
 
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_auxiliary_routing imports at its one call site.)
 from tldw_chatbook.Agents.agent_service import append_personal_context
-from tldw_chatbook.Chat.console_compaction_failure import (
-    compaction_failure_copy,
-    transaction_failure_copy,
-)
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     CompactionAdmission,
@@ -28421,6 +28417,9 @@ class ConsoleChatController:
                 is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
             ):
                 return _flatten_preflight_messages(semantic), None
+            # ADR-097: failure copy is first-use work, outside boot/mount.
+            from .console_compaction_failure import compaction_failure_copy
+
             return provider_messages, blocked(
                 compaction_failure_copy(
                     planned.reason or "plan_unreachable", manual=manual_action
@@ -28621,6 +28620,8 @@ class ConsoleChatController:
             resolved.policy.failure_behavior
             is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
         )
+        from .console_compaction_failure import transaction_failure_copy
+
         note = transaction_failure_copy(transaction, manual=manual_action, omitted=omit)
         if not omit:
             return provider_messages, blocked(note)

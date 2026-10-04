@@ -246,6 +246,7 @@ def _persist_console_provider_config(
     assert config_module.save_settings_to_cli_config(
         {
             "first_run": {"setup_completed": True},
+            "splash_screen": {"enabled": False},
             "chat_defaults": {"provider": provider, "model": model},
             f"api_settings.{provider}": provider_settings,
         }
@@ -310,6 +311,7 @@ def _configure_native_ready_console(app, model: str = "local-model") -> None:
     app.chat_api_model_value = model
 
 
+@pytest.mark.bootstrap_profile
 def test_native_ready_console_config_survives_cache_invalidating_reload() -> None:
     app = _build_test_app()
     _configure_native_ready_console(app, model="prepared-model")
@@ -325,6 +327,7 @@ def test_native_ready_console_config_survives_cache_invalidating_reload() -> Non
     assert reloaded["api_settings"]["llama_cpp"]["model"] == "prepared-model"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("outcome", "expected_copy"),
@@ -3935,7 +3938,7 @@ class RestoredConsoleHarness(ConsolidatedCSSApp):
         await self.push_screen(screen)
 
 
-class BlockedGateway:
+class BlockedGateway(_ReadyResolutionGateway):
     async def resolve_for_send(self, selection):
         return provider_resolution(
             provider="llama_cpp",
@@ -4968,9 +4971,15 @@ async def test_console_native_send_button_click_dispatches_message(monkeypatch):
         assert composer.draft_text() == ""
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_successful_send_does_not_leave_empty_send_tooltip(monkeypatch):
     app = _build_console_send_test_app()
+    # This composer harness has no world-books schema for exchange capture.
+    # Exercise the supported ordinary-send policy used by snapshot tests.
+    assert config_module.save_setting_to_cli_config(
+        "console", "exchange_capture", False
+    )
     _persist_console_provider_config(
         app,
         provider="openai",
@@ -5109,9 +5118,11 @@ async def test_console_setup_blocked_send_is_unreachable_behind_modal():
     assert notifications == []
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_native_blocked_send_preserves_composer_text_and_shows_recovery():
     app = _build_console_send_test_app()
+    _configure_native_ready_console(app, model="test-model")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
@@ -5127,6 +5138,14 @@ async def test_console_native_blocked_send_preserves_composer_text_and_shows_rec
         console.query_one("#console-send-message", Button).press()
         await _wait_for_text(console, pilot, "Provider blocked")
 
+        # Custody owns the refused original until the user restores recovery.
+        assert composer.draft_text() == ""
+        runtime = console._console_runtime()
+        session_id = console._ensure_console_chat_store().active_session_id
+        recovery = runtime.recoveries_for_session(session_id)
+        assert len(recovery) == 1 and recovery[0].draft == "blocked draft"
+        runtime.restore_turn_recovery(recovery[0].turn_id)
+        console._prompt_queue._load_recovered_turn(session_id)
         assert composer.draft_text() == "blocked draft"
 
 
@@ -9903,9 +9922,11 @@ async def test_console_regenerate_action_streams_selected_variant():
         assert source.id not in console._console_original_attempt_previews
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_rejected_regenerate_preserves_original_attempt_preview():
     app = _build_test_app()
+    _configure_native_ready_console(app, model="test-model")
     app.chat_api_provider_value = "llama_cpp"
     app.chat_api_model_value = "test-model"
     app.console_provider_gateway_factory = BlockedGateway
