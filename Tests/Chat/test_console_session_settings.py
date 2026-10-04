@@ -13,14 +13,17 @@ import tldw_chatbook.Chat.console_session_settings as session_settings
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
 from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
+from tldw_chatbook.Chat.console_provider_endpoints import SAVE_ENDPOINT_ACTION_LABEL
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    CONSOLE_VALUE_SOURCE_WORDS,
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
     ConsoleSettingsSummaryState,
+    ConsoleValueLayer,
     _estimate_tokens_locally,
     build_console_context_estimate,
     build_console_model_options,
@@ -402,6 +405,7 @@ def test_new_chats_resolve_the_chat_defaults_pair() -> None:
                 ChatScreen._effective_console_provider_model(screen)
             ),
             _provider_readiness_app_config=lambda: config,
+            _console_default_settings_memo=None,
         )
         settings = ConsoleSessionController._default_console_session_settings(session)
         return settings.provider, settings.model
@@ -2158,7 +2162,7 @@ def test_readiness_blocks_unsaved_generic_endpoint_with_safe_details() -> None:
 
     assert readiness.label == "Endpoint not saved"
     assert readiness.native_send_supported is False
-    assert "Save model defaults" in readiness.detail
+    assert SAVE_ENDPOINT_ACTION_LABEL in readiness.detail
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in readiness.detail
     assert "Saved endpoint: http://127.0.0.1:11434" in readiness.detail
 
@@ -2952,54 +2956,6 @@ async def _request_settings_close(pilot, source: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_settings_modal_provider_switch_takes_the_target_providers_own_model() -> (
-    None
-):
-    """TASK-33001.1: the Conversation settings modal's provider switch runs the
-    REAL controller rebase and fills the target provider's own model -- never
-    the chat-defaults model that belongs to another provider."""
-    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-
-    def real_rebase(state, **kwargs):
-        return ConsoleChatController.rebase_console_settings_draft(
-            object(), state, **kwargs
-        )
-
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="local-gguf")
-    estimate = ConsoleSettingsContextEstimate(
-        used_tokens=None, token_limit=None, label="unavailable"
-    )
-    modal = ConsoleSettingsModal(
-        settings=settings,
-        app_config={
-            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
-            "api_settings": {
-                "llama_cpp": {"api_url": "http://127.0.0.1:8080"},
-                "anthropic": {"api_key": "test-key", "model": "claude-sonnet-5"},
-            },
-        },
-        # The configured model is NOT the catalog's first entry, so a
-        # snap-to-first-catalog-model regression cannot pass.
-        providers_models={
-            "llama_cpp": ["local-gguf"],
-            "anthropic": ["claude-haiku-5", "claude-sonnet-5"],
-        },
-        context_estimate=estimate,
-        can_save=True,
-        draft_rebaser=real_rebase,
-    )
-    app = _SettingsCloseHarness()
-    async with app.run_test(size=(120, 42)) as pilot:
-        await app.push_screen(modal, callback=app.capture)
-        await pilot.pause()
-        modal.query_one("#console-settings-provider", Select).value = "anthropic"
-        await pilot.pause()
-
-        assert modal._draft.settings.provider == "anthropic"
-        assert modal._draft.settings.model == "claude-sonnet-5"
-
-
-@pytest.mark.asyncio
 async def test_alt_m_popover_provider_switch_takes_the_target_providers_own_model() -> (
     None
 ):
@@ -3166,7 +3122,7 @@ async def test_settings_modal_min_p_for_anthropic_is_neither_sent_nor_saved() ->
     async with app.run_test(size=(120, 42)) as pilot:
         await app.push_screen(modal, callback=app.capture)
         await pilot.pause()
-        modal.query_one("#console-settings-provider", Select).value = "anthropic"
+        modal._model_picked(("anthropic", model))  # what pick mode hands back
         await pilot.pause()
         assert "min_p" not in {field.name for field in modal._draft.field_drafts}
 
@@ -4116,6 +4072,25 @@ def test_summary_state_carries_structured_sampling_fields():
     state = _build_console_settings_summary_state_for_test()
     assert state.temperature == "0.70"
     assert state.max_tokens == "4096"
+
+
+@pytest.mark.parametrize("blank", ["temperature", "top_p"])
+def test_summary_names_the_provider_for_a_blank_required_sampler(blank):
+    """Qodo #2992: validation lets Temperature or Top P stay blank when the
+    provider drops it (Custom OpenAI 2 has no Top P), so the summary shows a
+    blank as the field rows' Source word, not a float() crash."""
+    settings = ConsoleSessionSettings(
+        provider="custom-openai-api-2", model="model-a", **{blank: None}
+    )
+    word = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
+    state = build_console_settings_summary_state(
+        settings,
+        ConsoleSettingsContextEstimate(None, None, "Context: unavailable"),
+        build_console_settings_readiness(settings, app_config={}, environ={}),
+    )
+    label = "T" if blank == "temperature" else "P"
+    assert f"{label} {word}" in state.sampling_row
+    assert state.temperature == ("0.70" if blank == "top_p" else word)
 
 
 def _registry_config() -> dict:

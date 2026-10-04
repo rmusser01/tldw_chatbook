@@ -164,8 +164,6 @@ def _conversation_settings_return_snapshot(
             custom_budget_tokens=2048,
         ),
         raw_values={
-            "console-settings-provider": provider,
-            "console-settings-model-picker": model,
             "console-settings-temperature": "0.7.2",
             "console-context-custom-budget": "2048",
         },
@@ -422,17 +420,17 @@ async def test_conversation_settings_return_claims_exact_revision_and_restores_m
     (
         (
             "stale_revision",
-            "Conversation settings changed while credentials were open. "
+            "Chat settings changed while credentials were open. "
             "The earlier draft was not restored.",
         ),
         (
             "deleted_session",
-            "The original conversation closed. Its Conversation settings draft "
+            "The original conversation closed. Its Chat settings draft "
             "was not restored.",
         ),
         (
             "temporary_session",
-            "The temporary conversation is no longer available. Its Conversation "
+            "The temporary conversation is no longer available. Its Chat "
             "settings draft was not restored.",
         ),
     ),
@@ -495,8 +493,8 @@ async def test_conversation_settings_return_terminal_rejection_consumes_once(
         await pilot.pause()
         assert host.screen_stack[-1] is console
         assert (
-            "Conversation settings return is no longer available. "
-            "Open Conversation settings again."
+            "Chat settings return is no longer available. "
+            "Open Chat settings again."
         ) in notices
 
         replacement = ConversationSettingsReturnIntent(
@@ -567,7 +565,7 @@ async def test_conversation_settings_return_superseded_route_preserves_latest_ha
         assert host.screen_stack[-1] is console
         assert (
             "This return was superseded by a newer request. "
-            "Open Conversation settings again."
+            "Open Chat settings again."
         ) in notices
         assert console._suspended_conversation_settings is snapshot
 
@@ -615,8 +613,8 @@ async def test_conversation_settings_return_consumed_route_clears_stale_snapshot
         assert console._suspended_conversation_settings is None
         assert console._suspended_conversation_settings_token is None
         assert (
-            "Conversation settings return is no longer available. "
-            "Open Conversation settings again."
+            "Chat settings return is no longer available. "
+            "Open Chat settings again."
         ) in notices
 
 
@@ -863,7 +861,7 @@ async def test_conversation_settings_return_success_preserves_replacement_staged
             nonlocal replacement_target, replacement_snapshot
             if target.return_revision == first_target.return_revision:
                 replacement_snapshot = _conversation_settings_return_snapshot(
-                    focus_control_id="console-settings-model-picker"
+                    focus_control_id="console-settings-model-change"
                 )
                 console._suspended_conversation_settings = replacement_snapshot
                 console._suspended_conversation_settings_token = 36
@@ -962,7 +960,7 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
                 )
                 replacement_snapshot = _conversation_settings_return_snapshot(
                     model="replacement-model",
-                    focus_control_id="console-settings-model-picker",
+                    focus_control_id="console-settings-model-change",
                 )
                 console._suspended_conversation_settings = replacement_snapshot
                 console._suspended_conversation_settings_token = 136
@@ -1057,10 +1055,7 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
             await pilot.pause(0.05)
 
         assert replacement_modal is not None
-        assert (
-            replacement_modal.query_one("#console-settings-model-picker").value
-            == "replacement-model"
-        )
+        assert replacement_modal._current_model_value() == "replacement-model"
         assert console._suspended_conversation_settings is None
         assert (
             app.pending_handoffs.exact_revision_status(
@@ -1186,12 +1181,12 @@ async def test_conversation_settings_return_pretransfer_cancellation_retains_ret
         console.apply_navigation_context(target.to_context())
         await wait_for_signal(
             open_started,
-            what="pre-transfer Conversation settings restore",
+            what="pre-transfer Chat settings restore",
         )
         console.workers.cancel_group(console, "conversation-settings-return")
         await wait_for_signal(
             open_cancelled,
-            what="pre-transfer Conversation settings cancellation",
+            what="pre-transfer Chat settings cancellation",
         )
         for _ in range(80):
             if not console._conversation_settings_return_restore_in_progress:
@@ -1257,7 +1252,7 @@ async def test_conversation_settings_return_transient_cleanup_preserves_new_sess
         console.apply_navigation_context(target.to_context())
         await wait_for_signal(
             restore_started,
-            what="Conversation settings restore session switch",
+            what="Chat settings restore session switch",
         )
         assert store.active_session_id == origin.id
         store.switch_session(later.id)
@@ -1307,7 +1302,7 @@ async def test_conversation_settings_return_missing_environment_credential_stays
         snapshot = _conversation_settings_return_snapshot(
             provider="openai",
             model="gpt-5",
-            focus_control_id="console-settings-model-picker",
+            focus_control_id="console-settings-model-change",
         )
         store.replace_session_settings(session.id, snapshot.settings)
         console._suspended_conversation_settings = snapshot
@@ -1339,7 +1334,9 @@ async def test_conversation_settings_return_missing_environment_credential_stays
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_unavailable_focus_falls_back_to_connection():
+async def test_conversation_settings_return_unavailable_focus_falls_back_to_change():
+    """TASK-33006.4: an unavailable restored target falls back to the MODEL
+    row's Change (Connection's provider picker and model search are gone)."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -1365,19 +1362,27 @@ async def test_conversation_settings_return_unavailable_focus_falls_back_to_conn
         for _ in range(80):
             if isinstance(host.screen_stack[-1], ConsoleSettingsModal):
                 focused = host.focused
-                if focused is not None and focused.id in {
-                    "console-settings-provider-picker-input",
-                    "model-search-picker-input",
-                }:
+                if focused is not None and focused.id == "console-settings-model-change":
                     break
             await pilot.pause(0.05)
 
         assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert host.focused is not None
-        assert host.focused.id in {
-            "console-settings-provider-picker-input",
-            "model-search-picker-input",
-        }
+        assert host.focused.id == "console-settings-model-change"
+
+
+async def _click_configure_credential(pilot, modal: ConsoleSettingsModal) -> None:
+    """Click Configure credential where it paints, and require the hit.
+
+    TASK-33006.2: at 100x30 the Model view body is eight rows, and the
+    Sampling line naming the hidden fields wraps, so the button opens below
+    the fold. A click at its unscrolled position used to land on whatever
+    painted there (the Esc hint, then Cancel); scroll it into view first.
+    """
+    button = modal.query_one("#console-settings-configure-credential")
+    button.scroll_visible(animate=False, immediate=True)
+    await pilot.pause()
+    assert await pilot.click(button)
 
 
 @pytest.mark.asyncio
@@ -1428,8 +1433,8 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
             await pilot.pause(0.05)
         assert isinstance(app.screen, ConsoleSettingsModal)
         original_modal = app.screen
-        original_modal.query_one("#console-settings-model-picker").focus_input()
-        await pilot.click("#console-settings-configure-credential")
+        original_modal.query_one("#console-settings-model-change", Button).focus()
+        await _click_configure_credential(pilot, original_modal)
 
         fresh_settings = None
         for _ in range(200):
@@ -1637,7 +1642,7 @@ async def test_conversation_settings_return_real_router_suspend_after_transfer_d
         )
         await wait_for_signal(
             status_started,
-            what="blocked post-transfer Conversation settings status",
+            what="blocked post-transfer Chat settings status",
         )
 
         returned_console = app._navigation_outgoing_screen()
@@ -1693,7 +1698,7 @@ async def test_conversation_settings_return_real_router_suspend_after_transfer_d
         assert fresh_console._pending_conversation_settings_return_target is None
         assert not isinstance(app.screen, ConsoleSettingsModal)
         assert not any(
-            "Conversation settings return was stale" in notice for notice in notices
+            "Chat settings return was stale" in notice for notice in notices
         )
 
 
@@ -1831,7 +1836,7 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
         first_snapshot = _conversation_settings_return_snapshot(model="first-model")
         replacement_snapshot = _conversation_settings_return_snapshot(
             model="replacement-model",
-            focus_control_id="console-settings-model-picker",
+            focus_control_id="console-settings-model-change",
         )
         console._suspended_conversation_settings = first_snapshot
         console._suspended_conversation_settings_token = 161
@@ -1914,7 +1919,7 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
             await pilot.pause(0.05)
         else:
             raise AssertionError(
-                "Timed out waiting for the first Conversation settings return "
+                "Timed out waiting for the first Chat settings return "
                 "to finish restoring."
             )
 
@@ -1941,7 +1946,7 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
             await pilot.pause(0.05)
         else:
             raise AssertionError(
-                "Timed out waiting for the replacement Conversation settings "
+                "Timed out waiting for the replacement Chat settings "
                 "return to finish restoring."
             )
 
@@ -2022,7 +2027,7 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
         real_push_screen = app.push_screen
         newer_overlay = ConfirmationDialog(
             title="Newer overlay",
-            message="Cover the restoring Conversation settings modal.",
+            message="Cover the restoring Chat settings modal.",
         )
 
         def hold_covered_modal_push(screen, *args, **kwargs):
@@ -2046,7 +2051,7 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
         console.apply_navigation_context(target.to_context())
         await wait_for_signal(
             modal_covered,
-            what="covered Conversation settings modal mount",
+            what="covered Chat settings modal mount",
         )
 
         assert app.screen is newer_overlay
@@ -2058,7 +2063,7 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
         console.workers.cancel_group(console, "conversation-settings-return")
         await wait_for_signal(
             push_cancelled,
-            what="covered Conversation settings push cancellation",
+            what="covered Chat settings push cancellation",
         )
         for _ in range(80):
             if not console._conversation_settings_return_restore_in_progress:
@@ -2108,7 +2113,7 @@ async def test_conversation_settings_return_covered_mount_cancellation_settles_b
         assert fresh_console._pending_conversation_settings_return_target is None
         assert not isinstance(app.screen, ConsoleSettingsModal)
         assert not any(
-            "Conversation settings return was stale" in notice for notice in notices
+            "Chat settings return was stale" in notice for notice in notices
         )
 
 
@@ -2170,7 +2175,7 @@ async def test_conversation_settings_return_posttransfer_cancellation_keeps_targ
         console.apply_navigation_context(target.to_context())
         await wait_for_signal(
             transfer_cancelled,
-            what="post-transfer Conversation settings cancellation",
+            what="post-transfer Chat settings cancellation",
         )
         for _ in range(80):
             if not console._conversation_settings_return_restore_in_progress:
@@ -2231,7 +2236,7 @@ async def test_dirty_return_confirmation_survives_real_router_navigation_away_an
                 break
             await pilot.pause(0.05)
         assert isinstance(app.screen, ConsoleSettingsModal)
-        await pilot.click("#console-settings-configure-credential")
+        await _click_configure_credential(pilot, app.screen)
 
         original_settings = None
         for _ in range(200):
@@ -2514,7 +2519,7 @@ async def test_conversation_settings_return_suspend_releases_acquired_exact_clai
         console.apply_navigation_context(target.to_context())
         console._consume_pending_conversation_settings_return()
         try:
-            await wait_for_signal(restore_started, what="Conversation settings restore claim")
+            await wait_for_signal(restore_started, what="Chat settings restore claim")
             assert (
                 app.pending_handoffs.exact_revision_status(
                     HandoffChannel.CONVERSATION_SETTINGS_RETURN,
@@ -11895,7 +11900,7 @@ async def test_console_workspace_conversation_resume_uses_real_local_services(tm
         inspector_text = _visible_text(console.query_one("#console-right-rail"))
         assert "Provider:" not in left_rail_text
         assert "Model:" not in left_rail_text
-        assert "Conversation settings" in inspector_text
+        assert "Chat settings" in inspector_text
         assert "Provider:" in inspector_text
         assert "Where: Real Workspace › Real saved chat" in inspector_text
         conversation_source = console.query_one(
@@ -15150,7 +15155,7 @@ async def test_console_settings_save_fires_success_toast():
         await _wait_for_selector(
             modal,
             pilot,
-            "#console-settings-model-select",
+            "#console-settings-model-change",
         )
         modal.query_one("#console-settings-save", Button).press()
         for _ in range(40):

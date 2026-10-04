@@ -109,9 +109,28 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
-    # 2026-10-03 (PR #2993, owner decision): re-measured at 7,811 after the
-    # same formatter reflow (+60 over dev's 7,751, AST-identical).
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7811,
+    # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
+    # words and open focus moved to console_settings_field_row.py.
+    # TASK-33006.2 lowers it to 7,466: the support sync moved there too, and
+    # the modal's own support table and "no effect" copy are gone. Its
+    # review fix lowers it to 7,445: the required check and the control
+    # support reads moved there as well. TASK-33006.3 lowers it to 7,410:
+    # the Request estimate and name disclosures are built there now.
+    # TASK-33006.4 lowers it to 6,201: the provider picker, the model search
+    # and their adapters, Custom model and Keep unverified are gone; the
+    # model changes only through Switch model's pick mode. Its review fix
+    # lowers it to 6,189: a created entry's landing moved to the field rows.
+    # TASK-33006.5 lowers it to 6,156: the footer buttons lost their
+    # compose-time geometry and Use saved defaults lives in
+    # console_settings_saved_defaults.py. TASK-33006.6 lowers it to 6,143:
+    # the label column's inline widths moved to app CSS, so the Context view
+    # can widen it. TASK-33006.7 lowers it to 6,142: one handler switches
+    # both views, which now open at their top. The Phase 6 final review fix
+    # lowers it to 6,103: Save as model default shows on the saved-defaults
+    # answer, so the persisted-table predicate is gone. (Counts above predate
+    # PR #2993's ruff reflow of this file, +60 lines AST-identical; Phase 6
+    # rebased onto it measures 6,193.)
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6193,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

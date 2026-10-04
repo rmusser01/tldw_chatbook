@@ -284,6 +284,28 @@ setup. Their failure said nothing about slowness.
 - To pin the fix, stall the gap deterministically (here, hold `submit_draft`
   across several poll ticks). Do not rely on the slow runner.
 
+## A baseline tree at a generic scratchpad path is someone else's baseline too
+
+**TASK-33006.2, 2026-10-02.** The session scratchpad is shared by every agent the
+session runs, across worktrees. A recovery-relaunch (TASK-33662) agent was running its
+base side from `scratchpad/base` (`run_cover.sh` at 14:51, `run_chunks.sh` at 16:07).
+At about 15:16 the P6 Task 2 implementer ran `mkdir -p scratchpad/base` and extracted
+`e4b2e4f684` into it with `git archive | tar -x`. That overwrote every file the two
+trees shared and kept the others, so the result was a mix of two branches. Around 16:2x
+the implementer ran `rm -rf scratchpad/base` to recover from an ENOSPC. The other
+agent's `cit_base.log` (87 failed, 8 passed) ran against the mixed tree, and
+`res_base_chunk_aa.log` ended with `FileNotFoundError: .../scratchpad/base`. The
+implementer's report said it "saw no sign" of another tree, because the other tree was
+also a repo tree. In the other direction, a tidy-up renamed this fix round's own
+scratch directory while its parity run was still going, and that run died with
+`OSError: cannot send`.
+
+**What to do.** Name every scratch tree and log after your task and SHA, for example
+`scratchpad/p6-t2-fix1-base-e4b2e4f684`. Create it with a plain `mkdir` (no `-p`), so
+an existing directory makes the command fail. Delete only paths you created in this
+run. Before you call a baseline clean, check that its directory did not exist before
+your extraction.
+
 ## A marker "inside the pane" can still sit under the fold hint (TASK-33003.7, 2026-09-29)
 
 `_assert_marker_inside_container` (Tests/UI/test_destination_visual_parity_correction.py)
@@ -2133,6 +2155,24 @@ of the contract: exact old ciphertext/DEK bytes disappear once the snapshot is
 released, and a writer still completes while the snapshot is open. A passing
 shredding test obtained by changing journal mode is not sufficient evidence.
 
+## A deferred read-then-write fails at once under a concurrent commit; serial runs hide it
+
+**TASK-33006.5 fix round 1, 2026-10-03.** The Chat settings Apply test first ran on
+the harness's `:memory:` DB. That DB is per connection, so the test persisted the
+conversation on the main thread after Apply and never exercised the worker-thread
+flush. On a file-backed DB the flush passed 8 of 8 serial runs, but run 8 at a time
+it failed 2 of 32: `update_conversation` raised "database is locked" in 15 ms, with
+no 15 s busy wait. It reads the row version and then UPDATEs inside a deferred
+`transaction()`. Another thread's commit between the two makes SQLite refuse the
+upgrade at once, and the busy handler is never called. `transaction()`'s own
+docstring says read-then-write needs `immediate=True`. With that change, 96 of 96
+loaded runs passed.
+
+**What to do.** Give any read-then-write `transaction(immediate=True)`. Pin it from
+the SQL with `set_trace_callback` (expect `BEGIN IMMEDIATE`), not from a race. A
+test of a worker-thread DB write needs a file-backed DB, and it needs runs 8 at a
+time as well as serial ones: one serial pass says nothing about lock upgrades.
+
 ---
 
 ## An empty WAL reader can invalidate a content-free negative cache forever
@@ -2838,6 +2878,19 @@ on each relabelled Button made the new width take.
 ancestor. A painted-label test must change the label on a MOUNTED widget (walk
 every state in one app run); a fresh mount per label measures the first label
 only and passes against this bug.
+
+**Recurred, TASK-33006 final review, 2026-10-03 -- a Collapsible title.** The
+review read `ConsoleSettingsModal CollapsibleTitle { width: 100% }` as a rule
+that only let the long Sampling title wrap, and said to drop it once every title
+was one row. Dropping it cut the Connection title to the word "Connection":
+Chat settings sets each title after mount, and an auto-width `CollapsibleTitle`
+keeps its first measure, as the Buttons above did. Nine painted-title tests in
+`Tests/UI/test_console_settings_disclosures.py` failed. The rule stayed, with
+its real reason in the comment.
+
+**What to do.** Before deleting a width rule as "only for X", check every
+widget it sizes whose content changes after mount, and run the painted tests
+without it.
 
 ---
 

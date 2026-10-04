@@ -8081,7 +8081,7 @@ def _stage_conversation_settings_return_intent(app, *, provider: str = "openai")
         session_id="console-session-return",
         settings_revision=3,
         active_view="model",
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
     )
     revision = app.pending_handoffs.stage(
         HandoffChannel.CONVERSATION_SETTINGS_RETURN,
@@ -8142,7 +8142,7 @@ async def test_conversation_settings_return_preserves_explicit_unselected_model(
         session_id="console-session-first-run",
         settings_revision=0,
         active_view="model",
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
     )
     revision = app.pending_handoffs.stage(
         HandoffChannel.CONVERSATION_SETTINGS_RETURN,
@@ -8244,7 +8244,7 @@ async def test_provider_navigation_conflict_requires_review_discard_or_return():
             == "Discard changes and configure Anthropic"
         )
         assert screen.query_one("#settings-provider-conflict-return", Button).label == (
-            "Return to Conversation settings"
+            "Return to Chat settings"
         )
 
         screen.query_one("#settings-provider-conflict-review", Button).press()
@@ -8320,14 +8320,14 @@ async def test_provider_navigation_conflict_discard_explicitly_applies_staged_ta
             "#settings-provider-api-key",
             "DUMMY-OPENAI-RETURN-KEY",
             ConversationSettingsReturnOutcome.CREDENTIAL_SAVED,
-            "Credential saved. Return to Conversation settings to check readiness; "
+            "Credential saved. Return to Chat settings to check readiness; "
             "provider acceptance is not yet verified.",
         ),
         (
             "#settings-provider-endpoint-value",
             "https://api.openai.example/v1",
             ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED,
-            "Provider settings saved. Return to Conversation settings to check "
+            "Provider settings saved. Return to Chat settings to check "
             "readiness; generation is not yet verified.",
         ),
     ),
@@ -8363,7 +8363,7 @@ async def test_conversation_settings_return_save_shows_typed_continuation(
         assert continuation.display is True
         assert expected_continuation_copy in _visible_text(screen)
         assert screen.query_one("#settings-provider-return", Button).label == (
-            "Return to Conversation settings"
+            "Return to Chat settings"
         )
         assert screen.query_one("#settings-provider-stay", Button).label == (
             "Stay in Settings"
@@ -8407,12 +8407,12 @@ async def test_conversation_settings_return_keeps_mounted_credential_out_of_tran
             system_prompt=snapshot_marker,
         ),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={"console-settings-base-url": ""},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=2,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={
             "advanced_generation": False,
             "connection_details": False,
@@ -8715,7 +8715,7 @@ async def test_conversation_settings_return_continuation_survives_fresh_settings
         return_button = restored.query_one("#settings-provider-return", Button)
 
         assert continuation.display is True
-        assert return_button.label == "Return to Conversation settings"
+        assert return_button.label == "Return to Chat settings"
         assert restored.query_one("#settings-provider-stay", Button).label == (
             "Stay in Settings"
         )

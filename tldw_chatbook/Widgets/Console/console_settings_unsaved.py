@@ -13,8 +13,11 @@ transfer), otherwise the value the controls showed once the modal finished its
 initial sync. The second half keeps values the controls merely normalize at
 mount (a blank committed endpoint shown as its configured default) from
 reading as edits. A suspended draft (credential round-trip) carries the first
-modal's baseline, because the reopened modal composes its Provider, Model,
-Endpoint and Streaming controls from the draft's edits.
+modal's baseline, because the reopened modal composes its pair, Endpoint and
+Streaming controls from the draft's edits. The provider·model pair is one
+field, "Model", the MODEL row's label (spec rule 1, TASK-33006.4). The
+modal's title counts the same edits: "Chat settings · <chat> · 2 unsaved
+edits" (TASK-33006.5).
 
 Ctrl+Q asks too (TASK-33622.10): it is a priority binding, so the app's quit
 flow can start while this modal is open, and ``confirm_quit`` asks before
@@ -44,11 +47,14 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
     normalize_chat_display_name,
 )
 from tldw_chatbook.Chat.console_settings_apply import ConsoleSettingsAction
+from tldw_chatbook.UI.character_display_text import sanitize_character_display_label
 
+#: The modal's name everywhere it is named (TASK-33006.5, spec §3).
+CHAT_SETTINGS_NAME = "Chat settings"
+#: The provider·model pair: one field, labelled as the MODEL row shows it.
+_PAIR_LABEL = "Model"
 #: Session-settings fields Apply commits, with the label each editor shows.
 _SETTINGS_FIELDS = {
-    "provider": "Provider",
-    "model": "Model",
     "base_url": MODEL_FIELD_LABELS["endpoint"],
     **{name: MODEL_FIELD_LABELS[name] for name in GENERATION_FIELD_REQUEST_KEYS},
 }
@@ -69,7 +75,7 @@ _NAME_LABEL = "Your name in this chat"
 _CONTEXT_INVALID_LABEL = "Context and memory"
 _BASELINE_LABELS = frozenset(
     (*_SETTINGS_FIELDS.values(), *_CONTEXT_FIELDS.values())
-) | {_NAME_LABEL, _CONTEXT_INVALID_LABEL}
+) | {_PAIR_LABEL, _NAME_LABEL, _CONTEXT_INVALID_LABEL}
 _MISSING = object()
 _GUARD_BUTTONS = "#console-settings-close-guard Button"
 
@@ -89,8 +95,10 @@ def chat_settings_values(
     Returns:
         Effective values keyed by the field label the editors show.
     """
+    # A scalar, so a baseline can travel in a suspended draft.
     values: dict[str, object] = {
-        label: getattr(settings, name) for name, label in _SETTINGS_FIELDS.items()
+        _PAIR_LABEL: f"{settings.provider or ''}\x1f{settings.model or ''}",
+        **{label: getattr(settings, name) for name, label in _SETTINGS_FIELDS.items()},
     }
     if context_overrides is None:
         # The key's presence is the signal; a primitive value lets a baseline
@@ -182,6 +190,25 @@ def esc_hint_copy(count: int, *, pending: str | None = None) -> str:
     return f"Esc close (asks: {count} unsaved)" if count else "Esc close"
 
 
+def chat_settings_title(chat_title: str, count: int) -> str:
+    """Return the modal's title: its name, the chat's title, unsaved edits.
+
+    Args:
+        chat_title: The chat's title; blank leaves it out.
+        count: How many fields are unsaved; zero leaves the count out.
+
+    Returns:
+        For example ``"Chat settings · Refactor plan · 2 unsaved edits"``.
+    """
+    parts = [CHAT_SETTINGS_NAME]
+    title = sanitize_character_display_label(chat_title, max_characters=60)
+    if title:
+        parts.append(title)
+    if count:
+        parts.append(f"{count} unsaved edit{'' if count == 1 else 's'}")
+    return " · ".join(parts)
+
+
 def unsaved_prompt_copy(labels: Iterable[str], *, can_apply: bool = True) -> str:
     """Return the unsaved-edits prompt copy naming ``labels``.
 
@@ -250,6 +277,7 @@ class ConsoleSettingsUnsavedGuardMixin:
     _unsaved_labels: tuple[str, ...] = ()
     _unsaved_retry: Callable[[], object] | None = None
     _unsaved_discard_approved = False
+    _chat_title = ""
 
     def _current_chat_settings_values(self) -> dict[str, object]:
         try:
@@ -399,8 +427,9 @@ class ConsoleSettingsUnsavedGuardMixin:
         )
 
     def _sync_unsaved_hint(self) -> None:
-        try:
+        try:  # a deferred call can land while a dismissed modal unmounts
             hint = self.query_one("#console-settings-esc-hint", Static)
+            title = self.query_one("#console-settings-modal-title", Static)
         except (NoMatches, QueryError):
             return
         # Same precedence as _request_settings_close: reset > compaction > unsaved.
@@ -409,7 +438,15 @@ class ConsoleSettingsUnsavedGuardMixin:
             if self._memory_reset_token is not None
             else "compaction running" if self._compaction_is_active() else None
         )
-        hint.update(esc_hint_copy(len(self._unsaved_field_labels()), pending=pending))
+        labels = self._unsaved_field_labels()
+        hint.update(esc_hint_copy(len(labels), pending=pending))
+        # The title counts the same edits (TASK-33006.5).
+        text = chat_settings_title(self._chat_title, len(labels))
+        if str(title.content) != text:
+            title.update(text)
+        # The same edited set marks each Model view row "edited *" (TASK-33006.1).
+        self._sync_field_rows(labels)
+        self._sync_saved_defaults_action()
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         """Route Esc, backdrop and Cancel; in the prompt they keep editing."""

@@ -688,6 +688,31 @@ class TestConversationsAndMessages:
         retrieved = db_instance.get_conversation_by_id(conv_id)
         assert retrieved["system_prompt"] == "Be concise."
 
+    def test_update_conversation_takes_the_write_lock_before_reading_the_version(
+        self, db_instance: CharactersRAGDB, char_id
+    ):
+        """A deferred BEGIN lets another connection commit between the version
+        read and the UPDATE, and SQLite then fails the UPDATE at once with
+        "database is locked" (no busy wait). Chat settings' Apply lost a
+        persisted conversation's generation snapshot this way in 2 of 32
+        loaded runs (TASK-33006.5); BEGIN IMMEDIATE waits for the lock."""
+        conv_id = db_instance.add_conversation(
+            {"character_id": char_id, "title": "ImmediateWrite"}
+        )
+        version = db_instance.get_conversation_by_id(conv_id)["version"]
+        statements: list[str] = []
+        conn = db_instance.get_connection()
+        conn.set_trace_callback(statements.append)
+        try:
+            db_instance.update_conversation(
+                conv_id, {"title": "Renamed"}, expected_version=version
+            )
+        finally:
+            conn.set_trace_callback(None)
+
+        begins = [s for s in statements if s.upper().startswith("BEGIN")]
+        assert begins == ["BEGIN IMMEDIATE"], statements
+
     def test_update_conversation_sets_system_prompt_and_bumps_version(
         self, db_instance: CharactersRAGDB, char_id
     ):

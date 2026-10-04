@@ -482,9 +482,6 @@ $ds-theme-preview-dark-ink: #000000;
 $ds-theme-preview-light-ink: #FFFFFF;
 $ds-theme-preview-invalid: #808080;
 
-/* Wide Conversation settings dialog preserved from upstream. */
-$ds-console-settings-wide-max-width: 196;
-
 /* Conversation Inspector: readable split-pane geometry (ADR-171). */
 $ds-inspector-modal-width: 120;
 $ds-inspector-modal-height: 42;

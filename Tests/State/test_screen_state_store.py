@@ -17,6 +17,10 @@ from tldw_chatbook.UI.Navigation.screen_state_store import (
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_runtime import (
+    ConsoleRuntime,
+    _ConsoleStagedEvidenceState,
+)
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
@@ -51,7 +55,7 @@ def test_suspended_conversation_draft_snapshot_rejects_malformed_nested_state() 
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     malformed = snapshot.to_mapping()
@@ -89,7 +93,7 @@ def test_suspended_conversation_draft_snapshot_fails_closed_on_unsafe_primitives
         provider_base_url_drafts={"openai": "https://example.invalid"},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     malformed = snapshot.to_mapping()
@@ -101,6 +105,22 @@ def test_suspended_conversation_draft_snapshot_fails_closed_on_unsafe_primitives
     target[path[-1]] = value
 
     assert ConsoleSettingsDraftSnapshot.from_mapping(malformed) is None
+
+
+class _BareRuntime(SimpleNamespace):
+    """A bare runtime whose staged-evidence seam is the real one.
+
+    ChatScreen's ``_pending_console_launch_context`` setter stages through
+    the runtime (b7dd8e53f2), so the bare screen needs these methods; they
+    are ConsoleRuntime's own, not stand-ins (TASK-33006.8 AC#2).
+    """
+
+    snapshot_console_staged_evidence = ConsoleRuntime.snapshot_console_staged_evidence
+    stage_console_staged_evidence = ConsoleRuntime.stage_console_staged_evidence
+    set_console_staged_evidence_notice = (
+        ConsoleRuntime.set_console_staged_evidence_notice
+    )
+    restore_console_staged_evidence = ConsoleRuntime.restore_console_staged_evidence
 
 
 def test_native_console_state_keeps_suspended_settings_draft_process_local() -> None:
@@ -119,7 +139,7 @@ def test_native_console_state_keeps_suspended_settings_draft_process_local() -> 
         provider_base_url_drafts={"llama_cpp": "http://127.0.0.1:9099"},
         active_view="model",
         scroll_anchor=4,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": True},
     )
 
@@ -130,11 +150,12 @@ def test_native_console_state_keeps_suspended_settings_draft_process_local() -> 
             serialize=lambda: {},
             restore=lambda _value: None,
         )
-        screen._console_runtime_ref = SimpleNamespace(
+        screen._console_runtime_ref = _BareRuntime(
             chat_store=store,
             set_chat_store=lambda value: setattr(
                 screen._console_runtime_ref, "chat_store", value
             ),
+            _staged_evidence=_ConsoleStagedEvidenceState(),
         )
         screen._session = SimpleNamespace(_console_visible_draft_session_id=None)
         screen._stash_console_pending_attachments = lambda _store: None
