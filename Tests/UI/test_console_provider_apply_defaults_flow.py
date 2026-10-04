@@ -2512,7 +2512,11 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
             # Endpoint row (settings-provider-endpoint) is gone; each Connect
             # row's Source word and help line take its facts, and
             # settings-provider-readiness is the Key check verdict.
+            # TASK-33007.4, extended on purpose (R15): the Applies-to row
+            # names the pair the open chat will use; the endpoint-key row
+            # moved into the Inspector's config-key disclosure, same id.
             dynamic_static_ids = (
+                "settings-model-applies-to",
                 "settings-provider-readiness",
                 "settings-provider-inspector-readiness",
                 "settings-provider-source",

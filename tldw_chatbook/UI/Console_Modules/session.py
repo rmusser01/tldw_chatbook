@@ -427,6 +427,43 @@ def _has_selected_text(value: Any) -> bool:
     return not _is_empty_select_value(value) and bool(str(value).strip())
 
 
+def follows_saved_defaults(
+    store: ConsoleChatStore,
+    session: ConsoleChatSession,
+    default_generation: int,
+) -> bool:
+    """Return whether an open chat converges on newly saved defaults (D1).
+
+    ADR-095 as amended 2026-09-26: a chat with no messages, no user work and
+    settings still equal to its creation baseline holds whatever a blank chat
+    created now would. One predicate serves the Console's convergence and
+    the Settings copy that says who a save reaches (TASK-33007.4).
+
+    Args:
+        store: The store that owns ``session``'s messages.
+        session: The open chat.
+        default_generation: The app's current explicit-default generation; a
+            chat created before a Console "Make default" keeps its settings.
+
+    Returns:
+        ``True`` when the chat follows the saved defaults.
+    """
+    if session.new_chat_default_generation < default_generation:
+        return False
+    if session.settings is None:
+        return True
+    if session.has_user_work or session.canonical_settings_baseline != session.settings:
+        return False
+    try:
+        # TASK-24300: emptiness only. `messages_for_session` materialises
+        # every stream buffer and deep-snapshots every message; this runs
+        # 3.27x per printable keystroke, so at 400 messages it allocated
+        # 1,310 snapshots per key before the caller looked at the length.
+        return not store.has_messages(session.id)
+    except KeyError:
+        return False
+
+
 _MAX_CANONICAL_CHARACTER_ID = (1 << 63) - 1
 _MAX_CANONICAL_CHARACTER_ID_TEXT = str(_MAX_CANONICAL_CHARACTER_ID)
 _CANONICAL_CHARACTER_ID_PATTERN = re.compile(r"[1-9][0-9]{0,18}")
@@ -4650,9 +4687,9 @@ class ConsoleSessionController:
         before a Console "Make default for new chats" are never touched.
         """
         settings = session.settings
-        if (
-            session.new_chat_default_generation
-            < self._console_new_chat_default_generation()
+        # TASK-33007.4: the same predicate tells Settings who a save reaches.
+        if not follows_saved_defaults(
+            store, session, self._console_new_chat_default_generation()
         ):
             return settings
         if settings is None:
@@ -4663,17 +4700,6 @@ class ConsoleSessionController:
                 mark_user_work=False,
                 canonical_settings_baseline=settings,
             )
-            return settings
-        if session.has_user_work or session.canonical_settings_baseline != settings:
-            return settings
-        try:
-            # TASK-24300: emptiness only. `messages_for_session` materialises
-            # every stream buffer and deep-snapshots every message; this runs
-            # 3.27x per printable keystroke, so at 400 messages it allocated
-            # 1,310 snapshots per key before the caller looked at the length.
-            if store.has_messages(session.id):
-                return settings
-        except KeyError:
             return settings
         # Creation reads the app-owned published snapshot so an in-flight
         # Make Default cannot leak into a new chat before runtime publication.

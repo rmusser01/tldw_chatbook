@@ -35,7 +35,11 @@ async def _settle(host, pilot):
 
 async def _tab_to(host, pilot, selector):
     target = host.screen.query_one(selector)
-    for _ in range(100):
+    # TASK-33007.4, raised on purpose: this is a loop guard, not a keystroke
+    # budget. Reaching Save selected from the discovered list wraps the whole
+    # screen, and the Inspector's "config key" disclosure title is one more
+    # stop on the way (101 at 170x48).
+    for _ in range(150):
         if host.screen.focused is target:
             _assert_painted(host.screen, target)
             return target

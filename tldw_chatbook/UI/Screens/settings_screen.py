@@ -1222,6 +1222,9 @@ PROVIDER_SAVE_SCOPE_COPY = (
 #: CATEGORY here ("Appearance defaults", "Storage defaults", "Provider
 #: setup"), which a keyboard user cannot tell apart from a setting's name.
 NO_FOCUSED_SETTING_COPY = "None — Tab to a setting"
+#: TASK-33007.4: the focused-field guide row naming the config key; the
+#: Inspector shows it only inside its closed "config key" disclosure.
+CONFIG_KEY_ROW_LABEL = "Saved as"
 #: TASK-33002.12: Providers & Models status for a saved default naming an
 #: ADR-146 registry entry that no longer exists.
 ENDPOINT_NOT_FOUND_SETTINGS_COPY = (
@@ -9453,6 +9456,10 @@ class SettingsScreen(BaseAppScreen):
             self._update_guided_action_widgets()
         if category is SettingsCategoryId.PROVIDERS_MODELS:
             self._update_provider_return_widgets()
+            # TASK-33007.4 (AC#3): the next new chat reads saved config, so a
+            # dirty form says its edits wait for s.
+            for note in self.query("#settings-provider-next-chat-note"):
+                note.display = has_unsaved_changes
             if self.focused is not None and str(self.focused.id or "").startswith(
                 "settings-model-profile-"
             ):
@@ -16910,7 +16917,10 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_test_result()
 
     def _update_provider_dynamic_widgets(self) -> None:
-        from ..Settings_Modules.providers_models_card import refresh_connect_rows
+        from ..Settings_Modules.providers_models_card import (
+            applies_to_copy,
+            refresh_connect_rows,
+        )
 
         try:
             provider = self._provider_widget_value()
@@ -16933,6 +16943,9 @@ class SettingsScreen(BaseAppScreen):
         # TASK-33007.2: each Connect row says its own source; the separate
         # readiness block is gone.
         refresh_connect_rows(self, provider, endpoint)
+        self._set_static_text(
+            "#settings-model-applies-to", applies_to_copy(self, provider, model)
+        )
         self._set_static_text(
             "#settings-provider-inspector-readiness", self._provider_readiness_label()
         )
@@ -16986,6 +16999,46 @@ class SettingsScreen(BaseAppScreen):
         if tooltip is not None:
             row.tooltip = tooltip
         return row
+
+    @staticmethod
+    def _split_config_key_row(
+        rows: tuple[tuple[str, str], ...],
+    ) -> tuple[tuple[tuple[str, str], ...], str]:
+        """Split a focused-field guide into its shown rows and its config key.
+
+        Args:
+            rows: A guide's ``(label, value)`` rows.
+
+        Returns:
+            The rows without "Saved as", and the "Saved as" value ("" if none).
+        """
+        shown = tuple(row for row in rows if row[0] != CONFIG_KEY_ROW_LABEL)
+        key = next(
+            (value for label, value in rows if label == CONFIG_KEY_ROW_LABEL), ""
+        )
+        return shown, key
+
+    @staticmethod
+    def _config_key_disclosure(*rows: Static, identifier: str) -> Collapsible:
+        """One closed, one-row "config key" disclosure for the Inspector.
+
+        TASK-33007.4: raw config keys stay out of the Inspector's own copy
+        (spec §4 rule 2); this disclosure holds them for whoever wants them.
+
+        Args:
+            *rows: The disclosure's rows, usually ``_detail_row`` Statics.
+            identifier: The disclosure's id.
+
+        Returns:
+            A collapsed Collapsible titled "config key".
+        """
+        return Collapsible(
+            *rows,
+            title="config key",
+            collapsed=True,
+            id=identifier,
+            classes="settings-config-key-disclosure",
+        )
 
     @staticmethod
     def _with_save_behavior_row(
@@ -17223,11 +17276,18 @@ class SettingsScreen(BaseAppScreen):
     def _refresh_provider_field_guidance(self) -> None:
         if self._active_category_id() is not SettingsCategoryId.PROVIDERS_MODELS:
             return
-        for index, (label, value) in enumerate(self._provider_field_guidance_rows()):
+        shown, config_key = self._split_config_key_row(
+            self._provider_field_guidance_rows()
+        )
+        for index, (label, value) in enumerate(shown):
             self._set_static_text(
                 f"#settings-provider-field-guide-{index}",
                 f"{label}: {_fold_long_tokens(value)}",
             )
+        self._set_static_text(
+            "#settings-provider-config-key-saved-as",
+            f"{CONFIG_KEY_ROW_LABEL}: {_fold_long_tokens(config_key)}",
+        )
 
     def _appearance_field_guidance_rows(self) -> tuple[tuple[str, str], ...]:
         return self._with_save_behavior_row(
@@ -22775,38 +22835,13 @@ class SettingsScreen(BaseAppScreen):
             yield self._detail_row("Save", STAGED_SAVE_BEHAVIOR_COPY)
             return
         elif summary.category is SettingsCategoryId.PROVIDERS_MODELS:
-            yield Static(
-                "Affects Console and provider-backed generation.",
-                classes="destination-section",
+            # TASK-33007.4: Applies to, Next new chat, the focused field and
+            # Key, composed beside the card (spec mock (c)).
+            from ..Settings_Modules.providers_models_card import (
+                compose_providers_models_inspector,
             )
-            yield Static(
-                self._provider_readiness_label(),
-                id="settings-provider-inspector-readiness",
-                classes="settings-detail-row",
-            )
-            yield Static("Focused field guide", classes="destination-section")
-            for index, (label, value) in enumerate(
-                self._provider_field_guidance_rows()
-            ):
-                yield self._detail_row(
-                    label,
-                    value,
-                    identifier=f"settings-provider-field-guide-{index}",
-                )
-            # TASK-33007.2 (AC#7): the Key block holds what 't' checks and the
-            # last check's labelled rows; the card's Key check row says only
-            # the verdict, so a result never moves the card's rows.
-            yield Static("Key", classes="destination-section")
-            yield Static(
-                PROVIDER_TEST_GUIDANCE,
-                id="settings-test-provider-guidance",
-                classes="settings-detail-row",
-            )
-            yield _ProviderTestResult(
-                self._adopt_shared_provider_test_evidence(),
-                id="settings-provider-test-result",
-                markup=False,
-            )
+
+            yield from compose_providers_models_inspector(self)
         elif summary.category is SettingsCategoryId.LIBRARY_RAG:
             # UX review item 9 (Scope Inspector clipping): a blank spacer
             # ahead of the RAG-specific guidance, separating it from the
@@ -24932,6 +24967,13 @@ class SettingsScreen(BaseAppScreen):
         landed_id = str(getattr(event.widget, "id", "") or "")
         if pending and landed_id and f"#{landed_id}" == pending:
             self._pending_navigation_focus_selector = None
+        if any(
+            node.has_class("settings-config-key-disclosure")
+            for node in event.widget.ancestors_with_self
+        ):
+            # TASK-33007.4: opening the Inspector's "config key" disclosure
+            # must keep naming the field the user was on.
+            return
         active_category = self._active_category_id()
         widget_id = str(getattr(event.widget, "id", "") or "")
         if active_category is SettingsCategoryId.APPEARANCE:
@@ -31562,6 +31604,11 @@ class SettingsScreen(BaseAppScreen):
                 self._sync_provider_credential_widget(provider)
                 self._sync_provider_context_window_widget(provider, model)
                 self._update_provider_dynamic_widgets()
+                from ..Settings_Modules.providers_models_card import (
+                    refresh_next_new_chat,
+                )
+
+                refresh_next_new_chat(self)
                 # TASK-33007.2: a saved key or endpoint can change who leads
                 # the provider list and its "configured: ..." help.
                 self._provider_configured_keys = None

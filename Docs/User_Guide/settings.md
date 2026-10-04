@@ -207,7 +207,7 @@ The biggest page, and where to start.
 | Group | What's in it |
 |---|---|
 | **Connect** | One row per fact, each with a **Source** word and a one-line help. **Provider** is one row and one Tab stop: it shows the chosen provider, and typing in it filters the list that opens under it by display name or ID (Up/Down move, **Enter** chooses or a click on a row does, **Esc** keeps the current provider and leaves the field, so **s**, **r** and **t** work next). The list leads with **Configured** providers (a key saved in config or set in your shell, or an endpoint you changed), then Cloud and Local, with Custom & legacy aliases last. It uses the display names Console shows — **Google Gemini**, **Mistral AI**, **Custom OpenAI-compatible**; legacy aliases say so, as in **llama.cpp (legacy alias)**, and stay selectable — and ends with **Enter provider ID**, which opens **Manual** for a custom key. For **Anthropic** a **Sign in with** row comes just above it: **API key** or **Claude subscription**. The subscription uses the credential Claude Code already holds (the macOS Keychain, or `~/.claude/.credentials.json`); Chatbook reads it, never stores or refreshes it, and requests bill your Claude plan rather than API credits. While it is chosen, **API key** and **Env var** stay visible but disabled, so switching back loses nothing, and the API key row's Source word reads **subscription** beside "Checking Claude subscription credential…" and then "Credential source: Claude subscription (not verified)", or says the credential is missing or expired and to log in with Claude Code. It follows the choice as soon as you make it, before Save; like any field here it is an unsaved edit until **Save**. **API key** is masked and says where the key comes from: **saved in config**, **from env var**, or **missing** (**edited \*** or **cleared \*** until you save); **Clear** removes a saved key. **Env var** says whether the variable is **set in shell**, with "safer: keeps keys out of config.toml". A keyless local provider (llama.cpp, oobabooga, vLLM, …) ships with an env var *name* ("if you set one on the server"); saving it with that variable unset records "no credential", so the credential check ignores the name even if you export the variable later (type the name into **Env var** to use it). The name is the shipped default, so it is back in the file and in **Env var** after the next restart, and still ignored. A variable that holds a key, a name you typed, or an explicit env-var choice you saved before is kept. **Endpoint** (**config**, **built-in** or, for a local server, **not set**) is checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." Connect ends in one **Key check** row: this provider's readiness word, in the Console's words ("Ready · not tested", "Ready · verified 14:01", "Not ready · no key"), and **Test (t)**. |
-| **Default model for new chats** | **Model** is a searchable list of this provider's models, with its Source word. Focus it (or type) and the list opens under it, grouped by where each ID came from — **Served now** (what **Discover models** just listed), **Current catalog**, **Saved fallback** — with the saved default marked **● CURRENT** and highlighted. Typing narrows the list; **Down** moves into it and **Enter** chooses. Choosing a model stages it as the default for new chats even when one is already set (save with **s**); it does not add the model to the provider's saved list — only **Save selected** does that. For an ID no list holds, press **Custom ID** (shown while the field has focus) and type it; it must be one line of at most 256 characters. **Esc** drops an unfinished search, keeps a typed Custom ID, and leaves the field. An ID that is not valid is never kept: leaving the field puts the previous model back and says so. Changing the provider switches the list to that provider and stages its own default model. |
+| **Default model for new chats** | **Model** is a searchable list of this provider's models, with its Source word. Focus it (or type) and the list opens under it, grouped by where each ID came from — **Served now** (what **Discover models** just listed), **Current catalog**, **Saved fallback** — with the saved default marked **● CURRENT** and highlighted. Typing narrows the list; **Down** moves into it and **Enter** chooses. Choosing a model stages it as the default for new chats even when one is already set (save with **s**); it does not add the model to the provider's saved list — only **Save selected** does that. For an ID no list holds, press **Custom ID** (shown while the field has focus) and type it; it must be one line of at most 256 characters. **Esc** drops an unfinished search, keeps a typed Custom ID, and leaves the field. An ID that is not valid is never kept: leaving the field puts the previous model back and says so. Changing the provider switches the list to that provider and stages its own default model. Under Model, **Applies to** says who the choice reaches: "new chats (Ctrl+T, temporary, workspace).", then the open Console chat by name and the provider · model it will use — "Open chat “Chat 1” is unused and will use OpenAI · gpt-4.1." when it has no messages and no edited settings, "Open chat “Refactor plan” keeps Ollama · qwen3:32b." when it holds work, or "No Console chat is open." |
 | **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
 | **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
 | **Session summary on quit** | **Show session usage summary when quitting** and **Summary duration (seconds)** (1–30, default 3). These **write immediately**. When enabled, confirming a quit (Ctrl+Q) briefly shows total session tokens and elapsed session time before the app exits; any key skips it. Off by default. |
@@ -336,6 +336,22 @@ them in Console with Alt+M)". The State line says the same in one row:
 Alt+M)". Focusing the **Provider** control shows its Purpose in the
 inspector: "Sets the provider new chats start with; open chats nobody has used
 yet follow it."; **Model** reads the same way for the model.
+
+The inspector for this page reads top to bottom:
+
+- **Applies to**: new chats (yes); unused open chats follow the saved
+  default; chats with work keep their own (switch there with **Alt+M**); and
+  the model defaults also reach chats that switch to this model.
+- **Next new chat will use**: the provider · model and the core values
+  ("T 0.7 · max 8192 · stream On") a new chat gets from the saved config. While
+  the page has unsaved edits it adds "Unsaved edits apply only after save (s)."
+- **Focused field guide**: the focused field's name, help, commit model and
+  range. Its config key is not printed there: it sits in the closed **config
+  key** disclosure under the guide ("Saved as: …"), together with the
+  endpoint key, the provider catalog, the credential policy, how to enter a
+  provider the catalog lacks, and where sampling fallbacks live. Opening the
+  disclosure keeps describing the field you were on.
+- **Key**: what **t** checks and the last check's rows.
 
 A clean form follows changes to the saved default provider, model and endpoint
 when you return. An unsaved edit stays attached to the provider and model you
@@ -786,7 +802,8 @@ This page's **Custom endpoints** section manages them. Each row reads
 An entry can also be your saved default provider. Settings then names it by
 its display name, and its readiness is the family's readiness plus the
 entry's own `api_key_env` rule. Providers & Models shows the entry's own
-facts, read-only: **Endpoint** is the entry's base URL, **Endpoint key** is
+facts, read-only: **Endpoint** is the entry's base URL, the inspector's
+**config key** disclosure gives its **Endpoint key** as
 `custom_endpoints.<slug>.base_url`, and the credential line names where the
 key comes from — **env var `<NAME>` (this endpoint)**, **saved in this
 endpoint**, or **none required by this endpoint** (never the key itself, and

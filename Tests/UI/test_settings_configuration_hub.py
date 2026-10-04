@@ -3670,7 +3670,19 @@ async def test_settings_provider_category_lists_console_supported_catalog():
         screen = _active_destination_screen(host)
         text = _visible_text(screen)
 
-        assert "Provider catalog" in text
+        # TASK-33007.4 (AC#6), rewritten on purpose: the catalog and the
+        # manual-entry line left the card for the Inspector's closed
+        # "config key" disclosure.
+        card = screen.query_one("#settings-providers-models-card")
+        disclosure = screen.query_one("#settings-provider-config-key", Collapsible)
+        assert disclosure.collapsed is True
+        catalog = screen.query_one("#settings-provider-catalog", Static)
+        manual = screen.query_one("#settings-provider-manual-entry-policy", Static)
+        for row in (catalog, manual):
+            assert disclosure in row.ancestors
+            assert card not in row.ancestors
+        catalog_line = str(catalog.renderable)
+        assert catalog_line.startswith("Provider catalog")
         # task-180: the catalog line shows grouped human display names, never
         # a raw config-key dump.
         for display_name in (
@@ -3681,18 +3693,15 @@ async def test_settings_provider_category_lists_console_supported_catalog():
             "llama.cpp",
             "vLLM (legacy alias)",
         ):
-            assert display_name in text
-        catalog_line = str(
-            screen.query_one("#settings-provider-catalog", Static).renderable
-        )
+            assert display_name in catalog_line
         assert "Cloud:" in catalog_line
         assert "Local:" in catalog_line
         assert "Custom & legacy aliases:" in catalog_line
         assert "local_vllm" not in catalog_line
         assert "custom_2" not in catalog_line
-        assert (
+        assert str(manual.renderable) == (
             "Choose a catalog provider (type in the open list to jump to one), "
-            "or use Manual / custom provider for other keys." in text
+            "or use Manual / custom provider for other keys."
         )
 
 
@@ -4459,12 +4468,23 @@ async def test_settings_provider_model_defaults_appear_before_reference_copy():
         card = screen.query_one("#settings-providers-models-card")
         title = card.query_one("#settings-selected-model-defaults-title", Static)
         temperature = card.query_one("#settings-model-profile-temperature", Input)
-        catalog = card.query_one("#settings-provider-catalog", Static)
-        widgets = list(card.query("*"))
 
         assert str(title.renderable) == "Selected model defaults"
-        assert widgets.index(title) < widgets.index(catalog)
-        assert widgets.index(temperature) < widgets.index(catalog)
+        assert temperature in list(card.query("*"))
+        # TASK-33007.4 (AC#6), rewritten on purpose: no reference copy
+        # follows the defaults in the card any more; all five rows live in
+        # the Inspector's closed "config key" disclosure.
+        disclosure = screen.query_one("#settings-provider-config-key", Collapsible)
+        assert disclosure.collapsed is True
+        for selector in (
+            "#settings-provider-catalog",
+            "#settings-provider-catalog-policy",
+            "#settings-provider-manual-entry-policy",
+            "#settings-provider-sampling-route",
+            "#settings-provider-endpoint-key",
+        ):
+            assert not card.query(selector), selector
+            assert disclosure in screen.query_one(selector).ancestors, selector
 
 
 @pytest.mark.asyncio
