@@ -15134,17 +15134,26 @@ async def test_console_settings_modal_carries_minimal_to_fireworks_and_the_reque
 
     Fireworks has no "minimal"; its record maps it to "low", so the switch
     keeps the control and the choice, and the saved level reaches the wire.
+    The switch is Change's pick (TASK-33006.4: the provider Select is gone),
+    landing on the controller's real rebaser.
     """
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
         HostedProviderResolution,
         build_hosted_chat_payload,
     )
     from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+    from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+        MODEL_CHANGE_ID,
+    )
 
     fireworks_model = "accounts/fireworks/models/deepseek-v3p1"
     app = ModalHarness()
     app.app_config = {"api_settings": {"fireworks": {"api_key": "test-key"}}}
     settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+
+    def pick_fireworks(_origin, _draft, _query, on_pick, _served):
+        on_pick(("fireworks", fireworks_model))
 
     async with app.run_test(size=(120, 60)) as pilot:
         await app.push_screen(
@@ -15152,6 +15161,12 @@ async def test_console_settings_modal_carries_minimal_to_fireworks_and_the_reque
                 settings,
                 app,
                 providers_models={"openai": ["gpt-4.1"], "fireworks": [fireworks_model]},
+                model_picker=pick_fireworks,
+                draft_rebaser=lambda state, **kwargs: (
+                    ConsoleChatController.rebase_console_settings_draft(
+                        object(), state, **kwargs
+                    )
+                ),
             ),
             callback=app.capture_saved_settings,
         )
@@ -15160,7 +15175,9 @@ async def test_console_settings_modal_carries_minimal_to_fireworks_and_the_reque
         reasoning.value = "minimal"
         await pilot.pause()
 
-        app.screen.query_one("#console-settings-provider", Select).value = "fireworks"
+        app.screen.query_one(f"#{MODEL_CHANGE_ID}", Button).focus()
+        await pilot.press("enter")
+        await pilot.pause()
         await pilot.pause()
 
         reasoning = app.screen.query_one("#console-settings-reasoning-effort", Select)
