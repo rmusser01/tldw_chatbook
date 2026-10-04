@@ -496,8 +496,13 @@ async def test_voice_save_waits_for_applied_runtime_when_default_is_opted_out() 
         def capture_save(self, event: STTSSettingsSaveEvent) -> None:
             self.saved_event = event
 
+    # TASK-34100.8 review round 1 (F1): "Use as default" can be unticked only
+    # while another provider reads replies; with nothing saved it is locked on.
+    app_config = {"COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"default_provider": "kokoro"}}}
     step = VoiceSetupStep(
-        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        wizard=SimpleNamespace(
+            app_instance=MagicMock(app_config=app_config), wizard_data={}
+        ),
         config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
     )
     app = DelayedSaveHost(step)

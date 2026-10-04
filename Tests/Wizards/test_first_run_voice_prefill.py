@@ -133,7 +133,89 @@ def test_saved_pocket_tts_endpoint_prefills_pocket_tts() -> None:
 
     assert saved is not None
     assert saved.preset == vs.VOICE_PRESET_POCKET_TTS
+    # Review round 1 (F1): with no default_provider saved the runtime reads
+    # replies with the OpenAI slot, so this IS the reply voice.
+    assert saved.draft.use_as_default is True
+
+
+_LEGACY_UNTOUCHED_WRITE = {
+    # What the old wizard wrote on every untouched Voice Next.
+    "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
+    "OPENAI_AUTH_MODE": "none",
+    "default_provider": "openai",
+    "default_model": "tts-1-hd",
+    "default_voice": "shimmer",
+    "default_format": "mp3",
+}
+
+
+def test_the_old_wizards_pocket_tts_address_is_never_preselected() -> None:
+    """Review round 1 (F2): pocket-tts never serves :8765/v1/audio/speech, so
+    that table cannot speak; it must not read as a working Custom voice."""
+    saved = prefill.saved_voice_from_config(_LEGACY_UNTOUCHED_WRITE)
+
+    assert saved is not None
+    assert saved.legacy is True
+    assert saved.preset == vs.VOICE_PRESET_NONE
+    assert saved.slot_preset == vs.VOICE_PRESET_CUSTOM
+    copy = prefill.current_voice_copy(saved)
+    assert "127.0.0.1:8765" in copy
+    assert "can't speak" in copy
+    assert "unchanged unless you edit it" not in copy
+
+
+def test_the_same_address_with_an_api_key_is_somebody_elses_server() -> None:
+    saved = prefill.saved_voice_from_config(
+        dict(_LEGACY_UNTOUCHED_WRITE, OPENAI_AUTH_MODE="api_key")
+    )
+
+    assert saved is not None
+    assert saved.legacy is False
+    assert saved.preset == vs.VOICE_PRESET_CUSTOM
+
+
+def test_another_default_provider_is_the_current_voice_even_with_an_endpoint() -> (
+    None
+):
+    """Review round 1 (F3): kokoro reads replies; the saved OpenAI endpoint is
+    not "the current voice", and tts-1-hd / shimmer were invented."""
+    saved = prefill.saved_voice_from_config(
+        {
+            "default_provider": "kokoro",
+            "default_voice": "af_bella",
+            "OPENAI_BASE_URL": _OFFICIAL,
+        }
+    )
+
+    assert saved is not None
+    assert saved.preset == vs.VOICE_PRESET_NONE
+    assert saved.other_provider == "kokoro"
+    assert saved.slot_preset == vs.VOICE_PRESET_OFFICIAL_OPENAI
     assert saved.draft.use_as_default is False
+    copy = prefill.current_voice_copy(saved)
+    assert copy.startswith("Current voice: kokoro")
+    assert "tts-1-hd" not in copy and "shimmer" not in copy
+
+
+@pytest.mark.parametrize(
+    ("preset", "table", "locked"),
+    (
+        (vs.VOICE_PRESET_POCKET_TTS, {}, True),
+        (vs.VOICE_PRESET_CUSTOM, {"default_provider": "openai"}, True),
+        (vs.VOICE_PRESET_OFFICIAL_OPENAI, {"OPENAI_BASE_URL": _OFFICIAL}, True),
+        (vs.VOICE_PRESET_POCKET_TTS, {"default_provider": "kokoro"}, False),
+        (vs.VOICE_PRESET_POCKET_TTS, {"default_provider": "omnivoice"}, False),
+        (vs.VOICE_PRESET_OMNIVOICE, {}, False),
+        (vs.VOICE_PRESET_NONE, {}, False),
+    ),
+)
+def test_the_default_box_is_locked_while_the_openai_slot_reads_replies(
+    preset, table, locked
+) -> None:
+    """Review round 1 (F1 / G8-V1-F1): the OpenAI-compatible slot has one
+    endpoint and, with no other default provider, it reads replies. Saving a
+    service there is choosing the reply voice, whatever the box says."""
+    assert prefill.default_box_locked(preset, table) is locked
 
 
 def test_saved_omnivoice_default_prefills_omnivoice() -> None:
@@ -208,7 +290,9 @@ def test_an_edit_a_test_or_a_tick_is_persisted() -> None:
 
 
 def test_unticked_save_writes_no_default_selection() -> None:
-    event = vs.build_voice_setup_save_event(_draft(), include_voice_axes=False)
+    """Only reachable while another provider reads replies (the box is locked
+    on otherwise), so the shared default axes stay that provider's."""
+    event = vs.build_voice_setup_save_event(_draft())
 
     assert event.settings == {
         "OPENAI_BASE_URL": vs.POCKET_TTS_ENDPOINT,
@@ -217,23 +301,6 @@ def test_unticked_save_writes_no_default_selection() -> None:
     assert event.preferences is None
     assert event.persist_default_preferences is False
     assert event.commit_defaults_after_handoff is False
-
-
-def test_unticked_save_on_the_reply_voice_slot_keeps_the_presets_axes() -> None:
-    """A PocketTTS URL is never paired with tts-1-hd / shimmer / mp3."""
-    event = vs.build_voice_setup_save_event(_draft(), include_voice_axes=True)
-
-    assert event.settings == {
-        "OPENAI_BASE_URL": vs.POCKET_TTS_ENDPOINT,
-        "OPENAI_AUTH_MODE": "none",
-        "default_model": "pocket-tts",
-        "default_voice": "alba",
-        "default_format": "wav",
-        "default_speed": 1.0,
-    }
-    assert "default_provider" not in event.settings
-    assert event.preferences is None
-    assert event.persist_default_preferences is False
 
 
 def test_ticked_save_makes_the_drafts_own_axes_the_default() -> None:
@@ -498,6 +565,65 @@ def test_service_status_lines_say_whether_a_service_will_work() -> None:
     assert status.service_status_copy(vs.VOICE_PRESET_NONE, endpoint="") == (
         "Nothing is saved. Set up a voice any time in Settings ▸ Speech & TTS."
     )
+
+
+def test_no_voice_for_now_says_what_happens_to_a_saved_voice() -> None:
+    """Review round 1 (F6 / G8-V1-F2): with a voice saved, "No voice for now"
+    keeps it; the line used to say "Nothing is saved"."""
+    working = prefill.saved_voice_from_config(
+        {
+            "OPENAI_BASE_URL": _OFFICIAL,
+            "OPENAI_AUTH_MODE": "api_key",
+            "default_provider": "openai",
+            "default_model": "tts-1-hd",
+            "default_voice": "shimmer",
+        }
+    )
+
+    assert status.no_voice_copy(None) == status.NO_VOICE_COPY
+    kept = status.no_voice_copy(working)
+    assert kept.startswith("Keeps your current voice (OpenAI · tts-1-hd · shimmer)")
+    assert "Speak replies" in kept
+    assert "Nothing is saved" not in kept
+    legacy = status.no_voice_copy(
+        prefill.saved_voice_from_config(_LEGACY_UNTOUCHED_WRITE)
+    )
+    assert "127.0.0.1:8765" in legacy
+    other = status.no_voice_copy(
+        prefill.saved_voice_from_config({"default_provider": "kokoro"})
+    )
+    assert other.startswith("Current voice: kokoro")
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "lead"),
+    (
+        (
+            {"locked": True, "ticked": True},
+            "Replies will use this voice — no other voice is set up.",
+        ),
+        (
+            {"locked": True, "ticked": True, "replaces": "OpenAI · tts-1-hd · shimmer"},
+            "This becomes the voice replies use — it replaces OpenAI · tts-1-hd "
+            "· shimmer.",
+        ),
+        (
+            {"locked": False, "ticked": True, "reply_voice": "kokoro"},
+            "Replies will use this voice instead of kokoro.",
+        ),
+        (
+            {"locked": False, "ticked": False, "reply_voice": "kokoro"},
+            "Saved for later; replies keep using kokoro.",
+        ),
+    ),
+)
+def test_the_default_help_line_says_which_voice_replies_use(kwargs, lead) -> None:
+    copy = status.default_help_copy(vs.VOICE_PRESET_POCKET_TTS, **kwargs)
+
+    assert copy == f"{lead} {status.DEFAULT_HELP_COPY}"
+    assert status.default_help_copy(
+        vs.VOICE_PRESET_OMNIVOICE, locked=False, ticked=False
+    ) == (status.DEFAULT_HELP_COPY)
 
 
 def test_probe_runs_off_the_event_loop() -> None:

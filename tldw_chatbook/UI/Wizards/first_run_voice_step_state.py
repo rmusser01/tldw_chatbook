@@ -240,7 +240,6 @@ def build_voice_setup_save_event(
     *,
     request_id: int | None = None,
     reply_to: object | None = None,
-    include_voice_axes: bool = False,
     credential: str | None = None,
 ) -> STTSSettingsSaveEvent:
     """Build the canonical global settings event for one valid Voice draft.
@@ -248,17 +247,17 @@ def build_voice_setup_save_event(
     TASK-34100.8 (voice-speech-01). With "Use as default" ticked, the draft's
     own model, voice, format and speed become the default voice. Unticked, no
     default selection is written (``persist_default_preferences=False`` stops
-    the handler materializing the current settings as defaults). The
-    OpenAI-compatible slot keeps one model/voice/format for its endpoint, in
-    the shared default axes, so when that slot is the voice replies use
-    (``include_voice_axes``) they travel with the endpoint even unticked: a
-    PocketTTS URL is never left paired with tts-1-hd / shimmer / mp3.
+    the handler materializing the current settings as defaults), and the
+    shared default axes stay the reply provider's. The step offers an
+    unticked save only while another provider reads replies: when the
+    OpenAI-compatible slot reads them, a save there IS the reply voice, so
+    the box is locked on (review round 1, F1) and a PocketTTS URL is never
+    left paired with tts-1-hd / shimmer / mp3.
 
     Args:
         draft: A valid Voice draft (a blank sample is allowed).
         request_id: Correlates the save result.
         reply_to: Widget receiving the save result.
-        include_voice_axes: Write model/voice/format/speed on an unticked save.
         credential: An OpenAI key the step staged; written where Settings
             writes it (``api_settings.openai.api_key``).
     """
@@ -270,13 +269,6 @@ def build_voice_setup_save_event(
         "OPENAI_BASE_URL": validation.normalized_endpoint,
         "OPENAI_AUTH_MODE": draft.authentication_mode,
     }
-    if include_voice_axes and not draft.use_as_default:
-        settings.update(
-            default_model=_identifier(draft.model_id, "Model"),
-            default_voice=_identifier(draft.voice_id, "Voice"),
-            default_format=draft.response_format,
-            default_speed=draft.speed,
-        )
     if credential:
         settings["openai_api_key"] = credential
     preferences = (

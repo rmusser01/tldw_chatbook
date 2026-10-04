@@ -41,21 +41,37 @@ _PRESET_NAMES = {
     vs.VOICE_PRESET_OMNIVOICE: "OmniVoice",
 }
 
+#: The PocketTTS address the wizard wrote before TASK-34100.8 (with auth
+#: "none"). The real pocket-tts server never serves it -- it speaks POST /tts
+#: on :8000 and answers 404 here -- so such a table is the old wizard's
+#: untouched write, and it cannot speak (review round 1, F2).
+LEGACY_POCKET_TTS_ENDPOINT = "http://127.0.0.1:8765/v1/audio/speech"
+_LEGACY_HOST = "127.0.0.1:8765"
+
 
 @dataclass(frozen=True, slots=True)
 class SavedVoice:
     """The voice saved before this run, as the step would show it.
 
     Attributes:
-        preset: The Service radio it maps to. ``VOICE_PRESET_NONE`` when the
-            saved default belongs to a provider this step does not set up.
-        draft: The controls' values, including the "Use as default" box.
-        other_provider: That other provider's id, kept as it is.
+        preset: The Service radio to preselect. ``VOICE_PRESET_NONE`` when
+            the voice replies use belongs to a provider this step does not set
+            up, or when the saved OpenAI-slot voice is the old wizard's
+            unspeakable write.
+        draft: The controls' values, including the "Use as default" box,
+            which is True when this is the voice replies use.
+        other_provider: The provider that reads replies when it is not one
+            this step sets up (e.g. ``kokoro``), kept as it is.
+        slot_preset: The Service radio the saved OpenAI-compatible endpoint
+            maps to, or "" when none is saved.
+        legacy: The saved endpoint is the old wizard's PocketTTS address.
     """
 
     preset: str
     draft: vs.VoiceSetupDraft
     other_provider: str = ""
+    slot_preset: str = ""
+    legacy: bool = False
 
 
 def raw_app_tts(app_config: object) -> Mapping[str, object]:
@@ -101,6 +117,12 @@ def _openai_slot_preset(speech_url: str) -> str:
 def saved_voice_from_config(table: object) -> SavedVoice | None:
     """Map a raw ``[app_tts]`` table to the voice the step should prefill.
 
+    The runtime reads replies with ``default_provider``, falling back to the
+    OpenAI-compatible slot when none is saved. So a slot endpoint with no
+    ``default_provider`` IS the reply voice (review round 1, F1), while one
+    saved beside another provider's default is not the current voice: that
+    provider is, and the shared default axes are its own (F3).
+
     Args:
         table: The raw ``[app_tts]`` table (see :func:`raw_app_tts`).
 
@@ -117,10 +139,10 @@ def saved_voice_from_config(table: object) -> SavedVoice | None:
             vs.VOICE_PRESET_POCKET_TTS,
         )
         return SavedVoice(vs.VOICE_PRESET_OMNIVOICE, draft)
+    own_axes = provider in {"", "openai"}
+    other = SavedVoice(vs.VOICE_PRESET_NONE, _blank_draft(), other_provider=provider)
     if not base_url and provider != "openai":
-        if not provider:
-            return None
-        return SavedVoice(vs.VOICE_PRESET_NONE, _blank_draft(), other_provider=provider)
+        return other if provider else None
     try:
         endpoint = normalize_openai_compatible_endpoint(
             base_url or vs.OFFICIAL_OPENAI_TTS_ENDPOINT
@@ -129,14 +151,11 @@ def saved_voice_from_config(table: object) -> SavedVoice | None:
             table.get("OPENAI_AUTH_MODE"), endpoint=endpoint
         ).value
     except (TypeError, ValueError):
-        return None
-    preset = _openai_slot_preset(endpoint.speech_url)
-    # The default axes belong to the OpenAI slot only while it is the default
-    # provider (or none is saved); another provider's axes are not its own.
-    own_axes = provider in {"", "openai"}
+        return None if own_axes else other
+    slot_preset = _openai_slot_preset(endpoint.speech_url)
     defaults = {
         vs.VOICE_PRESET_POCKET_TTS: (vs.POCKET_TTS_MODEL, vs.POCKET_TTS_VOICE, "wav"),
-    }.get(preset, _RUNTIME_FALLBACK)
+    }.get(slot_preset, _RUNTIME_FALLBACK)
     model = (_text(table, "default_model") if own_axes else "") or defaults[0]
     voice = (_text(table, "default_voice") if own_axes else "") or defaults[1]
     response_format = (_text(table, "default_format") if own_axes else "").lower()
@@ -150,9 +169,20 @@ def saved_voice_from_config(table: object) -> SavedVoice | None:
         response_format=response_format,
         speed=_speed(table) if own_axes else 1.0,
         sample_text=vs.DEFAULT_SAMPLE_TEXT,
-        use_as_default=provider == "openai",
+        use_as_default=own_axes,
     )
-    return SavedVoice(preset, draft, other_provider="" if own_axes else provider)
+    if not own_axes:
+        return SavedVoice(
+            vs.VOICE_PRESET_NONE,
+            draft,
+            other_provider=provider,
+            slot_preset=slot_preset,
+        )
+    if endpoint.speech_url == LEGACY_POCKET_TTS_ENDPOINT and auth == "none":
+        return SavedVoice(
+            vs.VOICE_PRESET_NONE, draft, slot_preset=slot_preset, legacy=True
+        )
+    return SavedVoice(slot_preset, draft, slot_preset=slot_preset)
 
 
 def _blank_draft(*, speed: float = 1.0, use_as_default: bool = False):
@@ -183,6 +213,22 @@ def reply_voice_uses_openai_slot(table: object) -> bool:
     if not isinstance(table, Mapping):
         return True
     return _text(table, "default_provider") in {"", "openai"}
+
+
+def default_box_locked(preset: str, table: object) -> bool:
+    """Whether "Use this voice when Chatbook reads replies aloud" is forced on.
+
+    TASK-34100.8 review round 1 (F1 / G8-V1-F1). The OpenAI-compatible slot
+    has one endpoint, and while it reads replies a save there IS the reply
+    voice. An unticked box used to save it anyway while the box, the Summary
+    and the User Guide said it was "not the default voice"; so for those
+    services the box is ticked and cannot be unticked.
+
+    Args:
+        preset: The selected Service radio.
+        table: The raw ``[app_tts]`` table.
+    """
+    return preset in OPENAI_SLOT_PRESETS and reply_voice_uses_openai_slot(table)
 
 
 def _persisted_identity(draft: vs.VoiceSetupDraft) -> tuple[object, ...]:
@@ -240,20 +286,34 @@ def voice_label(saved: SavedVoice) -> str:
     """'OpenAI · tts-1-hd · shimmer' -- service, model and voice."""
     if saved.preset == vs.VOICE_PRESET_OMNIVOICE:
         return "OmniVoice"
-    if saved.preset == vs.VOICE_PRESET_NONE:
+    if saved.other_provider:
         return saved.other_provider
-    name = service_name(saved.preset, saved.draft.endpoint)
+    name = service_name(saved.slot_preset or saved.preset, saved.draft.endpoint)
     return f"{name} · {saved.draft.model_id} · {saved.draft.voice_id}"
 
 
 def current_voice_copy(saved: SavedVoice) -> str:
     """The re-run status line naming the voice an untouched Next keeps."""
-    if saved.preset == vs.VOICE_PRESET_NONE:
+    if saved.other_provider:
         return (
             f"Current voice: {saved.other_provider} — kept as it is; nothing is "
             "saved here. Change it in Settings ▸ Speech & TTS."
         )
+    if saved.legacy:
+        return (
+            f"An earlier setup saved PocketTTS at {_LEGACY_HOST}, an address "
+            "pocket-tts doesn't serve, so that voice can't speak. Pick a "
+            "service to replace it; Next alone leaves it as it is."
+        )
     return f"Current voice: {voice_label(saved)} — unchanged unless you edit it."
+
+
+def legacy_summary_detail() -> str:
+    """The Summary's Voice detail for the old wizard's unspeakable write."""
+    return (
+        f"PocketTTS at {_LEGACY_HOST} (from an earlier setup) can't speak — "
+        "set a voice in Settings ▸ Speech & TTS"
+    )
 
 
 #: What each named service offers under Advanced: (models, voices, formats).
@@ -322,13 +382,16 @@ def draft_from_checkpoint(
 
 
 __all__ = [
+    "LEGACY_POCKET_TTS_ENDPOINT",
     "OPENAI_SLOT_PRESETS",
     "SavedVoice",
     "current_voice_copy",
+    "default_box_locked",
     "draft_from_checkpoint",
     "draft_matches_preset",
     "formats_for",
     "initial_voice_draft",
+    "legacy_summary_detail",
     "raw_app_tts",
     "reply_voice_uses_openai_slot",
     "saved_voice_from_config",

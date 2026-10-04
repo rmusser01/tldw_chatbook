@@ -12,6 +12,8 @@ replace the OmniVoice calls it makes.
 from __future__ import annotations
 
 import asyncio
+import tempfile
+from pathlib import Path
 from typing import Any, Mapping
 
 from loguru import logger
@@ -43,7 +45,9 @@ class OmniVoiceStepBase(SetupStep):
     """OmniVoice state check, one-time install, local sample and save.
 
     The Voice step's shared fields (preset, test generations, save future)
-    live here because both halves read them.
+    live here because both halves read them, and so do the plumbing both
+    halves call: playing a sample and receiving a settings save's result
+    (moved here by review round 1 to keep the step under its size budget).
     """
 
     _SAVE_TIMEOUT_SECONDS = 30.0
@@ -66,6 +70,103 @@ class OmniVoiceStepBase(SetupStep):
         self._omnivoice_installing = False
         self._omnivoice_report: Any = None
         self._omnivoice_seed: int | None = None
+        self._sample_audio_path: Path | None = None
+
+    async def _play_sample(self, result: voice_state.VoiceSampleResult) -> bool:
+        audio_player = getattr(self.app, "audio_player", None)
+        if audio_player is None:
+            # First run: no Speech screen has created the shared player yet
+            # (speech_playback_mixin creates it lazily the same way).
+            try:
+                from tldw_chatbook.TTS.audio_player import AsyncAudioPlayer
+
+                audio_player = self.app.audio_player = AsyncAudioPlayer()
+            except Exception:
+                logger.debug("Voice sample player unavailable (category=playback)")
+                return False
+        play = getattr(audio_player, "play", None)
+        if not callable(play):
+            return False
+        suffix = "." + result.response_format
+        sample_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                prefix="chatbook-voice-sample-",
+                suffix=suffix,
+                delete=False,
+            ) as handle:
+                handle.write(result.body)
+                sample_path = Path(handle.name)
+            prior_path = self._sample_audio_path
+            played = play(sample_path)
+            if asyncio.iscoroutine(played):
+                played = await played
+            if played is False:
+                # AsyncAudioPlayer reports "no OS player found" as False.
+                sample_path.unlink(missing_ok=True)
+                return False
+            if prior_path is not None:
+                prior_path.unlink(missing_ok=True)
+            self._sample_audio_path = sample_path
+            return True
+        except asyncio.CancelledError:
+            if sample_path is not None:
+                sample_path.unlink(missing_ok=True)
+            raise
+        except Exception:
+            if sample_path is not None:
+                sample_path.unlink(missing_ok=True)
+            logger.debug("Voice sample playback failed (category=playback)")
+            return False
+
+    def _receive_save_result(self, result: object) -> None:
+        from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
+            STTSSettingsSaveResult,
+        )
+
+        provider = self._save_provider
+        future = self._save_future
+        if (
+            type(result) is not STTSSettingsSaveResult
+            or result.request_id != self._save_request_id
+            or future is None
+            or future.done()
+        ):
+            return
+        if not result.persisted:
+            future.set_result((False, "Saving the Voice settings failed. Retry."))
+            return
+        provider_status = result.provider_statuses.get(provider)
+        if provider_status == "pending":
+            return
+        runtime_ready = (
+            provider_status in {"applied", "unchanged"}
+            and provider in result.provider_configuration_revisions
+            and provider in result.provider_runtime_revisions
+        )
+        if not runtime_ready:
+            future.set_result(
+                (False, "The Voice settings were saved, but are not active. Retry.")
+            )
+            return
+        if not self._save_use_as_default:
+            future.set_result((True, ""))
+            return
+        if result.defaults_activated is True:
+            future.set_result((True, ""))
+            return
+        future.set_result(
+            (
+                False,
+                "The Voice settings were saved, but the default was not activated. Retry.",
+            )
+        )
+
+    def receive_stts_settings_save_result(self, result: object) -> None:
+        self._receive_save_result(result)
+
+    def receive_stts_settings_runtime_result(self, result: object) -> None:
+        self._receive_save_result(result)
 
     def _compose_omnivoice_panel(self) -> ComposeResult:
         with Vertical(id="setup-voice-omnivoice-panel") as panel:

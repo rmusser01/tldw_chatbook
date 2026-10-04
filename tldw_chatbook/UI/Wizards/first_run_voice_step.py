@@ -16,15 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import math
-import tempfile
-from pathlib import Path
 from typing import (
     Any,
     Dict,
     Mapping,
 )
 
-from loguru import logger
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
@@ -88,7 +85,6 @@ class VoiceSetupStep(OmniVoiceStepBase):
         self._custom_draft: voice_state.VoiceSetupDraft | None = None
         self._verified_draft: voice_state.VoiceSetupDraft | None = None
         self._save_draft: voice_state.VoiceSetupDraft | None = None
-        self._sample_audio_path: Path | None = None
         self._saved: prefill.SavedVoice | None = None
         self._baseline: voice_state.VoiceSetupDraft | None = None
         self._staged_key: wizard_state.ProviderCredentialDraft | None = None
@@ -97,6 +93,10 @@ class VoiceSetupStep(OmniVoiceStepBase):
         self._refocus_test = False
         self._probe_timer: Any = None
         self._seen_inputs: dict[str, str] = {}
+        # Review round 1 (F1): the box is locked on while the OpenAI slot
+        # reads replies; _default_choice is the user's own value under it.
+        self._default_locked = False
+        self._default_choice = False
 
     def _raw_table(self) -> Mapping[str, object]:
         app_instance = getattr(self.wizard, "app_instance", None)
@@ -108,20 +108,26 @@ class VoiceSetupStep(OmniVoiceStepBase):
             return self._saved.draft
         return prefill.initial_voice_draft()
 
+    def _refresh_saved(self) -> None:
+        """Read what is saved now: at compose, and after this step's save (a
+        Back then "No voice for now" must name the voice just saved)."""
+        self._saved = prefill.saved_voice_from_config(self._raw_table())
+        saved = self._saved
+        self._baseline = (
+            saved.draft if saved is not None and saved.slot_preset else None
+        )
+        self._tested_this_run = False
+
     def compose_step(self) -> ComposeResult:
         # TASK-21148 (UAT V-1/V-2): outcome first -- purpose line, service
         # choice, try-it controls; the plumbing lives under Advanced.
         # TASK-34100.8: the saved voice (raw [app_tts]) is preselected, else
         # "No voice for now", never a server that probably isn't running.
-        self._saved = prefill.saved_voice_from_config(self._raw_table())
+        self._refresh_saved()
         saved = self._saved
         self._preset = saved.preset if saved else voice_state.VOICE_PRESET_NONE
-        self._baseline = (
-            saved.draft
-            if saved is not None and saved.preset in prefill.OPENAI_SLOT_PRESETS
-            else None
-        )
         draft = self._initial_draft()
+        self._default_choice = draft.use_as_default
         with Vertical(classes="setup-voice"):
             yield Static("Set up a voice", classes="setup-title")
             yield Static(
@@ -162,6 +168,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
                 yield Static(
                     prefill.current_voice_copy(saved)
                     if saved is not None
+                    and saved.preset != voice_state.VOICE_PRESET_NONE
                     else voice_status.DEFAULT_STATUS_COPY,
                     id="setup-voice-status",
                     classes="setup-subtitle",
@@ -384,8 +391,11 @@ class VoiceSetupStep(OmniVoiceStepBase):
         self._maybe_switch_to_custom()
 
     @on(Checkbox.Changed, "#setup-voice-default")
-    def _on_default_changed(self) -> None:
+    def _on_default_changed(self, event: Checkbox.Changed) -> None:
         self.clear_step_error()
+        if not self._default_locked:
+            self._default_choice = event.value
+        self._refresh_service_status()
 
     @on(Input.Changed, "#setup-voice-api-key")
     def _on_api_key_changed(self, event: Input.Changed) -> None:
@@ -490,9 +500,8 @@ class VoiceSetupStep(OmniVoiceStepBase):
 
     # -- service status ----------------------------------------------------
     def _service_line(self) -> str:
-        if self._preset == voice_state.VOICE_PRESET_NONE and self._saved is not None:
-            if self._saved.preset == voice_state.VOICE_PRESET_NONE:
-                return prefill.current_voice_copy(self._saved)
+        if self._preset == voice_state.VOICE_PRESET_NONE:
+            return voice_status.no_voice_copy(self._saved)
         try:
             endpoint = self.query_one("#setup-voice-endpoint", Input).value
         except NoMatches:
@@ -508,12 +517,45 @@ class VoiceSetupStep(OmniVoiceStepBase):
         )
 
     def _refresh_service_status(self) -> None:
+        """The line under the radio, and the default box that follows it."""
         try:
             self.query_one("#setup-voice-service-status", Static).update(
                 self._service_line()
             )
         except NoMatches:
             return
+        self._sync_default_box()
+
+    def _sync_default_box(self) -> None:
+        """Lock "Use this voice…" on while the OpenAI slot reads replies (F1)."""
+        try:
+            box = self.query_one("#setup-voice-default", Checkbox)
+            draft = self._draft_from_controls()
+        except (NoMatches, TypeError, ValueError):
+            return
+        locked = prefill.default_box_locked(self._preset, self._raw_table())
+        value = True if locked else self._default_choice
+        if locked or self._default_locked:
+            with box.prevent(Checkbox.Changed):
+                box.value = value
+        self._default_locked = box.disabled = locked
+        saved = self._saved
+        replaced = (
+            prefill.voice_label(saved)
+            if saved is not None and saved.slot_preset and not saved.other_provider
+            else ""
+        )
+        if replaced == prefill.voice_label(prefill.SavedVoice(self._preset, draft)):
+            replaced = ""
+        self.query_one("#setup-voice-default-help", Static).update(
+            voice_status.default_help_copy(
+                self._preset,
+                locked=locked,
+                ticked=box.value,
+                reply_voice=saved.other_provider if saved is not None else "",
+                replaces=replaced,
+            )
+        )
 
     def _schedule_probe(self) -> None:
         """Debounce endpoint typing: probe once the user pauses."""
@@ -744,53 +786,6 @@ class VoiceSetupStep(OmniVoiceStepBase):
         if not test.disabled:
             test.focus()
 
-    async def _play_sample(self, result: voice_state.VoiceSampleResult) -> bool:
-        audio_player = getattr(self.app, "audio_player", None)
-        if audio_player is None:
-            # First run: no Speech screen has created the shared player yet
-            # (speech_playback_mixin creates it lazily the same way).
-            try:
-                from tldw_chatbook.TTS.audio_player import AsyncAudioPlayer
-
-                audio_player = self.app.audio_player = AsyncAudioPlayer()
-            except Exception:
-                logger.debug("Voice sample player unavailable (category=playback)")
-                return False
-        play = getattr(audio_player, "play", None)
-        if not callable(play):
-            return False
-        suffix = "." + result.response_format
-        sample_path: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                prefix="chatbook-voice-sample-",
-                suffix=suffix,
-                delete=False,
-            ) as handle:
-                handle.write(result.body)
-                sample_path = Path(handle.name)
-            prior_path = self._sample_audio_path
-            played = play(sample_path)
-            if asyncio.iscoroutine(played):
-                played = await played
-            if played is False:
-                # AsyncAudioPlayer reports "no OS player found" as False.
-                sample_path.unlink(missing_ok=True)
-                return False
-            if prior_path is not None:
-                prior_path.unlink(missing_ok=True)
-            self._sample_audio_path = sample_path
-            return True
-        except asyncio.CancelledError:
-            if sample_path is not None:
-                sample_path.unlink(missing_ok=True)
-            raise
-        except Exception:
-            if sample_path is not None:
-                sample_path.unlink(missing_ok=True)
-            logger.debug("Voice sample playback failed (category=playback)")
-            return False
-
     def _speed_or_default(self) -> float:
         try:
             speed = float(self.query_one("#setup-voice-speed", Input).value)
@@ -816,7 +811,11 @@ class VoiceSetupStep(OmniVoiceStepBase):
         if self._preset == voice_state.VOICE_PRESET_OMNIVOICE:
             if self._omnivoice_untouched():
                 return True, ""
-            return await self._commit_omnivoice()
+            outcome = await self._commit_omnivoice()
+            if outcome[0]:
+                self._refresh_saved()
+            return outcome
+        self._sync_default_box()
         try:
             draft = self._draft_from_controls()
         except (TypeError, ValueError) as error:
@@ -854,9 +853,6 @@ class VoiceSetupStep(OmniVoiceStepBase):
                 draft,
                 request_id=request_id,
                 reply_to=self,
-                include_voice_axes=prefill.reply_voice_uses_openai_slot(
-                    self._raw_table()
-                ),
                 credential=credential,
             )
         )
@@ -871,60 +867,13 @@ class VoiceSetupStep(OmniVoiceStepBase):
             self._save_request_id = None
             self._save_draft = None
             self._save_future = None
+        if outcome[0]:
+            self._refresh_saved()
         if outcome[0] and credential is not None:
             note = getattr(self.wizard, "note_key_entered", None)
             if callable(note):
                 note()  # Protect now offers to encrypt the saved key.
         return outcome
-
-    def _receive_save_result(self, result: object) -> None:
-        from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
-            STTSSettingsSaveResult,
-        )
-
-        provider = self._save_provider
-        future = self._save_future
-        if (
-            type(result) is not STTSSettingsSaveResult
-            or result.request_id != self._save_request_id
-            or future is None
-            or future.done()
-        ):
-            return
-        if not result.persisted:
-            future.set_result((False, "Saving the Voice settings failed. Retry."))
-            return
-        provider_status = result.provider_statuses.get(provider)
-        if provider_status == "pending":
-            return
-        runtime_ready = (
-            provider_status in {"applied", "unchanged"}
-            and provider in result.provider_configuration_revisions
-            and provider in result.provider_runtime_revisions
-        )
-        if not runtime_ready:
-            future.set_result(
-                (False, "The Voice settings were saved, but are not active. Retry.")
-            )
-            return
-        if not self._save_use_as_default:
-            future.set_result((True, ""))
-            return
-        if result.defaults_activated is True:
-            future.set_result((True, ""))
-            return
-        future.set_result(
-            (
-                False,
-                "The Voice settings were saved, but the default was not activated. Retry.",
-            )
-        )
-
-    def receive_stts_settings_save_result(self, result: object) -> None:
-        self._receive_save_result(result)
-
-    def receive_stts_settings_runtime_result(self, result: object) -> None:
-        self._receive_save_result(result)
 
     def busy_label(self) -> str:
         """What a slow Next from Voice is doing: the save can take 30 s."""

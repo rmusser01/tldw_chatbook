@@ -139,8 +139,12 @@ class _RealVoiceSaveApp(App):
 
 
 def _service() -> TTSService:
+    # kokoro too: a re-run over another provider's default must validate it.
     registry = TTSAdapterRegistry(
-        specs=(provider_spec("openai", FakeAdapterFactory("openai"), {}),),
+        specs=tuple(
+            provider_spec(provider, FakeAdapterFactory(provider), {})
+            for provider in ("openai", "kokoro")
+        ),
         aliases={},
     )
     return TTSService(
@@ -249,42 +253,232 @@ async def test_rerun_prefill_names_the_saved_voice(monkeypatch) -> None:
         assert step.query_one("#setup-voice-voice", Input).value == "shimmer"
 
 
+def _summary_voice(raw: bytes):
+    rows = {
+        row.label: row
+        for row in wizard_state.build_summary_rows(
+            tomllib.loads(raw.decode()), {}, rag_deps_installed=False
+        )
+    }
+    return rows["Voice"]
+
+
+def _default_box(step) -> tuple[bool, bool, str]:
+    box = step.query_one("#setup-voice-default", Checkbox)
+    help_line = str(step.query_one("#setup-voice-default-help", Static).render())
+    return box.value, box.disabled, help_line
+
+
 @pytest.mark.asyncio
-async def test_unticked_pick_writes_the_presets_axes_but_no_default_selection(
-    monkeypatch,
-) -> None:
-    """A PocketTTS URL is never paired with tts-1-hd / shimmer / mp3, and no
-    default_provider is written that nobody chose."""
+async def test_a_fresh_pick_is_the_reply_voice_and_the_box_says_so() -> None:
+    """Review round 1 (F1 / G8-V1-F1): with no default_provider saved, the
+    runtime reads replies with the OpenAI slot. An unticked box used to save
+    the voice anyway while the box, the Summary and the User Guide all said
+    it was "not the default voice"."""
+    shown: list[tuple[bool, bool, str]] = []
 
     async def pick_pocket(step, pilot):
         step._select_preset_button("setup-voice-preset-pocket")
         await pilot.pause()
-        assert step.query_one("#setup-voice-default", Checkbox).value is False
+        shown.append(_default_box(step))
 
     step, app, outcome, before, after = await _commit_through_real_writer(
         None, None, act=pick_pocket
     )
 
+    [(ticked, locked, help_line)] = shown
+    assert (ticked, locked) == (True, True)
+    assert help_line.startswith(
+        "Replies will use this voice — no other voice is set up."
+    )
     assert outcome == (True, "")
-    app_tts, tts_settings = _voice_tables(after)
+    app_tts, _tts_settings = _voice_tables(after)
     assert app_tts["OPENAI_BASE_URL"] == voice_state.POCKET_TTS_ENDPOINT
-    assert app_tts["OPENAI_AUTH_MODE"] == "none"
-    assert (app_tts["default_model"], app_tts["default_voice"]) == (
-        "pocket-tts",
-        "alba",
+    assert app_tts["default_provider"] == "openai"
+    assert (
+        app_tts["default_model"],
+        app_tts["default_voice"],
+        app_tts["default_format"],
+    ) == ("pocket-tts", "alba", "wav")
+    voice_row = _summary_voice(after)
+    assert (voice_row.state, voice_row.detail) == (
+        wizard_state.ROW_CONFIGURED,
+        "PocketTTS · pocket-tts · alba",
     )
-    assert app_tts["default_format"] == "wav"
-    assert "default_provider" not in app_tts
-    assert "default_tts_provider" not in (tts_settings or {})
-    rows = {
-        row.label: row
-        for row in wizard_state.build_summary_rows(
-            tomllib.loads(after.decode()), {}, rag_deps_installed=False
+
+
+@pytest.mark.asyncio
+async def test_a_rerun_pick_over_the_openai_reply_voice_says_it_replaces_it(
+    monkeypatch,
+) -> None:
+    """G8-V1-F1 (b): an unticked Custom save replaced a working OpenAI reply
+    voice while the Summary called it the default anyway."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-sent")
+    shown: list[tuple[bool, bool, str]] = []
+
+    async def pick_custom_pocket(step, pilot):
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause()
+        step.query_one("#setup-voice-endpoint", Input).value = (
+            "http://127.0.0.1:8766/tts"
         )
-    }
-    assert rows["Voice"].detail == (
-        "PocketTTS · pocket-tts · alba (saved, not the default voice)"
+        await pilot.pause()
+        shown.append(_default_box(step))
+
+    step, app, outcome, before, after = await _commit_through_real_writer(
+        _WORKING_OPENAI_APP_TTS, _WORKING_OPENAI_TTS_SETTINGS, act=pick_custom_pocket
     )
+
+    [(ticked, locked, help_line)] = shown
+    assert (ticked, locked) == (True, True)
+    assert help_line.startswith(
+        "This becomes the voice replies use — it replaces OpenAI · tts-1-hd · shimmer."
+    )
+    assert outcome == (True, "")
+    app_tts, _tts_settings = _voice_tables(after)
+    assert app_tts["OPENAI_BASE_URL"] == "http://127.0.0.1:8766/tts"
+    assert _summary_voice(after).detail == (
+        "Custom endpoint 127.0.0.1:8766 · pocket-tts · alba"
+    )
+
+
+@pytest.mark.asyncio
+async def test_another_default_provider_keeps_the_box_free_and_its_defaults() -> None:
+    """Review round 2 (F11): with kokoro reading replies, an unticked
+    PocketTTS save writes the endpoint only; kokoro's defaults stay."""
+    kokoro = {
+        "default_provider": "kokoro",
+        "default_model": "kokoro",
+        "default_voice": "af_bella",
+        "default_format": "wav",
+        "default_speed": 1.0,
+    }
+    shown: list[tuple[bool, bool, str]] = []
+
+    async def pick_pocket(step, pilot):
+        assert step._preset == voice_state.VOICE_PRESET_NONE
+        assert str(
+            step.query_one("#setup-voice-service-status", Static).render()
+        ).startswith("Current voice: kokoro")
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause()
+        shown.append(_default_box(step))
+
+    step, app, outcome, before, after = await _commit_through_real_writer(
+        kokoro, None, act=pick_pocket
+    )
+
+    [(ticked, locked, help_line)] = shown
+    assert (ticked, locked) == (False, False)
+    assert help_line.startswith("Saved for later; replies keep using kokoro.")
+    assert outcome == (True, "")
+    app_tts, _tts_settings = _voice_tables(after)
+    assert app_tts["OPENAI_BASE_URL"] == voice_state.POCKET_TTS_ENDPOINT
+    assert {key: app_tts[key] for key in kokoro} == kokoro
+    assert _summary_voice(after).detail == (
+        "kokoro (default voice); PocketTTS also saved"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_old_wizards_pocket_tts_write_is_not_preselected_or_rewritten() -> (
+    None
+):
+    """Review round 1 (F2): every profile that passed Voice untouched under
+    the old wizard holds this table. It must not prefill as a working Custom
+    voice, and an untouched Next still writes nothing."""
+    legacy = {
+        "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
+        "OPENAI_AUTH_MODE": "none",
+        "default_provider": "openai",
+        "default_model": "tts-1-hd",
+        "default_voice": "shimmer",
+        "default_format": "mp3",
+    }
+    lines: list[str] = []
+
+    async def read_line(step, pilot):
+        lines.append(
+            str(step.query_one("#setup-voice-service-status", Static).render())
+        )
+
+    step, app, outcome, before, after = await _commit_through_real_writer(
+        legacy, None, act=read_line
+    )
+
+    assert step._preset == voice_state.VOICE_PRESET_NONE
+    assert "127.0.0.1:8765" in lines[0] and "can't speak" in lines[0]
+    assert outcome == (True, "")
+    assert app.saves == []
+    assert after == before
+    assert _summary_voice(after).state == wizard_state.ROW_ATTENTION
+
+
+@pytest.mark.asyncio
+async def test_no_voice_for_now_over_a_saved_voice_says_it_is_kept(
+    monkeypatch,
+) -> None:
+    """Review round 1 (F6 / G8-V1-F2): the line said "Nothing is saved" while
+    Next kept the saved voice and the Summary showed it with a tick."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-sent")
+    lines: list[str] = []
+
+    async def choose_no_voice(step, pilot):
+        step._select_preset_button("setup-voice-preset-none")
+        await pilot.pause()
+        lines.append(
+            str(step.query_one("#setup-voice-service-status", Static).render())
+        )
+
+    step, app, outcome, before, after = await _commit_through_real_writer(
+        _WORKING_OPENAI_APP_TTS, _WORKING_OPENAI_TTS_SETTINGS, act=choose_no_voice
+    )
+
+    assert lines[0].startswith(
+        "Keeps your current voice (OpenAI · tts-1-hd · shimmer)"
+    )
+    assert "Nothing is saved" not in lines[0]
+    assert app.saves == []
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_a_voice_saved_earlier_this_run_is_the_one_no_voice_keeps() -> None:
+    """G8-V1-F2 (same run): save a voice, go Back, choose "No voice for now":
+    the line names the voice just saved, and Next with it unchanged writes
+    nothing more."""
+    _replace_voice_tables(None, None)
+    service = _service()
+    step = _step(dict(config_module.settings))
+    app = _RealVoiceSaveApp(step, service)
+    app.app_config = dict(config_module.settings)
+    step.wizard.app_instance = app
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            step._select_preset_button("setup-voice-preset-pocket")
+            await pilot.pause()
+            assert await step.commit() == (True, "")
+            await pilot.pause()
+            assert len(app.saves) == 1
+
+            step._select_preset_button("setup-voice-preset-none")
+            await pilot.pause()
+            line = str(
+                step.query_one("#setup-voice-service-status", Static).render()
+            )
+            assert line.startswith(
+                "Keeps your current voice (PocketTTS · pocket-tts · alba)"
+            )
+
+            step._select_preset_button("setup-voice-preset-pocket")
+            await pilot.pause()
+            assert await step.commit() == (True, "")
+            await pilot.pause()
+            assert len(app.saves) == 1
+    finally:
+        await service.close()
+        await service.wait_closed()
 
 
 @pytest.mark.asyncio
@@ -641,7 +835,9 @@ async def test_voice_copy_controls_and_auto_tick(monkeypatch) -> None:
         return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
 
     monkeypatch.setattr(voice_state, "run_voice_sample", sample)
-    step = _step()
+    # Another provider reads replies, so the box is the user's to tick (with
+    # nothing else saved it is locked on: test_a_fresh_pick_is_the_reply_...).
+    step = _step(_raw({"default_provider": "kokoro"}))
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         step._select_preset_button("setup-voice-preset-pocket")

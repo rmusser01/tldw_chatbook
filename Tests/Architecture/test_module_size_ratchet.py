@@ -184,7 +184,10 @@ _BUDGETS: dict[str, int] = {
     # first_run_voice_omnivoice.py and its Advanced fields to
     # first_run_voice_pickers.compose_voice_advanced while the step gained
     # the SF3 fixes, whose logic lives in first_run_voice_{prefill,status}.py.
-    "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1014,
+    # Review round 1 -> 960: the OpenAI key lookup moved to
+    # first_run_voice_credentials.py, and sample playback and the save-result
+    # plumbing (shared by both halves) to OmniVoiceStepBase.
+    "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 960,
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,

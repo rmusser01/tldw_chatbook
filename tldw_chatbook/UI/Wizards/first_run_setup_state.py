@@ -1778,22 +1778,31 @@ def _voice_summary_row(app_config: Mapping[str, object]) -> "SummaryRow":
     Only the raw ``[app_tts]`` table counts: the loaded settings back-fill
     ``default_provider = "openai"`` when nothing was saved, which must not
     read as the user's choice. TASK-34100.8 (voice-speech-06): the row names
-    service, model and voice -- "OpenAI · tts-1-hd · shimmer".
+    service, model and voice -- "OpenAI · tts-1-hd · shimmer". Review round 1:
+    it names the voice replies use (an OpenAI-slot endpoint with no
+    default_provider IS that voice), names an endpoint saved beside another
+    provider's default as extra, and gives the old wizard's unspeakable
+    PocketTTS write no tick.
     """
     from tldw_chatbook.UI.Wizards import first_run_voice_prefill as voice_prefill
-    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
 
     saved = voice_prefill.saved_voice_from_config(_section(app_config, "app_tts"))
     if saved is None:
         return SummaryRow("Voice", ROW_DEFAULT, "not set up (optional)")
+    if saved.legacy:
+        return SummaryRow(
+            "Voice", ROW_ATTENTION, voice_prefill.legacy_summary_detail()
+        )
     label = voice_prefill.voice_label(saved)
-    if saved.preset == voice_state.VOICE_PRESET_NONE:
-        return SummaryRow("Voice", ROW_CONFIGURED, f"{label} (default voice)")
-    if saved.preset == voice_state.VOICE_PRESET_OMNIVOICE or saved.draft.use_as_default:
-        return SummaryRow("Voice", ROW_CONFIGURED, label)
-    return SummaryRow(
-        "Voice", ROW_CONFIGURED, f"{label} (saved, not the default voice)"
-    )
+    if saved.other_provider:
+        extra = (
+            f"; {voice_prefill.service_name(saved.slot_preset, saved.draft.endpoint)}"
+            " also saved"
+            if saved.slot_preset
+            else ""
+        )
+        return SummaryRow("Voice", ROW_CONFIGURED, f"{label} (default voice){extra}")
+    return SummaryRow("Voice", ROW_CONFIGURED, label)
 
 
 def build_summary_rows(

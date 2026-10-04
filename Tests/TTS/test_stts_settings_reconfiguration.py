@@ -3394,16 +3394,17 @@ async def test_first_run_voice_save_reports_to_the_wizard_without_a_toast(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("include_voice_axes", (False, True))
 async def test_first_run_voice_save_without_default_writes_no_default_selection(
-    monkeypatch: pytest.MonkeyPatch, include_voice_axes: bool
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """TASK-34100.8 (voice-speech-01): "Use as default" unticked.
 
     The handler used to snapshot the current effective settings and write them
     back as the saved defaults, so an unticked Voice save wrote
     ``default_provider = "openai"`` with tts-1-hd / shimmer / mp3 next to a
-    PocketTTS URL, and the Summary then claimed "(default voice)".
+    PocketTTS URL, and the Summary then claimed "(default voice)". The step
+    offers an unticked save only while another provider reads replies (review
+    round 1, F1), so the shared default axes stay that provider's.
     """
 
     from tldw_chatbook.UI.Wizards.first_run_voice_step_state import (
@@ -3443,7 +3444,6 @@ async def test_first_run_voice_save_without_default_writes_no_default_selection(
                 speed=1.0,
                 sample_text=DEFAULT_SAMPLE_TEXT,
             ),
-            include_voice_axes=include_voice_axes,
         )
     )
 
@@ -3456,11 +3456,4 @@ async def test_first_run_voice_save_without_default_writes_no_default_selection(
         "tts_settings"
     ]
     assert deletes == {}
-    if include_voice_axes:
-        assert (
-            app_tts["default_model"],
-            app_tts["default_voice"],
-            app_tts["default_format"],
-        ) == (POCKET_TTS_MODEL, POCKET_TTS_VOICE, "wav")
-    else:
-        assert not {"default_model", "default_voice", "default_format"} & set(app_tts)
+    assert not {"default_model", "default_voice", "default_format"} & set(app_tts)

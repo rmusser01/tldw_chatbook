@@ -14,6 +14,7 @@ import socket
 from urllib.parse import urlsplit
 
 from tldw_chatbook.TTS.pocket_tts_native import is_pocket_tts_native_url
+from tldw_chatbook.UI.Wizards import first_run_voice_prefill as prefill
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as vs
 
 #: One connect, well under a second (solution review: "a single connect with
@@ -126,6 +127,60 @@ def service_status_copy(
     )
 
 
+def no_voice_copy(saved: prefill.SavedVoice | None) -> str:
+    """The line under the radio while "No voice for now" is chosen.
+
+    Review round 1 (F6 / G8-V1-F2): with a voice already saved -- on a re-run,
+    or earlier in this run before going Back -- "No voice for now" keeps it,
+    and the line used to say "Nothing is saved" anyway.
+
+    Args:
+        saved: The voice saved now (None when nothing is).
+    """
+    if saved is None:
+        return NO_VOICE_COPY
+    if saved.other_provider or saved.legacy:
+        return prefill.current_voice_copy(saved)
+    return (
+        f"Keeps your current voice ({prefill.voice_label(saved)}); Next changes "
+        "nothing. Replies are read aloud only while Speak replies is on in Console."
+    )
+
+
+def default_help_copy(
+    preset: str,
+    *,
+    locked: bool,
+    ticked: bool,
+    reply_voice: str = "",
+    replaces: str = "",
+) -> str:
+    """The help line under "Use this voice when Chatbook reads replies aloud".
+
+    Review round 1 (F1 / G8-V1-F1): it says which voice replies will use.
+
+    Args:
+        preset: The selected Service radio.
+        locked: The OpenAI slot reads replies, so the box is forced on.
+        ticked: The box's value.
+        reply_voice: The provider reading replies when the box is free.
+        replaces: The saved voice this pick replaces, if it differs.
+    """
+    if preset not in prefill.OPENAI_SLOT_PRESETS:
+        return DEFAULT_HELP_COPY
+    if locked:
+        lead = (
+            f"This becomes the voice replies use — it replaces {replaces}."
+            if replaces
+            else "Replies will use this voice — no other voice is set up."
+        )
+    elif ticked:
+        lead = f"Replies will use this voice instead of {reply_voice}."
+    else:
+        lead = f"Saved for later; replies keep using {reply_voice}."
+    return f"{lead} {DEFAULT_HELP_COPY}"
+
+
 def voice_test_failure_copy(
     error: BaseException, *, preset: str, endpoint: str = ""
 ) -> str:
@@ -193,6 +248,8 @@ __all__ = [
     "PLAYED_COPY",
     "PROBE_TIMEOUT_SECONDS",
     "TESTING_COPY",
+    "default_help_copy",
+    "no_voice_copy",
     "probe_endpoint_reachable",
     "service_status_copy",
     "voice_test_failure_copy",
