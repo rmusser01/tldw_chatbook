@@ -5087,12 +5087,15 @@ def test_stream_signal_privacy_has_one_private_event_and_a_public_usage_payload(
     assert signals.usage_payload is None
     assert signals.completed_usage_payloads == []
     assert signals.usage_payloads() == []
-    preparation_field = next(item for item in signal_fields if item.name == "_trace_preparation")
+    preparation_field = next(
+        item for item in signal_fields if item.name == "_trace_preparation"
+    )
     assert preparation_field.repr is False
     assert preparation_field.init is False
     private_canary = "PRIVATE_ACCEPTED_PREPARATION_REQUEST"
     signals._trace_preparation = gateway_module._TraceAcceptedPreparation(
-        issuer=object(), owner={"active_request": private_canary},
+        issuer=object(),
+        owner={"active_request": private_canary},
         boundary={"frozen_request": private_canary},
     )
     assert private_canary not in repr(signals._trace_preparation)
@@ -11948,7 +11951,9 @@ async def test_custom_endpoint_stored_key_flows_to_resolution() -> None:
 
 
 @pytest.mark.asyncio
-async def test_custom_endpoint_unresolved_declared_key_blocks_with_missing_key_copy() -> None:
+async def test_custom_endpoint_unresolved_declared_key_blocks_with_missing_key_copy() -> (
+    None
+):
     # `environ={}` guarantees PAID_KEY_UNSET is absent even when the host
     # environment happens to define it.
     gateway = ConsoleProviderGateway(
@@ -12019,7 +12024,9 @@ async def test_custom_endpoint_llama_family_declared_key_flows_to_resolution() -
 
 
 @pytest.mark.asyncio
-async def test_custom_endpoint_openai_compatible_entry_url_outranks_stale_session_url() -> None:
+async def test_custom_endpoint_openai_compatible_entry_url_outranks_stale_session_url() -> (
+    None
+):
     """An edited openai_compatible entry re-resolves on send: the session's
     stale pinned URL is not used."""
     gateway = ConsoleProviderGateway(
@@ -12049,9 +12056,12 @@ async def test_custom_endpoint_openai_compatible_entry_url_outranks_stale_sessio
 
 
 @pytest.mark.asyncio
-async def test_custom_endpoint_llama_family_entry_url_outranks_stale_session_url() -> None:
+async def test_custom_endpoint_llama_family_entry_url_outranks_stale_session_url() -> (
+    None
+):
     """An edited llama_cpp entry re-resolves on send: the session's stale
     pinned URL is not used."""
+
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"data": [{"id": "server-model"}]})
 
@@ -12174,7 +12184,9 @@ async def test_custom_endpoint_resolution_carries_raw_selected_provider() -> Non
 
 
 @pytest.mark.asyncio
-async def test_custom_endpoint_llama_family_resolution_carries_raw_selected_provider() -> None:
+async def test_custom_endpoint_llama_family_resolution_carries_raw_selected_provider() -> (
+    None
+):
     """The llama-family path flattens provider/execution_key to the family
     but still keeps the raw slug in selected_provider."""
 
@@ -12244,21 +12256,37 @@ async def test_plain_provider_resolution_carries_no_raw_selected_provider() -> N
 @pytest.mark.asyncio
 @pytest.mark.parametrize("family", ["llama_cpp", "openai_compatible"])
 @pytest.mark.parametrize("pinned", [False, True])
-async def test_routed_snapshot_url_pin_preserves_ordinary_registry_edits(family, pinned):
+async def test_routed_snapshot_url_pin_preserves_ordinary_registry_edits(
+    family, pinned
+):
     requests = []
+
     def handler(request):
         requests.append(str(request.url))
         return httpx.Response(200, json={"data": [{"id": "model"}]})
-    config = {"custom_endpoints": {"gpu": {
-        "display_name": "GPU", "family": family,
-        "base_url": "http://new-server:9090", "models": ["model"],
-    }}}
+
+    config = {
+        "custom_endpoints": {
+            "gpu": {
+                "display_name": "GPU",
+                "family": family,
+                "base_url": "http://new-server:9090",
+                "models": ["model"],
+            }
+        }
+    }
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        gateway = ConsoleProviderGateway(http_client=client, config_provider=lambda: config, environ={})
-        resolved = await gateway.resolve_for_send(ConsoleProviderSelection(
-            provider="custom-ep:gpu", explicit_model="model",
-            base_url="http://original-server:8080", base_url_is_pinned=pinned,
-        ))
+        gateway = ConsoleProviderGateway(
+            http_client=client, config_provider=lambda: config, environ={}
+        )
+        resolved = await gateway.resolve_for_send(
+            ConsoleProviderSelection(
+                provider="custom-ep:gpu",
+                explicit_model="model",
+                base_url="http://original-server:8080",
+                base_url_is_pinned=pinned,
+            )
+        )
     assert resolved.ready
     expected = "http://original-server:8080" if pinned else "http://new-server:9090"
     suffix = "/v1/chat/completions" if family == "openai_compatible" else ""
@@ -12273,8 +12301,8 @@ async def test_stream_signal_delegates_retained_provider_work_without_owning_can
     seen = []
     signals = gateway_module.ConsoleProviderStreamSignals()
     assert not signals.register_provider_work(future, close)
-    signals.provider_work_callback = (
-        lambda completion, closer: seen.append((completion, closer)) or True
+    signals.provider_work_callback = lambda completion, closer: (
+        seen.append((completion, closer)) or True
     )
     assert signals.register_provider_work(future, close)
     assert seen == [(future, close)]
