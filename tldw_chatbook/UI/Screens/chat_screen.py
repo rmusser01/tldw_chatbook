@@ -13894,6 +13894,21 @@ class ChatScreen(BaseAppScreen):
         except (NoMatches, QueryError):
             logger.debug("No Console workspace context tray available for sync")
 
+    async def _await_console_title_views(self) -> bool:
+        """Prove both current rail projections settled before rename feedback.
+
+        Returns:
+            False if a title-bearing tray is no longer mounted.
+        """
+        for selector in ("#console-workspace-context", "#console-workspaces-context"):
+            try:
+                tray = self.query_one(selector, ConsoleWorkspaceContextTray)
+            except (NoMatches, QueryError):
+                return False
+            if not await tray.wait_for_publication():
+                return False
+        return True
+
     async def _sync_console_legacy_workspace_context_aliases(self) -> None:
         """Expose transitional legacy new-conversation control while grouped browser is active."""
         try:

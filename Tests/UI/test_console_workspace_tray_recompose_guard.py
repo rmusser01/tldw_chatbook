@@ -47,6 +47,8 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceStatusPair,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 APP_SIZE = (160, 48)
 
 TRAY_SELECTOR = "#console-workspace-context"

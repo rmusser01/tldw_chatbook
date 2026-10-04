@@ -33,6 +33,8 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceContextTray,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 WORKSPACES_TRAY_SELECTOR = "#console-workspaces-context"
 
 

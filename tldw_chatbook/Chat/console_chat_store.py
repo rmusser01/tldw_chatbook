@@ -10,7 +10,7 @@ import threading
 import time
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager, suppress
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from collections.abc import Iterator
@@ -1812,6 +1812,7 @@ class ConsoleChatStore:
         self._progress_identity_lock = threading.RLock()
         self._progress_message_store: MessageStore | None = None
         self._sessions: dict[str, ConsoleChatSession] = {}
+        self._conversation_title_transitions: set[str] = set()
         self._ephemeral_promotion_lock = threading.RLock()
         self._ephemeral_promotion_reservations: dict[
             str, _ConsoleEphemeralPromotionReservation
@@ -2977,6 +2978,8 @@ class ConsoleChatStore:
             raise TypeError(
                 "initial_project_instruction_state must be ProjectInstructionControlState"
             )
+        if persisted_conversation_id in self._conversation_title_transitions:
+            raise RuntimeError("A conversation title change is still publishing.")
         # A restored session comes FROM durable storage, so it is by
         # definition not temporary. Refuse rather than silently produce a
         # session that is both temporary and persisted -- the one state the
@@ -4668,6 +4671,77 @@ class ConsoleChatStore:
                         "in-memory session keeps the applied value."
                     )
         return session, persisted
+
+    def publish_conversation_title(self, conversation_id: str, title: str) -> None:
+        """Publish an already committed title to all exact local runtime aliases.
+
+        Args:
+            conversation_id: Persisted identity in this store's Data Profile.
+            title: Durable nonblank title; this method performs no database write.
+
+        Raises:
+            ValueError: If the title is blank.
+            RuntimeError: If a matching runtime's promotion blocks mutation.
+        """
+        with self.conversation_title_transition(conversation_id) as publish:
+            publish(title)
+
+    @contextmanager
+    def conversation_title_transition(
+        self,
+        conversation_id: str,
+    ) -> Iterator[Callable[[str], None]]:
+        """Reserve exact aliases before the caller's durable title write.
+
+        The caller retains persistence ownership and must publish only after
+        commit. Existing promotion admissions and fork transitions cover the
+        whole durable/live gap. A fresh hydrate of this exact conversation
+        is refused until the transition finishes; unrelated chats remain free.
+
+        Args:
+            conversation_id: Exact persisted identity in this store's profile.
+
+        Yields:
+            Callback publishing the committed nonblank title to retained aliases.
+
+        Raises:
+            RuntimeError: If mutation admission or an existing rename blocks it.
+        """
+        if conversation_id in self._conversation_title_transitions:
+            raise RuntimeError("A conversation title change is still publishing.")
+        matches = tuple(
+            session
+            for session in self.sessions()
+            if session.persisted_conversation_id == conversation_id
+        )
+        with ExitStack() as transitions:
+            for session in matches:
+                transitions.enter_context(self._fork_source_transition(session.id))
+            self._conversation_title_transitions.add(conversation_id)
+            live = True
+            try:
+
+                def publish(title: str) -> None:
+                    if not live:
+                        raise RuntimeError("Conversation title publication expired.")
+                    normalized = title.strip()
+                    if not normalized:
+                        raise ValueError("Console chat session title cannot be blank.")
+                    for session in matches:
+                        if (
+                            self._sessions.get(session.id) is not session
+                            or session.persisted_conversation_id != conversation_id
+                        ):
+                            continue
+                        if session.title != normalized:
+                            session.has_user_work = True
+                            session.canonical_settings_baseline = None
+                        session.title = normalized
+
+                yield publish
+            finally:
+                live = False
+                self._conversation_title_transitions.discard(conversation_id)
 
     def admit_library_activity(
         self,
@@ -8204,6 +8278,8 @@ class ConsoleChatStore:
         session = self._session_or_raise(session_id)
         with self._fork_source_transition(session_id):
             if session.persisted_conversation_id != conversation_id:
+                if conversation_id in self._conversation_title_transitions:
+                    raise RuntimeError("A conversation title change is still publishing.")
                 session.conversation_binding_revision = (
                     self._advance_console_settings_binding_revision(
                         session_id,

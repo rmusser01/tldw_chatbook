@@ -898,6 +898,7 @@ class ConsoleSessionController:
         painted_session_accessor: Callable[[], str | None] = lambda: None,
         refresh_manual_read_rows: Callable[[], None] = lambda: None,
         on_draft_session_changed: Callable[[], None] | None = None,
+        rename_saved_conversation: Callable[[str, str], None] | None = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -961,6 +962,7 @@ class ConsoleSessionController:
                 `self.app_instance`. Snapshotted as a plain attribute: it
                 does not change identity over the controller's life, and
                 the pre-extraction methods never called it, only read it.
+            rename_saved_conversation: Late-bound durable saved-title rename owner.
             chat_store_accessor: `ChatScreen._ensure_console_chat_store`
                 (lazily creates the store) -- used where the original body
                 called it as a method.
@@ -1102,6 +1104,7 @@ class ConsoleSessionController:
         self._switcher_authority_accessor = switcher_authority_accessor
         self._console_runtime_accessor = console_runtime_accessor
         self._set_active_workspace_for_session_fn = set_active_workspace_for_session
+        self._rename_saved_conversation_fn = rename_saved_conversation
         self._resume_workspace_conversation_fn = resume_workspace_conversation
         self._workspace_initial_session_title_fn = workspace_initial_session_title
         self._merge_workspace_rows_fn = merge_workspace_rows
@@ -2461,8 +2464,30 @@ class ConsoleSessionController:
             )
             return
 
+        db = getattr(self.app_instance, "chachanotes_db", None)
+        conversation_id = session.persisted_conversation_id
+
         def _apply_rename(result: str | None) -> None:
             if result is None:
+                return
+            if (
+                getattr(self.app_instance, "chachanotes_db", None) is not db
+                or self._console_chat_store is not store
+                or not any(candidate is session for candidate in store.sessions())
+                or session.persisted_conversation_id != conversation_id
+            ):
+                self.app_instance.notify(
+                    "The profile or chat changed. Open Rename again.",
+                    severity="warning",
+                )
+                return
+            if conversation_id is not None:
+                if self._rename_saved_conversation_fn is None:
+                    self.app_instance.notify(
+                        "Conversation rename is unavailable.", severity="error"
+                    )
+                    return
+                self._rename_saved_conversation_fn(conversation_id, result)
                 return
             try:
                 _renamed, persisted = store.rename_session(session_id, result)
