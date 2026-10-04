@@ -135,10 +135,13 @@ class Observation:
 
         def start(_cls, *args, **kwargs):
             phase, started = self.phase, time.perf_counter()
+            caller = self.stack(sys._getframe(1))
             try:
                 return original_start(*args, **kwargs)
             finally:
-                self.record("HelperLease.start", phase, time.perf_counter() - started)
+                self.record(
+                    "HelperLease.start", phase, time.perf_counter() - started, caller
+                )
 
         monkeypatch.setattr(HelperLease, "start", classmethod(start))
         if os.name == "nt":
@@ -363,6 +366,36 @@ async def test_native_console_pause_probe(monkeypatch, tmp_path, request):
             assert result["trace_states"] == ["complete"] * 3
             assert result["response_links"] == 3
             assert result["dispatch_checkpoints"] == 0
+            # Isolate the CSS work sampled on all platforms: the real bar
+            # removes and re-adds its height class even when visibility did
+            # not change. Compare unchanged calls with an equality-guarded
+            # diagnostic control on the same mounted widget. No production
+            # implementation is changed, and all storage guards stay real.
+            from tldw_chatbook.Widgets.Console.console_control_bar import (
+                ConsoleControlBar,
+            )
+
+            bar = screen.query_one(ConsoleControlBar)
+            bar._set_recovery_height(False)
+
+            def layout_state():
+                return (
+                    bar.classes,
+                    bar.styles.height,
+                    bar.styles.min_height,
+                    bar.styles.max_height,
+                )
+
+            expected_layout = layout_state()
+            with observed.phase_scope("unchanged_layout"):
+                for _ in range(8):
+                    bar._set_recovery_height(False)
+            assert layout_state() == expected_layout
+            with observed.phase_scope("unchanged_layout_control"):
+                for _ in range(8):
+                    if layout_state() != expected_layout:
+                        bar._set_recovery_height(False)
+            assert layout_state() == expected_layout
             result["complete"] = True
             observed.phase = "shutdown"
     finally:
