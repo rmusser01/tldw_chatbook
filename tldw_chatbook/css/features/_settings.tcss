@@ -566,6 +566,20 @@ Button.settings-category-group-toggle:focus {
     color: $ds-text-muted;
 }
 
+/* TASK-33007.4: the Applies-to row names the open chat and the pair it will
+   use. It reads one row for a short chat title; a long title or model id
+   wraps to a second row rather than cutting off the pair, which is the
+   point of the row. */
+#settings-model-applies-row {
+    height: auto;
+}
+
+#settings-providers-models-card .settings-applies-to {
+    width: $ds-width-fill;
+    height: auto;
+    padding: $ds-space-0 $ds-space-1;
+}
+
 #settings-provider-api-key-clear,
 #settings-test-provider {
     width: auto;
@@ -1205,6 +1219,22 @@ Button.settings-category-group-toggle:focus {
     height: $ds-size-1;
     min-height: $ds-size-1;
     margin: $ds-space-0 $ds-space-1 $ds-space-0 $ds-space-0;
+}
+
+/* TASK-33007.4: the Inspector's "config key" disclosure costs one row closed
+   (spec §6): no global Collapsible frame, band or padding rows, and its rows
+   sit one cell in under the title. */
+.settings-config-key-disclosure {
+    min-height: $ds-size-0;
+    padding: $ds-space-0;
+    margin: $ds-space-0;
+    border: none;
+    background: transparent;
+}
+
+.settings-config-key-disclosure > Contents {
+    padding: $ds-space-0 $ds-space-0 $ds-space-0 $ds-space-1;
+    background: transparent;
 }
 
 /* TASK-33003.6: fill from components/_buttons.tcss, as above. */

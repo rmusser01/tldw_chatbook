@@ -64,6 +64,7 @@ from ..Screens.settings_screen import (
     ANTHROPIC_API_KEY_GUIDANCE_COPY,
     ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY,
     API_URL_PROVIDER_KEYS,
+    CONFIG_KEY_ROW_LABEL,
     INSTANT_APPLY_BEHAVIOR_COPY,
     MODEL_DISCOVERY_CAPABILITY_WARNING,
     MODEL_DISCOVERY_EMPTY_COPY,
@@ -76,11 +77,13 @@ from ..Screens.settings_screen import (
     QWENCLOUD_API_MODE_OPTIONS,
     QWENCLOUD_PROVIDER_TABLE_INVALID_COPY,
     ProviderEndpointURLValidator,
+    SettingsCategoryId,
     SettingsRegion,
     SettingsURLInput,
     _anthropic_auth_source_options,
     _anthropic_auth_sources,
     _fold_long_tokens,
+    _ProviderTestResult,
 )
 
 if TYPE_CHECKING:
@@ -113,6 +116,25 @@ PROVIDER_CONTROL_TOOLTIP = (
 #: Focus can pass to the list's parent on a click; the list closes only
 #: once focus has really left the control (ModelSearchPicker's delay).
 _BLUR_CLOSE_DELAY_SECONDS = 0.05
+#: TASK-33007.4: who a Default model choice reaches (spec mock (c)).
+APPLIES_TO_NEW_CHATS = "new chats (Ctrl+T, temporary, workspace)."
+NO_CONSOLE_CHAT_COPY = "No Console chat is open."
+#: A longer chat title is cut so the pair stays on the row's one line.
+_APPLIES_TO_TITLE_LIMIT = 24
+#: The Inspector's Applies to block: (id suffix, label, value).
+APPLIES_TO_INSPECTOR_ROWS = (
+    ("new", "New chats", "yes"),
+    ("unused", "Unused open chats", "follow the saved default"),
+    ("work", "Chats with work", "keep their own; switch there with Alt+M"),
+    ("switch", "Model defaults", "chats that switch to this model pick them up"),
+)
+UNSAVED_EDITS_NOTE = "Unsaved edits apply only after save (s)."
+#: The card's old reference rows, now in the Inspector's config-key disclosure.
+MANUAL_ENTRY_POLICY_COPY = (
+    "Choose a catalog provider (type in the open list to jump to one), "
+    "or use Manual / custom provider for other keys."
+)
+SAMPLING_ROUTE_COPY = "Sampling and transport defaults are routed to Console Behavior."
 
 
 class ProviderFilterInput(PickerSearchInput):
@@ -537,6 +559,203 @@ def refresh_key_rows(screen: SettingsScreen, provider: str) -> None:
     screen._set_static_text("#settings-provider-key-status", key_word)
     screen._set_static_text("#settings-provider-api-key-help", key_help)
     screen._set_static_text("#settings-provider-readiness", key_check_verdict(screen))
+
+
+def provider_model_pair(screen: SettingsScreen, provider: object, model: object) -> str:
+    """Name a provider·model pair the way every surface does (spec §4 rule 2).
+
+    Args:
+        screen: The Settings screen (it owns the provider display names).
+        provider: A provider id or alias.
+        model: A model id, or nothing.
+
+    Returns:
+        "<Provider> · <model>", with "no model" when none is set.
+    """
+    name = screen._provider_display_label(str(provider or "")) or "no provider"
+    return f"{name} · {str(model or '').strip() or 'no model'}"
+
+
+def applies_to_copy(screen: SettingsScreen, provider: str, model: str) -> str:
+    """Say who the Default model reaches: new chats, then the open Console chat.
+
+    D1 (ADR-095 as amended 2026-09-26): an unused open chat takes the new
+    default; a chat with messages or edits keeps its own pair. The test is
+    the Console's own (``follows_saved_defaults``), so the row never says
+    something the Console then does not do.
+
+    Args:
+        screen: The Settings screen; its app holds the live Console store.
+        provider: The provider the card shows.
+        model: The model the card shows.
+
+    Returns:
+        The Applies-to row's text.
+    """
+    from ...Chat.console_chat_store import ConsoleChatStore
+    from ..Console_Modules.session import follows_saved_defaults
+
+    store = screen._custom_endpoints_store()
+    session_id = getattr(store, "active_session_id", None)
+    session = (
+        next((s for s in store.sessions() if s.id == session_id), None)
+        if isinstance(store, ConsoleChatStore) and session_id is not None
+        else None
+    )
+    if session is None:
+        return f"{APPLIES_TO_NEW_CHATS} {NO_CONSOLE_CHAT_COPY}"
+    title = session.title.strip() or "untitled"
+    if len(title) > _APPLIES_TO_TITLE_LIMIT:
+        # The pair is the point of the row; a long title gives way to it.
+        title = title[: _APPLIES_TO_TITLE_LIMIT - 1].rstrip() + "…"
+    generation = getattr(screen.app_instance, "console_new_chat_default_generation", 0)
+    if follows_saved_defaults(
+        store, session, generation if type(generation) is int else 0
+    ):
+        pair = provider_model_pair(screen, provider, model)
+        return (
+            f"{APPLIES_TO_NEW_CHATS} Open chat “{title}” is unused and will use {pair}."
+        )
+    own = session.settings
+    pair = provider_model_pair(screen, own.provider, own.model)
+    return f"{APPLIES_TO_NEW_CHATS} Open chat “{title}” keeps {pair}."
+
+
+def next_new_chat_lines(screen: SettingsScreen) -> tuple[str, str]:
+    """What a new chat gets from saved config: its pair and core values.
+
+    Built by the function a Console Ctrl+T chat is built with, over the same
+    saved mapping, so the two cannot disagree (D3's core values).
+
+    Args:
+        screen: The Settings screen whose app holds the saved config.
+
+    Returns:
+        The pair line and the "T · max · stream" line.
+    """
+    from ...Chat.console_session_settings import blank_console_session_settings
+
+    settings = blank_console_session_settings(screen._app_config_mapping())
+    max_tokens = "not set" if settings.max_tokens is None else str(settings.max_tokens)
+    streaming = "On" if settings.streaming else "Off"
+    return (
+        provider_model_pair(screen, settings.provider, settings.model),
+        f"T {settings.temperature:g} · max {max_tokens} · stream {streaming}",
+    )
+
+
+def refresh_next_new_chat(screen: SettingsScreen) -> None:
+    """Re-say the Inspector's Next new chat block after a save.
+
+    Args:
+        screen: The Settings screen that owns the Inspector.
+    """
+    pair, values = next_new_chat_lines(screen)
+    screen._set_static_text("#settings-provider-next-chat-pair", pair)
+    screen._set_static_text("#settings-provider-next-chat-values", values)
+
+
+def compose_providers_models_inspector(screen: SettingsScreen) -> ComposeResult:
+    """Compose the Inspector's Providers & Models blocks (spec mock (c)).
+
+    Applies to, Next new chat will use, the focused field (help and range,
+    its config key in a closed disclosure with the card's old reference
+    facts), then Key.
+
+    Args:
+        screen: The Settings screen that owns the Inspector.
+
+    Yields:
+        The Inspector body's Providers & Models widgets.
+    """
+    yield Static("Applies to", classes="destination-section")
+    for suffix, label, value in APPLIES_TO_INSPECTOR_ROWS:
+        yield screen._detail_row(
+            label, value, identifier=f"settings-provider-applies-{suffix}"
+        )
+    yield Static("Next new chat will use", classes="destination-section")
+    pair, values = next_new_chat_lines(screen)
+    for suffix, text in (("pair", pair), ("values", values)):
+        yield Static(
+            text,
+            id=f"settings-provider-next-chat-{suffix}",
+            classes="settings-detail-row",
+            markup=False,
+        )
+    note = Static(
+        UNSAVED_EDITS_NOTE,
+        id="settings-provider-next-chat-note",
+        classes="settings-detail-row",
+    )
+    note.display = screen._category_has_unsaved_changes(
+        SettingsCategoryId.PROVIDERS_MODELS
+    )
+    yield note
+    yield Static("Focused field guide", classes="destination-section")
+    shown, config_key = screen._split_config_key_row(
+        screen._provider_field_guidance_rows()
+    )
+    for index, (label, value) in enumerate(shown):
+        yield screen._detail_row(
+            label, value, identifier=f"settings-provider-field-guide-{index}"
+        )
+    provider = str(screen._provider_display_setting_values()["provider"])
+    yield screen._config_key_disclosure(
+        screen._detail_row(
+            CONFIG_KEY_ROW_LABEL,
+            config_key,
+            identifier="settings-provider-config-key-saved-as",
+        ),
+        screen._detail_row(
+            "Endpoint key",
+            screen._provider_endpoint_row(provider).removeprefix("Endpoint key: "),
+            identifier="settings-provider-endpoint-key",
+        ),
+        Static(
+            screen._provider_catalog_summary(),
+            id="settings-provider-catalog",
+            classes="settings-detail-row",
+            markup=False,
+        ),
+        Static(
+            screen._provider_catalog_key_policy(),
+            id="settings-provider-catalog-policy",
+            classes="settings-detail-row",
+            markup=False,
+        ),
+        Static(
+            MANUAL_ENTRY_POLICY_COPY,
+            id="settings-provider-manual-entry-policy",
+            classes="settings-detail-row",
+            markup=False,
+        ),
+        Static(
+            SAMPLING_ROUTE_COPY,
+            id="settings-provider-sampling-route",
+            classes="settings-detail-row",
+            markup=False,
+        ),
+        identifier="settings-provider-config-key",
+    )
+    # TASK-33007.2 (AC#7): the Key block holds what 't' checks and the last
+    # check's labelled rows; the card's Key check row says only the verdict,
+    # so a result never moves the card's rows.
+    yield Static("Key", classes="destination-section")
+    yield Static(
+        screen._provider_readiness_label(),
+        id="settings-provider-inspector-readiness",
+        classes="settings-detail-row",
+    )
+    yield Static(
+        PROVIDER_TEST_GUIDANCE,
+        id="settings-test-provider-guidance",
+        classes="settings-detail-row",
+    )
+    yield _ProviderTestResult(
+        screen._adopt_shared_provider_test_evidence(),
+        id="settings-provider-test-result",
+        markup=False,
+    )
 
 
 def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
@@ -1031,6 +1250,15 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         model_adapter.display = False
         model_adapter.can_focus = False
         yield model_adapter
+        # TASK-33007.4 (AC#1): who this choice reaches, under the choice.
+        with Horizontal(id="settings-model-applies-row", classes="settings-input-row"):
+            yield Static("Applies to", classes="settings-input-label")
+            yield Static(
+                applies_to_copy(screen, provider, str(values["model"])),
+                id="settings-model-applies-to",
+                classes="settings-applies-to",
+                markup=False,
+            )
         yield Static("Context capacity", classes="destination-section")
         yield Static(
             screen._provider_model_context_window_status(
@@ -1470,34 +1698,9 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                     prompt="Inherit default",
                     compact=True,
                 )
-        yield Static(
-            screen._provider_catalog_summary(),
-            id="settings-provider-catalog",
-            classes="settings-status-row",
-        )
-        yield Static(
-            screen._provider_catalog_key_policy(),
-            id="settings-provider-catalog-policy",
-            classes="settings-status-row",
-        )
-        yield Static(
-            "Choose a catalog provider (type in the open list to jump to one), "
-            "or use Manual / custom provider for other keys.",
-            id="settings-provider-manual-entry-policy",
-            classes="settings-status-row",
-        )
-        yield Static(
-            "Sampling and transport defaults are routed to Console Behavior.",
-            id="settings-provider-sampling-route",
-            classes="settings-status-row",
-        )
-        yield screen._detail_row(
-            "Endpoint key",
-            screen._provider_endpoint_row(str(values["provider"])).removeprefix(
-                "Endpoint key: "
-            ),
-            identifier="settings-provider-endpoint-key",
-        )
+        # TASK-33007.4 (AC#5): the catalog, key-policy, manual-entry,
+        # sampling-route and endpoint-key rows moved to the Inspector's
+        # config-key disclosure (compose_providers_models_inspector).
 
 
 def compose_custom_endpoints_section(screen: SettingsScreen) -> ComposeResult:
