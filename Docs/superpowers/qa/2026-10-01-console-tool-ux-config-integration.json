@@ -29087,5 +29087,535 @@
     "runtime_evidence": "Reuse actual918-pass/1 inherited baseline-confirmed MRO-red receipts on b4bda22edc0e25666a107840a00b5dcde36dce19, base83c264f286. No runtime source changes, no relabelled test/native/lint replay. All5 Console patches replay raw-exact; whole-tree difference is incoming setup documentation/task metadata only.",
     "ADR_required": "no new ADR or implementation; incoming ADR217 and amendments read; existing selected Console ADRs apply",
     "limits": "No new native Auth/sign-in, credential, full Library, live-server or full-suite verification. Earlier runtime/native/failure receipts retain actual anchors; inherited broader MRO guard remains red and unchanged. Final exact-head clean/resolved Qodo and all5 relevant checks including BOTH UI shards, then fresh Done-metadata-head gates/review and normal protected merge remain required; auto off."
+  },
+  "oct04_library_reader_delete_refresh_dev_integration": {
+    "anchor_head": "5523d633901e44624e5766b2c851b53f408b9239",
+    "base": "f1f80847a410525ce1b00d27ea0e8be824a98422",
+    "previous_published_head": "27432b8a5d14d9f14fd5abe9e20532702b9fd878",
+    "source_pin_count": 344,
+    "source_map_reconstruction": {
+      "base_key": "oct04_shared_pane_latest_dev_integration",
+      "following_docs_key": "oct04_following_setup_docs_dev_rebase",
+      "base_pin_count": 334,
+      "overrides": {
+        "scripts/ui_pr_gate_census.txt": "544dded13bb723e699ad46a270b3fd5fe852f7f86ca3d2b3a41bc0d3f420be72",
+        "Docs/security/production-diagnostic-inventory.json": "41312165d0673ff456fa2134321843356733de8bedc574b6e852a1fb443a99b4"
+      },
+      "additions": {
+        "Tests/UI/test_library_conversation_reader.py": "f50371c75237521914637760609e647b44ac979897a0ebe9fb5ae6802efa90c7",
+        "tldw_chatbook/UI/Library_Modules/library_conversations_state.py": "28e6391816b31a31193f35d039c5c4ba4c681ab519080f4fca30c23108b4903b",
+        "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": "1e60dc2d869ee13a893f4f5490a9845104d85422439ec1dc4f0f4fdf56efefac",
+        "Tests/UI/test_library_reader_console_delete_refresh.py": "c63581e9a31f7fe05aa7959eeb94dd7ef31bf856bbd07466f8af44be0d89fdcf",
+        "tldw_chatbook/Library/library_conversation_reader_state.py": "3c17ca192b16c7ecabebb24c705212c563f6b16ac03d3c933c91b293e543109f",
+        "Tests/UI/test_library_conversation_reader_freshness.py": "4dbae068c3c395b2d191d42b612319542430a507df0fe86001d549e3d1c68e46",
+        "Tests/Architecture/test_library_modules_size_ratchet.py": "11c189a9403aadc52d906e5385fea7b0ccc22720f9e0c99a91801d3462c74e48",
+        "tldw_chatbook/Widgets/Library/library_conversation_reader.py": "37b089f3f4c6a878bb03306086961c143a776e1865639959aa8865093fe5ee20",
+        "Tests/UI/test_library_shell.py": "c14eced76c173da31ef9b2f43bbc4429dfd2005391c8388051fcc39d7025f7b8",
+        "tldw_chatbook/UI/Library_Modules/library_conversation_reader_freshness.py": "9148e43af24ca7d1028b67d8cd1a280d7355003a714e06bfd9c0b6590cdfcd3f"
+      },
+      "final_pin_count": 344
+    },
+    "rebase": {
+      "old_head": "1ce9af448198d2002522bb4e459ed6669ea2b067",
+      "previous_published_head": "27432b8a5d14d9f14fd5abe9e20532702b9fd878",
+      "old_base": "67fc5310471823262eb6ce344a539e699784bed8",
+      "new_head": "5523d633901e44624e5766b2c851b53f408b9239",
+      "new_base": "f1f80847a410525ce1b00d27ea0e8be824a98422",
+      "source_pin_count": 344,
+      "changed_source_pins": {
+        "scripts/ui_pr_gate_census.txt": {
+          "old": "ab40cd1561627fc8610b4556c87af7667ae44f68746babab037ec00bdf86bf39",
+          "new": "544dded13bb723e699ad46a270b3fd5fe852f7f86ca3d2b3a41bc0d3f420be72"
+        },
+        "Docs/security/production-diagnostic-inventory.json": {
+          "old": "be7ff2edf65581fceb44d725bbebd5a30b565bc203e6027e0313305d1de77e49",
+          "new": "41312165d0673ff456fa2134321843356733de8bedc574b6e852a1fb443a99b4"
+        }
+      },
+      "added_source_pins": {
+        "Tests/UI/test_library_conversation_reader.py": "f50371c75237521914637760609e647b44ac979897a0ebe9fb5ae6802efa90c7",
+        "tldw_chatbook/UI/Library_Modules/library_conversations_state.py": "28e6391816b31a31193f35d039c5c4ba4c681ab519080f4fca30c23108b4903b",
+        "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": "1e60dc2d869ee13a893f4f5490a9845104d85422439ec1dc4f0f4fdf56efefac",
+        "Tests/UI/test_library_reader_console_delete_refresh.py": "c63581e9a31f7fe05aa7959eeb94dd7ef31bf856bbd07466f8af44be0d89fdcf",
+        "tldw_chatbook/Library/library_conversation_reader_state.py": "3c17ca192b16c7ecabebb24c705212c563f6b16ac03d3c933c91b293e543109f",
+        "Tests/UI/test_library_conversation_reader_freshness.py": "4dbae068c3c395b2d191d42b612319542430a507df0fe86001d549e3d1c68e46",
+        "Tests/Architecture/test_library_modules_size_ratchet.py": "11c189a9403aadc52d906e5385fea7b0ccc22720f9e0c99a91801d3462c74e48",
+        "tldw_chatbook/Widgets/Library/library_conversation_reader.py": "37b089f3f4c6a878bb03306086961c143a776e1865639959aa8865093fe5ee20",
+        "Tests/UI/test_library_shell.py": "c14eced76c173da31ef9b2f43bbc4429dfd2005391c8388051fcc39d7025f7b8",
+        "tldw_chatbook/UI/Library_Modules/library_conversation_reader_freshness.py": "9148e43af24ca7d1028b67d8cd1a280d7355003a714e06bfd9c0b6590cdfcd3f"
+      },
+      "all_owned_runtime_native_sources_byte_exact": true,
+      "all_incoming_non_composed_paths_exact_dev": true,
+      "all_six_metadata_patches_raw_exact": true,
+      "diagnostic_inventory_regenerated_from_actual_combined_sources": true,
+      "UI_census": {
+        "entries": 130,
+        "floor": 128,
+        "all_incoming_and_two_Console_entries_retained": true,
+        "floor_unchanged": true
+      },
+      "workflow_ratchets_and_real_test_profile_contracts_exact_dev": true,
+      "prior_918pass_one_inherited_MROred_receipts_retained_original_anchor": true
+    },
+    "fresh_checks": {
+      "new": {
+        "label": "library-delete-new",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-new-njvdgt56/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-new-njvdgt56/pytest.xml",
+          "Tests/UI/test_library_conversation_reader_freshness.py",
+          "Tests/UI/test_library_reader_console_delete_refresh.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 67.91,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-new-njvdgt56",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 12,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "startup": {
+        "label": "library-delete-startup",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-startup-1c33lrrx/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-startup-1c33lrrx/pytest.xml",
+          "Tests/Performance/test_app_import_weight.py",
+          "Tests/Performance/test_ui_ready_module_census.py",
+          "Tests/Performance/test_boot_worker_census.py",
+          "Tests/Performance/test_textual_css_fastpath.py",
+          "Tests/Performance/test_boot_css_byte_budget.py",
+          "Tests/Performance/test_screen_preimport_payload_budget.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 97.62,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-startup-1c33lrrx",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 22,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "latency": {
+        "label": "library-delete-latency",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-latency-lj_5sgmo/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-latency-lj_5sgmo/pytest.xml",
+          "Tests/Performance/test_ui_latency_guardrails.py",
+          "Tests/Utils/test_ui_responsiveness_stall_persist.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 91.19,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-latency-lj_5sgmo",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 13,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "CI": {
+        "label": "library-delete-CI",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-CI-7d52mnb6/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-CI-7d52mnb6/pytest.xml",
+          "Tests/CI/test_ci_queue_pressure_contract.py",
+          "Tests/CI/test_derived_artifacts_workflow.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 3.36,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-CI-7d52mnb6",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 34,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "ratchet": {
+        "label": "library-delete-ratchet",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-ratchet-awllqr23/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-ratchet-awllqr23/pytest.xml",
+          "Tests/Architecture/test_library_modules_size_ratchet.py::test_every_controller_file_has_a_budget_row",
+          "Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py]",
+          "Tests/Architecture/test_library_modules_size_ratchet.py::test_budget_is_not_left_slack_after_a_move[tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py]"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 3.11,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-ratchet-awllqr23",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "two_reader_admission_failures": {
+        "label": "library-delete-reader",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-reader-keb17j6z/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-reader-keb17j6z/pytest.xml",
+          "Tests/UI/test_library_conversation_reader.py::test_reader_info_is_explicit_and_truthful",
+          "Tests/UI/test_library_conversation_reader.py::test_page_drift_confirms_exact_identity_before_declaring_deletion"
+        ],
+        "exit_code": 1,
+        "elapsed_seconds": 9.54,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-reader-keb17j6z",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [
+          {
+            "report": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-reader-keb17j6z/pytest.xml",
+            "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+            "text": "eturn _load_settings_guarded(\ntldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped\n    with operation(source, target=target):\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__\n    return next(self.gen)\n           ^^^^^^^^^^^^^^\ntldw_chatbook/Backup_Recovery/config_participants.py:352: in operation\n    with raw._scope(source, route, writing=True, selected_read=target) as active:\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__\n    return next(self.gen)\n           ^^^^^^^^^^^^^^\ntldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope\n    participant = _raw_participant(source)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^\ntldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant\n    state = _participant_state(participant)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nparticipant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10bd75d60>\n\n    def _participant_state(participant):\n        if type(participant) is not _RawParticipant or participant not in _participants:\n            raise bootstrap.RecoveryRequired(\"raw_participant_not_installed\")\n        state = _participants[participant]\n        source = state.source()\n        if source is None or type(source) is not state.source_type:\n            raise bootstrap.RecoveryRequired(\"raw_participant_not_installed\")\n        if _source_participants.get(source) is not participant:\n            raise bootstrap.RecoveryRequired(\"raw_participant_not_installed\")\n        if state.owner.startswith(\"mcp.\"):\n            bound = mcp_sources.binding(source)\n            if bound is None or not bound[2] or bound[1] != state.selected:\n                raise bootstrap.RecoveryRequired(\"raw_source_selection_changed\")\n        if state.owner == \"chat.dictionaries\":\n            binding = dictionary_files.binding(source)\n            if binding is None or binding[1] != state.selected:\n                raise bootstrap.RecoveryRequired(\"raw_source_selection_changed\")\n        if state.owner in {\"personas\", \"chat.dictionary_history\", \"chat.rag_context\"}:\n            binding = chat_sources.binding(source)\n            if binding is None or binding[1] != state.selected:\n                raise bootstrap.RecoveryRequired(\"raw_source_selection_changed\")\n        if state.owner == \"config\":\n            binding = config_files.binding(source)\n            if binding is None or binding[1] != state.selected:\n>               raise bootstrap.RecoveryRequired(\"raw_source_selection_changed\")\nE               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\n\ntldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired"
+          },
+          {
+            "report": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-reader-keb17j6z/pytest.xml",
+            "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+            "text": "eturn _load_settings_guarded(\ntldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped\n    with operation(source, target=target):\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__\n    return next(self.gen)\n           ^^^^^^^^^^^^^^\ntldw_chatbook/Backup_Recovery/config_participants.py:352: in operation\n    with raw._scope(source, route, writing=True, selected_read=target) as active:\n         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__\n    return next(self.gen)\n           ^^^^^^^^^^^^^^\ntldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope\n    participant = _raw_participant(source)\n                  ^^^^^^^^^^^^^^^^^^^^^^^^\ntldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant\n    state = _participant_state(participant)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nparticipant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10bd75d60>\n\n    def _participant_state(participant):\n        if type(participant) is not _RawParticipant or participant not in _participants:\n            raise bootstrap.RecoveryRequired(\"raw_participant_not_installed\")\n        state = _participants[participant]\n        source = state.source()\n        if source is None or type(source) is not state.source_type:\n            raise bootstrap.RecoveryRequired(\"raw_participant_not_installed\")\n        if _source_participants.get(source) is not participant:\n            raise bootstrap.RecoveryRequired(\"raw_participant_not_installed\")\n        if state.owner.startswith(\"mcp.\"):\n            bound = mcp_sources.binding(source)\n            if bound is None or not bound[2] or bound[1] != state.selected:\n                raise bootstrap.RecoveryRequired(\"raw_source_selection_changed\")\n        if state.owner == \"chat.dictionaries\":\n            binding = dictionary_files.binding(source)\n            if binding is None or binding[1] != state.selected:\n                raise bootstrap.RecoveryRequired(\"raw_source_selection_changed\")\n        if state.owner in {\"personas\", \"chat.dictionary_history\", \"chat.rag_context\"}:\n            binding = chat_sources.binding(source)\n            if binding is None or binding[1] != state.selected:\n                raise bootstrap.RecoveryRequired(\"raw_source_selection_changed\")\n        if state.owner == \"config\":\n            binding = config_files.binding(source)\n            if binding is None or binding[1] != state.selected:\n>               raise bootstrap.RecoveryRequired(\"raw_source_selection_changed\")\nE               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\n\ntldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired"
+          }
+        ],
+        "junit": {
+          "tests": 2,
+          "failures": 2,
+          "errors": 0,
+          "skipped": 0
+        }
+      }
+    },
+    "fresh_targeted_passed": 84,
+    "fresh_targeted_collected": 86,
+    "inherited_reader_admission_failures": {
+      "baseline": "f1f80847a410525ce1b00d27ea0e8be824a98422",
+      "snapshot": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-library-reader-dev-baseline-sgy4s79g",
+      "profile": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-library-reader-baseline-profile-ksl92art",
+      "exit_code": 1,
+      "elapsed_seconds": 14.03,
+      "tests": [
+        "Tests/UI/test_library_conversation_reader.py::test_reader_info_is_explicit_and_truthful",
+        "Tests/UI/test_library_conversation_reader.py::test_page_drift_confirms_exact_identity_before_declaring_deletion"
+      ],
+      "failures": [
+        {
+          "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+          "text": "ction_changed\")\n        if state.owner in {\"personas\", \"chat.dictionary_history\", \"chat.rag_context\"}:\n            binding = chat_sources.binding(source)\n            if binding is None or binding[1] != state.selected:\n                raise bootstrap.RecoveryRequired(\"raw_source_selection_changed\")\n        if state.owner == \"config\":\n            binding = config_files.binding(source)\n            if binding is None or binding[1] != state.selected:\n>               raise bootstrap.RecoveryRequired(\"raw_source_selection_changed\")\nE               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\n\n/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-library-reader-dev-baseline-sgy4s79g/tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired"
+        },
+        {
+          "message": "tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed",
+          "text": "ction_changed\")\n        if state.owner in {\"personas\", \"chat.dictionary_history\", \"chat.rag_context\"}:\n            binding = chat_sources.binding(source)\n            if binding is None or binding[1] != state.selected:\n                raise bootstrap.RecoveryRequired(\"raw_source_selection_changed\")\n        if state.owner == \"config\":\n            binding = config_files.binding(source)\n            if binding is None or binding[1] != state.selected:\n>               raise bootstrap.RecoveryRequired(\"raw_source_selection_changed\")\nE               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed\n\n/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-library-reader-dev-baseline-sgy4s79g/tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired"
+        }
+      ],
+      "same_two_admission_failures_as_combined_tree": true,
+      "baseline_full_tree_exact_git_archive": true,
+      "application_module_origin_verified_baseline_snapshot": true,
+      "ordinary_unchanged_conftest_and_profile_contracts": true,
+      "no_added_marker_or_getter_admission_guard_override": true,
+      "initial_guard_stop": "Baseline origin guard compared resolved /private/var file with unresolved /var root. Corrected both-path resolution; reused untouched complete git archive, no source/guard changes.",
+      "scope": "Exactly two modified reader cases, no full Library/full-suite/native replay; original admission refusal reproduced on unmodified dev and retained, not fixed or suppressed."
+    },
+    "preflight": {
+      "head": "5523d633901e44624e5766b2c851b53f408b9239",
+      "base": "f1f80847a410525ce1b00d27ea0e8be824a98422",
+      "exit_code": 0,
+      "elapsed_seconds": 126.64,
+      "log": "/tmp/console-tool-ux-library-delete-preflight.log",
+      "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-library-delete-preflight-pvj2f6ok",
+      "sources_stable": true,
+      "success_line": true
+    },
+    "static": {
+      "head": "5523d633901e44624e5766b2c851b53f408b9239",
+      "base": "f1f80847a410525ce1b00d27ea0e8be824a98422",
+      "source_pins": 344,
+      "sources_stable": true,
+      "Ruff_zero_new": {
+        "base": "f1f80847a410525ce1b00d27ea0e8be824a98422",
+        "files": {
+          "Docs/superpowers/qa/2026-10-01-console-approval-layout/native_check.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Docs/superpowers/qa/2026-10-01-console-close-followup/native_check.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Chat/test_console_ask_user_round.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "Tests/Chat/test_console_chat_create_confirm.py": {
+            "before": 6,
+            "after": 6,
+            "new": []
+          },
+          "Tests/Chat/test_console_chat_create_integration.py": {
+            "before": 11,
+            "after": 11,
+            "new": []
+          },
+          "Tests/Chat/test_console_local_review_hook.py": {
+            "before": 2,
+            "after": 2,
+            "new": []
+          },
+          "Tests/Chat/test_console_runtime_shutdown.py": {
+            "before": 2,
+            "after": 2,
+            "new": []
+          },
+          "Tests/Chat/test_console_session_settings.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Packaging/test_console_interaction_import_closure.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Performance/test_console_keystroke_work_census.py": {
+            "before": 2,
+            "after": 2,
+            "new": []
+          },
+          "Tests/Performance/test_ui_ready_module_census.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_chat_approval_card.py": {
+            "before": 5,
+            "after": 5,
+            "new": []
+          },
+          "Tests/UI/test_console_approval_compact_layout.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_console_button_routing.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "Tests/UI/test_console_pending_interrupt_projection.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_console_session_close_impact.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_console_session_tab_close.py": {
+            "before": 4,
+            "after": 4,
+            "new": []
+          },
+          "Tests/UI/test_console_turn_resend_ui.py": {
+            "before": 2,
+            "after": 1,
+            "new": []
+          },
+          "Tests/Utils/test_mcp_native_qa_args.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Widgets/test_confirmation_dialog_literal_text.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "scripts/check_ui_pr_gate_census.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_chat_controller.py": {
+            "before": 199,
+            "after": 199,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_chat_models.py": {
+            "before": 28,
+            "after": 28,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_display_state.py": {
+            "before": 27,
+            "after": 27,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_message_actions.py": {
+            "before": 6,
+            "after": 6,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_runtime.py": {
+            "before": 30,
+            "after": 30,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_turn_resend.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "tldw_chatbook/UI/Console_Modules/message.py": {
+            "before": 38,
+            "after": 38,
+            "new": []
+          },
+          "tldw_chatbook/UI/Console_Modules/session.py": {
+            "before": 42,
+            "after": 41,
+            "new": []
+          },
+          "tldw_chatbook/UI/Console_Modules/wiring.py": {
+            "before": 4,
+            "after": 4,
+            "new": []
+          },
+          "tldw_chatbook/UI/Screens/chat_screen.py": {
+            "before": 200,
+            "after": 200,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": {
+            "before": 6,
+            "after": 6,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/Console/console_transcript.py": {
+            "before": 27,
+            "after": 26,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/cancel_confirmation_dialog.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/confirmation_dialog.py": {
+            "before": 7,
+            "after": 7,
+            "new": []
+          }
+        }
+      },
+      "public_signature_audit": [],
+      "checks": {
+        "diff": {
+          "exit_code": 0,
+          "output": ""
+        },
+        "backlog_ids": {
+          "exit_code": 0,
+          "output": "No duplicate task IDs across 4941 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.\n"
+        },
+        "UI_census": {
+          "exit_code": 0,
+          "output": "OK: 130 Tests/UI files in the PR gate (floor 128); every listed path exists.\n"
+        }
+      },
+      "scope": "Latest dev integration preserves all four overlapping Console module ASTs and comment tokens with upstream Ruff0.15.22 formatting. Incoming runtime/fixture/checker changes are retained exactly. Original native artifacts and all non-overlap feature sources remain byte-identical; no guard/getter/admission/budget/cap changes."
+    },
+    "ADR_required": "no new ADR; integrate existing Library ADR076 and selected Console ADR094/097/150/195; shared-pane ADR212 remains applicable",
+    "limits": [
+      "84 actual targeted passes, including both production Console Delete/Undo to Library journeys, 22 startup, 13 latency, 34 CI and only 3 selected Library controller size-ratchet checks. No full Library, Architecture A/B, native or full-suite replay.",
+      "Two modified reader cases fail before owned Console behavior with RecoveryRequired: raw_source_selection_changed. Both actual cases reproduce under normal unchanged contracts on a complete unmodified dev archive; baseline module origin is verified. First origin proof stopped before pytest because /var and /private/var were compared without resolving both paths; corrected both-path resolution and reused untouched archive, no guard or app edits. These two failures are retained, not fixed, marked or suppressed.",
+      "Prior 918 passes and the baseline-confirmed broader MRO red retain the actual shared-pane runtime anchor and 334-pin map. Owned Console UI53, earlier native captures and static/failure receipts are reused only where corresponding source bytes match; never relabelled as fresh344-pin runs.",
+      "Incoming helper/controller/tests/profile markers/967-line ratchet are exact dev. All owned Console runtime/native source bytes are unchanged; all6 metadata patches replay raw-exact. Census130/floor128 retains every incoming and Console entry; no workflow, admission, getter, worker, canary, cap or budget change.",
+      "Diagnostic inventory regenerated from actual combined sources. All3 tasks remain In Progress until fresh exact-head clean/resolved Qodo plus all5 hosted checks including BOTH UI shards, then fresh final Done-metadata-head checks/review before protected normal merge. Auto-merge remains off."
+    ]
   }
 }
