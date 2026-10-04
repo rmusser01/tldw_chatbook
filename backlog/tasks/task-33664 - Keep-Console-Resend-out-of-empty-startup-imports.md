@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 14:38'
+updated_date: '2026-10-04 14:58'
 labels:
   - agents
   - console
@@ -407,6 +407,14 @@ ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; exis
 Reason: preserving latest-dev failed-close semantics with two native/causal fleet fences requires the same rollback boundary to cover partial acquisition, without a new ownership or authority policy.
 
 Independent preliminary review requires explicit real-controller checks for reverse rollback of both fences when one abort returns false or raises; attempt every acquired fence, retain the failed-generation latch and refuse replacement generations. Add a RED control for second-fence acquisition raising after the first succeeds, then move acquisition under the existing rollback handler without changing cleanup, authority or timeout rules. Verify preferred begin_close_progress exactly once before committed generation, and that a progress failure leaves wake/scratch/queue/child teardown untouched. Preserve original assertions and current/frozen schema controls. Correct ADR199's current numbering to incoming NotesFTS75→76 plus progress76→77/current gates77, leaving its historical decision and AgentRuns histories unchanged.
+
+## Faithful Close fixture qualification refinement — October 4
+
+ADR required: no new ADR
+ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; existing Console close/retirement ADR097 applies.
+Reason: real-controller and mounted Close qualification must exercise the existing preferred progress boundary and both retained native/saved causal identities; no production narrowing, new authority, readiness/config adapter or weakened assertion.
+
+Independent interim review confirms the older single persisted-ID cancellation expectation is stale: its source is exact both465 and incomingf800, while native+saved cancellation is exact prior465 and required by ADR199. Strengthen that exact test to require native and persisted IDs once each. The mounted incoming Close failure helper patches close_progress, but this PR uses begin_close_progress; retarget only its failure injection to the actual preferred boundary and strengthen exact latched-fence dictionaries to both IDs while preserving all notification/retry/privacy/usage and stale-incarnation assertions. Preserve the original136P1F controller and mounted1F78.683s receipts. Add direct delegated observations of the real wake-fence, scratch-close and queue mark_closing calls to the six new partial/progress-failure variants, with the successful control proving those probes are live; require the exact surviving fence and failed generation after uncertain rollback. Keep production bytes unchanged beyond the already RED-verified existing acquisition/rollback boundary fix. Run only the newly changed owning tests/affected mounted node once, retain all prior results by relevant source identity, then independent immutable review.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
