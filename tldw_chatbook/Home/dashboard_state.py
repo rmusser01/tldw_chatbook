@@ -894,7 +894,7 @@ def _home_idle_canvas_controls(
 
 def _status_summary_line(state: HomeDashboardInput) -> str:
     return (
-        f"Model: {'Ready' if state.model_ready else 'Blocked'} | "
+        f"Model: {'Ready' if state.model_ready else 'Not set up'} | "
         f"RAG: {'Ready' if state.rag_ready else 'Missing sources'} | "
         f"MCP: {'Ready' if state.mcp_ready else 'Blocked'} | "
         f"ACP: {'Ready' if state.acp_ready else 'Blocked'} | "
@@ -1059,7 +1059,7 @@ def _system_status_lines(state: HomeDashboardInput) -> tuple[str, ...]:
         _runtime_explanation_line(state),
         (
             "Agent readiness: "
-            f"Model {'ready' if state.model_ready else 'blocked'}, "
+            f"Model {'ready' if state.model_ready else 'not set up'}, "
             f"RAG {'ready' if state.rag_ready else 'needs sources'}, "
             f"MCP {'ready' if state.mcp_ready else 'blocked'}, "
             f"ACP {'ready' if state.acp_ready else 'blocked'}"

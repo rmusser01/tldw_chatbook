@@ -115,7 +115,9 @@ Local | Server: Configured; local mode | Active: 1 | Approvals: 0"), then
 Server sync is optional."), "Agent readiness: …", "Server events: …", and
 "Work: N active, N approvals" (plus "Notifications: N unread" when any).
 Read it with the Quirks section open: two of the four readiness fields are
-hard-coded, and "Model: Ready" is optimistic.
+hard-coded, and "Model: Ready" is optimistic. With no usable model (for
+example after skipping setup) the line reads "Model: Not set up", matching the
+header, and "Agent readiness" reads "Model not set up".
 
 ## Common tasks
 

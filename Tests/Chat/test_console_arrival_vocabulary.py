@@ -83,6 +83,25 @@ def test_home_after_skip_says_not_set_up_instead_of_blocked() -> None:
     assert _header_line(ready) == "Home | Ready · Local"
 
 
+def test_home_details_after_skip_say_not_set_up_too() -> None:
+    """Review round 1 (F9): the header said 'Not set up' while the Details
+    on the same screen still read 'Model: Blocked' and 'Model blocked'."""
+    from tldw_chatbook.Home.dashboard_state import (
+        HomeDashboardInput,
+        _status_summary_line,
+        _system_status_lines,
+    )
+
+    skipped = HomeDashboardInput(model_ready=False)
+    summary = _status_summary_line(skipped)
+    lines = " ".join(_system_status_lines(skipped))
+
+    assert "Model: Not set up" in summary
+    assert "Model: Blocked" not in summary
+    assert "Model not set up" in lines
+    assert "Model blocked" not in lines
+
+
 def _ready_line(*, provider_label: str, model: str) -> str:
     from tldw_chatbook.Chat.console_onboarding_state import (
         build_console_setup_card_state,
