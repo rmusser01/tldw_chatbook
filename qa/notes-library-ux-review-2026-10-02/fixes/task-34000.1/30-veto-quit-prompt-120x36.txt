@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Title begins or ends with whitespace — remove it │
+│   a  │ Library notes · Ready                                  │  o  to save. · Next: Keep editing; changes save      │
+│   v  │ Notes (123)                                            │  t  automatically.                                   │
+│      │ These notes live in the Library's own database — for   │  e      ‹ Notes      Gardening log                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │                                                      │
+│      │ from files.          █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█base only — no file on disk  │
+│      │                      █                                                          █                             │
+│      │ Filter               █   Quit and discard unsaved changes to "Gardening log"?   █    Preview            Info  │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔█                                                          █                             │
+│      │ ▊ Gardening log      █  These changes could not be saved: Title begins or ends  █                             │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█   with whitespace — remove it to save. Keep editing to   █▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │                      █       fix or save them, or discard them and quit.        █                           ▎ │
+│      │    New     ○ Sort: Ne█                                                          █▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    Add from files…   █                                                          █                             │
+│      │ Folders & placement  █             Keep editing   Discard and quit              █                             │
+│      │    New folder     Add█                                                          █▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    ○ Remove placement█▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█                           ▎ │
+│ ---> │ Sort unavailable — clear the filter                    │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │ filter: Gardening log · 1 result                       │                                                      │
+│      │                                                        │     Body                                             │
+│      │   Clear filter                                         │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │  ▾ Unfiled                                             │     ▊ - 09-12: planted garlic                      ▎ │
+│      │    Gardening log · Unfiled · 2m                        │     ▊ - 09-20: tomatoes done                       ▎ │
+│      │   Recently deleted (3)                                 │     ▊ - 09-28: mulched beds                        ▎ │
+│      │                                                        │     ▊                                           ▆▆ ▎ │
+│      │                                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      └────────────────────────────────────────────────────────┘                                      13 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

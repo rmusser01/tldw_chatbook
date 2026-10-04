@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  Title begins or ends with whitespace — remove it │
+│   a  │ Library notes · Ready                                  │  o  to save. · Next: Keep editing; changes save      │
+│   v  │ Notes (123)                                            │  t  automatically.                                   │
+│      │ These notes live in the Library's own database — for   │  e      ‹ Notes      Gardening log                   │
+│      │ notes that live in a folder on disk, switch to Folder  │  s                                                   │
+│      │ files. To copy or keep a folder synced, choose Add     │                                                      │
+│      │ from files.                                            │      In the Library database only — no file on disk  │
+│      │                                                        │     T                                                │
+│      │ Filter                                                 │     b        Edit           Preview            Info  │
+│ ---> │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     o                                                │
+│      │ ▊ Gardening log                                      ▎ │     Title                                            │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │                                                        │     ▊ Gardening log                                ▎ │
+│      │    New     ○ Sort: Newest     Select                   │<--- ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │    Add from files…     Export                          │                                                      │
+│      │ Folders & placement                                    │     Keywords                                         │
+│      │    New folder     Add to folder     Move note          │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │    ○ Remove placement                                  │     ▊ garden                                       ▎ │
+│ ---> │ Sort unavailable — clear the filter                    │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      │ filter: Gardening log · 1 result                       │                                                      │
+│      │                                                        │     Body                                             │
+│      │   Clear filter                                         │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │
+│      │  ▾ Unfiled                                             │     ▊ - 09-12: planted garlic                      ▎ │
+│      │    Gardening log · Unfiled · 2m                        │     ▊ - 09-20: tomatoes done                       ▎ │
+│      │   Recently deleted (3)                                 │     ▊ - 09-28: mulched beds                        ▎ │
+│      │                                                        │     ▊                                           ▆▆ ▎ │
+│      │                                                        │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │
+│      └────────────────────────────────────────────────────────┘                                      13 words · 1:1  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  esc back to notes | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

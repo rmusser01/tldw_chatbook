@@ -41,6 +41,13 @@ FAST_LANE_TARGETS = (
     "Tests/UI/test_mcp_tools_mode.py",
     "Tests/Widgets/test_detach_safe_text_area.py",
     "Tests/Architecture/test_console_controllers_define_their_self_attributes.py",
+    # TASK-34000.1: a Screen that flushes on navigation must answer the quit
+    # walk; quit prompts are awaited only through the choke point; the Notes
+    # autosave max-wait arithmetic. Static AST scans (one cached tree walk
+    # each) and pure unit tests: a few seconds for the lane in total.
+    "Tests/Architecture/test_flush_screens_have_quit_hooks.py",
+    "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
+    "Tests/Library/test_library_note_autosave_max_wait.py",
 )
 HEAVY_JOB_KEYS = {
     "core-tests",

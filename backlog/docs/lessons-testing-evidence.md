@@ -18435,3 +18435,28 @@ Trace calls through storage getters and park a real read while the actual owner-
 PR #2995 initially tried to restore a no-owning-turn fixture by stripping the primary cancellation and assistant registrations after arming a creation card. The production primary-source predicate requires those registrations, so the source was already stale before Close. A later denial could have passed without exercising the Close fence.
 
 The corrected two no-parent phases use actual surviving-child rows and trusted actor context, with a positive exact-record/source-live witness at the original parked-card or enrichment barrier. Owning-parent and primary grant cases retain their original primary setup. Preserve those positive witnesses alongside the denial, outcome and cleanup assertions; reaching a card alone does not prove that its execution authority is still live. Evidence: [fixture proposal](../../Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/task-8-surviving-child-fixture-proposal.json), [live witness](../../Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/task-8-surviving-child.json) and [review](../../Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/task-8-review.md).
+
+## A `git archive` baseline is not a checkout: git-reading tests switch branches there
+
+**TASK-34000.1, 2026-10-03.** Pairing architecture failures against a
+`git archive HEAD` export of the base, two
+`test_persistent_diagnostic_inventory.py` cases
+(`test_task_15743_reviewed_delta_is_complete`,
+`..._exception_types_survive_loguru_forwarding`) passed on "base" and failed on
+the branch. That looked like a regression, but both name Console files the
+branch never touched. Each test branches on `_task_15743_archaeology_available()`.
+In the worktree, the pinned commits resolve and the test diffs them with
+`git diff`. In the export there is no `.git`, so it takes the current-source
+fallback, which is a different assertion. The comparison was between two
+different tests, not between base and branch.
+
+**What to do.** Before you read a base-pass/branch-fail split from an export as
+your regression, grep the test for `subprocess`/`git`. If it shells out to git,
+the export cannot pair it. Check instead whether the failure names only files
+your branch leaves alone: compare its message against
+`git diff --name-only $(git merge-base HEAD origin/dev)..HEAD`. If it does,
+report it as pre-existing on that evidence, and say how you established it.
+Related, from the same session: on macOS `/bin/bash` 3.2 has no `mapfile`, and
+node ids that contain spaces (`[...-Q3 retro.md]`) split under `$(cat list)`.
+Both produced "no tests ran" on the base arm. Drive node lists through a tiny
+Python `subprocess.run([... *nodes])` runner instead.

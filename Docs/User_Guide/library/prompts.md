@@ -288,7 +288,10 @@ until the write settles. A link that opens a prompt from somewhere else (a
 Search / RAG result's **Open**, or a deep link the screen reconciles on entry)
 is refused by the same unsaved edit, and names the one it did not open: "Can't
 open Prompt 7 — Save or Discard the open Prompt first." Nothing is queued: save
-or discard, then follow the link again. The save-status line reports the outcome:
+or discard, then follow the link again. Quitting with **Ctrl+Q** asks first,
+'Quit and discard unsaved changes to "<name>"?', with **Keep editing**
+selected; only **Discard and quit** exits without the edit. The save-status
+line reports the outcome:
 
 - "Saved."
 - "Name already in use — pick another or open the existing prompt." —

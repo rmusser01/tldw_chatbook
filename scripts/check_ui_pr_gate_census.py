@@ -92,7 +92,14 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # (test_app_quit_in_flight_modals.py ~2.7 min, test_console_video_picker_cancel.py
 # ~1 min locally) stay out until the lane has a shard with room for them.
 # TASK-33003.20 adds the production approval batch geometry guard.
-MINIMUM_FILES = 136
+# TASK-34000.1 raised it to 139: the census held 138 files on dev (two past
+# the 136 floor), and Tests/UI/test_library_quit_guard.py joins it. It is a
+# deliberately lean core: 3 real-app boots, about 35-45 s locally; the typed
+# tail and a new note reach the DB before exit; a refused save keeps the
+# typist in place and Ctrl+Q asks. The other quit variants live in
+# test_library_quit_guard_extended.py, outside this lane: it was near its
+# 20-minute cap when they were written (TASK-34353 has since sharded it).
+MINIMUM_FILES = 139
 
 
 def read_census(path: Path) -> list[str]:
