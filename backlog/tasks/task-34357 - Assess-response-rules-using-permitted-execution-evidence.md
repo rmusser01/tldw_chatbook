@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-04 05:54'
-updated_date: '2026-10-04 07:55'
+updated_date: '2026-10-04 07:56'
 labels: []
 dependencies:
   - TASK-34356
@@ -37,5 +37,5 @@ ADR required: yes. ADR path: backlog/decisions/219-console-learned-response-rule
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Freeze only the active task chain and already model-bound result bodies, pairing definitive body-free tool dispatch facts. Closed semantic batches exclude feedback/labels and reject invented evidence, malformed results and overflow. Native context preflight retains transport limits; Save remaps actual durable message versions. ADR-219. Evidence: 81 feature/evidence/storage/resource tests; 83 existing auxiliary gateway cases (one reproduced baseline failure excluded); black/ruff/mypy pass. Current work freshness remains unknown when the execution owner supplies no revision.
+Freeze only the active task chain and already model-bound result bodies, pairing definitive body-free tool dispatch facts. Closed semantic batches exclude feedback/labels and reject invented evidence, malformed results and overflow. Native context preflight retains transport limits; Save remaps actual durable message versions. ADR-219. Evidence: 81 feature/evidence/storage/resource tests; 52 existing auxiliary gateway cases (one reproduced baseline failure excluded); black/ruff/mypy pass. Current work freshness remains unknown when the execution owner supplies no revision.
 <!-- SECTION:NOTES:END -->

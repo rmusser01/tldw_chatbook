@@ -259,6 +259,8 @@ class RuleValidation:
     source: RuleSource
     fixture_ids: tuple[str, ...]
     tested_at: str
+    original_input_digest: str | None = None
+    fixture_digest: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "case_results", tuple(self.case_results))
