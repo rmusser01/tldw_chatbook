@@ -375,6 +375,21 @@ class ConsoleChatStartCoordinator:
                 "Chat start failed (phase=restriction, exception_type={})",
                 type(exc).__name__,
             )
+            try:
+                # Ordinary registration may fail repeatedly. Preserve denial
+                # with the same pre-established key, without filesystem or SQL.
+                item.ledger._retain_chat_start_restriction(
+                    item.request.attempt_id,
+                    owner_id=item.runtime_owner_id,
+                    chain_id=item.context.chain_id
+                    if item.context is not None
+                    else None,
+                )
+            except BaseException as retain_error:
+                logger.warning(
+                    "Chat start failed (phase=restriction_fallback, exception_type={})",
+                    type(retain_error).__name__,
+                )
 
     async def _run(self, item: AgentChatStartAuthorization) -> None:
         from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused

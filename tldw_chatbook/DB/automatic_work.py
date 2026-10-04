@@ -63,25 +63,38 @@ class AutomaticWorkLedger:
         self._wall_clock = wall_clock
         self._monotonic_clock = monotonic_clock
 
+        # Establish the existing canonical key before this ledger can authorize
+        # work. Cleanup must never need a fresh filesystem observation.
+        if not db.is_memory_db:
+            self._restriction_database_id = str(db.db_path.resolve())
+        else:
+            # Independent memory stores retain private UUIDs; ledgers for the
+            # same store share the identity even if the property is rebuilt.
+            with _UNCONFIRMED_STARTS_LOCK:
+                identity = getattr(db, "_automatic_work_restriction_id", None)
+                if identity is None:
+                    identity = "memory:" + uuid4().hex
+                    db._automatic_work_restriction_id = identity
+                self._restriction_database_id = identity
+
     def _restriction_database(self) -> str:
-        if not self._db.is_memory_db:
-            return str(self._db.db_path.resolve())
-        # Repeated :memory: names and eventual Python object-ID reuse must not
-        # couple independent stores. A ledger shares its DB's private identity.
-        with _UNCONFIRMED_STARTS_LOCK:
-            identity = getattr(self._db, "_automatic_work_restriction_id", None)
-            if identity is None:
-                identity = "memory:" + uuid4().hex
-                self._db._automatic_work_restriction_id = identity
-            return identity
+        return self._restriction_database_id
 
     def _restrict_chat_start(
         self, attempt_id: str, *, owner_id: str, chain_id: str | None
     ) -> None:
         """Retain uncertain authority before settlement I/O, without reading DB."""
+        self._retain_chat_start_restriction(
+            attempt_id, owner_id=owner_id, chain_id=chain_id
+        )
+
+    def _retain_chat_start_restriction(
+        self, attempt_id: str, *, owner_id: str, chain_id: str | None
+    ) -> None:
+        """Insert denial using only captured identity and the existing registry."""
         with _UNCONFIRMED_STARTS_LOCK:
             _UNCONFIRMED_STARTS[
-                (self._restriction_database(), owner_id, attempt_id)
+                (self._restriction_database_id, owner_id, attempt_id)
             ] = (chain_id, object())
 
     def _clear_chat_start_restriction(self, attempt_id: str, *, owner_id: str) -> None:

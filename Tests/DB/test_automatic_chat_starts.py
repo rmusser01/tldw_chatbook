@@ -746,3 +746,111 @@ def test_missing_start_confirmation_requires_successful_owned_transaction(
             == reservations
         )
     assert ledger.snapshot(root).used["generation"] == 0
+
+
+@pytest.mark.parametrize("memory", [False, True])
+def test_restriction_identity_is_captured_for_aliases_and_memory_peers(
+    tmp_path, monkeypatch, memory
+):
+    """Cleanup and admission keep the same key when filesystem observation fails."""
+    from pathlib import Path
+    import sys
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.DB.automatic_work import AutomaticWorkLedger
+
+    db = AgentRunsDB(
+        ":memory:" if memory else tmp_path / "identity.sqlite", client_id="identity"
+    )
+    other = AgentRunsDB(
+        ":memory:" if memory else tmp_path / "other.sqlite", client_id="other"
+    )
+    peer = None
+    ledger = db.automatic_work
+    ledger.recover(current_owner_id="owner")
+    root, _ = source_run(db)
+    other_root, _ = source_run(other)
+    if memory:
+        sibling = AutomaticWorkLedger(db)
+        assert ledger._restriction_database().startswith("memory:")
+        assert (
+            ledger._restriction_database()
+            != other.automatic_work._restriction_database()
+        )
+    else:
+        alias = tmp_path / "alias"
+        alias.mkdir()
+        peer = AgentRunsDB(
+            alias / ".." / db.db_path.name, client_id="alias", reconcile_on_init=False
+        )
+        sibling = peer.automatic_work
+    assert sibling._restriction_database() == ledger._restriction_database()
+    resolve = Path.resolve
+
+    def fail_resolution(path, *args, **kwargs):
+        if (
+            path == db.db_path or (peer is not None and path == peer.db_path)
+        ) and sys._getframe(1).f_globals.get(
+            "__name__"
+        ) == "tldw_chatbook.DB.automatic_work":
+            raise OSError("private canonical identity failure")
+        return resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_resolution)
+    try:
+        ledger._restrict_chat_start("uncertain", owner_id="owner", chain_id=root)
+        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+            sibling.check_active(root, owner_id="owner")
+        other.automatic_work.check_active(other_root, owner_id="owner")
+        sibling.recover(current_owner_id="owner")
+        with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+            sibling.check_active(root, owner_id="owner")
+        sibling._clear_chat_start_restriction("uncertain", owner_id="owner")
+        ledger.check_active(root, owner_id="owner")
+        ledger._restrict_chat_start("uncertain", owner_id="owner", chain_id=root)
+        sibling.recover(current_owner_id="replacement")
+        sibling.check_active(root, owner_id="replacement")
+        assert ledger._restriction_database() == sibling._restriction_database()
+    finally:
+        monkeypatch.setattr(Path, "resolve", resolve)
+        ledger._clear_chat_start_restriction("uncertain", owner_id="owner")
+        if peer is not None:
+            peer.close()
+        db.close()
+        other.close()
+
+
+def test_initial_restriction_identity_failure_refuses_automatic_authority(
+    tmp_path, monkeypatch
+):
+    """A failed initial canonical key must not produce an authority-capable ledger."""
+    from pathlib import Path
+    import sys
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    db = AgentRunsDB(tmp_path / "uncertain.sqlite", client_id="identity")
+    resolve = Path.resolve
+
+    def fail_resolution(path, *args, **kwargs):
+        if (
+            path == db.db_path
+            and sys._getframe(1).f_globals.get("__name__")
+            == "tldw_chatbook.DB.automatic_work"
+        ):
+            raise OSError("private initial identity failure")
+        return resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_resolution)
+    try:
+        with pytest.raises(OSError):
+            db.automatic_work
+        assert "automatic_work" not in db.__dict__
+        with db.connection() as conn:
+            for table in (
+                "automatic_work_chains",
+                "automatic_work_reservations",
+                "automatic_chat_start_attempts",
+            ):
+                assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+    finally:
+        monkeypatch.setattr(Path, "resolve", resolve)
+        db.close()
