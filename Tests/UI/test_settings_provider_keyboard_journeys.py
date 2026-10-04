@@ -88,11 +88,9 @@ async def test_provider_keyboard_edit_revert_save_and_return(theme, size, monkey
         assert not screen._category_has_unsaved_changes(CATEGORY)
         await _edit(host, pilot, "#settings-provider-endpoint-value", ENDPOINT)
         # TASK-33007.2, rewritten on purpose: Connect ends in the Key check
-        # row and Model moved under "Default model for new chats", so the
-        # actual keyboard traversal runs Endpoint -> Test (t) -> Model.
-        await pilot.press("tab")
-        await _settle(host, pilot)
-        assert screen.focused is screen.query_one("#settings-test-provider")
+        # row and Model moved under "Default model for new chats". Test (t)
+        # is not a Tab stop ('t' runs it; parent AC#2), so the actual
+        # keyboard traversal runs Endpoint -> Model.
         await pilot.press("tab")
         await _settle(host, pilot)
         assert screen.focused is screen.query_one("#settings-model-value")

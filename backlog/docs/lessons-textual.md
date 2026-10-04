@@ -708,6 +708,26 @@ actually take focus; work that just repaints has no stake in it. Only the real g
 reproduces this — calling the same coroutine directly from a test posts no focus event
 and passes.
 
+**A list that cannot take focus loses a held click if it closes on blur (TASK-33007.2
+review round 1, 2026-10-03).** The Settings Provider combobox kept its list at
+`can_focus = False`, so the control stayed the one Tab stop, and closed the list 50 ms after
+the control blurred. A press on a row focuses the nearest focusable ANCESTOR instead, here
+the scrolling detail pane (`get_focusable_widget_at` walks `ancestors_with_self`). The
+control blurs, and the timer closes the list. `OptionList` chooses only on `Click`, which
+App builds at `MouseUp`, and only when the same widget is still under the pointer
+(`app.py` `on_event`). Measured in tmux with SGR mouse sequences: a 0 s hold chose Ollama,
+a 0.1 s hold chose a **wrong** row (Arcee AI), and 0.3 s or 1.0 s holds were lost.
+`pilot.click` could never show this: it forwards `MouseDown`, `MouseUp` and `Click`
+straight to the screen, so no focus change can come between them. To reproduce it,
+post the events through App the way the driver does
+(`app.post_message(events.MouseDown(None, x, y, 0, 0, 1, False, False, False, x, y))`,
+wait, then `MouseUp`). Then poll for the outcome: the Click, `OptionSelected` and
+`Select.Changed` chain is posted after `pause()`'s idle wait starts, so a fixed
+`pause(0.2)` flaked under `-n 8`. The fix: when the timer finds that focus went to a
+container of the open list and the pointer is over the list, re-focus the control
+instead of closing. Guard the lookup with `QueryError`, because the timer can fire
+during teardown.
+
 ## `Screen`'s Tab binding is not `priority`, so a burst types past it — and `pilot.press` can never show you
 
 **task-32106 / PR #2571 review round 1, 2026-09-10.** A live report said typing

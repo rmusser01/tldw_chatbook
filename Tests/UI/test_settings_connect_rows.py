@@ -89,12 +89,18 @@ async def test_provider_is_one_row_one_tab_stop_and_filters_by_name_or_id(reques
         await pilot.press("down")
         assert picker.highlighted not in (None, highlighted)
 
+        # ADR-031 / task-1560: one Esc closes the list AND releases the field,
+        # so the footer's "Esc, s save category" chain holds with the list open.
+        assert ("Esc, s", "save category") in screen._footer_shortcut_entries()
         await pilot.press("escape")
         await pilot.pause()
         assert not picker.display
         assert control.value == "Anthropic"
-        assert host.focused is control
+        assert host.focused is None
+        assert ("s", "save category") in screen._footer_shortcut_entries()
 
+        control.focus()
+        await pilot.pause()
         await pilot.press(*"llamaf", "enter")
         await pilot.pause(0.2)
         assert screen._provider_setting_values_mapping()["provider"] == (
@@ -194,3 +200,122 @@ async def test_key_check_row_ends_connect_and_its_detail_lives_in_the_inspector(
         assert str(result.renderable).startswith("Readiness")
         assert str(verdict.renderable) == "Not ready · no key"
         assert default_model.virtual_region.y == default_model_y
+
+
+def _app_mouse(host, cls, x: int, y: int, button: int):
+    """Post a mouse event through the App, the way the terminal driver does,
+    so App synthesizes the Click at MouseUp (pilot.click forwards it directly
+    and cannot show a press that outlives a focus change)."""
+    host.post_message(cls(None, x, y, 0, 0, button, False, False, False, x, y))
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("hold", [0.0, 0.3, 0.8])
+async def test_a_held_mouse_press_on_the_open_list_still_chooses(request, hold):
+    """Review I1: a press moves focus to the scrolling pane; the list must stay
+    open until the release, which is when the choice lands."""
+    from textual import events
+
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "anthropic", "model": "claude-x"}
+    app.app_config["api_settings"] = {"anthropic": {"api_key": _FAKE_KEY}}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        control = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        control.focus()
+        await pilot.pause()
+        await pilot.press(*"olla")
+        await pilot.pause()
+        rows = _region_rows(screen, picker)
+        row = next(i for i, text in enumerate(rows) if text.strip() == "Ollama")
+        x = picker.region.x + rows[row].index("Ollama") + 1
+        y = picker.region.y + row
+
+        _app_mouse(host, events.MouseMove, x, y, 0)
+        _app_mouse(host, events.MouseDown, x, y, 1)
+        await pilot.pause(hold)
+        _app_mouse(host, events.MouseUp, x, y, 1)
+        # The Click -> OptionSelected -> Select.Changed chain is posted after
+        # pause()'s idle wait begins; give it time under xdist load.
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if screen._provider_setting_values_mapping()["provider"] == "ollama":
+                break
+
+        assert screen._provider_setting_values_mapping()["provider"] == "ollama"
+        assert control.value == "Ollama"
+        assert not picker.display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    ("provider", "settings"),
+    [("anthropic", {"api_key": _FAKE_KEY}), ("openai", {})],
+    ids=["anthropic-key-saved", "openai-no-key"],
+)
+async def test_model_is_at_most_five_tab_presses_from_provider(
+    request, monkeypatch, provider, settings
+):
+    """Parent AC#2 (review I3): Test (t) is not a Tab stop -- 't' runs it --
+    so Model stays within five presses of the Provider control."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": provider, "model": "m-1"}
+    app.app_config["api_settings"] = {provider: settings}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        model = screen.query_one("#settings-model-value", Input)
+        test_button = screen.query_one("#settings-test-provider", Button)
+        screen.query_one("#settings-provider-search", Input).focus()
+        await pilot.pause()
+
+        presses = 0
+        while host.focused is not model and presses < 10:
+            await pilot.press("tab")
+            await pilot.pause()
+            presses += 1
+            assert host.focused is not test_button
+
+        assert host.focused is model
+        assert presses <= 5, presses
+        assert test_button.display and not test_button.disabled
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_provider_help_names_a_provider_once_its_save_configures_it(
+    request, monkeypatch
+):
+    """Review finding 7: the "configured: ..." help is rebuilt after a save."""
+    from Tests.UI.test_settings_configuration_hub import (
+        _capture_provider_settings_mutations,
+    )
+
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    app.app_config["api_settings"] = {"llama_cpp": {}}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        assert "llama.cpp" not in _text(screen, "#settings-provider-search-status")
+
+        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
+        endpoint.focus()
+        await pilot.pause()
+        await pilot.press(*"http://127.0.0.1:9098", "escape", "s")
+        await pilot.pause(0.2)
+
+        assert len(mutations) == 1
+        assert "configured: llama.cpp" in _text(
+            screen, "#settings-provider-search-status"
+        )

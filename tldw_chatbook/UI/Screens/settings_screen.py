@@ -31487,6 +31487,10 @@ class SettingsScreen(BaseAppScreen):
                 self._sync_provider_credential_widget(provider)
                 self._sync_provider_context_window_widget(provider, model)
                 self._update_provider_dynamic_widgets()
+                # TASK-33007.2: a saved key or endpoint can change who leads
+                # the provider list and its "configured: ..." help.
+                self._provider_configured_keys = None
+                self._refresh_provider_picker()
                 self._update_draft_status_widgets(category)
                 conflict_target = self._provider_navigation_conflict_target
                 if conflict_target is not None:
