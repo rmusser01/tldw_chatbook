@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 22:30'
+updated_date: '2026-10-04 22:43'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -978,4 +978,16 @@ Read-only guessed absent paths/launcher were corrected by bounded discovery befo
 Incoming TASK31245 remains In Progress3checked/17unchecked, TASK33621.2 Done6checked, and all15 new follow-ups To Do as shipped. TASK34353 remains In Progress/AC3unchecked; separate task/ADR states are not closed. Only after both independent approvals CLI TASK33664 AC3 returns Done/checked with AC4 checked; all16 scoped tasks Done/checked/notes. This documentation-only closure changes ONLY four owned canonical Markdown records and preserves3822 reviewed records, all27997 tree paths outside four, all historical plan/notes/document prefixes and prior deletions. No source edit follows immutable approval.
 
 Evidence: /private/tmp/pr2918-postui3-{planned-source,plan-hash-domains,reviewed-source-manifest,candidate-tree,composition-proof,functional-evidence,warning-clarification,static-proof,artifact-read-checks,artifact-identity-carry,independent-review,budget-prerequisites,budget-verification,budget-independent-review}.json and raw/XML/command/exit/storage JSONL. Approvals qualify ONLYa7d; later actual dev is separately unqualified. Fresh published0b2f Qodo/full pagination/current gates/actual refs/live protection precede ONE exact-observed0b2f-lease publication and actual local/remote/GitHub/body verification after lag without second push. Fresh new-head Qodo/no actionable feedback and ALL FOUR conceptual gates requiring ALL THREE UI shards precede any later concurrency inspection/fetch/rebase or normal protected --match-head-commit merge. Verify actual GitHub MERGED parents/tree/concurrency before heartbeat pause/completion. The oldc5 ONE hosted Perf retry exception is consumed; no further retry/dispatch/dummy head workaround. No fullsuite/liveproviderskeys/physicalkeysrelaunch/voiceinstallserviceprovisiondownloadplayback/nativeLinuxWindowsaggregatepackageindexinstalledreleasewideraudit/adminbypass/weakenedgates/sharedstash/foreigncleanup.
+
+## Final protected merge integration — October 4, 2026
+
+The owner explicitly directs immediate merging rather than further waiting for a stale external Qodo summary. Normal protected exact21ead merge was attempted and GitHub refused solely because the branch was behind dev. All FOUR21ead gates and all THREE UI shards had passed; full feedback pagination/four historical resolved threads/older nested feedback were unchanged, but Qodo still referenced old0b2f. No current-head Qodo approval is claimed. GitHub strict/admin/conversation/required-check protection remains intact. MERGE_QUEUE is unset/off and is not changed.
+
+Prospective CLI TASK33664 AC3 In Progress/unchecked with AC4 checked and plan eb05d7f6 preceded one clean preserving rebase onto exact a78a9a900b4901e33c031f830dd2d80224d5147d, immutable source1ee35ff88d12879237636db3379c94f8587ee1d1. All3862 source records/modes/recomputed disk blobs and full28020 tree/index equal the independent complete merge tree. All3801 prior nonoverlap records and59 incoming nonfeature paths are exact. The only two actual feature overlaps, derived-artifacts.yml and lessons-live-verification.md, independently reproduce clean three-way bytes. The workflow preserves all THREE serial UI shards/same20-minute cap/census order/required aggregator and incoming dispatch-safe lane conditions/non-required queue tick; both complete lesson bodies and prior deletions remain. No root runtime/test repair or new owner/schema/authority/permission/dependency/pin/ceiling/work/time/warmup decision. Existing ADR097/103/199/211 and incoming ADR218 apply. Incoming provider/Roleplay/queue changes and their task states remain as shipped, without new live/provider/physical/platform certification.
+
+The narrow affected CI composition selection ran ONCE on this source:120PASS/1.675s XML, exit0/F/E/S0. RawSHA256 63d6622a0ae40a639d1190215f1d972466f8529e8e370fcea6d5f267927e8800, XMLSHA256 c05278d8d51dbfcc299170ce450c3718ffd0a0968d824c642b4421e7fb37dea0. All27 late stale rm_rf warnings remain; no masking or foreign cleanup. Whole integration whitespace passes. Independent source/composition/history/CI review Ready/no findings/all activity settled, JSONSHA256 acf993b74148a664d176152dbd8ad0c305c6d881d05f97d12a208115ba9b553d, explicitly approves carrying the original fb14 five-budget evidence by relevant source/guard/MAX/work/profile identity. The prior original five5PASS112.657s/imports681/686/UI1033/1033 zeroheadroom/raw739cff962021a33088af42f467f9eb9ea4c2b4594b2e431f680ba311f70b275b/XML9c153b44d9a1c91e114a7573355737af6625729599b7a85f457972b084df5316 remain historical measurements, not new measurements. No original budget/test/build/static/artifact/CSS/baseline/retry/preparation/rebase/publication code was replayed.
+
+Every historical positive/NON-GREEN/baseline/interrupted/unexecuted/metadata/warning/FD/style/size/optional/physical/wider limit remains, including the four exact-incoming failures, unawaited to_thread and UI FD320>200 cause/resource limits. Selections NEVER SUM. Source approval applies only to exacta78; later actual dev remains separately unqualified. After independent Ready, CLI closes only AC3/Done with AC4 checked; this closure changes only four owned Markdown records and preserves all3862 reviewed source records/full tree outside four/deletions/history. Single exact-observed21ead-lease publication/actual remote-GitHub-body verification precedes normal PROTECTED AUTO-MERGE on the verified published head under the owner immediate instruction. No admin bypass, protection/queue mode change, manual retry/dispatch/dummy-head workaround or stale-Qodo approval claim. Handle new actionable feedback. Verify actual GitHub MERGED parents/tree/concurrency before heartbeat pause/completion.
+
+Evidence: /private/tmp/pr2918-direct-merge-{pre-rebase,planned-source,rebase-attempt,rebase-result,expected-tree,reviewed-source-manifest,candidate-tree,composition-proof,ci-proof,independent-review}.json and CI raw/XML/command/exit/plan/rebase logs.
 <!-- SECTION:NOTES:END -->
