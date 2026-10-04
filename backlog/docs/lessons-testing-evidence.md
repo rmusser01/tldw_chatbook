@@ -43,6 +43,21 @@ check whether the file was fixed between the artifact's run and your base — an
 remember that if no full run has completed since a suspect commit landed, CI has
 never exercised it: a "hang was fixed" verdict from an old artifact says nothing
 about regressions newer than the last completing run.
+
+## A screen leaving the stack is not its result arriving (TASK-33622.15, 2026-10-04)
+
+**Incident.** A new test waited for a review dialog's kept close with
+`_until(lambda: modal not in app.screen_stack)` and then asserted
+`app.results == [ReviewCommitUnknownResult()]`. It failed with `[]` on its first run.
+The close had worked: Textual's `Screen.dismiss` pops the screen at once but hands the
+result to the opener's callback through `requester.call_next`, a later turn, so the
+assertion ran in between. Seven older tests in the same file used the same wait and
+had passed by timing alone. Review of PR #2998 had already traced two Media player
+quit-prompt tests that flake under load to the same pattern.
+
+**What to do.** When a test checks what a dismissed screen returned, wait for the
+result itself (the callback's list is non-empty, or the opener's state changed), not
+for the screen to leave `screen_stack`.
 ## A prompt that tells the model where things are must be tested by doing what it says
 
 **TASK-33940.1, 2026-10-02.** The workspace system-prompt note listed bound folders "relative
@@ -1998,6 +2013,14 @@ helper that asserts `await pilot.click(...)`, but the sweep missed this one call
 inside a `try/finally`. When a harness wraps a flaky call, grep for every raw
 call site, not just the obvious ones. Always assert a pilot click's return value,
 so a miss fails at the click.
+
+**Same trap, just-pushed variant (TASK-33622.15, 2026-10-04).** A test clicked
+**Quit anyway** as soon as the "Quit while still working?" dialog was the top
+screen. A pushed screen is on the stack before its widgets are placed, and an
+unplaced widget's `region` is empty, so Pilot aimed at (0, 0). Once, under load,
+the click answered nothing and the test timed out five seconds later at "Quit
+anyway to answer". Before clicking a widget on a screen that was just pushed, wait
+until its `region.area > 0`.
 
 ---
 
