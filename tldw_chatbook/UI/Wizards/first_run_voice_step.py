@@ -90,7 +90,6 @@ class VoiceSetupStep(OmniVoiceStepBase):
         self._staged_key: wizard_state.ProviderCredentialDraft | None = None
         self._probe_generation = 0
         self._reachable: bool | None = None
-        self._refocus_test = False
         self._probe_timer: Any = None
         self._seen_inputs: dict[str, str] = {}
         # Review round 1 (F1): the box is locked on while the OpenAI slot
@@ -631,10 +630,10 @@ class VoiceSetupStep(OmniVoiceStepBase):
 
     @on(Button.Pressed, "#setup-voice-test")
     def _on_test_and_hear(self) -> None:
-        test = self.query_one("#setup-voice-test", Button)
-        self._refocus_test = self.app.focused is test
+        held = self.app.focused is self.query_one("#setup-voice-test", Button)
         if self._preset == voice_state.VOICE_PRESET_OMNIVOICE:
             self._start_omnivoice_sample()
+            self._hold_test_focus(held)
             return
         try:
             draft = self._draft_from_controls()
@@ -647,6 +646,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
         self._test_in_progress_generation = generation
         self.query_one("#setup-voice-status", Static).update(voice_status.TESTING_COPY)
         self._refresh_sample_state()
+        self._hold_test_focus(held)
         run_wizard_worker(
             self,
             self._run_voice_sample(generation, draft),
@@ -773,18 +773,6 @@ class VoiceSetupStep(OmniVoiceStepBase):
                 self._test_in_progress_generation = None
                 self._refresh_sample_state()
                 self._restore_test_focus()
-
-    def _restore_test_focus(self) -> None:
-        """Disabling Test and Hear dropped focus to the top (voice-speech-05)."""
-        if not self._refocus_test or not self.display:
-            return
-        self._refocus_test = False
-        try:
-            test = self.query_one("#setup-voice-test", Button)
-        except NoMatches:
-            return
-        if not test.disabled:
-            test.focus()
 
     def _speed_or_default(self) -> float:
         try:

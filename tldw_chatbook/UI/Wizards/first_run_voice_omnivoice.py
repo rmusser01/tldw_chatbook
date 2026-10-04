@@ -71,6 +71,8 @@ class OmniVoiceStepBase(SetupStep):
         self._omnivoice_report: Any = None
         self._omnivoice_seed: int | None = None
         self._sample_audio_path: Path | None = None
+        self._refocus_test = False
+        self._refocus_from: Any = None
 
     async def _play_sample(self, result: voice_state.VoiceSampleResult) -> bool:
         audio_player = getattr(self.app, "audio_player", None)
@@ -167,6 +169,31 @@ class OmniVoiceStepBase(SetupStep):
 
     def receive_stts_settings_runtime_result(self, result: object) -> None:
         self._receive_save_result(result)
+
+    def _hold_test_focus(self, held: bool) -> None:
+        """Remember that Test and Hear held focus, and where disabling it for
+        the test moved focus (voice-speech-05)."""
+        self._refocus_test = held
+        self._refocus_from = self.app.focused
+
+    def _restore_test_focus(self) -> None:
+        """Put focus back on Test and Hear after a test, for either half.
+
+        Only while focus is still where disabling the button left it: a test
+        can take 20 s, and focus the user moved meanwhile stays where they put
+        it (review round 1, F5). OmniVoice tests restore it too (F4).
+        """
+        if not self._refocus_test or not self.display:
+            return
+        self._refocus_test = False
+        if self.app.focused not in (self._refocus_from, None):
+            return
+        try:
+            test = self.query_one("#setup-voice-test", Button)
+        except NoMatches:
+            return
+        if not test.disabled:
+            test.focus()
 
     def _compose_omnivoice_panel(self) -> ComposeResult:
         with Vertical(id="setup-voice-omnivoice-panel") as panel:
@@ -437,6 +464,7 @@ class OmniVoiceStepBase(SetupStep):
                         voice_state.OMNIVOICE_SAMPLE_FAILED_COPY
                     )
                     self._refresh_sample_state()
+                    self._restore_test_focus()
                 return
             if generation != self._test_generation:
                 return
@@ -453,6 +481,7 @@ class OmniVoiceStepBase(SetupStep):
                 else voice_status.PLAYBACK_FAILED_COPY
             )
             self._refresh_sample_state()
+            self._restore_test_focus()
         finally:
             if self._test_in_progress_generation == generation:
                 self._test_in_progress_generation = None

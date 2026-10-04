@@ -22,7 +22,15 @@ import pytest
 import toml
 from textual import on
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Checkbox, Input, RadioButton, Select, Static
+from textual.widgets import (
+    Button,
+    Checkbox,
+    Input,
+    RadioButton,
+    RadioSet,
+    Select,
+    Static,
+)
 
 import tldw_chatbook.UI.Wizards.first_run_voice_step as voice_step_module
 from Tests.TTS.adapter_fakes import FakeAdapterFactory, provider_spec
@@ -686,6 +694,42 @@ async def test_focus_returns_to_test_and_hear_after_a_test(monkeypatch) -> None:
         await pilot.pause(0.2)
         assert test.disabled is False
         assert step.app.focused is test
+
+
+@pytest.mark.asyncio
+async def test_focus_stays_where_the_user_moved_it_during_a_test(monkeypatch) -> None:
+    """Review round 1 (F5): a test can take 20 s. Focus the user moved in
+    the meantime must not be pulled back to Test and Hear when it ends, or
+    the next Enter re-runs the test instead of doing what they chose."""
+    release = asyncio.Event()
+
+    async def sample(*_args, **_kwargs):
+        await release.wait()
+        return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", sample)
+    step = _step()
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause()
+        test = step.query_one("#setup-voice-test", Button)
+        test.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        dropped = step.app.focused  # where disabling the button sent focus
+        assert dropped is not test
+        moved_to = step.query_one("#setup-voice-sample", Input)
+        if dropped is moved_to:
+            moved_to = step.query_one("#setup-voice-preset", RadioSet)
+        moved_to.focus()
+        await pilot.pause()
+
+        release.set()
+        await pilot.pause(0.2)
+        assert test.disabled is False
+        assert step.app.focused is moved_to
 
 
 @pytest.mark.asyncio

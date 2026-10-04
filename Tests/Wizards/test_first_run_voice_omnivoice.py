@@ -521,3 +521,35 @@ async def test_service_row_fits_at_80_columns(monkeypatch) -> None:
         for label in ("PocketTTS", "OpenAI", "Custom", "OmniVoice"):
             assert label in painted
             assert f"{label[:6]}…" not in painted
+
+async def test_focus_returns_to_test_and_hear_after_an_omnivoice_test(
+    monkeypatch,
+) -> None:
+    """TASK-34100.8 review round 1 (F4): disabling Test and Hear during an
+    OmniVoice sample dropped focus, and only the OpenAI-slot path put it
+    back, so keyboard users lost their place after an OmniVoice test."""
+    _state(monkeypatch, "ready")
+    release = asyncio.Event()
+
+    async def sample(*_a, **_k):
+        await release.wait()
+        return vs.VoiceSampleResult(b"RIFF....WAVE", "audio/wav", "wav", True)
+
+    monkeypatch.setattr(vs, "run_omnivoice_sample", sample)
+    step = _step()
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        test = step.query_one("#setup-voice-test", Button)
+        assert test.disabled is False
+        test.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert test.disabled is True
+        assert step.app.focused is not test
+
+        release.set()
+        await pilot.pause(0.2)
+        assert test.disabled is False
+        assert step.app.focused is test
