@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@claude'
 created_date: '2026-10-03 18:37'
-updated_date: '2026-10-04 08:00'
+updated_date: '2026-10-04 09:26'
 labels:
   - console
   - context-compaction
@@ -73,4 +73,13 @@ Evidence:
 - Frozen matrices in test_console_turn_preparation.py updated; test_console_context_compaction.py's old copy assertion moved to the new alert.
 - Live, real app + gpt-5.6-terra (shipped default) in an isolated profile with a custom 1,500-token budget: the hold card showed 1,413 of 1,500 tokens; Compact and send summarized ('Earlier turns summarized for context') and sent the held message once; Send without compacting sent it as is; Cancel put it back in the composer. With Max tokens 32,000 on the estimated 32,000 window, the alert named Max tokens and the estimate; after the before-commit fix there is no dispatch panel and Restore returned the message.
 - Docs/User_Guide/console/context-and-rag.md: new 'When a chat reaches its context limit'.
+
+Qodo round (PR #3003):
+- The check now runs early (before skills/retrieval/hooks), and again before commit only if the request grew. A late hold resumes without re-appending notes or retrieval events and reuses its capture result.
+- Send without compacting also holds when the policy turned Automatic.
+- The check is skipped when compaction is Off. Measured probe cost: ~7 ms at 40 turns, 14-24 ms at 120 turns (~30k tokens), against a ~500 ms send.
+- A cancelled or abandoned resumed hold drops its answered id.
+- Not changed: an uncompacted over-ceiling send is windowed by the real preparation, as compaction Off is; this is pinned by a test.
+- ADR-097 UI-ready census kept flat by importing the copy module lazily.
+Tests added: hook context refused before commit (real RunHooksEngine, mutation-checked); late hold after hooks resumes without repeats (window measured with the real probe); Automatic-meanwhile; abandoned resume; over-ceiling windowing.
 <!-- SECTION:NOTES:END -->
