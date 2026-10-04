@@ -69,7 +69,9 @@ What that means in practice:
   After **Save to disk**, Ctrl+Q asks the same question while the file picker
   or its **Replace existing file?** / **Destination changed** question is
   open; **Stay** returns you there. Cancelling the file picker itself (Escape or
-  **Cancel**) discards the video without asking, so choose a file to keep it.
+  **Cancel**) brings the **Generated video** choice back with the video still
+  there, as often as you like. Only an explicit discard throws it away:
+  **Discard** on that choice, or **Discard and quit** when Ctrl+Q asks.
 - **"Save"** on a ready video card copies the file to
   `[chat.videos] save_location` (default `~/Downloads`) — the only way a
   video escapes ephemerality, and always an explicit act.

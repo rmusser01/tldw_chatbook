@@ -1353,20 +1353,87 @@ async def test_unmount_immediately_before_external_commit_creates_no_path_or_car
     assert cast(_TrackingStream, artifact.stream).close_calls == 1
 
 
+def _staged_stream_open_at_each_wait(
+    harness: _OutcomeHarness, artifact: PendingVideoArtifact
+) -> list[bool]:
+    """Record, at every screen the resolver waits on, whether the video is live."""
+    seen: list[bool] = []
+    original_wait = harness._wait_for_console_screen_result
+
+    async def recording_wait(self, screen):
+        seen.append(not artifact.stream.closed)
+        return await original_wait(screen)
+
+    harness._wait_for_console_screen_result = MethodType(recording_wait, harness)
+    return seen
+
+
 @pytest.mark.asyncio
-async def test_external_picker_cancel_discards_without_card(tmp_path: Path) -> None:
+async def test_external_picker_cancel_returns_to_the_storage_choice(
+    tmp_path: Path,
+) -> None:
+    # TASK-33622.17 (owner decision): cancelling the Save-to-disk picker goes
+    # back to the storage choice with the staged video; it used to discard it.
+    # Two cancels in a row, then only the explicit Discard ends the video.
+    from tldw_chatbook.Widgets.Console.console_video_save_screens import (
+        GeneratedVideoFileSave,
+    )
+
     artifact = _artifact(extension="webm")
-    harness = _OutcomeHarness(actions=["save_external", None], video_store=object())
+    harness = _OutcomeHarness(
+        actions=["save_external", None, "save_external", None, "discard"],
+        video_store=object(),
+    )
+    live_at_each_wait = _staged_stream_open_at_each_wait(harness, artifact)
 
     await harness._resolve_generated_video_outcome(
         artifact, session_id="session", message_id=artifact.message_id
     )
 
+    assert [type(screen) for screen in harness.waited_screens] == [
+        ConsoleVideoCapacityModal,
+        GeneratedVideoFileSave,
+        ConsoleVideoCapacityModal,
+        GeneratedVideoFileSave,
+        ConsoleVideoCapacityModal,
+    ]
+    assert live_at_each_wait == [True] * 5
     picker = harness.waited_screens[1]
     assert picker.default_filename == "generated-clip.webm"
+    assert harness.notifications == []
     assert harness.appended == []
     assert harness.opened == []
     assert artifact.stream.closed
+    assert cast(_TrackingStream, artifact.stream).close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_external_picker_cancel_then_save_writes_the_same_staged_video(
+    tmp_path: Path,
+) -> None:
+    # TASK-33622.17: the choice re-opened after a cancelled picker carries the
+    # same staged payload, so a later save writes it -- once, with no sibling.
+    artifact = _artifact(b"paid generation")
+    destination = tmp_path / "saved"
+    destination.mkdir()
+    target = destination / "kept.mp4"
+    harness = _OutcomeHarness(
+        actions=["save_external", None, "save_external", target],
+        video_store=object(),
+    )
+
+    await harness._resolve_generated_video_outcome(
+        artifact, session_id="session", message_id=artifact.message_id
+    )
+
+    assert len(harness.waited_screens) == 4
+    assert target.read_bytes() == b"paid generation"
+    assert sorted(destination.iterdir()) == [target]
+    assert harness.opened == [target]
+    assert harness.appended == []
+    assert harness._pending_console_video_artifacts() == {}
+    assert harness._pending_video_operation_cancels == {}
+    assert cast(_TrackingStream, artifact.stream).close_calls == 1
 
 
 @pytest.mark.parametrize(
@@ -1505,8 +1572,9 @@ async def test_external_picker_validates_path_before_target_inspection(
 ) -> None:
     artifact = _artifact(b"webm bytes", extension="webm")
     dangerous = Path(f"{tmp_path}/safe/../../chosen.webm")
+    # TASK-33622.17: the picker's cancel returns to the choice; Discard ends it.
     harness = _OutcomeHarness(
-        actions=["save_external", dangerous, None], video_store=object()
+        actions=["save_external", dangerous, None, "discard"], video_store=object()
     )
     inspected: list[Path] = []
     harness._external_video_target_identity = lambda target: inspected.append(target)
@@ -1519,6 +1587,7 @@ async def test_external_picker_validates_path_before_target_inspection(
     assert any(
         "generated video format" in message for message, _ in harness.notifications
     )
+    assert harness.actions == []
     assert artifact.stream.closed
 
 
@@ -1745,8 +1814,9 @@ async def test_existing_external_target_requires_confirmation_and_decline_repick
     artifact = _artifact(b"replacement")
     target = tmp_path / "existing.mp4"
     target.write_bytes(b"keep me")
+    # TASK-33622.17: the re-pick's cancel returns to the choice; Discard ends it.
     harness = _OutcomeHarness(
-        actions=["save_external", target, False, None], video_store=object()
+        actions=["save_external", target, False, None, "discard"], video_store=object()
     )
 
     await harness._resolve_generated_video_outcome(
@@ -1756,7 +1826,7 @@ async def test_existing_external_target_requires_confirmation_and_decline_repick
     assert target.read_bytes() == b"keep me"
     assert harness.appended == []
     assert harness.opened == []
-    assert len(harness.waited_screens) == 4
+    assert len(harness.waited_screens) == 5
 
 
 @pytest.mark.asyncio
@@ -1778,8 +1848,9 @@ async def test_concurrent_external_creator_is_confirmed_and_never_overwritten(
         "supports_follow_symlinks",
         set(os.supports_follow_symlinks) | {racing_link},
     )
+    # TASK-33622.17: the re-pick's cancel returns to the choice; Discard ends it.
     harness = _OutcomeHarness(
-        actions=["save_external", target, False, None], video_store=object()
+        actions=["save_external", target, False, None, "discard"], video_store=object()
     )
 
     await harness._resolve_generated_video_outcome(
@@ -1789,7 +1860,7 @@ async def test_concurrent_external_creator_is_confirmed_and_never_overwritten(
     assert target.read_bytes() == b"theirs"
     assert harness.appended == []
     assert harness.opened == []
-    assert len(harness.waited_screens) == 4
+    assert len(harness.waited_screens) == 5
 
 
 @pytest.mark.asyncio
@@ -1800,7 +1871,7 @@ async def test_confirmed_target_disappearing_requires_fresh_confirmation_before_
     target = tmp_path / "disappears.mp4"
     target.write_bytes(b"original")
     harness = _OutcomeHarness(
-        actions=["save_external", target, True, False, None],
+        actions=["save_external", target, True, False, None, "discard"],
         video_store=object(),
     )
     original_wait = harness._wait_for_console_screen_result
@@ -1840,7 +1911,7 @@ async def test_confirmed_target_disappearing_requires_fresh_confirmation_before_
     )
 
     assert identity_calls == 1
-    assert len(harness.waited_screens) == 5
+    assert len(harness.waited_screens) == 6
     assert harness.appended == []
     assert harness.opened == []
     assert not target.exists()
@@ -1853,11 +1924,13 @@ async def test_confirmed_target_disappearing_requires_fresh_confirmation_before_
         GeneratedVideoFileSave,
     )
 
+    # TASK-33622.17: cancelling that last picker returns to the storage choice.
     assert [type(screen) for screen in harness.waited_screens[1:]] == [
         GeneratedVideoFileSave,
         GeneratedVideoConfirmation,
         GeneratedVideoConfirmation,
         GeneratedVideoFileSave,
+        ConsoleVideoCapacityModal,
     ]
     assert [screen.title for screen in harness.waited_screens[2:4]] == [
         "Replace existing file?",

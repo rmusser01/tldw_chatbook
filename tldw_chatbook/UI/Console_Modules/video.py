@@ -787,7 +787,14 @@ class ConsoleVideoController:
     async def _save_pending_console_video_external(
         self, artifact: PendingVideoArtifact
     ) -> Path | Literal[False] | None:
-        """Choose and atomically write an external path, retaining on failure."""
+        """Choose and atomically write an external path, retaining on failure.
+
+        Returns:
+            The saved path; False to go back to the storage choice with the
+            video kept (a failed save, or the picker cancelled -- TASK-33622.17:
+            only an explicit discard may throw a generated video away); None
+            once this screen no longer owns the video.
+        """
         # TASK-33622.15: these screens ask before Ctrl+Q discards the video.
         from tldw_chatbook.Widgets.Console.console_video_save_screens import (
             GeneratedVideoConfirmation,
@@ -801,8 +808,10 @@ class ConsoleVideoController:
                     default_filename=f"{artifact.slug}.{artifact.extension}",
                 )
             )
-            if not self._owns_pending_console_video(artifact) or not selected:
+            if not self._owns_pending_console_video(artifact):
                 return None
+            if not selected:
+                return False
             try:
                 target = ConsoleVideoController._normalize_pending_video_target(
                     Path(selected).expanduser(), artifact.extension
