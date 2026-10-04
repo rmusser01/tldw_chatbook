@@ -119,6 +119,61 @@ def first_token_timeout_seconds(
     return max(float(value), float(stall_timeout))
 
 
+def _configured_stall_window() -> float:
+    """The gap window in force: env, then config, then the default.
+
+    The same precedence as ``console_agent_bridge._stall_timeout_seconds``,
+    read here so the transport layer need not import the bridge.
+    """
+    import math
+    import os
+
+    raw: object = os.environ.get("TLDW_STREAM_STALL_TIMEOUT_SECONDS")
+    if raw is None or not str(raw).strip():
+        from tldw_chatbook.config import get_cli_setting
+
+        raw = get_cli_setting(
+            "chat_defaults", "stream_stall_timeout_seconds", DEFAULT_STALL_TIMEOUT_SECONDS
+        )
+    try:
+        value = float(raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_STALL_TIMEOUT_SECONDS
+    return value if math.isfinite(value) else DEFAULT_STALL_TIMEOUT_SECONDS
+
+
+#: How much longer than the first-token window a self-hosted server's HTTP
+#: read timeout runs, so the watchdog -- not the transport -- decides.
+FIRST_TOKEN_READ_TIMEOUT_MARGIN_SECONDS = 30.0
+
+
+def self_hosted_read_timeout(configured: float) -> float:
+    """A self-hosted chat request's HTTP read timeout (review round 1, B-F1).
+
+    Live: a Custom OpenAI-compatible endpoint's 120 s read timeout fired
+    before the 300 s first-token window, so a cold model's slow first token
+    surfaced as a retryable network error instead of the first-token copy.
+    The read timeout is never shorter than the first-token window plus
+    :data:`FIRST_TOKEN_READ_TIMEOUT_MARGIN_SECONDS`.
+
+    Args:
+        configured: The handler's configured read timeout in seconds.
+
+    Returns:
+        ``configured`` raised to the floor (unchanged when the floor cannot
+        be read).
+    """
+    try:
+        window = first_token_timeout_seconds(
+            "llama_cpp", stall_timeout=_configured_stall_window()
+        )
+    except Exception:  # noqa: BLE001 -- the floor is best effort
+        return configured
+    if window is None:
+        return configured
+    return max(configured, window + FIRST_TOKEN_READ_TIMEOUT_MARGIN_SECONDS)
+
+
 async def watch_content_stalls(
     source: AsyncIterator[_T],
     timeout_seconds: Optional[float],
@@ -136,6 +191,7 @@ async def watch_content_stalls(
             :class:`StreamStallError`.
         first_item_timeout_seconds: A longer window for the FIRST item only
             (a cold local model); ``None`` uses ``timeout_seconds`` for it.
+            A whitespace-only text item does not end it.
 
     Yields:
         Each item from ``source`` unchanged; every item resets the clock.
@@ -169,7 +225,10 @@ async def watch_content_stalls(
                 # provider blocked inside a wedged read is not aborted by that
                 # close -- see TASK-30015; the run is freed regardless.)
                 raise StreamStallError(window, provider, first_token=first)
-            first = False
+            if not (isinstance(item, str) and not item.strip()):
+                # Review round 1 (A-F5): a blank delta from a cold server
+                # still reading the prompt is not the answer starting.
+                first = False
             yield item
     finally:
         # A consumer that breaks/cancels out of the loop must not leak the

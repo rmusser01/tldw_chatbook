@@ -2089,6 +2089,18 @@ def build_hosted_chat_handler(
     return chat_with_hosted_provider
 
 
+def _engine_read_timeout(record: ProviderRecord, configured: float) -> float:
+    """A self-hosted record's read timeout outlasts the first-token window.
+
+    TASK-34100.5 review (B-F1): see ``self_hosted_read_timeout``.
+    """
+    if record.classification != "local":
+        return configured
+    from tldw_chatbook.Chat.stream_stall_watchdog import self_hosted_read_timeout
+
+    return self_hosted_read_timeout(configured)
+
+
 def _send_hosted_chat_request(
     record: ProviderRecord,
     *,
@@ -2167,7 +2179,7 @@ def _send_hosted_chat_request(
                 provider=record.key,
                 base_url=resolution.base_url,
                 api_key=resolution.api_key,
-                timeout=resolution.timeout,
+                timeout=_engine_read_timeout(record, resolution.timeout),
                 retries=resolution.retries,
                 retry_delay=resolution.retry_delay,
                 auth_scheme=record.auth_scheme,

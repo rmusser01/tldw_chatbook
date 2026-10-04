@@ -162,3 +162,219 @@ def test_a_first_send_with_no_published_usage_still_times_the_wait() -> None:
         assert "40s" in line
     finished = SimpleNamespace(status="done", steps=(), turn_usage=None)
     assert console_turn_activity_text(finished, now=50.0, turn_started_at=10.0) == ""
+
+
+# --- Review round 1 -----------------------------------------------------------
+
+
+def test_a_whitespace_delta_does_not_end_the_first_token_window() -> None:
+    """A-F5: a cold server that sends a blank delta while it is still reading
+    the prompt has not started answering; the long first-token window holds
+    until real content arrives."""
+
+    async def source():
+        yield "\n"
+        await asyncio.sleep(0.3)  # longer than the gap window, inside the first
+        yield "answer"
+
+    assert asyncio.run(
+        _collect(source(), 0.1, first_item_timeout_seconds=1.0)
+    ) == ["\n", "answer"]
+
+
+def test_real_content_still_hands_over_to_the_gap_window() -> None:
+    """The control: once the answer has begun, gaps keep the short window."""
+
+    async def source():
+        yield " Hi"
+        await asyncio.sleep(0.3)
+        yield "late"
+
+    with pytest.raises(StreamStallError) as caught:
+        asyncio.run(_collect(source(), 0.1, first_item_timeout_seconds=1.0))
+    assert caught.value.first_token is False
+
+
+def _no_first_token_config(monkeypatch) -> None:
+    monkeypatch.delenv("TLDW_FIRST_TOKEN_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setattr(
+        "tldw_chatbook.config.get_cli_setting",
+        lambda _section, _key, default=None: default,
+    )
+
+
+class _RecordingSession:
+    def __init__(self) -> None:
+        self.timeouts: list[object] = []
+        self.adapters: list[object] = []
+
+    def mount(self, _prefix, adapter) -> None:
+        self.adapters.append(adapter)
+
+    def post(self, _url, json=None, headers=None, timeout=None, stream=False):
+        self.timeouts.append(timeout)
+
+        class _Response:
+            status_code = 200
+            text = '{"choices":[{"message":{"content":"ok"}}]}'
+
+            @staticmethod
+            def json():
+                return {"choices": [{"message": {"content": "ok"}}]}
+
+            @staticmethod
+            def raise_for_status():
+                return None
+
+        return _Response()
+
+    def close(self) -> None:
+        return None
+
+
+def test_a_self_hosted_read_timeout_never_undercuts_the_first_token_window(
+    monkeypatch,
+) -> None:
+    """B-F1 (live, 2026-10-03): a Custom OpenAI-compatible endpoint's 120 s
+    HTTP read timeout fired before the 300 s first-token window, urllib3
+    re-sent the prompt (llama-server processed it twice), and the 503 that
+    followed was retried as transient into a refused trace reservation. The
+    read timeout now outlasts the window, so the watchdog -- with its own
+    copy -- decides, and a read timeout is never re-sent."""
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls_Local as local
+
+    _no_first_token_config(monkeypatch)
+    session = _RecordingSession()
+    monkeypatch.setattr(local, "create_default_session", lambda: session)
+
+    local._chat_with_openai_compatible_local_server(
+        api_base_url="http://127.0.0.1:9412/v1",
+        model_name="qwen",
+        input_data=[{"role": "user", "content": "hi"}],
+        streaming=False,
+        provider_name="Custom OpenAI",
+        timeout=120,
+        api_retries=2,
+    )
+
+    assert session.timeouts and session.timeouts[0] > 300, session.timeouts
+    retry = session.adapters[0].max_retries
+    assert retry.read == 0, "a read timeout must not re-send the prompt"
+
+
+def test_the_custom_hosted_engine_read_timeout_outlasts_the_window(
+    monkeypatch,
+) -> None:
+    """The same floor on the engine path a registry custom endpoint uses."""
+    from tldw_chatbook.LLM_Calls import hosted_provider_engine as engine
+    from tldw_chatbook.provider_registry import CUSTOM_HOSTED
+
+    _no_first_token_config(monkeypatch)
+    monkeypatch.setattr(
+        engine,
+        "resolve_hosted_request",
+        lambda record, **_kwargs: engine.HostedProviderResolution(
+            provider="custom-hosted",
+            model="qwen",
+            api_key="",
+            base_url="http://127.0.0.1:9412/v1",
+            timeout=120.0,
+            retries=1,
+            retry_delay=1.0,
+            streaming=False,
+        ),
+    )
+    captured: dict[str, object] = {}
+
+    def fake_post(**kwargs):
+        captured.update(kwargs)
+        return {
+            "choices": [
+                {"index": 0, "message": {"role": "assistant", "content": "ok"},
+                 "finish_reason": "stop"}
+            ]
+        }
+
+    monkeypatch.setattr(engine, "owned_json_post", fake_post)
+    engine.build_hosted_chat_handler(CUSTOM_HOSTED)(
+        input_data=[{"role": "user", "content": "hi"}], streaming=False
+    )
+
+    assert captured["config"].timeout > 300
+
+
+def _bridge_run_with_gateway(tmp_path, monkeypatch, gateway, **over):
+    from Tests.Chat.test_console_agent_bridge import _bridge_with_gateway, _run
+    from tldw_chatbook.Chat import console_agent_bridge as bridge_mod
+    from tldw_chatbook.Chat import stream_stall_watchdog as wd
+
+    wd._SESSION_TRACKERS.clear()
+    monkeypatch.setattr(bridge_mod, "_stall_timeout_seconds", lambda: 0.1)
+    stalls: list[str] = []
+    real = wd.record_session_stall
+
+    def spy(session_id, provider, **kw):
+        stalls.append(provider)
+        return real(session_id, provider, **kw)
+
+    monkeypatch.setattr(bridge_mod, "record_session_stall", spy)
+    bridge, _db, store, session, assistant_id = _bridge_with_gateway(
+        tmp_path, gateway
+    )
+    outcome = _run(bridge, store, session, assistant_id, **over)
+    wd._SESSION_TRACKERS.clear()
+    return outcome, stalls
+
+
+class _SlowFirstTokenGateway:
+    async def stream_chat(self, resolution, messages, tools=None, **kwargs):
+        await asyncio.sleep(0.5)  # past the 0.1 s gap window
+        yield "hello from a cold model"
+
+
+def test_the_bridge_gives_a_self_hosted_first_token_its_own_window(
+    tmp_path, monkeypatch
+) -> None:
+    """C-F1: the one line that hands the bridge's real stream path the longer
+    window. Deleting it left every other suite green."""
+    _no_first_token_config(monkeypatch)
+
+    outcome, stalls = _bridge_run_with_gateway(
+        tmp_path / "local", monkeypatch, _SlowFirstTokenGateway()
+    )
+
+    assert stalls == []
+    assert "hello from a cold model" in (outcome.final_text or "")
+
+
+def test_the_bridge_keeps_the_stall_window_for_a_cloud_first_token(
+    tmp_path, monkeypatch
+) -> None:
+    from Tests.Chat.test_console_agent_bridge import _test_resolution
+
+    _no_first_token_config(monkeypatch)
+
+    outcome, stalls = _bridge_run_with_gateway(
+        tmp_path / "cloud",
+        monkeypatch,
+        _SlowFirstTokenGateway(),
+        resolution=_test_resolution(provider="anthropic", execution_key="anthropic"),
+    )
+
+    assert stalls == ["anthropic"]
+    summaries = " ".join(getattr(step, "summary", "") for step in outcome.steps)
+    assert "no first token after 0.1 s" in summaries, summaries
+
+
+def test_the_read_floor_follows_a_configured_longer_gap_window(monkeypatch) -> None:
+    """A stall window configured above 300 s lengthens the first-token
+    window too; the read floor follows it."""
+    from tldw_chatbook.Chat.stream_stall_watchdog import self_hosted_read_timeout
+
+    _no_first_token_config(monkeypatch)
+    monkeypatch.setenv("TLDW_STREAM_STALL_TIMEOUT_SECONDS", "400")
+
+    assert self_hosted_read_timeout(120) == 430
+    assert self_hosted_read_timeout(900) == 900
+    monkeypatch.setenv("TLDW_STREAM_STALL_TIMEOUT_SECONDS", "0")  # watchdog off
+    assert self_hosted_read_timeout(120) == 120
