@@ -1533,6 +1533,30 @@ class FileNotesService:
         )
 
     @_serialized
+    def enforce_retention(self) -> OperationResult:
+        """Apply the ADR-218 retention bounds for this service's root.
+
+        Returns:
+            Retention status and any replica warning.
+        """
+        if self._replica is None:
+            return _result(
+                "replica-error",
+                self.root_key,
+                "Retention requires the recovery replica",
+            )
+        try:
+            self._replica.enforce_retention(self.root_key)
+        except Exception as error:
+            return _result(
+                "replica-error",
+                self.root_key,
+                "Could not enforce replica retention",
+                warning=_replica_warning(error),
+            )
+        return OperationResult(status="ok", relative_path=self.root_key)
+
+    @_serialized
     def reconcile(self) -> ReconcileResult:
         """Project external create/modify/delete changes into the replica.
 

@@ -142,6 +142,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-212](212-shared-adaptive-pane-shell.md) | Accepted | Share the adaptive pane shell (grips, messages, rail rows, compact search input) between the Library and Roleplay through destination classes, neutral resolver aliases and an opt-in Tab region. |
 | [ADR-217](217-first-run-setup-shape-and-surfaces.md) | Accepted | One setup owner on a Textual-free setup core serves the first-run corridor (Quick 4 steps, Full 11), a re-run dashboard, single-step sheets and `tldw-cli setup --plain`; a stable step total; a Console probe-turn test message; provider keys stay in config.toml by default with the OS keychain optional. |
 | [ADR-219](219-console-chat-destinations-and-bounded-starts.md) | Accepted | Let Console agents create workspace or casual drafts and start background work with destination defaults, scoped approvals, shared finite budgets, and durable recovery. |
+| [ADR-218](218-file-notes-replica-retention.md) | Proposed | Bound the ADR-029 File Notes replica's recovery data: 50 most-recent checkpoints per unprotected note, 30-day tombstone/revision expiry on root change and session end, with protected paths and the most-recent tombstone never evicted. |
 
 | [ADR-211](211-ephemeral-provider-failure-presentation.md) | Accepted | Keep sanitized provider failure presentation transient across the gateway, agent outcome and Console while preserving typed fallback semantics and diagnostic persistence. |
 

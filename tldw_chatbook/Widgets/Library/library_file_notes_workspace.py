@@ -2682,6 +2682,14 @@ class LibraryFileNotesWorkspace(Vertical):
                 await asyncio.shield(save_task)
             except (asyncio.CancelledError, Exception):
                 pass
+        # task-34382 (ADR-218): the session-end retention pass, after any
+        # in-flight save settles and before the owner/replica retire.
+        service = self._service
+        if service is not None:
+            try:
+                await asyncio.to_thread(service.enforce_retention)
+            except Exception as error:
+                self.log.warning(f"File Notes retention cleanup failed: {error}")
         if self._owns_session_owner:
             await asyncio.to_thread(self._session_owner.shutdown)
         elif self._owns_replica:
@@ -2953,6 +2961,30 @@ class LibraryFileNotesWorkspace(Vertical):
             return True
         finally:
             reservation.release()
+
+    async def _enforce_retention(
+        self,
+        service: FileNotesService,
+        generation: int,
+    ) -> str | None:
+        """Run one ADR-218 retention pass for a scanned root (task-34382).
+
+        Args:
+            service: Service bound to the root candidate just scanned.
+            generation: Root generation the candidate belongs to.
+
+        Returns:
+            A warning to surface, or ``None`` when cleanup ran clean.
+        """
+        try:
+            result = await asyncio.to_thread(service.enforce_retention)
+        except Exception as error:
+            return f"Retention cleanup failed: {error}"
+        if self._path_result_is_stale(service, generation):
+            return None
+        if not result.succeeded:
+            return f"Retention cleanup failed: {result.message or result.status}"
+        return None
 
     async def _load_deleted_paths(
         self,
@@ -6238,6 +6270,20 @@ class LibraryFileNotesWorkspace(Vertical):
                 if generation == self._root_generation:
                     self._report_root_change_reason(ROOT_CHANGE_TIMEOUT_COPY)
                 return False
+            # task-34382 (ADR-218): retention runs after the scan adopts the
+            # candidate and BEFORE Recently-deleted is read, so the listing
+            # never names entries the policy just expired. Failure warns; it
+            # never blocks the root change.
+            retention_warning = await self._enforce_retention(service, generation)
+            if not self._active or generation != self._root_generation:
+                return False
+            if retention_warning:
+                merged = "; ".join(
+                    warning
+                    for warning in (result.replica_warning, retention_warning)
+                    if warning
+                )
+                result = replace(result, replica_warning=merged or None)
             deleted = await self._load_deleted_paths(
                 replica=self._replica,
                 service=service,

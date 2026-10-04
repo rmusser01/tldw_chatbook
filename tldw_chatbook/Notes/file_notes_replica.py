@@ -7,7 +7,7 @@ import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
 from typing import NamedTuple
@@ -24,6 +24,11 @@ from tldw_chatbook.Backup_Recovery.participants import (
 from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 
 from tldw_chatbook.Utils.fts5_match_forms import quote_fts5_phrase
+
+#: ADR-218: most-recent ``pre_edit`` revisions kept per unprotected note.
+MAX_REVISIONS_PER_NOTE = 50
+#: ADR-218: tombstones and revisions past this age are expired.
+RECOVERY_EXPIRY_DAYS = 30
 
 
 class ReplicaFileInfo(NamedTuple):
@@ -501,28 +506,11 @@ class FileNotesReplica:
             ``True`` when an exact entry or folder prefix protects the path.
         """
         with self._locked_connection():
-            row = self._connection.execute(
-                """
-                SELECT 1
-                FROM protected_paths
-                WHERE root = ?
-                  AND (
-                        (is_prefix = 0 AND relative_path = ?)
-                     OR (
-                            is_prefix = 1
-                        AND (
-                               relative_path = ''
-                            OR relative_path = ?
-                            OR substr(?, 1, length(relative_path) + 1)
-                               = relative_path || '/'
-                        )
-                     )
-                  )
-                LIMIT 1
-                """,
-                (root, relative_path, relative_path, relative_path),
-            ).fetchone()
-        return row is not None
+            return _protected_row_exists(
+                self._connection,
+                root,
+                relative_path,
+            )
 
     def checkpoint(
         self,
@@ -688,6 +676,131 @@ class FileNotesReplica:
         return (
             hashlib.sha256(revision.raw_bytes).hexdigest() == revision.content_hash
         )
+
+    def enforce_retention(
+        self,
+        root: str,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        """Apply the ADR-218 retention bounds for one root atomically.
+
+        Three rules, one transaction: each unprotected path keeps at most
+        :data:`MAX_REVISIONS_PER_NOTE` most-recent ``pre_edit`` revisions;
+        tombstones and revisions older than :data:`RECOVERY_EXPIRY_DAYS` are
+        expired; protected paths and the most-recent tombstone (with its
+        ``delete`` revision) are never evicted. Timestamps are compared as
+        parsed UTC values -- the stored spellings mix ``Z`` and ``+00:00`` --
+        and a value that cannot be parsed is kept, never evicted.
+
+        Args:
+            root: Canonical notes-root identifier.
+            now: Retention clock; defaults to the current UTC time.
+        """
+        observed_now = now or datetime.now(timezone.utc)
+        if observed_now.tzinfo is None:
+            observed_now = observed_now.replace(tzinfo=timezone.utc)
+        cutoff = observed_now - timedelta(days=RECOVERY_EXPIRY_DAYS)
+        with self._transaction() as cursor:
+            # Rule 1: the per-note checkpoint cap, protected paths exempt.
+            cap_paths = cursor.execute(
+                """
+                SELECT DISTINCT relative_path
+                FROM revisions
+                WHERE root = ? AND kind = 'pre_edit'
+                """,
+                (root,),
+            ).fetchall()
+            for row in cap_paths:
+                relative_path = str(row["relative_path"])
+                if _protected_row_exists(cursor, root, relative_path):
+                    continue
+                cursor.execute(
+                    """
+                    DELETE FROM revisions
+                    WHERE rowid IN (
+                        SELECT rowid
+                        FROM revisions
+                        WHERE root = ? AND relative_path = ? AND kind = 'pre_edit'
+                        ORDER BY created_at DESC, session_key DESC
+                        LIMIT -1 OFFSET ?
+                    )
+                    """,
+                    (root, relative_path, MAX_REVISIONS_PER_NOTE),
+                )
+
+            # Rule 2: tombstone expiry, the most-recent tombstone kept.
+            tombstone_rows = cursor.execute(
+                """
+                SELECT relative_path, deleted_at
+                FROM files
+                WHERE root = ? AND deleted_at IS NOT NULL
+                """,
+                (root,),
+            ).fetchall()
+            newest_tombstone_at: datetime | None = None
+            for row in tombstone_rows:
+                deleted_at = _parse_utc_timestamp(str(row["deleted_at"]))
+                if deleted_at is not None and (
+                    newest_tombstone_at is None or deleted_at > newest_tombstone_at
+                ):
+                    newest_tombstone_at = deleted_at
+            for row in tombstone_rows:
+                relative_path = str(row["relative_path"])
+                if _protected_row_exists(cursor, root, relative_path):
+                    continue
+                deleted_at = _parse_utc_timestamp(str(row["deleted_at"]))
+                if deleted_at is None or deleted_at >= cutoff:
+                    continue
+                if (
+                    newest_tombstone_at is not None
+                    and deleted_at == newest_tombstone_at
+                ):
+                    continue
+                self._delete_fts(cursor, root, relative_path)
+                cursor.execute(
+                    "DELETE FROM files WHERE root = ? AND relative_path = ?",
+                    (root, relative_path),
+                )
+
+            # Rule 3: revision expiry; protected paths and the preserved
+            # tombstone's delete revision are exempt.
+            revision_rows = cursor.execute(
+                """
+                SELECT rowid, relative_path, kind, created_at
+                FROM revisions
+                WHERE root = ?
+                """,
+                (root,),
+            ).fetchall()
+            expired_row_ids: list[int] = []
+            protected_cache: dict[str, bool] = {}
+            for row in revision_rows:
+                relative_path = str(row["relative_path"])
+                is_protected = protected_cache.get(relative_path)
+                if is_protected is None:
+                    is_protected = _protected_row_exists(
+                        cursor, root, relative_path
+                    )
+                    protected_cache[relative_path] = is_protected
+                if is_protected:
+                    continue
+                created_at = _parse_utc_timestamp(str(row["created_at"]))
+                if created_at is None or created_at >= cutoff:
+                    continue
+                if (
+                    newest_tombstone_at is not None
+                    and created_at == newest_tombstone_at
+                    and str(row["kind"]) == "delete"
+                ):
+                    # The most-recent tombstone's own delete revision is the
+                    # same recovery fact as the tombstone kept above.
+                    continue
+                expired_row_ids.append(int(row["rowid"]))
+            for row_id in expired_row_ids:
+                cursor.execute(
+                    "DELETE FROM revisions WHERE rowid = ?", (row_id,)
+                )
 
     def prepare_deletion(
         self,
@@ -899,3 +1012,49 @@ class FileNotesReplica:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _protected_row_exists(
+    connection: sqlite3.Connection,
+    root: str,
+    relative_path: str,
+) -> bool:
+    """Return whether an exact or component-bounded prefix protects a path."""
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM protected_paths
+        WHERE root = ?
+          AND (
+                (is_prefix = 0 AND relative_path = ?)
+             OR (
+                    is_prefix = 1
+                AND (
+                       relative_path = ''
+                    OR relative_path = ?
+                    OR substr(?, 1, length(relative_path) + 1)
+                       = relative_path || '/'
+                )
+             )
+          )
+        LIMIT 1
+        """,
+        (root, relative_path, relative_path, relative_path),
+    ).fetchone()
+    return row is not None
+
+
+def _parse_utc_timestamp(value: str) -> datetime | None:
+    """Parse one stored UTC timestamp, or ``None`` when unparseable.
+
+    Stored spellings mix trailing ``Z`` and ``+00:00`` across the codebase's
+    history; SQL string ordering cannot compare them, so retention parses in
+    Python. ``None`` fails safe: the caller keeps, never evicts.
+    """
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
