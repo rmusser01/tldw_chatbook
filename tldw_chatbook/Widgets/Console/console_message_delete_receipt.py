@@ -196,9 +196,9 @@ class ConsoleMessageDeleteReceiptModal(SafeModalDismissMixin, ModalScreen[str | 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         """Done, unless a save is running: then say it can't be stopped."""
         if self._working is not None:
-            self.query_one("#console-delete-receipt-status", Static).update(
-                f"{_STILL_SAVING[self._working]}\nIt can't be cancelled."
-            )
+            # The progress panel can still be mounting (Undo just pressed).
+            for status in self.query("#console-delete-receipt-status").results(Static):
+                status.update(f"{_STILL_SAVING[self._working]}\nIt can't be cancelled.")
             return
         self.dismiss_safe_once(None)
 
