@@ -388,6 +388,10 @@ async def test_reader_info_is_explicit_and_truthful() -> None:
             ),
         ),
         message_total=1,
+        # The saved transcript's token as the seeded detail service reports
+        # it: the first list read re-checks a loaded transcript and reloads
+        # one whose epoch moved (TASK-33628.10).
+        message_epoch="epoch-chat-a",
         complete=True,
     )
     screen._conversations_state.reader_loaded_metadata = _conversation_records()[0]
@@ -1674,7 +1678,11 @@ async def test_page_drift_confirms_exact_identity_before_declaring_deletion(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await screen.workers.wait_for_complete()
-        screen._conversations_state.reader_state = _loaded_reader_state()
+        # Carry the seeded service's saved-transcript epoch, so the page
+        # read's re-check (TASK-33628.10) finds this load current.
+        screen._conversations_state.reader_state = replace(
+            _loaded_reader_state(), message_epoch="epoch-chat-a"
+        )
         screen._conversations_state.reader_loaded_metadata = records[0]
         screen._conversations_state.reader_selected_metadata = records[0]
         screen._selected_conversation_id = "chat-a"
