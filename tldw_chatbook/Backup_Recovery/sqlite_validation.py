@@ -98,6 +98,7 @@ class _Restrictions:
         self.migration_owner = None
         self.shipped_checkpoint_migration = False
         self.shipped_checkpoint_rename = False
+        self.fleet_progress_migration = False
         self.canvas_schema = False
         self.changing_schema_trust = False
         self.reading_fts_metadata = False
@@ -306,6 +307,28 @@ class _Restrictions:
                     and second == "version"
                     and database == "main"
                     and source is None
+                )
+                allowed |= (
+                    self.fleet_progress_migration
+                    and database == "main"
+                    and source is None
+                    and (
+                        action == sqlite3.SQLITE_CREATE_TABLE
+                        and first == "fleet_progress_messages"
+                        or action == sqlite3.SQLITE_CREATE_INDEX
+                        and first in {
+                            "idx_fleet_progress_conversation_sequence",
+                            "sqlite_autoindex_fleet_progress_messages_1",
+                        }
+                        and second == "fleet_progress_messages"
+                        or action == sqlite3.SQLITE_REINDEX
+                        and first == "idx_fleet_progress_conversation_sequence"
+                        or action == sqlite3.SQLITE_INSERT
+                        and first == "sqlite_master"
+                        or action == sqlite3.SQLITE_UPDATE
+                        and first == "sqlite_master"
+                        and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+                    )
                 )
                 return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
             # Research keeps its existing ADD COLUMN authority. Only fixed
@@ -745,14 +768,18 @@ def _validate_candidate(
                     from tldw_chatbook.DB.recovery_core_schema import (
                         CHACHANOTES_V76_NATIVE_SCHEMAS,
                         CHACHANOTES_V76_SHIPPED_SCHEMAS,
+                        CHACHANOTES_V77_SCHEMAS,
                     )
 
                     actual_sql = tuple(
                         row[3] for row in _catalog(connection) if row[3] is not None
                     )
-                    if version != 76 or actual_sql not in (
-                        *CHACHANOTES_V76_NATIVE_SCHEMAS,
-                        *CHACHANOTES_V76_SHIPPED_SCHEMAS,
+                    if not (
+                        version == 76 and actual_sql in (
+                            *CHACHANOTES_V76_NATIVE_SCHEMAS,
+                            *CHACHANOTES_V76_SHIPPED_SCHEMAS,
+                        )
+                        or version == 77 and actual_sql in CHACHANOTES_V77_SCHEMAS
                     ):
                         return (("unsupported_schema_migration",), None)
                     shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
@@ -769,14 +796,23 @@ def _validate_candidate(
                         if len(choices) != 1:
                             return (("unsupported_schema_migration",), None)
                         expected, statements = choices[0]
-                        if shipped_checkpoint:
+                        if (
+                            shipped_checkpoint and version == 76
+                            or installed.owner_id == "db.chachanotes.primary"
+                            and version == 77
+                        ):
                             migration = (
                                 Path(__file__).resolve().parents[1]
                                 / "DB"
                                 / "migrations"
-                                / "chachanotes_v76_to_v77_agent_chat_starts.sql"
+                                / (
+                                    "chachanotes_v77_to_v78_fleet_progress.sql"
+                                    if version == 77
+                                    else "chachanotes_v76_to_v77_agent_chat_starts.sql"
+                                )
                             )
-                            restrictions.shipped_checkpoint_migration = True
+                            restrictions.shipped_checkpoint_migration = version == 76
+                            restrictions.fleet_progress_migration = version == 77
                             try:
                                 pending = ""
                                 for line in migration.read_text(
@@ -806,6 +842,7 @@ def _validate_candidate(
                                     raise ValueError("incomplete_installed_migration")
                             finally:
                                 restrictions.shipped_checkpoint_migration = False
+                                restrictions.fleet_progress_migration = False
                         for statement in statements:
                             if restrictions.expired():
                                 raise InterruptedError

@@ -101,7 +101,6 @@ CORE_SCHEMAS = (
             "CREATE INDEX idx_flashcard_templates_name ON flashcard_templates(name)",
             "CREATE INDEX idx_flashcards_deck_id ON flashcards(deck_id)",
             "CREATE INDEX idx_flashcards_next_review ON flashcards(next_review)",
-            "CREATE INDEX idx_fleet_progress_conversation_sequence\n  ON fleet_progress_messages(conversation_id, sequence)",
             "CREATE INDEX idx_hook_continuation_receipts_conversation\n    ON console_hook_continuation_receipts(conversation_id)",
             "CREATE INDEX idx_kept_briefings_kept_at ON kept_briefings(kept_at DESC, id DESC)",
             "CREATE INDEX idx_kept_scripts_briefing ON kept_scripts(kept_briefing_id)",
@@ -278,7 +277,6 @@ CORE_SCHEMAS = (
             "CREATE TABLE 'flashcards_fts_data'(id INTEGER PRIMARY KEY, block BLOB)",
             "CREATE TABLE 'flashcards_fts_docsize'(id INTEGER PRIMARY KEY, sz BLOB)",
             "CREATE TABLE 'flashcards_fts_idx'(segid, term, pgno, PRIMARY KEY(segid, term)) WITHOUT ROWID",
-            "CREATE TABLE fleet_progress_messages (\n  sequence INTEGER PRIMARY KEY AUTOINCREMENT,\n  message_id TEXT NOT NULL UNIQUE CHECK(length(message_id) BETWEEN 1 AND 128),\n  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,\n  handle_id TEXT NOT NULL CHECK(length(handle_id) BETWEEN 1 AND 128),\n  run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 128),\n  parent_run_id TEXT NOT NULL CHECK(length(parent_run_id) BETWEEN 1 AND 128),\n  chain_id TEXT CHECK(chain_id IS NULL OR length(chain_id) BETWEEN 1 AND 128),\n  agent TEXT NOT NULL CHECK(length(agent) BETWEEN 1 AND 80),\n  body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2000),\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
             "CREATE TABLE kept_briefings(\n  id                     INTEGER PRIMARY KEY AUTOINCREMENT,\n  source_briefing_id     INTEGER NOT NULL UNIQUE,\n  watchlist_name         TEXT,\n  body_markdown          TEXT NOT NULL,\n  covers_through_item_id INTEGER,\n  covers_from_ts         DATETIME,\n  selection_mode         TEXT,\n  model_used             TEXT,\n  item_count             INTEGER NOT NULL DEFAULT 0,\n  featured_count         INTEGER NOT NULL DEFAULT 0,\n  overflow_count         INTEGER NOT NULL DEFAULT 0,\n  origin                 TEXT NOT NULL CHECK(origin IN ('manual','scheduled')),\n  original_created_at    DATETIME,\n  kept_at                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
             "CREATE TABLE kept_scripts(\n  id                   INTEGER PRIMARY KEY AUTOINCREMENT,\n  kept_briefing_id     INTEGER NOT NULL REFERENCES kept_briefings(id) ON DELETE CASCADE ON UPDATE CASCADE,\n  source_script_id     INTEGER UNIQUE,\n  preset_name          TEXT NOT NULL,\n  roster_snapshot_json TEXT NOT NULL,\n  turns_json           TEXT NOT NULL,\n  model_used           TEXT,\n  original_created_at  DATETIME,\n  kept_at              DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n)",
             "CREATE TABLE keyword_collections(\n  id            INTEGER PRIMARY KEY AUTOINCREMENT,\n  name          TEXT    UNIQUE NOT NULL COLLATE NOCASE,\n  parent_id     INTEGER REFERENCES keyword_collections(id)\n                         ON DELETE SET NULL ON UPDATE CASCADE,\n  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  last_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  deleted       BOOLEAN  NOT NULL DEFAULT 0,\n  client_id     TEXT     NOT NULL DEFAULT 'unknown',\n  version       INTEGER  NOT NULL DEFAULT 1\n, sync_id TEXT)",
@@ -822,4 +820,45 @@ CORE_SCHEMAS = tuple(
 CHACHANOTES_NATIVE_V76_TO_V77_SQL = (
     "UPDATE db_schema_version SET version = 77 "
     "WHERE schema_name = 'rag_char_chat_schema' AND version = 76",
+)
+
+
+# ADR-199/219: fleet progress follows shipped native v77; old catalogs stay frozen.
+CHACHANOTES_V77_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_DICTIONARY_UPDATE_SCHEMA
+CHACHANOTES_V77_SCHEMAS = (
+    CHACHANOTES_V77_SCHEMA,
+    CHACHANOTES_V77_DICTIONARY_UPDATE_SCHEMA,
+    *CHACHANOTES_V76_NATIVE_SCHEMAS,
+)
+CHACHANOTES_FLEET_PROGRESS_SQL = ('CREATE INDEX idx_fleet_progress_conversation_sequence\n  ON fleet_progress_messages(conversation_id, sequence)', 'CREATE TABLE fleet_progress_messages (\n  sequence INTEGER PRIMARY KEY AUTOINCREMENT,\n  message_id TEXT NOT NULL UNIQUE CHECK(length(message_id) BETWEEN 1 AND 128),\n  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,\n  handle_id TEXT NOT NULL CHECK(length(handle_id) BETWEEN 1 AND 128),\n  run_id TEXT NOT NULL CHECK(length(run_id) BETWEEN 1 AND 128),\n  parent_run_id TEXT NOT NULL CHECK(length(parent_run_id) BETWEEN 1 AND 128),\n  chain_id TEXT CHECK(chain_id IS NULL OR length(chain_id) BETWEEN 1 AND 128),\n  agent TEXT NOT NULL CHECK(length(agent) BETWEEN 1 AND 80),\n  body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2000),\n  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP\n)')
+
+
+def _fleet_progress_catalog(schema):
+    """Append the two frozen progress objects in sqlite_schema type/name order."""
+    import re
+
+    def catalog_key(sql):
+        match = re.match(
+            r'CREATE (?:UNIQUE |VIRTUAL )?(INDEX|TABLE|TRIGGER) (?:IF NOT EXISTS )?["`]?([^"` (]+)',
+            sql,
+        )
+        assert match is not None
+        return match[1].lower(), match[2]
+
+    return tuple(sorted(schema + CHACHANOTES_FLEET_PROGRESS_SQL, key=catalog_key))
+
+
+CHACHANOTES_V78_SCHEMAS = tuple(
+    _fleet_progress_catalog(schema) for schema in CHACHANOTES_V77_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_V78_SCHEMAS[1]
+CORE_SCHEMAS = tuple(
+    (owner, 78, CHACHANOTES_V78_SCHEMAS[0])
+    if owner == "db.chachanotes.primary"
+    else (owner, version, schema)
+    for owner, version, schema in CORE_SCHEMAS
+)
+# The installed .sql file owns DDL; this fixed step owns only its stamp.
+CHACHANOTES_FLEET_V77_TO_V78_SQL = (
+    "UPDATE db_schema_version SET version=78 WHERE schema_name='rag_char_chat_schema' AND version=77",
 )

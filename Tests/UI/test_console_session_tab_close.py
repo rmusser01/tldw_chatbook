@@ -1404,7 +1404,7 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                 await _show_tabs(console, pilot, {keeper, doomed.id})
                 bridge = controller._agent_bridge
                 assert bridge is not None
-                close_progress = bridge.close_progress
+                close_progress = bridge.begin_close_progress
                 abort_fence = bridge.abort_fleet_fence
                 calls = []
 
@@ -1420,7 +1420,7 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                         raise RuntimeError("progress cleanup unavailable")
                     return close_progress(session_id, conversation_id=conversation_id)
 
-                patch.setattr(bridge, "close_progress", fail_once)
+                patch.setattr(bridge, "begin_close_progress", fail_once)
                 if rollback_refused:
                     patch.setattr(
                         bridge, "abort_fleet_fence", lambda *_args, **_kwargs: False
@@ -1461,7 +1461,8 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                             ),
                         ), "provisional close failure dropped surviving-child usage"
                         assert bridge._fleet_fence_generations == {
-                            conversation_id: generation
+                            doomed.id: generation,
+                            conversation_id: generation,
                         }
                         assert controller._failed_session_close_generations == {
                             doomed.id: generation
@@ -1503,7 +1504,8 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                         assert controller._session_close_generation == generation
                         assert calls == [doomed.id]
                         assert bridge._fleet_fence_generations == {
-                            conversation_id: generation
+                            doomed.id: generation,
+                            conversation_id: generation,
                         }
                         assert controller._failed_session_close_generations == {
                             doomed.id: generation
@@ -1531,8 +1533,11 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                         )
                         await _await_tabs(console, pilot, {keeper})
                         assert calls == [doomed.id, doomed.id]
-                        assert not bridge._fleet_fence_generations
-                        assert not controller._fleet_wake._conversation_fences
+                        generation = controller._session_close_generations[doomed.id]
+                        assert bridge._fleet_fence_generations == {doomed.id: generation}
+                        assert controller._fleet_wake._conversation_fences == {
+                            doomed.id: generation
+                        }
                         assert not controller._session_close_states
 
                         # Low-level recreation can reuse the native ID, but it
@@ -1616,8 +1621,10 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                         assert reopened.id in (
                             console._console_runtime()._admission_fenced_sessions
                         )
-                        assert not bridge._fleet_fence_generations
-                        assert not controller._fleet_wake._conversation_fences
+                        assert bridge._fleet_fence_generations == {doomed.id: generation}
+                        assert controller._fleet_wake._conversation_fences == {
+                            doomed.id: generation
+                        }
                         assert calls == [doomed.id, doomed.id]
                         assert reopened.id in _session_ids(store)
                         assert (
@@ -1628,9 +1635,10 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
                     if isinstance(host.screen, ConfirmationDialog):
                         host.screen.dismiss(False)
                     patch.setattr(bridge, "abort_fleet_fence", abort_fence)
-                    generation = bridge._fleet_fence_generations.get(conversation_id)
-                    if generation is not None:
-                        abort_fence(conversation_id, generation=generation)
+                    for fenced_id in (doomed.id, conversation_id):
+                        generation = bridge._fleet_fence_generations.get(fenced_id)
+                        if generation is not None:
+                            abort_fence(fenced_id, generation=generation)
 
 
 @pytest.mark.asyncio

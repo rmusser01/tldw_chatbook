@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Chat.attachment_core import PendingAttachment, vision_block_reason
