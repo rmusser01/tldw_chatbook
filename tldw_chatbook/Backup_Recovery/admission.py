@@ -388,7 +388,7 @@ class Admission:
                     (
                         "path:" + str(root),
                         "path:" + str(resolved),
-                        f"inode:{info.st_dev}:{info.st_ino}",
+                        bootstrap.inode_token(info),
                     )
                 )
         return result
@@ -423,7 +423,7 @@ class Admission:
             roots = tuple(
                 Path(r) for r in entry.roots + entry.proposed if Path(r) not in omitted
             )
-            tokens[name] = set(entry.historical)
+            tokens[name] = bootstrap.identity_view(entry.historical)
             try:
                 if roots or not omitted.intersection(map(Path, entry.roots)):
                     # Malformed empty declarations remain invalid. Only a proved
@@ -491,7 +491,7 @@ class Admission:
         info = os.stat(root)
         if (
             "path:" + str(resolved) not in tokens
-            or f"inode:{info.st_dev}:{info.st_ino}" not in tokens
+            or bootstrap.inode_token(info) not in tokens
         ):
             raise AdmissionError("root_identity_unverified")
         return resolved, stat.S_ISDIR(info.st_mode)

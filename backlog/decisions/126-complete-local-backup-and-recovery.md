@@ -1093,3 +1093,36 @@ weaker than today.
   change-time behaviour are verified.
 - The visual native scope's `_check_path` interaction is unverified. Reuse is
   disabled inside that scope unless it is shown harmless.
+
+### TASK-34200 amendment — file identity is path + inode, not the device
+
+Status: **Approved by the owner on 2026-10-03** (chosen over a volume-UUID
+identity and over filing only).
+
+**Context.** The owner's Mac rebooted on 2026-09-28 and its data volume came
+back with a different `st_dev` (16777234 → 16777230). The admission registry
+pinned `inode:<st_dev>:<st_ino>`. So the bootstrap marker, the same file with
+the same inode at the same path, no longer matched its own registration, and
+every start of the app, on any profile, failed closed with "Recovery required:
+recovery_scope_uncertain". No recovery operation was pending. The recovery CLI
+has no re-enroll for this; the owner's machine was unblocked by moving the
+registry aside.
+
+**Decision.** Identity tokens are the path tokens plus `inode:<st_ino>`
+(`bootstrap.inode_token`). Every comparison against stored tokens goes through
+`bootstrap.identity_view`, which reads a token recorded before this amendment
+(`inode:<dev>:<ino>`) as `inode:<ino>`. Existing registries therefore keep
+matching across a renumbering; new registrations record the device-free form.
+
+**Consequences.** Replacing or copying a file at a registered path still
+produces a new inode, so that fence is unchanged (pinned by
+`Tests/Backup_Recovery/test_admission_device_renumber.py`). One case is weaker:
+a different volume mounted at the same path whose file has the same inode number
+would now match. That needs a volume swap at the same mount point and an inode
+collision, and it was accepted. Matches are now a superset of before, and every
+comparison a false inode match could flip fails closed: admission groups more
+namespaces (more locking), and the activation, publication, replacement,
+storage-admission and later-rollback scope checks refuse. Nothing that was
+refused before is admitted. A malformed stored token is never normalized, so it
+cannot match. The PERF-08 per-call posture stamps keep
+`st_dev`: they never outlive a process, so a renumbering cannot reach them.

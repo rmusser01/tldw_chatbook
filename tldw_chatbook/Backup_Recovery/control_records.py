@@ -155,7 +155,8 @@ def _existing_admission_authority(bootstrap_root):
                     or entry.roots != [str(marker)]
                     or entry.pending is not None
                     or entry.proposed
-                    or not authority._tokens((marker,)) <= set(entry.historical)
+                    or not authority._tokens((marker,))
+                    <= bootstrap.identity_view(entry.historical)
                 ):
                     raise RecoveryRequired("recovery_scope_uncertain")
         return authority

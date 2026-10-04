@@ -717,9 +717,9 @@ def _config_capture_sources(root, selectors, bindings):
                     or info.st_mode & 0o077
                 ):
                     raise bootstrap.RecoveryRequired("capture_config_source_unsafe")
-                tokens.add(f"inode:{info.st_dev}:{info.st_ino}")
+                tokens.add(bootstrap.inode_token(info))
             if any(bootstrap._overlap(path, control) for control in controls) or any(
-                tokens.intersection(entry["historical"])
+                tokens.intersection(bootstrap.identity_view(entry["historical"]))
                 or any(bootstrap._overlap(path, Path(p)) for p in entry["roots"])
                 or any(
                     bootstrap._overlap(path, Path(token[5:]))

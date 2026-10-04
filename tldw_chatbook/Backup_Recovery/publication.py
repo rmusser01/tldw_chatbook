@@ -12,7 +12,7 @@ from tldw_chatbook.Utils.platform_files import os
 
 from . import archive_reader as reader
 from .admission import Admission
-from .bootstrap import _key, _overlap, _read, _records, _registry
+from .bootstrap import _key, _overlap, _read, _records, _registry, identity_view, inode_token
 from .capture import _item_validator
 from .journal import (
     _CandidateReceipt,
@@ -310,9 +310,9 @@ def _config_publication_scopes(
                     or info.st_mode & 0o077
                 ):
                     raise ValueError("publication_config_source_unsafe")
-                tokens.add(f"inode:{info.st_dev}:{info.st_ino}")
+                tokens.add(inode_token(info))
             if any(
-                tokens.intersection(entry["historical"])
+                tokens.intersection(identity_view(entry["historical"]))
                 or any(_overlap(path, Path(value)) for value in entry["roots"])
                 or any(
                     _overlap(path, Path(value[5:]))
