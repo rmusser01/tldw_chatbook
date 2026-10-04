@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-04 08:42'
+updated_date: '2026-10-04 09:00'
 labels:
   - console
   - approvals
@@ -168,6 +168,15 @@ Latest-dev encryption owner integration (PR #3000), planned before rebase:
 ADR required: no new ADR; direct integration of existing owner config/encryption/admission boundaries and selected Console ADR094/097/150/195/212; prior database ADR208 remains applicable.
 ADR path: existing Console ADRs and backlog/decisions/208-migration-sql-files-are-the-executed-source.md.
 Reason: no new selected architecture or acceptance change; preserve owner contracts rather than extend deferred encryption scope.
+
+Latest-dev Chat settings Phase6 owner integration (PR #2992), planned before rebase:
+1. Preserve the owner core-first layout, hidden-field disclosures, pair-only model change, saved-defaults staging and ordinary Apply ownership. Read the owner task/plan and existing ADR095/031/033/097/150/161; deferred owner riders remain outside the selected three Console tasks.
+2. Snapshot and rebase with auto-merge off. Compose the shared screen, existing profile warm-up test, token-backed approval styles and additive UI census; prove unchanged feature methods/comments, non-overlap bytes, incoming non-composed paths and metadata patches. Rebuild CSS and actual diagnostic inventory, retaining incoming budgets and admission/profile/worker/canary guards.
+3. Run the six new Phase6 suites, affected settings/provider/session contracts and selected actual ratchets/token governance; verify owned Console UI/models, production Delete/Undo→Library, startup/latency, CI and artifact preflight. No full-suite/Library/Architecture A-B/native/Auth/live-key replay claim; older receipts retain their actual source anchors.
+4. Publish with an exact lease; require clean resolved final-head Qodo and all5 hosted checks including both UI shards, then fresh Done-metadata checks/review before protected normal merge.
+ADR required: no new ADR.
+ADR path: backlog/decisions/095-conversation-owned-console-generation-settings.md; existing ADR031/033/097/150/161/195/212.
+Reason: direct integration of the merged owner layout and settings boundaries, with no new selected architecture or acceptance criterion.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
