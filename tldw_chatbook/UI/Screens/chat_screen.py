@@ -19205,10 +19205,10 @@ class ChatScreen(BaseAppScreen):
                     self._clear_console_composer_draft()
             return False
 
-        if parse.kind == KIND_COMMAND:
-            # Captured drafts remain in the composer until runtime custody.
+        if parse.kind == KIND_COMMAND:  # Never on this pump (TASK-33622.16).
             self._console_unknown_send_armed = None
-            await self._dispatch_console_command(parse)
+            from ..Console_Modules.command_handoff import run_console_command
+            run_console_command(self, parse, session_id, stash or draft)
             return False
 
         if parse.kind == KIND_UNKNOWN:
@@ -22836,10 +22836,10 @@ class ChatScreen(BaseAppScreen):
                 )
                 self._console_pending_send = None
                 return
-            # Enter and Send converge on the same visible-action handler.
-            # Scheduling it on the app pump preserves the keypress snapshot;
-            # app-owned runtime custody owns accepted work, except that a Send
-            # held for hook review goes on in a ChatScreen worker (TASK-33621.28).
+            # Enter and Send converge on the same visible-action handler, run
+            # here on the APP pump to keep the keypress snapshot; nothing may
+            # park it: runtime custody owns accepted work, and a hook review
+            # or slash command goes on in a worker (TASK-33621.28, -33622.16).
             self.app.call_later(
                 partial(
                     self._send_console_message_from_visible_action,

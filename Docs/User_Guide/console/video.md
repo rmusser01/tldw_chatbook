@@ -29,6 +29,11 @@ writing them into your chat database.
 - **Paid backends ask first.** When `[video_generation]
   confirm_cost_estimate` is on (default), cloud backends show the
   billing shape (per generated second) and wait for confirmation.
+  **Escape** (or **Cancel**) starts nothing and keeps your draft.
+- The Console stays responsive while a video generates, whether you sent
+  with **Enter** or the **Send** button: **Stop**, **F1** help, **Ctrl+Q**
+  and other commands (`/stop`, `/help`, …) keep working. Sending the same
+  unchanged draft again while its first run is still going does nothing.
 
 ### Backends
 

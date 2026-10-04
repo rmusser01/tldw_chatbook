@@ -1467,3 +1467,39 @@ render the tooltip text through `Static.update` the way the tooltip timer does),
 assert the literal type (`Text`/`Content`) when the surface cannot be painted in the
 test, and prove the test red on the unfixed code. Tests:
 `Tests/UI/test_roleplay_hostile_names.py`, `Tests/UI/test_roleplay_hostile_text_surfaces.py`.
+
+## A coroutine handed to `app.call_later` is awaited on the app pump: Enter froze every key, a click did not (TASK-33622.16, 2026-10-03)
+
+**Incident.** Found live during TASK-33622.15: after **Enter** sent
+`/generate-video` to MiniMax, the "Generate video?" confirm ignored Escape, F1
+and Ctrl+Q, and so did the storage choice after it, until the paid generation
+resolved; a click on **Send** did not freeze. An await-chain probe of each
+pump's task in a mounted test on dev (`01a2020981`) showed the APP pump parked in
+`MessagePump.on_callback` → `_send_console_message_from_visible_action` →
+`_dispatch_console_command` → `_console_command_generate_video` →
+`Worker.wait()` (the confirm's `push_screen_wait` worker). On the Send route
+the app pump was idle and the Console's own pump was parked in
+`on_button_pressed`, so the composer's Stop button was dead for the whole paid
+run. TASK-33621.28 had fixed this exact freeze for the send's hook review
+only. The same send also awaited every slash command inline, so the freeze came
+back through `/generate-video`.
+
+**Why (Textual 8.2.8).** Enter schedules the send with
+`app.call_later(coroutine_function)`, and `MessagePump.on_callback` AWAITS a
+coroutine callback on the pump it was posted to. That is the app pump, which
+dispatches every key. A `Button.Pressed` handler is awaited on the screen's
+pump instead. So "click works, Enter freezes" means the send awaited
+something user-paced.
+
+**What to do.** A send path reached from a key must not await anything with a
+user-paced lifetime (a modal, a remote job). Hand it to a worker, as
+`UI/Console_Modules/command_handoff.py` does for every slash command. When you
+fix "pump parked by awaiting X", list everything else that path awaits. Second
+trap, found live on the fix build: Ctrl+Q under the confirm quit the app, and
+shutdown cancelled the confirm's waiting worker. `Worker.wait()` then raised
+`WorkerCancelled` through the command's own worker, and that showed up as an
+`unhandled_exception` on the way out. A worker that waits on a modal must
+treat `WorkerCancelled` as "over", not "broken". Test it with keys delivered
+the way the driver does (`_key`), and use a bounded `_pump_runs` poll on BOTH
+pumps (`Tests/UI/test_console_video_send_freeze.py`). Do not use Pilot here:
+its idle wait never returns while a pump is parked.
