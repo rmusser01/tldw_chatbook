@@ -1147,3 +1147,274 @@ and 8: excluded from portable export by default, and captured in local rollback
 archives through a typed owner adapter. Under decision 9, isolated restore remaps the
 persisted `credential_scope_id`, so a restored profile never reads or overwrites
 another profile's keys.
+### TASK-34404 amendment — native Windows ordinary admission evidence
+
+Status: Owner-authorized implementation, 2026-10-04; merge requires native
+differential and complete-conversation receipts.
+
+Windows ordinary acquisitions use the same confirmed-evidence mechanism and
+count-before-final-observation ordering as POSIX. Every observation uses the
+repository Windows facade, whose stat values come from a freshly opened
+non-reparse local-NTFS handle: actual file identity, owner SID and ordered DACL
+projection, exact owner/DACL descriptor bytes in posture stamps, and
+FILE_BASIC_INFO.ChangeTime in content st_ctime_ns. CPython's Windows
+creation-time st_ctime is never evidence. Posture and content for the same
+named path use one fresh stat handle; descriptor bytes are immutable snapshot
+data, not cached permission or path decisions. Ancestor ChangeTime is not
+posture evidence: unrelated directory content churn does not change ownership
+or privacy and would prevent confirmation during normal app activity.
+
+The per-call volume check uses qualified_for("admission", root.parent), which
+reads the current native volume identity and refuses FILE_READ_ONLY_VOLUME,
+remote/unsupported filesystems or unavailable qualification. It does not
+persist permission or path decisions. The settle rule, evidence confirmation,
+epoch, pause, provenance, maintenance gates and complete fallback derivation
+are unchanged. New native tests compare verdicts after actual ACL edits,
+in-place selector edits with restored mtime, directory namespace changes with
+restored mtime, and directory replacement; they also mutate after the lease is
+counted and before the final observation, and count native opens for both routes.
+
+This closes the earlier Windows-only full-derivation restriction when the
+native tests pass. Native ownership correction is a separate boundary below;
+a successful admission observation alone never authorizes a foreign SQLite file.
+
+
+### TASK-34404 amendment — proven private custody under Windows TokenOwner
+
+Native Windows Server 2022 evidence (run 37230513912, job 111518996121)
+shows TokenUser=runneradmin, TokenOwner=BUILTIN Administrators. The facade-created
+private parent and main database have the actual TokenUser owner. SQLite's
+default-created WAL/SHM have the actual TokenOwner owner and inherit an explicit
+full-access ACE naming that exact TokenUser, plus SYSTEM/Administrators grants.
+The previous projection mapped these sidecars to uid 0 and ordinary reopening
+refused them as wrong_owner. Ordinary local Windows has TokenOwner=TokenUser.
+
+Actual TokenUser ownership retains the existing policy. An alternative native
+owner satisfies private-user custody only when all of these are measured:
+- the actual owner SID equals the current process token's TokenOwner SID;
+- that SID is already an administrative principal trusted by the existing policy;
+- the freshly read DACL has only ordinary allow ACEs and an applicable full-access
+  ACE naming the exact TokenUser SID (OWNER RIGHTS is insufficient);
+- the conservative DACL projection has no public/shared exposure bits.
+
+TokenOwner is queried afresh for each security observation. Immutable descriptor
+decoding is cached only by descriptor bytes, directory kind, TokenUser and current
+TokenOwner; no token owner, permission or filesystem decision is cached.
+Raw owner SID and descriptor bytes remain native evidence: uid 1000 is the
+existing compatibility category, now expressing that narrowly proven custody.
+Files owned by a foreign SID, default-owner files lacking the exact user ACE,
+admin-only or OWNER RIGHTS-only ACLs, denied user grants and shared ACLs do not
+satisfy this rule. The process token and actual file owner are never changed.
+Ordinary user-owned file hardening and trusted system directory traversal retain
+their existing policies.
+
+
+The Windows evidence snapshot shares fresh parent handles only inside one
+observation. Descent opens each component once. A second bottom-up pass reopens
+every named parent-to-child association and reads current owner/DACL/content
+from those validation handles; each child's binding is checked before its
+parent's binding. A replaced, renamed or vanished ancestor therefore cannot
+remain invisible behind an older pinned parent. Any identity mismatch raises
+ESTALE and runs full derivation. Only needed parent handles survive descent,
+all are closed before the snapshot returns, and no pin is kept for later calls.
+A native regression replaces the data directory after child validation closes
+and proves the subsequent parent binding check catches it.
+
+
+A counted ordinary acquisition observes the union of selector evidence and all
+related-path evidence in one fresh snapshot. Common posture/content dependencies
+are read once and mapped back to every immutable evidence entry before comparison;
+no entry's dependency is omitted. This avoids repeated traversal of common native
+ancestors when one config operation admits lock, backup and temporary siblings.
+The final epoch comparison remains after that observation. An unavailable optional
+snapshot first retires the counted token and then runs full derivation, which remains
+the only source of refusal. The native oracle changes a related sibling after
+counting and proves rederivation without a leaked count; actual parent-replacement,
+owner/ACL, control-record and pause/maintenance oracles retain their verdict checks.
+
+### TASK-34406 amendment — presentation config lock entry
+
+Console presentation may request nonblocking entry to the existing configuration
+operation. If either the rebuild or file lock is held by another thread, entry
+raises the code-owned `ConfigOperationBusy` category, releases any earlier lock
+and acquisition resources, and neither enters the projection body nor changes
+configuration cache or failure state. The Console coalesces one existing trailing
+refresh and recomputes current state when entry succeeds. No selected path,
+permission, policy or checked storage lifetime is cached by this contract.
+
+Once both locks are acquired, presentation retains the same continuously checked
+native operation until all synchronous projection work and nested configuration
+readers retire. Default callers and explicit actions keep waiting for the locks;
+maintenance, cancellation, selector changes and body/cleanup errors keep their
+existing refusal and propagation semantics. A busy category raised inside the
+projection body is an error, not an entry deferral. This narrow contract addresses
+native-probe samples showing the UI blocked at the real configuration lock wait;
+moving its checked body outside admission or replacing it with cached authority
+would weaken the existing lifetime contract and is not adopted.
+
+The third native probe also sampled independent credential polling loading
+provider-readiness configuration on the UI thread. Synchronous Console
+presentation entry points may share one disposable configuration mapping loaded
+by a finite owned worker. Publication requires the same configuration generation
+and lexical selector, app/database, session, workspace and settings revision as
+the captured request. A cold or changed owner defers the presentation body;
+expiry retains only that same owner's already rendered data while one worker
+checks current configuration. Cancellation retires the worker's native resources
+before its owner finishes. No cached mapping grants file or provider authority.
+
+The live configuration getter remains the default for explicit actions, provider
+selection and controller send wiring outside those synchronous presentation
+scopes. Readiness itself still recomputes credential expiry and current shared
+connection evidence from the disposable mapping; neither verdict is cached.
+Once an admitted projection body enters, its continuous checked config lifetime
+still encloses every nested synchronous config operation. This preserves the
+existing recovery and send contracts while removing repeated presentation IO.
+
+### TASK-34405 amendment — finite database callback counted intervals (2026-10-04)
+
+A qualified `run_owned_db_call` owns one complete synchronous callback interval
+for its exact installed, file-backed CharactersRAGDB, AgentRunsDB or WorkspaceDB
+receiver. The existing `_core_operation` encloses the callback inside the existing
+`operation_owned_connection` boundary. Same-receiver nested repository reads and
+transactions therefore reuse one validated participant operation; every actual SQL
+read and metadata/ambient publication fence remains in place. The operation exits
+before retirement of a newly opened worker connection, because explicit close
+must not run while its counted borrower remains live.
+
+This interval grants only the receiver's existing bounded descendant scope. A
+different repository instance, including another receiver at the same pathname,
+requires independent ordinary admission and cannot inherit the original receiver's
+operation. Fresh callbacks refuse while admission is closed; an already counted
+callback may finish its same-receiver reads while pause waits for its operation and
+native handles to retire. Native allocation leases remain separately counted.
+Awaiter cancellation does not shorten the synchronous callback or retire its
+resources early. Pre-existing borrowed handles and transactions remain owned by
+the original caller; memory, subclasses and custom owners retain their prior route.
+No persistent callback executor, checked-result cache or maintenance capability is
+introduced. The measured alternative of retaining separate operations around each
+metadata read repeated native admission within the same finite callback without
+adding a freshness boundary; complete callback counting preserves those SQL fences
+while eliminating that repeated admission work.
+
+Console workspace availability uses that same finite callback boundary with its
+captured registry service and database receiver. Qualified reads share the counted
+interval without a redundant inner owned close; direct and unqualified adapter
+reads retain their original ownership route. Publication rechecks the captured
+service/database identities and request generation after the await. A redirected
+registry database aborts remaining workspace reads and the current receiver is
+captured afresh; no old receiver's cleanup may be redirected to the new receiver.
+
+### TASK-34406 amendment — checked presentation source and defaults handoff (2026-10-04)
+
+A finite readiness mapping carries the configuration generation and actual
+validated raw selected path observed inside its checked config operation both
+after entry and after loading and copying the mapping. Both tags must equal the
+requested source, and publication still rechecks the complete UI owner. Ambient
+selector equality before and after an await is insufficient: retargeting A to B
+and back to A does not advance the config generation.
+
+Disposable presentation scopes reuse established session settings and cannot
+perform pristine-default convergence from their mapping, including while it is
+expired. After the worker source and UI owner checks succeed, one explicit
+handoff outside that scope may converge an eligible session from the freshly
+checked mapping. Existing provenance, pristine-state and explicit-default
+generation gates remain in force. The publication key is recaptured after that
+handoff's own settings revision change. Unscoped actions continue to obtain live
+configuration and retain their existing convergence behavior. This separates
+display reuse from the authoritative session update without introducing a cached
+send or file authority.
+
+The Agent rail and fleet may likewise share one disposable historical projection
+for their current owner. Its finite owned database callback derives from the exact
+captured AgentRunsDB receiver, with the existing counted callback interval and
+connection retirement. Publication rechecks bridge, receiver, profile/config,
+session/workspace, conversation and process-local run identity. It never writes
+the bridge's authoritative historical cache or redirects a captured read to a
+replacement database. Live fleet and live summary precedence remain unchanged;
+direct bridge history/action reads retain their existing contract. Changed
+historical content requests only the existing coalesced Agent-section repaint.
+The pure mode-bar presentation may use the same disposable readiness scope;
+controller core-state/provider/runtime publication and sends remain live.
+
+### TASK-34404 amendment — bootstrap barriers cover changed directory entries (2026-10-04)
+
+Pending publication revalidates and fully synchronizes its existing pending record
+and pinned bootstrap directory. It does not reopen and synchronize every unchanged
+ancestor of that directory. Registration already synchronizes each newly created
+directory entry through its exact pinned containing directory before returning,
+then synchronizes the pending record and bootstrap directory. If an exclusive
+creation loses after an absent observation, registration synchronizes that same
+containing directory before accepting the competing name; the existing no-follow
+owner and private-root checks still validate the resulting object. Required barrier
+failures propagate and leave recovery evidence fenced. No directory flush failure
+is converted to success, and no ownership-based or cached path decision selects
+which required barrier may be omitted.
+
+The ordinary Windows whole-HEAD control reproduced three restore failures before
+this correction. A call-through failed-handle receipt identified the unchanged,
+SYSTEM-owned home-parent directory (`C:\Users`, projected mode 0744), rather than
+an operation-created directory or bootstrap root. The root barrier had succeeded.
+A read-only same-object rights probe showed that neither write nor append access
+could reopen that protected ancestor. Requesting only append access or enabling
+backup privileges therefore does not correct the durability boundary. The native
+Windows primitive remains unchanged: checked same-object reopen followed by normal
+`NtFlushBuffersFileEx` flags zero, preserving directory metadata and device cache
+synchronization. Publication retains all record, created-entry, rename, installed
+metadata and terminal fence barriers. Removing the unbounded unchanged-ancestor
+walk also removes its drive-empty `Path("/")` comparison on Windows; publication
+no longer needs a hard-coded volume-root termination rule.
+
+Native regression evidence covers each newly created ancestor's containing-entry
+barrier, a competing creation, propagation of required creation and pending-root
+barrier failures, and real flags-zero Windows barriers. The exact three original
+app restore controls and supported OS qualification remain required evidence.
+
+### Exact bootstrap creation intents and failed-barrier retries (TASK-34404)
+
+The narrower publication barrier must also preserve a directory entry created by
+an earlier failed attempt. A real Windows control created an ancestor successfully,
+then denied its containing-directory reopen with an exact-user rights2|4 deny ACE.
+After restoring that isolated test ACL, retrying registration omitted the prior
+entry barrier. The original HEAD publication ancestor walk supplied it. Its three
+mounted success controls therefore establish ordinary restore behavior, not retry
+durability qualification.
+
+Before each missing-directory creation, write a bounded private intent in its
+existing pinned containing directory and synchronize both intent bytes and the
+containing directory. The name is derived only from the local lexical child;
+strict contents bind that child and the actual parent device/inode. Hold the
+actual intent file's native exclusive lock through creation, containing-entry
+synchronization, removal and removal synchronization. Successful creation cannot
+forget its intent before its required barrier succeeds.
+
+A retry checks only the exact intent names for its own lexical ancestor chain,
+including an already existing chain. Under the actual file lock it validates the
+private regular record, named file binding, strict contents and current pinned
+parent identity before reestablishing that entry barrier. Existing resulting
+children retain their current owner/no-follow/private-root checks; no directory
+is deleted, replaced or permission-repaired. Live creators, incomplete/corrupt,
+foreign, moved or substituted records and changed parents refuse. Missing child
+names may be created only from the caller-derived local chain under this same
+finite intent boundary. No serialized locator grants authority, and unchanged
+ancestors without an exact creation intent receive no durability barrier.
+
+
+### TASK-34403 amendment: finite fresh paired-witness metadata observation (2026-10-04)
+An installed Windows MCP permission read repeated current-generation selection eighteen times. Its nineteen witness reads each independently reread control records three times and registry twice. The measured 3,003 native opens are governed read work, not provider latency.
+
+Each witness query may read full validated control records and registry once and share those values among its existing source-scope, startup and paired-generation decisions. The observation belongs only to that finite call and its actual admitted lease execution context. Public startup/source-scope readers continue to perform fresh native reads. No mapping, absence, selected path or empty witness is retained for a later call, callback or turn.
+
+The reader must preserve all record-schema, unknown-record, pending-intent, cross-profile overlap, historical-inode, held-namespace, paired-generation and required-owner checks. Fresh named metadata at observation completion must still match the physical identities and change stamps observed while reading; a pending record inserted during the read or a changed/missing/replaced record refuses publication. This fence retains native no-reparse/private-owner validation and applies on Windows, Linux and macOS. Native leases, source guards and caller-method identities are unchanged.
+
+This is an ADR amendment because metadata sharing changes the recovery reader's observation boundary. Retaining repeated full reads was rejected after actual native attribution proved their cost; cross-call witness caching and omission of empty-generation checks remain rejected because later recovery evidence must be visible immediately.
+
+### TASK-34403 amendment: admitted MCP generation observations retain exact custody
+
+A real seeded permission read-modify-write starts before local pause and must finish under its existing native custody. Its repeated bound-source checks still read fresh paired-generation evidence. They must not request a new ordinary storage acquisition after pause, nor borrow a selected-generation lease for a different canonical path. An installed MCP raw operation retains an exact canonical observation lease before acceptance when canonical and selected paths differ; otherwise its already admitted exact canonical lease serves that observation. Only the same source's active issued operation, current process/thread/task, installed participant mapping and positively live native leases may supply this retained observation. A foreign source, child task, sibling path, retired operation or unqualified native hold cannot inherit it.
+
+The retained lease changes no execution selection or path authority. Each observation still checks its exact canonical execution context and reads fresh validated generation evidence, with no cross-call witness, absence or permission cache. Bound source and native parent proof run outside the coordinator lock; pure exact identity, active ownership, closure and pause predicates are rechecked under the lock before accepting an operation or changing participant state. The corrected native pause test seeds actual policy bytes, exposing a pre-existing no-op test gap and the prior attempt to reacquire storage during accepted work.
+
+Participant closure, drain and resume are coordinator bookkeeping over exact installed source identities and counted native work. They do not obtain fresh file authority, create an observation acquisition or validate generation metadata while a pause is active. Closure may run on the maintenance thread while an accepted source operation retains its own canonical observer. Drain tests exact counters and persistence readiness; resume remains refused during process pause. Every actual source admission/use retains its fresh out-of-lock bound-source and native parent proof, so opening the bookkeeping gate cannot authorize a stale or retargeted source.
+
+
+The TASK-34403 finite-observation completion fence must verify native containing ancestors as well as the selected control entries. On Windows, retain all ancestor receipts from the same fresh bottom-up named tree and apply the existing private-parent owner and writable/sticky policy; observing but discarding those receipts is insufficient. On POSIX, hold completion pins live while reopening descendants before ancestors through the verified native path walk and compare the actual named physical identities to their held identities. A containing ancestor may be renamed without changing descendant inode metadata, so held-descriptor fstat alone is not a named-binding proof. These checks retain the existing platform trust rules and add no authority/cache boundary.

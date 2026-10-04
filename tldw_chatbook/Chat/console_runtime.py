@@ -1175,6 +1175,8 @@ class ConsoleRuntime:
         self._attention_revision = 0
         self._console_needs_attention: bool | None = None
         self._last_known_terminal_marks: tuple[tuple[str, str], ...] | None = None
+        self._rendered_receipt_ack_owner: tuple[Any, Any, int | None] | None = None
+        self._rendered_receipt_acks: set[tuple[str, str]] = set()
         self._notified_terminal_receipts: set[str] = set()
         self._notifying_terminal_receipts: set[str] = set()
         #: Bumped by every `dispose()` -- i.e. once per app run, not once
@@ -1564,6 +1566,9 @@ class ConsoleRuntime:
             if marks_known:
                 with self._attention_lock:
                     self._last_known_terminal_marks = marks
+                    # A durable receipt observed again owns another acknowledgement,
+                    # even if an earlier repaint already cleared its exact identity.
+                    self._rendered_receipt_acks.difference_update(marks)
                 for conversation_id, receipt_id in marks:
                     self._notify_terminal_receipt(
                         conversation_id,
@@ -1673,11 +1678,28 @@ class ConsoleRuntime:
                 return ()
             acknowledged: list[str] = []
             removed_pairs: set[tuple[str, str]] = set()
+            owner = (service, view, attachment_generation)
+            prior_owner = self._rendered_receipt_ack_owner
+            if (
+                prior_owner is None
+                or prior_owner[0] is not service
+                or prior_owner[1] is not view
+                or prior_owner[2] != attachment_generation
+            ):
+                self._rendered_receipt_acks.clear()
+                self._rendered_receipt_ack_owner = owner
+            # Bound this cache to the current mounted receipt set. Exceptions
+            # remain retryable; only an exact completed durable delete is reused.
+            self._rendered_receipt_acks.intersection_update(rendered)
             for conversation_id, receipt_id in rendered:
                 if not conversation_id or not receipt_id:
                     continue
+                pair = (conversation_id, receipt_id)
+                if pair in self._rendered_receipt_acks:
+                    continue
                 try:
-                    removed = acknowledge(conversation_id, receipt_id) is True
+                    result = acknowledge(conversation_id, receipt_id)
+                    removed = result is True
                 except Exception as exc:  # noqa: BLE001 -- mark remains retryable
                     logger.debug(
                         "Console terminal-attention acknowledgement failed "
@@ -1685,6 +1707,8 @@ class ConsoleRuntime:
                         type(exc).__name__,
                     )
                     continue
+                if result is True or result is False:
+                    self._rendered_receipt_acks.add(pair)
                 if removed:
                     acknowledged.append(receipt_id)
                     removed_pairs.add((conversation_id, receipt_id))
@@ -4614,6 +4638,8 @@ class ConsoleRuntime:
             self._attachment_generation += 1
             generation = self._attachment_generation
             self.view = view
+            self._rendered_receipt_ack_owner = None
+            self._rendered_receipt_acks.clear()
             self._attached_generation = generation
             if previous is not view:
                 self._reconciled_view = None
@@ -4672,6 +4698,8 @@ class ConsoleRuntime:
             self._clear_view_hooks()
             self.view = None
             self._attached_generation = None
+            self._rendered_receipt_ack_owner = None
+            self._rendered_receipt_acks.clear()
             self._reconciled_view = None
             self.recompute_console_attention()
             return True

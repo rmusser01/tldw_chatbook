@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable, Iterable
+from concurrent.futures import Future
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -41,6 +42,7 @@ CONSOLE_CHARACTER_ROW_LIMIT = 5
 CONSOLE_CHARACTER_SEARCH_LIMIT = 8
 CONSOLE_CHARACTER_REPAIR_CANDIDATE_LIMIT = 20
 _SCOPE_CAPTURE_ATTEMPTS = 3
+_SCOPE_AMBIENT_CHECK_TIMEOUT_SECONDS = 10.0
 
 
 class ConsoleCharacterOperationPhase(StrEnum):
@@ -339,6 +341,38 @@ class ConsoleCharacterContextController:
             int(database.get_character_conversation_search_revision()),
         )
 
+    def _read_database_scope_metadata_pair(
+        self,
+        database: Any,
+        current: tuple[int, str] | None,
+        open_conversation_id: str,
+        loop: asyncio.AbstractEventLoop,
+    ) -> tuple[tuple[str, int], tuple[str, int]] | None:
+        """Keep paired reads on one finite handle and ambient checks on the loop."""
+        metadata_before = self._read_database_scope_metadata(database)
+        ambient_check: Future[bool] = Future()
+
+        def validate_ambient_on_loop() -> None:
+            if not ambient_check.set_running_or_notify_cancel():
+                return
+            try:
+                ambient_check.set_result(
+                    self._ambient_scope_matches(database, current, open_conversation_id)
+                )
+            except Exception as exc:  # noqa: BLE001 - propagate accessor failures.
+                ambient_check.set_exception(exc)
+
+        # Awaiter cancellation leaves this finite callback in charge of its
+        # connection. A stopped/closed event loop must not strand that handle;
+        # an expired queued check is cancelled before it can inspect UI state.
+        try:
+            loop.call_soon_threadsafe(validate_ambient_on_loop)
+            if not ambient_check.result(timeout=_SCOPE_AMBIENT_CHECK_TIMEOUT_SECONDS):
+                return None
+        finally:
+            ambient_check.cancel()
+        return metadata_before, self._read_database_scope_metadata(database)
+
     async def _capture_scope(self) -> _ConsoleCharacterScopeSnapshot:
         """Capture DB/current identity atomically across off-thread metadata reads."""
 
@@ -369,8 +403,13 @@ class ConsoleCharacterContextController:
                     )
                 continue
             try:
-                metadata_before = await run_owned_db_call(
-                    database, self._read_database_scope_metadata, database
+                metadata_pair = await run_owned_db_call(
+                    database,
+                    self._read_database_scope_metadata_pair,
+                    database,
+                    current,
+                    open_conversation_id,
+                    asyncio.get_running_loop(),
                 )
             except Exception:  # noqa: BLE001 - DB adapters have no shared error base.
                 if not self._ambient_scope_matches(
@@ -380,20 +419,9 @@ class ConsoleCharacterContextController:
                 raise _ConsoleCharacterScopeReadError(
                     database, current, open_conversation_id
                 ) from None
-            if not self._ambient_scope_matches(database, current, open_conversation_id):
+            if metadata_pair is None:
                 continue
-            try:
-                metadata_after = await run_owned_db_call(
-                    database, self._read_database_scope_metadata, database
-                )
-            except Exception:  # noqa: BLE001 - DB adapters have no shared error base.
-                if not self._ambient_scope_matches(
-                    database, current, open_conversation_id
-                ):
-                    continue
-                raise _ConsoleCharacterScopeReadError(
-                    database, current, open_conversation_id
-                ) from None
+            metadata_before, metadata_after = metadata_pair
             if metadata_before != metadata_after:
                 continue
             if self._ambient_scope_matches(database, current, open_conversation_id):

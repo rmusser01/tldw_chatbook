@@ -798,17 +798,20 @@ _QUALIFICATION_FILE = Path(__file__).with_name("native_qualification.json")
 
 def _posture(path: Path) -> tuple | None:
     """Identity and permission posture, or None when the path is absent."""
-    try:
-        info = os.stat(path, follow_symlinks=False)
-    except FileNotFoundError:
-        return None
-    return (
+    return _observe_stamps((path,), ())[0][0]
+
+
+def _posture_stamp(info, security=None) -> tuple:
+    stamp = (
         info.st_dev,
         info.st_ino,
         stat.S_IFMT(info.st_mode),
         stat.S_IMODE(info.st_mode),
         info.st_uid,
     )
+    # Exact fresh owner/DACL bytes fence native security changes without
+    # invalidating posture on unrelated directory content writes.
+    return (*stamp, security) if security is not None else stamp
 
 
 def _content(path: Path) -> tuple | None:
@@ -818,6 +821,41 @@ def _content(path: Path) -> tuple | None:
     except FileNotFoundError:
         return None
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _observe_stamps(posture_paths, content_paths) -> tuple:
+    """Observe each named path once for one fresh evidence snapshot.
+
+    Posture and content of overlapping paths come from the same native open.
+    No filesystem observation survives this call.
+    """
+    paths = tuple(dict.fromkeys((*posture_paths, *content_paths)))
+    if os.name == "nt":
+        observations = os.stat_many_for_admission(paths)
+    else:
+        observations = {}
+        for path in paths:
+            try:
+                observations[path] = (os.stat(path, follow_symlinks=False), None)
+            except FileNotFoundError:
+                observations[path] = None
+    posture = tuple(
+        None if (observed := observations[path]) is None else _posture_stamp(*observed)
+        for path in posture_paths
+    )
+    content = tuple(
+        None
+        if (observed := observations[path]) is None
+        else (
+            observed[0].st_dev,
+            observed[0].st_ino,
+            observed[0].st_size,
+            observed[0].st_mtime_ns,
+            observed[0].st_ctime_ns,
+        )
+        for path in content_paths
+    )
+    return posture, content
 
 
 def _chain(path: Path) -> tuple[Path, ...]:
@@ -832,8 +870,10 @@ class _Evidence:
 
     def __init__(self, names, posture_paths, content_paths):
         self.names = names
-        self.posture = tuple((p, _posture(p)) for p in posture_paths)
-        self.content = tuple((p, _content(p)) for p in content_paths)
+        posture_paths, content_paths = tuple(posture_paths), tuple(content_paths)
+        posture, content = _observe_stamps(posture_paths, content_paths)
+        self.posture = tuple(zip(posture_paths, posture, strict=True))
+        self.content = tuple(zip(content_paths, content, strict=True))
         self.epoch = bootstrap._admission_epoch
         self.confirmed = False
 
@@ -850,15 +890,35 @@ class _Evidence:
         )
 
     def observe(self) -> tuple:
-        return (
-            tuple(_posture(p) for p, _ in self.posture),
-            tuple(_content(p) for p, _ in self.content),
+        return _observe_stamps(
+            tuple(p for p, _ in self.posture),
+            tuple(p for p, _ in self.content),
         )
 
     def settled_before(self, when_ns: int) -> bool:
         return all(
             s is None or s[4] <= when_ns - _EVIDENCE_SETTLE_NS for _, s in self.content
         )
+
+
+def _observe_evidence(entries) -> tuple:
+    """Observe all derivation dependencies once within one fresh snapshot."""
+    posture_paths = tuple(
+        dict.fromkeys(p for entry in entries for p, _ in entry.posture)
+    )
+    content_paths = tuple(
+        dict.fromkeys(p for entry in entries for p, _ in entry.content)
+    )
+    posture, content = _observe_stamps(posture_paths, content_paths)
+    posture_by_path = dict(zip(posture_paths, posture, strict=True))
+    content_by_path = dict(zip(content_paths, content, strict=True))
+    return tuple(
+        (
+            tuple(posture_by_path[p] for p, _ in entry.posture),
+            tuple(content_by_path[p] for p, _ in entry.content),
+        )
+        for entry in entries
+    )
 
 
 def _no_links(evidence: _Evidence) -> bool:
@@ -896,7 +956,10 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
             return None  # absence-proved roots are never reused
         walked.extend(roots)
     posture = sorted({p for target in walked for p in _chain(Path(target))})
-    evidence = _Evidence(names, posture, (*content, selector))
+    try:
+        evidence = _Evidence(names, posture, (*content, selector))
+    except (OSError, ValueError):
+        return None  # Native unobservable paths never become admission evidence.
     posture_ok = all(
         s is not None and not stat.S_ISLNK(s[2]) for _, s in evidence.posture
     )
@@ -907,7 +970,10 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
 
 def _path_evidence(names, selected: Path) -> _Evidence | None:
     """Stamp the admitted path's chain (the containment check's only input)."""
-    evidence = _Evidence(names, _chain(selected), ())
+    try:
+        evidence = _Evidence(names, _chain(selected), ())
+    except (OSError, ValueError):
+        return None
     return evidence if _no_links(evidence) else None
 
 
@@ -922,6 +988,10 @@ def _hold_serving(hold) -> bool:
 
 def _mount_read_only(path: Path) -> bool:
     """Qualification refuses a read-only mount; the reuse path must too."""
+    if os.name == "nt":
+        # Qualification reads current local-NTFS identity and read-only flags.
+        # The Windows facade has no POSIX statvfs; absence is not a mount verdict.
+        return not qualified_for("admission", path)[0]
     statvfs = getattr(os, "statvfs", None)
     if statvfs is None:
         return True
@@ -934,7 +1004,10 @@ def _mount_read_only(path: Path) -> bool:
 def _selected_paths(path, related_paths) -> tuple[Path, ...]:
     return tuple(
         selected
-        for selected in ((lexical_path(path) if path is not None else None), *related_paths)
+        for selected in (
+            (lexical_path(path) if path is not None else None),
+            *related_paths,
+        )
         if selected is not None
     )
 
@@ -992,11 +1065,14 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
         token._execution_selection = execution_selection
     # Native filesystem observation never runs under the coordinator lock.
     try:
+        entries = (evidence, *per_path)
         unchanged = (
-            evidence.observe() == evidence.stamps()
-            and all(entry.observe() == entry.stamps() for entry in per_path)
+            _observe_evidence(entries) == tuple(entry.stamps() for entry in entries)
             and evidence.epoch == bootstrap._admission_epoch
         )
+    except (OSError, ValueError):
+        token.close()
+        return None  # Only the unchanged full derivation decides refusal codes.
     except BaseException:
         token.close()  # as the derivation does: a counted lease never leaks
         raise
@@ -1020,11 +1096,14 @@ def _observe_candidates(root, selector, path, related_paths):
                 (str(selector), str(item))
             )
     now = time.time_ns()
-    return epoch, {
-        name: (entry, entry.observe(), now)
-        for name, entry in wanted.items()
-        if entry is not None
-    }
+    observations = {}
+    for name, entry in wanted.items():
+        if entry is not None:
+            try:
+                observations[name] = (entry, entry.observe(), now)
+            except (OSError, ValueError):
+                continue  # A candidate that cannot be observed cannot confirm.
+    return epoch, observations
 
 
 def _note_evidence(hold, root, selector, path, related_paths, names, roots, before):
@@ -1197,7 +1276,7 @@ def _acquire_storage(
         ):
             raise bootstrap.RecoveryRequired("operation_native_scope_changed")
     before = None
-    if _EVIDENCE_REUSE and type(attempt) is _Acquisition and os.name != "nt":
+    if _EVIDENCE_REUSE and type(attempt) is _Acquisition:
         reused = _reuse_evidence(
             root, selector, path, related_paths, check, execution_selection
         )

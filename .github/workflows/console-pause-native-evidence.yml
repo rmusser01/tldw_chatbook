@@ -1,30 +1,91 @@
 name: Console pause native evidence
 
 on:
+  workflow_dispatch:
   push:
-    branches: [codex/console-performance-fixes]
+    branches: [codex/console-performance-fixes, codex/console-uat-performance-fixes]
+  pull_request:
+    branches: [dev]
+    paths:
+      - 'tldw_chatbook/Backup_Recovery/**'
+      - 'tldw_chatbook/Utils/windows_files.py'
+      - 'tldw_chatbook/Chat/console_*.py'
+      - 'tldw_chatbook/Chat/Chat_Functions.py'
+      - 'tldw_chatbook/UI/Console_Modules/**'
+      - 'tldw_chatbook/UI/Screens/chat_screen.py'
+      - 'tldw_chatbook/Widgets/Console/**'
+      - 'tldw_chatbook/LLM_Calls/**'
+      - 'tldw_chatbook/provider_registry.py'
+      - 'tldw_chatbook/Scheduling/scheduler/loop.py'
+      - 'tldw_chatbook/DB/base_db.py'
+      - 'tldw_chatbook/Agents/mcp_tool_provider.py'
+      - 'tldw_chatbook/app.py'
+      - 'Tests/LLM_Calls/test_documented_provider_response_contracts.py'
+      - 'Tests/Chat/test_console_context_presentation_reads.py'
+      - 'Tests/Chat/test_console_retry_json_identity.py'
+      - 'Tests/Chat/test_console_retry_json_wire.py'
+      - 'Tests/Chat/test_console_engine_trace_reconstruction.py'
+      - 'Tests/UI/test_console_settings_context_owner.py'
+      - 'Tests/UI/test_console_refresh_read_batching.py'
+      - 'Tests/Performance/test_console_native_pause_probe.py'
+      - 'Tests/Utils/test_windows_native_admission.py'
+      - 'Tests/Backup_Recovery/test_windows_admission_evidence.py'
+      - 'Tests/Backup_Recovery/test_generation_witness_observation.py'
+      - 'Tests/Backup_Recovery/test_raw_source_coordinator_io.py'
+      - 'Tests/Backup_Recovery/test_restored_mcp_continuous_custody.py'
+      - 'Tests/Backup_Recovery/test_bootstrap_creation_intents.py'
+      - 'Tests/Backup_Recovery/test_bootstrap_directory_durability.py'
+      - 'Tests/Agents/test_mcp_catalog_store_offload.py'
+      - '.github/workflows/console-pause-native-evidence.yml'
 
 permissions:
   contents: read
 
 jobs:
+  windows-custody:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12.10', '3.13', '3.14']
+    runs-on: windows-2022
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      TLDW_REQUIRE_ELEVATED_CUSTODY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -e ".[dev]"
+      - name: Verify actual elevated token ownership and fresh NTFS admission
+        run: python -m pytest Tests/Utils/test_windows_custody_requirement.py Tests/Utils/test_windows_native_admission.py Tests/Backup_Recovery/test_windows_admission_evidence.py Tests/Backup_Recovery/test_bootstrap_creation_intents.py -q -s --timeout=180 --junitxml=${{ runner.temp }}/windows-admission.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-custody-${{ matrix.python }}
+          path: ${{ runner.temp }}/windows-admission.xml
+          if-no-files-found: error
   probe:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022]
+        os: [ubuntu-24.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
-      PYTHONUTF8: "1"
+      PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12.10"
+          python-version: '3.12.10'
       - name: Install bounded-probe dependencies
         run: python -m pip install -e ".[dev]"
       - name: Select a user-owned Windows temporary root
@@ -35,10 +96,11 @@ jobs:
           New-Item -ItemType Directory -Path $pauseTemp -Force | Out-Null
           "TEMP=$pauseTemp" >> $env:GITHUB_ENV
           "TMP=$pauseTemp" >> $env:GITHUB_ENV
-      - name: Diagnose native Windows ownership and change-time
+      - name: Verify shared admission, refresh, scheduler and captured trace controls
+        run: python -m pytest Tests/Backup_Recovery/test_admission_evidence_reuse.py Tests/Backup_Recovery/test_console_metadata_batching.py Tests/Backup_Recovery/test_generation_witness_observation.py Tests/Backup_Recovery/test_bootstrap_creation_intents.py Tests/Backup_Recovery/test_bootstrap_directory_durability.py Tests/Backup_Recovery/test_raw_source_coordinator_io.py Tests/Backup_Recovery/test_restored_mcp_continuous_custody.py Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_permission_rmw_admitted_before_pause_finishes Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_same_path_distinct_source_cannot_borrow_admitted_permission Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_installed_retarget_refuses_and_custom_subclass_stays_unqualified Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_config_retarget_and_native_demotion_refuse_bound_source Tests/Backup_Recovery/test_finite_db_counted_interval.py Tests/Backup_Recovery/test_console_config_sync_lifetime.py Tests/Chat/test_console_context_presentation_reads.py Tests/Chat/test_console_retry_json_identity.py Tests/Chat/test_console_retry_json_wire.py Tests/Chat/test_console_engine_trace_reconstruction.py Tests/UI/test_console_settings_context_owner.py Tests/Chat/test_console_trace_admission_gc.py Tests/Chat/test_console_trace_graph_gc.py Tests/UI/test_console_refresh_read_batching.py Tests/UI/test_console_readiness_config_projection.py Tests/UI/test_console_partial_mount_resize.py Tests/UI/test_console_recovery_height_idempotence.py Tests/Scheduling/test_scheduler_stop_resolution.py Tests/App/test_subscription_boot_admission_thread.py Tests/LLM_Calls/test_documented_provider_response_contracts.py Tests/Agents/test_mcp_catalog_store_offload.py -q --timeout=180 --junitxml=${{ runner.temp }}/console-controls.xml
+      - name: Verify original mounted Windows restore and live-scheduler boundaries
         if: runner.os == 'Windows'
-        continue-on-error: true
-        run: python -m pytest Tests/Utils/test_windows_native_admission.py -q -s --timeout=180 --junitxml=${{ runner.temp }}/windows-admission.xml
+        run: python -m pytest "Tests/Backup_Recovery/test_startup_pending_readmission.py::test_parent_readmission_waits_for_actual_isolated_finalization[success]" "Tests/Backup_Recovery/test_startup_pending_readmission.py::test_parent_readmission_waits_for_actual_isolated_finalization[pending_failure]" "Tests/Backup_Recovery/test_startup_pending_readmission.py::test_initial_pending_fence_waits_for_live_scheduler_and_native_pause[success]" -q --timeout=180 --junitxml=${{ runner.temp }}/mounted-restores.xml
       - name: Measure real guarded Console and three immediate captured replies
         env:
           TLDW_PAUSE_PROBE_RESULT: ${{ runner.temp }}/console-pause.json
@@ -51,5 +113,6 @@ jobs:
           path: |
             ${{ runner.temp }}/console-pause.json
             ${{ runner.temp }}/console-pause.xml
-            ${{ runner.temp }}/windows-admission.xml
+            ${{ runner.temp }}/console-controls.xml
+            ${{ runner.temp }}/mounted-restores.xml
           if-no-files-found: error

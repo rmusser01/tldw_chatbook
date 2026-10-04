@@ -55,15 +55,18 @@ class _RawParticipant:
 
     @property
     def owner_id(self):
-        return _participant_state(self).owner
+        with storage._lock:
+            return _participant_identity(self).owner
 
     def close_admission(self):
         with storage._changed:
-            _participant_state(self).closed = True
+            state = _participant_identity(self)
+            state.closed = True
 
     def drain(self, deadline):
         with storage._changed:
-            if not _participant_state(self).closed:
+            checked = _participant_identity(self)
+            if not checked.closed:
                 raise RuntimeError("participant_admission_not_closed")
             while (
                 any(s.participant is self for s in _states.values())
@@ -74,38 +77,49 @@ class _RawParticipant:
                 if remaining <= 0:
                     return False
                 storage._changed.wait(min(remaining, 0.05))
-            state = _participant_state(self)
-            source = state.source()
-            if mcp_sources.binding(source) is not None:
-                return mcp_sources.drain_ready(source)
-            if state.owner == "chat.dictionaries":
-                return dictionary_files.drain_ready(source)
-            if chat_sources.binding(source) is not None:
-                return chat_sources.drain_ready(source)
-            if state.owner == "config":
-                return (
-                    source._CONFIG_PERSISTENCE_ERROR is None
-                    and source.get_config_load_failure() is None
-                    and source._CONFIG_CACHE is not None
-                )
-            if state.owner == "eval.definitions":
-                return (
-                    source._config == source._persisted_config
-                    and source.persistence_error is None
-                )
-            if state.owner == "ui.themes":
-                return not source.is_modified
-            return True
+        state = checked
+        source = state.source()
+        if state.owner.startswith("mcp."):
+            ready = mcp_sources.drain_ready(source)
+        elif state.owner == "chat.dictionaries":
+            ready = dictionary_files.drain_ready(source)
+        elif state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            ready = chat_sources.drain_ready(source)
+        elif state.owner == "config":
+            ready = (
+                source._CONFIG_PERSISTENCE_ERROR is None
+                and source.get_config_load_failure() is None
+                and source._CONFIG_CACHE is not None
+            )
+        elif state.owner == "eval.definitions":
+            ready = (
+                source._config == source._persisted_config
+                and source.persistence_error is None
+            )
+        elif state.owner == "ui.themes":
+            ready = not source.is_modified
+        else:
+            ready = True
+        with storage._changed:
+            if _participant_identity(self) is not state or not state.closed:
+                raise RuntimeError("participant_admission_not_closed")
+            return (
+                ready
+                and not any(s.participant is self for s in _states.values())
+                and not storage._pending_acquisitions
+                and not storage._retiring_holds
+            )
 
     def resume(self):
         with storage._changed:
-            state = _participant_state(self)
+            state = _participant_identity(self)
             if storage._pause is not None:
                 raise bootstrap.RecoveryRequired("process_pause_still_active")
             state.closed = False
 
 
-def _participant_state(participant):
+def _participant_identity(participant):
+    """Check only installed identity mappings; never read source metadata."""
     if type(participant) is not _RawParticipant or participant not in _participants:
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     state = _participants[participant]
@@ -114,6 +128,12 @@ def _participant_state(participant):
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     if _source_participants.get(source) is not participant:
         raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+    return state
+
+
+def _participant_state(participant):
+    state = _participant_identity(participant)
+    source = state.source()
     if state.owner.startswith("mcp."):
         bound = mcp_sources.binding(source)
         if bound is None or not bound[2] or bound[1] != state.selected:
@@ -293,7 +313,10 @@ def _raw_participant(source):
                 weakref.ref(source), type(source), owner, selected
             )
             _source_participants[source] = participant
-        state = _participant_state(participant)
+    state = _participant_state(participant)
+    with storage._lock:
+        if _participant_identity(participant) is not state:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
         if state.selected != selected:
             raise bootstrap.RecoveryRequired("raw_source_selection_changed")
         return participant
@@ -341,47 +364,96 @@ class _State:
     companion_guard: object | None = None
     companion_roots: tuple[Path, ...] = ()
     config_anchor: Path | None = None
+    mcp_canonical: Path | None = None
+    mcp_observation_lease: object | None = None
 
 
 _states = {}
 
 
+def _live_state(operation, path, writing):
+    """Validate issued operation and lease identities under the coordinator.
+
+    This helper is deliberately free of selected-source and filesystem reads.
+    """
+    if type(operation) is not _RawOperation or operation not in _states:
+        raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    state = _states[operation]
+    if (
+        not state.active
+        or operation not in storage._raw_operations
+        or state.pid != os.getpid()
+        or state.thread is not threading.current_thread()
+        or state.task is not storage._task_identity()
+        or state.uncertain
+    ):
+        raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    if state.participant is None and storage._pause is not None:
+        raise bootstrap.RecoveryRequired("storage_locally_paused")
+    if writing and not state.writing:
+        raise bootstrap.RecoveryRequired("raw_path_outside_scope")
+    if path is not None and lexical_path(path) not in state.paths + state.directories:
+        raise bootstrap.RecoveryRequired("raw_path_outside_scope")
+    for lease, hold in zip(state.leases, state.holds):
+        if (
+            lease not in storage._live_leases
+            or storage._holds.get(lease._key) is not hold
+        ):
+            raise bootstrap.RecoveryRequired("raw_native_scope_changed")
+        if hold is not None and (hold.stop.is_set() or hold.error is not None):
+            raise bootstrap.RecoveryRequired("raw_native_scope_changed")
+        if storage._pause is not None and hold is None:
+            raise bootstrap.RecoveryRequired("raw_native_scope_unqualified")
+    return state
+
+
+def _mcp_observation(source, canonical):
+    """Supply only this installed source's currently issued canonical lease."""
+    operation = getattr(_local, "operation", None)
+    if operation is None:
+        return None
+    with storage._lock:
+        state = _live_state(operation, None, False)
+        if (
+            state.source is not source
+            or state.route != mcp_sources.ROUTE
+            or state.participant is None
+        ):
+            return None
+        participant = _participant_identity(state.participant)
+        if (
+            participant.source() is not source
+            or state.mcp_canonical != lexical_path(canonical)
+            or state.mcp_observation_lease not in state.leases
+        ):
+            raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        lease = state.mcp_observation_lease
+    # This existing gate checks the lease's exact canonical selection. A lease
+    # admitted for a recovered destination cannot substitute for the canonical.
+    lease.execution_context(canonical)
+    with storage._lock:
+        if (
+            _live_state(operation, None, False) is not state
+            or _participant_identity(state.participant) is not participant
+            or state.mcp_observation_lease is not lease
+            or state.source is not source
+            or state.mcp_canonical != lexical_path(canonical)
+        ):
+            raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+    return {lexical_path(canonical): lease}
+
+
 def _check(operation, path=None, *, writing=False):
     # No virtual validator dispatch and no mutable caller token fields.
     with storage._lock:
-        if type(operation) is not _RawOperation or operation not in _states:
-            raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
-        state = _states[operation]
-        if (
-            not state.active
-            or operation not in storage._raw_operations
-            or state.pid != os.getpid()
-            or state.thread is not threading.current_thread()
-            or state.task is not storage._task_identity()
-            or state.uncertain
-        ):
-            raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
-        if state.participant is not None:
-            _participant_state(state.participant)
-        elif storage._pause is not None:
-            raise bootstrap.RecoveryRequired("storage_locally_paused")
-        if writing and not state.writing:
-            raise bootstrap.RecoveryRequired("raw_path_outside_scope")
-        if (
-            path is not None
-            and lexical_path(path) not in state.paths + state.directories
-        ):
-            raise bootstrap.RecoveryRequired("raw_path_outside_scope")
-        for lease, hold in zip(state.leases, state.holds):
-            if (
-                lease not in storage._live_leases
-                or storage._holds.get(lease._key) is not hold
-            ):
-                raise bootstrap.RecoveryRequired("raw_native_scope_changed")
-            if hold is not None and (hold.stop.is_set() or hold.error is not None):
-                raise bootstrap.RecoveryRequired("raw_native_scope_changed")
-            if storage._pause is not None and hold is None:
-                raise bootstrap.RecoveryRequired("raw_native_scope_unqualified")
+        state = _live_state(operation, path, writing)
+        participant = state.participant
+        source = state.source
+    # Binding validation may read native recovery records. It must not
+    # monopolize the coordinator while unrelated admitted workers use it.
+    participant_state = (
+        _participant_state(participant) if participant is not None else None
+    )
     if state.config_anchor is not None and config_files.sibling_selector(
         state.source, state.route, state.selected
     ) != state.config_anchor:
@@ -407,6 +479,23 @@ def _check(operation, path=None, *, writing=False):
             info.st_uid != os.geteuid() or info.st_mode & 0o077
         ):
             raise bootstrap.RecoveryRequired("config_companion_parent_unsafe")
+    # Revocation/retirement can interleave with either source or parent proof.
+    # A valid earlier observation cannot substitute for current issued custody.
+    with storage._lock:
+        if (
+            _live_state(operation, path, writing) is not state
+            or state.participant is not participant
+            or state.source is not source
+        ):
+            raise bootstrap.RecoveryRequired("raw_operation_provenance_invalid")
+        if participant is not None and (
+            type(participant) is not _RawParticipant
+            or _participants.get(participant) is not participant_state
+            or participant_state.source() is not source
+            or type(source) is not participant_state.source_type
+            or _source_participants.get(source) is not participant
+        ):
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
     return state
 
 
@@ -679,10 +768,14 @@ def _scope(
             source_lock = source._mcp_source_lock
         if route in config_files.ROUTES:
             source_lock = source._config_file_lock()
+        gate = _participant_state(participant) if participant is not None else None
         with storage._changed:
             attempt.check()
-            if participant is not None and _participant_state(participant).closed:
-                raise bootstrap.RecoveryRequired("storage_locally_paused")
+            if participant is not None:
+                if _participant_identity(participant) is not gate:
+                    raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+                if gate.closed:
+                    raise bootstrap.RecoveryRequired("storage_locally_paused")
             if source_key is not None:
                 source_lock = _path_locks.get(source_key)
                 if source_lock is None:
@@ -759,6 +852,17 @@ def _scope(
                 state.leases.append(storage.acquire_storage(path))
                 state.holds.append(storage._holds.get(state.leases[-1]._key))
                 attempt.check()
+        if route == mcp_sources.ROUTE and participant is not None:
+            canonical = mcp_sources.canonical_path(source)
+            state.mcp_canonical = canonical
+            if canonical == admission_paths[0]:
+                state.mcp_observation_lease = state.leases[0]
+            else:
+                attempt.check()
+                state.mcp_observation_lease = storage.acquire_storage(canonical)
+                state.leases.append(state.mcp_observation_lease)
+                state.holds.append(storage._holds.get(state.leases[-1]._key))
+                attempt.check()
         if pinned:
             fd, _ = _open_verified_parent(
                 anchor / ".raw-pin",
@@ -786,10 +890,14 @@ def _scope(
             for hold in state.holds
         ):
             raise bootstrap.RecoveryRequired("storage_locally_paused")
+        gate = _participant_state(participant) if participant is not None else None
         with storage._changed:
             attempt.check()
-            if participant is not None and _participant_state(participant).closed:
-                raise bootstrap.RecoveryRequired("storage_locally_paused")
+            if participant is not None:
+                if _participant_identity(participant) is not gate:
+                    raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+                if gate.closed:
+                    raise bootstrap.RecoveryRequired("storage_locally_paused")
             state.active = True
             _local.operation = operation
         _check(operation)
@@ -824,9 +932,13 @@ def _scope(
             if core is not None:
                 storage._check_operation(core, core.path)
             storage._operation_local.operation = core
-            if previous is not None:
-                _check(previous)
             _local.operation = previous
+            try:
+                if previous is not None:
+                    _check(previous)
+            except BaseException:
+                _local.operation = None
+                raise
 
 
 def _selected(operation):

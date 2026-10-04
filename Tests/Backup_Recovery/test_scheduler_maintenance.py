@@ -15,6 +15,10 @@ from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
 from tldw_chatbook.Scheduling.scheduler.loop import SchedulerLoop
 from tldw_chatbook.Scheduling.services.watchlist_projection import WatchlistProjection
 
+# Default stop reads must retain the installed private config selection. The
+# original scheduler also holds dispatch after per-test environment redirection.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.fixture
 def database(tmp_path):

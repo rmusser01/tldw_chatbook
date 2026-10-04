@@ -11,11 +11,9 @@ character swapped in, a Personas "Start chat" character chat with its
 greeting, an image result as the only assistant history, and an image after a
 normal exchange) was refused before the provider on origin/dev.
 
-The startup trace-maintenance pass is pushed past each test. Its garbage
-collector can sweep a revision admitted for a send before that send reserves
-its call (``trace_revision_unavailable``), which made these mounted sends fail
-at random when the first pass ran about five seconds after mount. That race
-is a separate defect, recorded in the task notes, not what these tests cover.
+Startup trace maintenance uses its ordinary timing. TASK-33621.47 now protects
+the exact canonical revision metadata between admission and call reservation;
+the separate deterministic GC tests also enforce payload reclamation.
 """
 
 from __future__ import annotations
@@ -41,7 +39,6 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat import console_chat_controller as controller_module
-from tldw_chatbook.Chat import console_runtime
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_chat_models import (
@@ -129,9 +126,6 @@ async def _settle_workers(h) -> None:
 
 @asynccontextmanager
 async def _mounted_console(tmp_path, monkeypatch, size):
-    monkeypatch.setattr(
-        console_runtime, "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS", 600.0
-    )
     app = _build_test_app()
     database = CharactersRAGDB(tmp_path / "chat.sqlite", "task-33621-2")
     app.chachanotes_db = database

@@ -2342,9 +2342,12 @@ class ConsoleTraceService:
                     prior_header.provider_name != header.provider_name
                     or prior_header.model_name != header.model_name
                     or prior_header.endpoint_identity != header.endpoint_identity
-                    or prior_header.generation_parameters != header.generation_parameters
-                    or prior_header.response_format != header.response_format
-                    or prior_header.reasoning_controls != header.reasoning_controls
+                    or _artifact_bytes(prior_header.generation_parameters)
+                    != _artifact_bytes(header.generation_parameters)
+                    or _artifact_bytes(prior_header.response_format)
+                    != _artifact_bytes(header.response_format)
+                    or _artifact_bytes(prior_header.reasoning_controls)
+                    != _artifact_bytes(header.reasoning_controls)
                     or self._resolve_system_composition(prior_header)
                     != self._resolve_system_composition(header)
                     or tuple(
@@ -6287,7 +6290,9 @@ def _object_field(value: object) -> Mapping[str, object]:
     if value is None:
         return {}
     if isinstance(value, Mapping):
-        return cast(Mapping[str, object], value)
+        # The shadow freezes arrays as tuples. Persist ordinary JSON values;
+        # the repository's input contract deliberately rejects runtime tuples.
+        return cast(Mapping[str, object], _thaw(value))
     return {"value": value}
 
 

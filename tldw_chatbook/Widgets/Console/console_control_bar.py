@@ -9,6 +9,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.css.scalar import Scalar
 from textual.message import Message
 from textual.widgets import Button, Static
 
@@ -126,9 +127,19 @@ class ConsoleControlBar(Vertical):
     def _set_recovery_height(self, visible: bool) -> None:
         """Set the exact bar height for its recovery-row visibility."""
         height = 2 if visible else 1
+        height_class = "h-2" if visible else "h-1"
+        # Avoid stylesheet application for unchanged state. Inspect the actual
+        # class/inline constraints so external style changes are still repaired.
+        if (
+            {name for name in self.classes if name.startswith("h-")} == {height_class}
+            and not self.styles.inline.has_rule("height")
+            and self.styles.min_height == Scalar.from_number(height)
+            and self.styles.max_height == Scalar.from_number(height)
+        ):
+            return
         self.remove_class(*(name for name in self.classes if name.startswith("h-")))
         self.set_styles(height=None)
-        self.add_class("h-2" if visible else "h-1")
+        self.add_class(height_class)
         self.styles.min_height = height
         self.styles.max_height = height
 

@@ -129,9 +129,9 @@ def select(store):
             store.path = _root(path, witnesses) / path.name
 
 
-def selected_path(canonical):
+def selected_path(canonical, *, retained=None):
     """Resolve only this declared store's current admitted generation."""
-    with observed(canonical) as witnesses:
+    with observed(canonical, retained=retained) as witnesses:
         return _root(canonical, witnesses) / canonical.name if witnesses else canonical
 
 
@@ -455,8 +455,10 @@ def readable(store, owner):
 
 
 def _require_store_write(store, owner):
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+
     path = getattr(store, "_recovery_original_path", lexical_path(store.path))
-    with observed(path) as witnesses:
+    with observed(path, retained=raw._mcp_observation(store, path)) as witnesses:
         if not witnesses:
             return
         expected = _root(path, witnesses) / path.name if owner in _FRESH else path

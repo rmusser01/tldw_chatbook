@@ -138,12 +138,24 @@ def activation_permission(
 
 
 def _source_scope_admitted(root: Path, names: tuple[str, ...], path: Path) -> bool:
-    """Refuse restored shared sources outside the actual native admitted group.
+    """Keep the public source-scope gate fresh and its ordinary fast path."""
+    records = bootstrap._control_records(root)
+    _, profiles, associations = records
+    restored = {
+        name
+        for record in profiles + associations
+        for name in record.get("activation", {}).get("namespaces", [])
+    }
+    if not restored - set(names):
+        return True
+    return _source_scope_admitted_from_records(
+        names, path, records, bootstrap._registry(root)
+    )
 
-    Ordinary capture can register sources without enrolling a restored profile;
-    those historical source registrations alone never disable legacy execution.
-    """
-    _, profiles, associations = bootstrap._control_records(root)
+
+def _source_scope_admitted_from_records(names, path, records, registry):
+    """Evaluate the unchanged source rules using this call's validated records."""
+    _, profiles, associations = records
     restored = {
         name
         for record in profiles + associations
@@ -152,7 +164,6 @@ def _source_scope_admitted(root: Path, names: tuple[str, ...], path: Path) -> bo
     uncovered = restored - set(names)
     if not uncovered:
         return True
-    registry = bootstrap._registry(root)
     if registry is None or not uncovered <= registry.keys():
         return False
     selected = lexical_path(path)

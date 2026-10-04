@@ -222,7 +222,7 @@ from .config import (
     get_cli_setting,
     get_media_db_path,
     get_prompts_db_path,
-    get_subscriptions_db_path,
+    get_subscriptions_db_path,  # noqa: F401 - shared app-module compatibility alias.
     get_tts_profiles_db_path,
     get_user_data_dir,
     save_setting_to_cli_config,
@@ -4699,12 +4699,8 @@ class TldwCli(
             )
 
         def start_subscriptions_fts_backfill() -> Worker | None:
-            from tldw_chatbook.Backup_Recovery.activation import execution_allowed
-
-            if not execution_allowed(
-                ("db.subscriptions",), get_subscriptions_db_path()
-            ):
-                return None
+            # The thread body resolves its path and takes fresh admission.
+            # Repeating that preflight here blocks the UI during boot.
             # task-688: index subscription_items rows scraped before the FTS5
             # index existed, so search covers a user's whole back catalogue
             # without any action on their part.

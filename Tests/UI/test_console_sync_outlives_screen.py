@@ -63,6 +63,10 @@ from tldw_chatbook.UI.Screens.chat_screen import (
     ChatScreen,
     _console_screen_is_torn_down,
 )
+from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _console_sync_workers(app):
@@ -77,9 +81,20 @@ async def _console_app(tmp_path):
     test owns its own `async with app.run_test(...)`.
     """
     app = _build_test_app()
+    # This fixture supplies its Console explicitly; claim startup before the
+    # real app can push a competing initial screen during the mount await.
+    app._initial_screen_pushed = True
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     gateway = _StallingWakeGateway()
+    gateway.cached_context_window = lambda settings: resolve_context_window(
+        settings.provider, settings.model or ""
+    )
+
+    async def context_window(settings):
+        return gateway.cached_context_window(settings)
+
+    gateway.resolve_context_window = context_window
     app.console_provider_gateway_factory = lambda: gateway
     app.app_config.setdefault("console", {})["agent_runtime"] = False
     return app, gateway

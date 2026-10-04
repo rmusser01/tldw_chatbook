@@ -11068,8 +11068,13 @@ class ConsoleAgentBridge:
         )
         return records[0]["id"] if records else None
 
-    def _derive_historical_snapshot(self, conversation_id: str) -> AgentLiveSnapshot:
-        primary_records = self._db.list_runs(
+    def _derive_historical_snapshot(
+        self, conversation_id: str, *, database: AgentRunsDB | None = None
+    ) -> AgentLiveSnapshot:
+        # A finite presentation callback captures its receiver before await;
+        # a replaced bridge database cannot redirect its reads or retirement.
+        database = self._db if database is None else database
+        primary_records = database.list_runs(
             conversation_id,
             include_superseded=False,
             agent_kind=AGENT_KIND_PRIMARY,
@@ -11077,7 +11082,7 @@ class ConsoleAgentBridge:
         if not primary_records:
             return AgentLiveSnapshot()
         primary = primary_records[0]
-        subagent_records = self._db.list_runs(
+        subagent_records = database.list_runs(
             conversation_id,
             include_superseded=False,
             agent_kind=AGENT_KIND_SUBAGENT,

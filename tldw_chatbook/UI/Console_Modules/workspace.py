@@ -33,7 +33,8 @@ from loguru import logger
 from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.css.query import NoMatches
 
-from tldw_chatbook.DB.base_db import operation_owned_connection
+from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_call
+from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
 from ...Character_Chat.character_conversation_navigation import (
     LocalCharacterConversationTarget,
@@ -109,6 +110,7 @@ from ...Workspaces.display_state import (
     ConsoleWorkspaceContextState,
     ConsoleWorkspaceConversationRow,
     ConsoleWorkspaceConversationSectionState,
+    _recompute_filesystem_binding_status,
     build_console_workspace_state,
     console_workspace_conversation_result_copy,
 )
@@ -118,6 +120,7 @@ from ...Workspaces.models import (
     WorkspaceRuntimeBinding,
 )
 from ...Workspaces.registry_service import (
+    LocalWorkspaceRegistryService,
     WorkspaceNotFound,
     WorkspaceRegistryServiceError,
     binding_exclusion_entries,
@@ -6611,20 +6614,55 @@ class ConsoleWorkspaceController:
     ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
         """Read runtime bindings and folder readiness off-loop into a snapshot."""
         registry = getattr(self.app_instance, "workspace_registry_service", None)
-        with operation_owned_connection(getattr(registry, "db", None)):
-            availability: dict[str, bool] = {}
-            bindings_by_id: dict[str, tuple[WorkspaceRuntimeBinding, ...]] = {}
-            for workspace_id in workspace_ids:
-                if registry is None:
-                    availability[workspace_id] = False
-                    bindings_by_id[workspace_id] = ()
-                    continue
-                try:
+        return self._capture_workspace_files_availability_for_registry(
+            registry, workspace_ids
+        )
+
+    def _capture_workspace_files_availability_for_registry(
+        self, registry: Any, workspace_ids: Sequence[str]
+    ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
+        """Retain the existing ownership route for direct and custom reads."""
+        database = getattr(registry, "db", None)
+        with operation_owned_connection(database):
+            return self._read_workspace_files_availability(
+                registry, database, workspace_ids
+            )
+
+    def _read_workspace_files_availability(
+        self, registry: Any, database: object, workspace_ids: Sequence[str]
+    ) -> tuple[dict[str, bool], dict[str, tuple[WorkspaceRuntimeBinding, ...]]]:
+        """Read the captured registry owner within its caller's finite lifetime."""
+        availability: dict[str, bool] = {}
+        bindings_by_id: dict[str, tuple[WorkspaceRuntimeBinding, ...]] = {}
+        for workspace_id in workspace_ids:
+            if getattr(registry, "db", None) is not database:
+                return {}, {}
+            if registry is None:
+                availability[workspace_id] = False
+                bindings_by_id[workspace_id] = ()
+                continue
+            try:
+                if type(registry) is LocalWorkspaceRegistryService:
+                    # Its folder lister reads the complete runtime set too.
+                    # Reuse one read and the display layer's same disk checks
+                    # within this finite operation, including Default cleanup.
+                    runtime_bindings = tuple(
+                        _recompute_filesystem_binding_status(binding)
+                        for binding in registry.list_runtime_bindings(workspace_id)
+                    )
+                    folder_bindings = tuple(
+                        binding
+                        for binding in runtime_bindings
+                        if binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
+                    )
+                else:
+                    # Custom adapters may implement their own folder status
+                    # contract. Keep their existing listers and merge behavior.
                     folder_bindings = tuple(registry.list_folder_bindings(workspace_id))
                     list_runtime_bindings = getattr(
                         registry, "list_runtime_bindings", None
                     )
-                    runtime_bindings = (
+                    stored_bindings = (
                         tuple(list_runtime_bindings(workspace_id))
                         if callable(list_runtime_bindings)
                         else folder_bindings
@@ -6633,21 +6671,22 @@ class ConsoleWorkspaceController:
                         str(getattr(binding, "binding_id", "")): binding
                         for binding in folder_bindings
                     }
-                    bindings_by_id[workspace_id] = tuple(
+                    runtime_bindings = tuple(
                         refreshed_by_binding_id.get(
                             str(getattr(binding, "binding_id", "")), binding
                         )
-                        for binding in runtime_bindings
+                        for binding in stored_bindings
                     )
-                    availability[workspace_id] = any(
-                        binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
-                        and binding.status is RuntimeBindingStatus.READY
-                        for binding in folder_bindings
-                    )
-                except Exception:
-                    availability[workspace_id] = False
-                    bindings_by_id[workspace_id] = ()
-            return availability, bindings_by_id
+                bindings_by_id[workspace_id] = runtime_bindings
+                availability[workspace_id] = any(
+                    binding.binding_kind is RuntimeBindingKind.LOCAL_FILESYSTEM
+                    and binding.status is RuntimeBindingStatus.READY
+                    for binding in folder_bindings
+                )
+            except Exception:
+                availability[workspace_id] = False
+                bindings_by_id[workspace_id] = ()
+        return availability, bindings_by_id
 
     async def _refresh_workspace_files_availability_snapshot(self) -> None:
         """Publish only the latest completed folder-availability generation."""
@@ -6655,10 +6694,30 @@ class ConsoleWorkspaceController:
             while self._screen_running_accessor():
                 generation = self._workspace_files_availability_generation
                 workspace_ids = self._workspace_files_availability_requested_ids
-                availability_snapshot, bindings_snapshot = await asyncio.to_thread(
-                    self._capture_workspace_files_availability, workspace_ids
+                registry = getattr(
+                    self.app_instance, "workspace_registry_service", None
                 )
-                if generation == self._workspace_files_availability_generation:
+                database = getattr(registry, "db", None)
+                if type(database) is WorkspaceDB and not database.is_memory_db:
+                    availability_snapshot, bindings_snapshot = await run_owned_db_call(
+                        database,
+                        self._read_workspace_files_availability,
+                        registry,
+                        database,
+                        workspace_ids,
+                    )
+                else:
+                    availability_snapshot, bindings_snapshot = await asyncio.to_thread(
+                        self._capture_workspace_files_availability_for_registry,
+                        registry,
+                        workspace_ids,
+                    )
+                if (
+                    generation == self._workspace_files_availability_generation
+                    and registry
+                    is getattr(self.app_instance, "workspace_registry_service", None)
+                    and database is getattr(registry, "db", None)
+                ):
                     self._workspace_files_availability_by_id = MappingProxyType(
                         {
                             workspace_id: bool(

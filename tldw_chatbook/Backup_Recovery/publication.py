@@ -831,13 +831,9 @@ def _pending(
                     parent, f"pending-{_key(journal.operation_id)}.json", expected
                 )
             flush_directory(parent)
-        # Any of these local directories may have been created by registration.
-        # The filesystem root itself has no containing directory entry to flush.
-        for ancestor in root.parents:
-            if ancestor == Path("/"):
-                break
-            with pinned_directory(ancestor) as parent:
-                flush_directory(parent)
+        # Registration already synchronized every newly created containing
+        # directory entry. This recheck changes only the bootstrap record/root;
+        # unchanged ancestors need no publication barrier (ADR-126).
 
 
 def _preserved_settings_digest(descriptor):

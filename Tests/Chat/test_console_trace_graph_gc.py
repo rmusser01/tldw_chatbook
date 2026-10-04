@@ -881,7 +881,6 @@ def test_reopen_has_no_trace_payload_in_any_durable_owner(tmp_path) -> None:
             "console_trace_response_links",
             "console_trace_revision_bindings",
             "console_trace_segments",
-            "console_trace_semantic_revisions",
             "console_trace_surface_nodes",
             "console_trace_surface_replacements",
         )
@@ -889,6 +888,14 @@ def test_reopen_has_no_trace_payload_in_any_durable_owner(tmp_path) -> None:
             connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
             for table in payload_tables
         )
+        # Canonical live locators own metadata identity even after trace purge.
+        # They retain no policies, bindings, artifacts or archived message body.
+        revisions = connection.execute(
+            "SELECT live_message_id, live_locator_retired_at "
+            "FROM console_trace_semantic_revisions"
+        ).fetchall()
+        assert len(revisions) == 1
+        assert revisions[0][0] is not None and revisions[0][1] is None
         result_blob = connection.execute(
             "SELECT result_json FROM console_trace_gc_runs WHERE request_id = 'gc-privacy'"
         ).fetchone()[0]

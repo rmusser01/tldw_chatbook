@@ -82,6 +82,8 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
 ) -> _CallResult:
     """Run a finite callback and retire only its newly opened worker handle.
 
+    Qualified callbacks retain one counted repository interval through their
+    complete body. The interval exits before retiring a new native handle.
     Cancellation of the awaiting task does not close a handle still in use by
     its executor callback. Existing connections and memory/custom owners retain
     their original lifetimes.
@@ -93,8 +95,11 @@ async def run_owned_db_call[**_CallParameters, _CallResult](
 
         if type(database) not in {AgentRunsDB, CharactersRAGDB, WorkspaceDB} or database.is_memory_db:
             return operation(*args, **kwargs)
+        from tldw_chatbook.Backup_Recovery.participants import _core_operation
+
         with operation_owned_connection(database):
-            return operation(*args, **kwargs)
+            with _core_operation(database):
+                return operation(*args, **kwargs)
 
     return await asyncio.to_thread(invoke)
 

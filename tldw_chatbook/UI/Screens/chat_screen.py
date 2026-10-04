@@ -44,7 +44,6 @@ from textual.events import (
     Paste,
     Resize,
 )
-from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widget import Widget
 from textual.worker import Worker
@@ -3368,9 +3367,42 @@ class ChatScreen(BaseAppScreen):
             active_model = suspended_draft.provider_model_drafts.get(
                 active_provider, active_model
             )
-        effective_thinking_policy = (
-            await controller.effective_thinking_history_policy_for_session(session_id)
-        )
+        context_reader = None
+        context_owner = None
+        if callable(getattr(controller, "context_control_presentation_inputs", None)):
+            context_reader = spend.ConsoleContextReadSnapshot.for_screen(
+                self, max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
+            )
+            context_owner = context_reader._key(controller, session_id)
+        def context_owner_current() -> bool:
+            if context_reader is None:
+                return True
+            if (
+                self._ensure_console_chat_controller() is not controller
+                or self._ensure_console_chat_store() is not store
+                or context_owner != context_reader._key(controller, session_id)
+            ):
+                return False
+            try:
+                return store.capture_console_settings_origin(session_id) == origin
+            except KeyError:
+                return False
+
+        try:
+            effective_thinking_policy = (
+                await controller.effective_thinking_history_policy_for_session(session_id)
+            )
+        except KeyError:
+            if not context_owner_current():
+                return False
+            raise
+        if context_reader is not None:
+            if context_owner is None or not context_owner_current():
+                return False
+            if not await context_reader.warm(controller, session_id):
+                return False
+            if not context_owner_current():
+                return False
         context_estimate = self._console_settings_context_estimate_for_session(
             session_id,
             settings=settings,
@@ -3385,6 +3417,8 @@ class ChatScreen(BaseAppScreen):
             active_provider,
             current_model=active_model,
         )
+        if not context_owner_current():
+            return False
         active_run = self._console_run_active()
 
         modal_contract = _conversation_settings_modal_module()
@@ -3476,6 +3510,8 @@ class ChatScreen(BaseAppScreen):
                 modal.disabled = True
             return transfer_outcome
 
+        if not context_owner_current():
+            return False
         if _pre_push_guard is not None and not _pre_push_guard():
             return False
         try:
@@ -7611,29 +7647,7 @@ class ChatScreen(BaseAppScreen):
         Served from the per-pass memo inside a `_console_derivation_scope`
         (task-15452): one draft-edit sync called this 63 times.
         """
-        memo = self._console_derivation_memo
-        if memo is not None and "app_config" in memo:
-            return memo["app_config"]
-        try:
-            app_config = getattr(self.app, "app_config")
-        except (AttributeError, NoActiveAppError):
-            app_config = getattr(self.app_instance, "app_config", {}) or {}
-        app_config = app_config or {}
-        resolved = app_config
-        if self._console_config_snapshot_is_disk_loaded(app_config):
-            try:
-                fresh = load_settings()
-            except Exception:
-                logger.debug(
-                    "Console readiness refresh via load_settings() failed; "
-                    "using snapshot"
-                )
-            else:
-                if isinstance(fresh, Mapping) and fresh:
-                    resolved = fresh
-        if memo is not None:
-            memo["app_config"] = resolved
-        return resolved
+        return spend.provider_readiness_app_config(self, load_settings)
 
     @classmethod
     def _console_config_snapshot_is_disk_loaded(cls, app_config: Any) -> bool:
@@ -8417,8 +8431,11 @@ class ChatScreen(BaseAppScreen):
         memory = None
         controller = self._ensure_console_chat_controller()
         try:
-            overrides, global_overrides, memory = controller.context_control_inputs(
-                session_id
+            read_snapshot = spend.ConsoleContextReadSnapshot.for_screen(
+                self, max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
+            )
+            overrides, global_overrides, memory = read_snapshot.inputs(
+                controller, session_id
             )
         except (KeyError, ValueError):
             pass
@@ -8433,6 +8450,8 @@ class ChatScreen(BaseAppScreen):
             overrides=overrides,
             global_overrides=global_overrides,
             active_memory=memory,
+            busy=memory is None,
+            status_message="Loading context…" if memory is None else "",
             accounting=accounting,
             thinking_history_policy=(
                 store.session_thinking_history_policy(session_id)
@@ -9332,6 +9351,7 @@ class ChatScreen(BaseAppScreen):
         section.request_reconcile()
         rail.request_outer_reconcile()
 
+    @spend.console_readiness_presentation
     def _sync_console_settings_summary(self) -> None:
         """Refresh the mounted Console settings summary surfaces if present."""
         self._apply_console_settings_summary_state(
@@ -11793,6 +11813,7 @@ class ChatScreen(BaseAppScreen):
             logger.opt(exception=True).warning("cost_chip_state_failed")
             return self._last_console_cost_state
 
+    @spend.console_readiness_presentation
     def _sync_console_cost_chip(self) -> None:
         """Refresh the cost chip from freshly built state (task-5).
 
@@ -11855,6 +11876,7 @@ class ChatScreen(BaseAppScreen):
             self._record_ui_timer_stopped("console-environment-poll")
             self._console_environment_poll_timer = None
 
+    @spend.console_readiness_presentation
     def _poll_console_credential_readiness(self) -> None:
         """Refresh send controls as background credentials complete or expire."""
         from tldw_chatbook.LLM_Calls.anthropic_subscription import (
@@ -15297,6 +15319,7 @@ class ChatScreen(BaseAppScreen):
             widget.styles.max_height = 0
         widget._console_copy_block_applied = cache_value
 
+    @spend.console_readiness_presentation
     def _sync_console_transcript_guidance(self) -> None:
         """Refresh Console onboarding and provider recovery copy in place."""
         # These synchronous presentation helpers consume one result. Keep the
@@ -18473,20 +18496,23 @@ class ChatScreen(BaseAppScreen):
                     memory_controller = (
                         controller or self._ensure_console_chat_controller()
                     )
-                    _global, _local, effective_memory = (
-                        memory_controller.context_control_inputs(
-                            store.active_session_id
-                        )
+                    read_snapshot = spend.ConsoleContextReadSnapshot.for_screen(
+                        self, max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
+                    )
+                    _global, _local, effective_memory = read_snapshot.inputs(
+                        memory_controller, store.active_session_id
                     )
                 except Exception:
                     logger.warning(
                         "Console effective-memory presentation selection failed"
                     )
                 else:
-                    memory_banner = derive_console_memory_banner_presentation(
-                        effective_memory,
-                        active_messages,
-                    )
+                    if effective_memory is None:
+                        memory_banner = None
+                    else:
+                        memory_banner = derive_console_memory_banner_presentation(
+                            effective_memory, active_messages
+                        )
             transcript.set_memory_banner_presentation(memory_banner)
             # TASK-371: reflect run state in the jump-to-latest pill when the
             # reader is scrolled up during / just after a streaming reply.
@@ -18691,6 +18717,7 @@ class ChatScreen(BaseAppScreen):
             return f"{console_pending_round_copy_for(controller, session_id or '')}."
         return run_state.visible_copy or run_state.status.value
 
+    @spend.console_readiness_presentation
     def _sync_console_mode_bar(self) -> None:
         try:
             mode_bar = self.query_one("#console-mode-bar", Static)
@@ -18854,7 +18881,18 @@ class ChatScreen(BaseAppScreen):
             # while a settled tick pays for one build. Task-scoped: only
             # THIS coroutine's task reads the cache — workers and handlers
             # interleaving during the awaits keep building live.
-            with self._workspace.tick_workspace_build_scope():
+            read_snapshot = spend.ConsoleContextReadSnapshot.for_screen(
+                self, max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
+            )
+            with read_snapshot.scope(), self._workspace.tick_workspace_build_scope():
+                controller = self._console_chat_controller
+                store = self._console_chat_store
+                if (
+                    controller is not None
+                    and store is not None
+                    and store.active_session_id
+                ):
+                    await read_snapshot.warm(controller, store.active_session_id)
                 if self._sync_console_rail_and_controls() is False:
                     self._console_control_bar_replay_whole_sync = True
                     return
@@ -18869,6 +18907,16 @@ class ChatScreen(BaseAppScreen):
                 self._sync_console_live_work_readiness_rows()
                 self._sync_console_mode_bar()
                 await self._sync_console_native_session_tabs()
+                # Re-read the target after suspension; a tab publication may
+                # have created, persisted or activated a different session.
+                controller = self._console_chat_controller
+                store = self._console_chat_store
+                if (
+                    controller is not None
+                    and store is not None
+                    and store.active_session_id
+                ):
+                    await read_snapshot.warm(controller, store.active_session_id)
                 self._dispatch_active_console_roleplay_refresh()
                 self._sync_console_workspace_context()
                 project_instruction_ui.sync_project_instruction_status_for_screen(self)
@@ -21888,44 +21936,14 @@ class ChatScreen(BaseAppScreen):
 
         return self._run_console_config_sync(sync)
 
+    @spend.console_readiness_presentation
     def _run_console_config_sync(self, sync: Callable[[], None]) -> bool:
         """Render synchronously, or defer entry to the existing coalesced retry."""
-        from tldw_chatbook import config
-        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
-        from tldw_chatbook.Backup_Recovery.config_participants import operation
-
-        if getattr(self, "_console_sync_maintenance_paused", False):
-            self._request_console_control_bar_sync(delayed=True)
-            return False
-        # Nested readers still check the current source; keep its native
-        # lifetime continuous for this synchronous refresh, never an await.
-        failure: BaseException | None = None
-        entered = False
-        try:
-            with operation(config):
-                entered = True
-                try:
-                    sync()
-                except BaseException as error:  # noqa: BLE001 - re-raised after native owner exit.
-                    # A UI error must not mark config persistence as failed.
-                    # Nested config failures retain their own failure state.
-                    failure = error
-        except BaseException as error:
-            if (
-                not entered
-                and type(error) is RecoveryRequired
-                and error.args == ("storage_locally_paused",)
-            ):
-                # Native intent can precede the local monitor. Recompute on
-                # one trailing timer even if that intent is canceled unseen.
-                self._request_console_control_bar_sync(delayed=True)
-                return False
-            if failure is not None and error is not failure:
-                raise error from failure
-            raise
-        if failure is not None:
-            raise failure
-        return True
+        return spend.run_console_config_sync(
+            sync,
+            maintenance_paused=getattr(self, "_console_sync_maintenance_paused", False),
+            request_retry=lambda: self._request_console_control_bar_sync(delayed=True),
+        )
 
     def _sync_console_control_bar_under_config(
         self, rail_state: ConsoleRailState | None = None
@@ -22602,17 +22620,17 @@ class ChatScreen(BaseAppScreen):
         band = console_rail_width_band(event.size.width)
         if band == self._last_console_workspace_width_band:
             return
-        self._last_console_workspace_width_band = band
-        self._request_console_control_bar_sync()  # The header word is band-sized.
         try:
             self.query_one("#console-workspace-grid")
+            left_rail = self.query_one("#console-left-rail")
+            right_rail = self.query_one("#console-right-rail")
+            left_handle = self.query_one("#console-context-rail-handle")
+            right_handle = self.query_one("#console-inspector-rail-handle")
         except QueryError:
             return
+        self._last_console_workspace_width_band = band
+        self._request_console_control_bar_sync()  # The header word is band-sized.
         focused = self.app.focused
-        left_rail = self.query_one("#console-left-rail")
-        right_rail = self.query_one("#console-right-rail")
-        left_handle = self.query_one("#console-context-rail-handle")
-        right_handle = self.query_one("#console-inspector-rail-handle")
         focused_in_left_rail = self._is_descendant_or_self(focused, left_rail)
         focused_in_right_rail = self._is_descendant_or_self(focused, right_rail)
         focused_in_left_handle = self._is_descendant_or_self(focused, left_handle)

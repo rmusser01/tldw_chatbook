@@ -17352,7 +17352,7 @@ class ConsoleChatController:
             publish(None, None)
             return None
         try:
-            kill_switch = service.get_kill_switch()
+            kill_switch = await asyncio.to_thread(service.get_kill_switch)
         except Exception:  # noqa: BLE001 -- fail closed to "no MCP this run"
             logger.opt(exception=True).warning(
                 "ConsoleChatController: get_kill_switch failed; skipping MCP this run"
@@ -25762,6 +25762,7 @@ class ConsoleChatController:
         session_id: str,
         *,
         uncommitted_user_message_id: str | None = None,
+        _presentation_lineage: tuple | None = None,
     ) -> tuple[DurableMessageSnapshot, ...] | None:
         """Capture the active durable lineage without leaking content to logs.
 
@@ -25773,7 +25774,10 @@ class ConsoleChatController:
                 Defaults to the echo of a send held at the compaction
                 threshold, which no caller should treat as history either.
         """
-        persistence = getattr(self.store, "persistence", None)
+        persistence = (
+            _presentation_lineage[0] if _presentation_lineage is not None
+            else getattr(self.store, "persistence", None)
+        )
         # task-32804.12 ([D2]): prefer the batch version reader so the
         # snapshot capture is a few chunked SELECTs instead of one point read
         # per active-path message per dispatch. Fall back to the per-message
@@ -25783,11 +25787,14 @@ class ConsoleChatController:
         if not callable(versions_reader) and not callable(version_reader):
             return None
         try:
-            active_ids = self.store.active_path_message_ids(session_id)
-            messages = {
-                message.id: message
-                for message in self.store.messages_for_session(session_id)
-            }
+            if _presentation_lineage is not None:
+                active_ids, messages = _presentation_lineage[1:3]
+            else:
+                active_ids = self.store.active_path_message_ids(session_id)
+                messages = {
+                    message.id: message
+                    for message in self.store.messages_for_session(session_id)
+                }
         except KeyError:
             return None
         batched_versions: dict[str, int] | None = None
@@ -25805,7 +25812,7 @@ class ConsoleChatController:
             except Exception:
                 return None
         snapshots: list[DurableMessageSnapshot] = []
-        skip_id = (
+        skip_id = _presentation_lineage[4] if _presentation_lineage is not None else (
             uncommitted_user_message_id
             if uncommitted_user_message_id is not None
             else self._held_send_echo_id(session_id)
@@ -25913,7 +25920,11 @@ class ConsoleChatController:
                     # TASK-33621.3: a live durable-send owner never gets its
                     # parent mirror; fence with the parent its row was written with.
                     parent_message_id=message.parent_message_id
-                    or self.store.durable_parent_for_message(native_id),
+                    or (
+                        _presentation_lineage[3].get(native_id)
+                        if _presentation_lineage is not None
+                        else self.store.durable_parent_for_message(native_id)
+                    ),
                     status=message.status,
                     deleted=False,
                     provider_visible=provider_visible,
@@ -26650,6 +26661,86 @@ class ConsoleChatController:
                     snapshots,
                 )
         return owner.context_policy_overrides, global_overrides, effective
+
+    async def context_control_presentation_inputs(self, session_id: str) -> tuple:
+        """Read one UI projection off-loop from captured, disposable lineage.
+
+        The caller fences publication by its session/revision owner. Explicit
+        actions and provider dispatch continue using their live synchronous
+        authority seams. This finite callback owns only its new worker handle.
+        """
+        from tldw_chatbook.DB.base_db import run_owned_db_call
+
+        owner = next(
+            (item for item in self.store.sessions() if item.id == session_id), None
+        )
+        if owner is None:
+            raise KeyError(session_id)
+        conversation_id = owner.persisted_conversation_id
+        overrides = owner.context_policy_overrides
+        persistence = getattr(self.store, "persistence", None)
+        repository = self._context_repository
+        active_ids = tuple(self.store.active_path_message_ids(session_id))
+        messages = {
+            message.id: copy.deepcopy(message)
+            for message in self.store.messages_for_session(session_id)
+        }
+        parents = {
+            native_id: self.store.durable_parent_for_message(native_id)
+            for native_id in active_ids
+        }
+        lineage = (
+            persistence,
+            active_ids,
+            messages,
+            parents,
+            self._held_send_echo_id(session_id),
+        )
+        summary, boundary = self.store.session_context_summary(session_id)
+        boundary_row = messages.get(boundary)
+        legacy = NO_LEGACY_MEMORY
+        if (
+            conversation_id is not None
+            and isinstance(summary, str)
+            and summary.strip()
+            and boundary in active_ids
+            and boundary_row is not None
+            and boundary_row.persisted_message_id is not None
+        ):
+            legacy = LegacyMemorySnapshot(
+                conversation_id=conversation_id,
+                summary_text=summary,
+                boundary_message_id=boundary_row.persisted_message_id,
+            )
+
+        def read() -> tuple:
+            try:
+                global_overrides = self._global_context_policy_overrides()
+            except Exception:
+                global_overrides = None
+            effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
+            if repository is not None and conversation_id is not None:
+                snapshots = self._durable_context_snapshots(
+                    session_id, _presentation_lineage=lineage
+                )
+                if snapshots:
+                    head, memory, scope = self._applicable_branch_memory_state(
+                        repository,
+                        conversation_id,
+                        frozenset(snapshot.message_id for snapshot in snapshots),
+                    )
+                    effective = select_effective_memory(
+                        conversation_id,
+                        snapshots,
+                        memories=(memory,) if memory is not None else (),
+                        scopes=(scope,) if scope is not None else (),
+                        selection_candidates=(head,) if head is not None else (),
+                        legacy=legacy,
+                    )
+            return overrides, global_overrides, effective
+
+        database = getattr(repository, "db", None) or getattr(persistence, "db", None)
+        return await run_owned_db_call(database, read)
 
     def reset_active_context_memory(self, session_id: str) -> tuple[str, int] | None:
         """Deactivate only the branch-valid memory and return its undo token."""

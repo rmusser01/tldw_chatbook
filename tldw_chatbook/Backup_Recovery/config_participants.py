@@ -35,6 +35,20 @@ _STATE_NAMES = (
 )
 
 
+class ConfigOperationBusy(RuntimeError):
+    """Presentation entry deferred because another thread owns a config lock."""
+
+
+def checked_config_identity(source: object, active: object) -> tuple[int, str]:
+    """Tag data with its active checked config generation and selected path."""
+    from . import raw_participants as raw
+
+    state = raw._check(active)
+    if state.source is not source or state.route not in {"config", "config_snapshot"}:
+        raise bootstrap.RecoveryRequired("config_operation_source_invalid")
+    return source._CONFIG_GENERATION, str(state.selected)
+
+
 def binding(source):
     module = sys.modules.get("tldw_chatbook.config")
     if module is not None and source is module:
@@ -292,7 +306,8 @@ def verified_user_data_directory(source):
 
 
 @contextmanager
-def operation(source, *, route="config", target=None):
+def operation(source, *, route="config", target=None, wait_for_locks: bool = True):
+    """Retain a checked config lifetime, optionally refusing busy lock entry."""
     from . import raw_participants as raw
 
     previous = getattr(raw._local, "operation", None)
@@ -340,8 +355,12 @@ def operation(source, *, route="config", target=None):
         # Config snapshots and rebuilds already use REBUILD -> FILE. Keep
         # that order before entering any guarded reader or writer body.
         for lock in (source._settings_rebuild_lock(), source._config_file_lock()):
-            while not lock.acquire(timeout=0.05):
+            if wait_for_locks:
+                while not lock.acquire(timeout=0.05):
+                    attempt.check()
+            elif not lock.acquire(blocking=False):
                 attempt.check()
+                raise ConfigOperationBusy("config_lock_busy")
             acquired.callback(lock.release)
             attempt.check()
         before = {

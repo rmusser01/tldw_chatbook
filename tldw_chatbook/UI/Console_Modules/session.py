@@ -4041,6 +4041,8 @@ class ConsoleSessionController:
         self,
         store: ConsoleChatStore,
         session: ConsoleChatSession,
+        *,
+        checked_config: Mapping | None = None,
     ) -> ConsoleSessionSettings | None:
         """Converge a pristine session on the currently saved defaults.
 
@@ -4054,15 +4056,27 @@ class ConsoleSessionController:
         after a Settings save or first-run setup (TASK-33001.5). Sessions
         with work, source-owned sessions (no baseline) and sessions created
         before a Console "Make default for new chats" are never touched.
+
+        Presentation scopes only reuse established settings. Their worker
+        handoff may pass ``checked_config`` after verifying its actual source
+        and session owner; unscoped callers otherwise obtain live config.
         """
         settings = session.settings
+        projection = getattr(self._screen, "_console_readiness_projection_active", None)
+        if projection is not None and projection[0] == threading.get_ident():
+            # Display reuse, including expired data, never owns durable defaults.
+            return settings
         if (
             session.new_chat_default_generation
             < self._console_new_chat_default_generation()
         ):
             return settings
         if settings is None:
-            settings = self._blank_console_session_settings()
+            settings = (
+                blank_console_session_settings(checked_config)
+                if checked_config is not None
+                else self._blank_console_session_settings()
+            )
             store.replace_session_settings(
                 session.id,
                 settings,
@@ -4086,7 +4100,11 @@ class ConsoleSessionController:
         # This path is different: full Settings may have updated the config
         # cache without replacing ``app.app_config``, so read the fresh
         # mapping and converge without an app restart (task-177).
-        app_config = self._provider_readiness_app_config()
+        app_config = (
+            checked_config
+            if checked_config is not None
+            else self._provider_readiness_app_config()
+        )
         # This runs on every provider/model display rebuild and composer
         # keystroke. A published config write replaces the mapping, so one
         # derivation per (session, mapping) is exact between two saves.
@@ -4412,9 +4430,7 @@ class ConsoleSessionController:
         if getattr(self.app_instance, "active_server_id", None) != expected_server_id:
             return None
         provider = getattr(self.app_instance, "server_context_provider", None)
-        capture_context = getattr(
-            provider, "capture_character_authority_context", None
-        )
+        capture_context = getattr(provider, "capture_character_authority_context", None)
         context_is_current = getattr(
             provider, "is_character_authority_context_current", None
         )
@@ -4697,9 +4713,7 @@ class ConsoleSessionController:
             )
         return True
 
-    async def _start_persona_console_session(
-        self, payload: ChatHandoffPayload
-    ) -> bool:
+    async def _start_persona_console_session(self, payload: ChatHandoffPayload) -> bool:
         """Build a dedicated persona-bound session from a Personas handoff.
 
         Mirrors ``_start_character_console_session`` minus greeting, local
@@ -5566,9 +5580,8 @@ class ConsoleSessionController:
             or getattr(binding, "label", "")
             or f"Folder {index + 1}"
         )
-        kind = (
-            getattr(getattr(binding, "binding_kind", None), "value", None)
-            or str(getattr(binding, "binding_kind", ""))
+        kind = getattr(getattr(binding, "binding_kind", None), "value", None) or str(
+            getattr(binding, "binding_kind", "")
         )
         if kind == "ssh-filesystem" and not ssh_missing:
             binding_id = str(getattr(binding, "binding_id", "") or "")
@@ -5603,10 +5616,9 @@ class ConsoleSessionController:
         ssh_missing = not ssh_available()
 
         def _binding_kind(binding: Any) -> str:
-            return (
-                getattr(getattr(binding, "binding_kind", None), "value", None)
-                or str(getattr(binding, "binding_kind", ""))
-            )
+            return getattr(
+                getattr(binding, "binding_kind", None), "value", None
+            ) or str(getattr(binding, "binding_kind", ""))
 
         options = tuple(
             ProjectInstructionBindingOption(
@@ -5615,8 +5627,7 @@ class ConsoleSessionController:
                     selection, index, ssh_missing=ssh_missing
                 ),
                 eligible=not (
-                    ssh_missing
-                    and _binding_kind(selection.binding) == "ssh-filesystem"
+                    ssh_missing and _binding_kind(selection.binding) == "ssh-filesystem"
                 ),
                 recovery=(
                     SSH_UNAVAILABLE_MESSAGE
@@ -5665,9 +5676,7 @@ class ConsoleSessionController:
             screen = screen_ref()
             if (
                 owner is None
-                or owner._project_instruction_decision_modals.pop(
-                    decision_id, None
-                )
+                or owner._project_instruction_decision_modals.pop(decision_id, None)
                 is not modal
                 or screen is None
                 or getattr(screen, "_console_runtime_attachment_retired", False)
@@ -5707,9 +5716,7 @@ class ConsoleSessionController:
             screen = screen_ref()
             if (
                 owner is None
-                or owner._project_instruction_decision_modals.pop(
-                    decision_id, None
-                )
+                or owner._project_instruction_decision_modals.pop(decision_id, None)
                 is not modal
                 or screen is None
                 or getattr(screen, "_console_runtime_attachment_retired", False)

@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Sequence
+import asyncio
+import copy
+import threading
+import time
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from functools import wraps
 from typing import Any
 
 from ...Chat.assistant_generation_state import assistant_state_allows_provider_history
@@ -59,6 +65,399 @@ _REMOTE_RECOVERY_KINDS = frozenset(
         ConsoleDispatchRecoveryKind.REMOTE_DISPATCH_STARTED,
     }
 )
+
+
+def _screen_readiness_config(screen: Any) -> Any:
+    from textual._context import NoActiveAppError
+
+    app_instance = getattr(screen, "app_instance", None)
+    if app_instance is None:
+        return {}
+    try:
+        return getattr(screen.app, "app_config") or {}
+    except (AttributeError, NoActiveAppError):
+        return getattr(app_instance, "app_config", {}) or {}
+
+
+def provider_readiness_app_config(
+    screen: Any, load_current: Callable[[], Any], *, memoize: bool = True
+) -> Any:
+    """Keep live action reads; synchronous presentation supplies owned data."""
+    active = getattr(screen, "_console_readiness_projection_active", None)
+    if active is not None and active[0] == threading.get_ident():
+        return active[1]
+    memo = getattr(screen, "_console_derivation_memo", None) if memoize else None
+    if memo is not None and "app_config" in memo:
+        return memo["app_config"]
+    resolved = _screen_readiness_config(screen)
+    if screen._console_config_snapshot_is_disk_loaded(resolved):
+        try:
+            fresh = load_current()
+        except Exception:  # noqa: BLE001 - preserve the existing snapshot fallback.
+            pass
+        else:
+            if isinstance(fresh, Mapping) and fresh:
+                resolved = fresh
+    if memo is not None:
+        memo["app_config"] = resolved
+    return resolved
+
+
+@dataclass(frozen=True)
+class ConsoleReadinessConfigRead:
+    """Source tags captured inside the same checked finite mapping read."""
+
+    source_before: tuple[int, str]
+    value: Mapping
+    source_after: tuple[int, str]
+
+
+class ConsoleReadinessConfigProjection:
+    """Own finite config reads shared only by synchronous presentation work."""
+
+    def __init__(
+        self, screen: Any, *, read_current: Callable[[], Any], max_age: float = 1.0
+    ) -> None:
+        self.screen = screen
+        self.read_current = read_current
+        self.max_age = max_age
+        self.key = self.value = None
+        self.at = 0.0
+        self.pending = False
+
+    @classmethod
+    def for_screen(cls, screen: Any) -> ConsoleReadinessConfigProjection:
+        projection = getattr(screen, "_console_readiness_config_projection", None)
+        if projection is None:
+
+            def read_current():
+                from tldw_chatbook import config
+                from tldw_chatbook.Backup_Recovery.config_participants import (
+                    checked_config_identity,
+                    operation,
+                )
+                from ..Screens.chat_screen import load_settings
+
+                with operation(config) as active:
+                    before = checked_config_identity(config, active)
+                    value = copy.deepcopy(load_settings())
+                    return ConsoleReadinessConfigRead(
+                        before, value, checked_config_identity(config, active)
+                    )
+
+            projection = cls(screen, read_current=read_current)
+            screen._console_readiness_config_projection = projection
+        return projection
+
+    def _key(self) -> tuple:
+        from tldw_chatbook import config
+
+        screen = self.screen
+        app = getattr(screen, "app_instance", None)
+        store = getattr(screen, "_console_chat_store", None)
+        session_id = getattr(store, "active_session_id", None)
+        owner = (
+            next((item for item in store.sessions() if item.id == session_id), None)
+            if store is not None
+            else None
+        )
+        return (
+            config.current_config_identity(),
+            app,
+            id(getattr(app, "app_config", None)),
+            getattr(app, "chachanotes_db", None),
+            store,
+            session_id,
+            getattr(owner, "workspace_id", None),
+            store.session_settings_revision(session_id) if owner is not None else None,
+        )
+
+    def run(self, body: Callable[[], Any]) -> bool:
+        """Defer a cold owner; use only its own last mapping during expiry."""
+        screen = self.screen
+        key = self._key()
+        current = key == self.key and self.value is not None
+        if (
+            not current or time.monotonic() - self.at >= self.max_age
+        ) and not self.pending:
+            self.pending = True
+            screen.run_worker(
+                self._refresh(key), exclusive=False, group="console-readiness-config"
+            )
+        if not current:
+            return False
+        previous = getattr(screen, "_console_readiness_projection_active", None)
+        screen._console_readiness_projection_active = threading.get_ident(), self.value
+        try:
+            with screen._console_derivation_scope():
+                return body() is not False
+        finally:
+            screen._console_readiness_projection_active = previous
+
+    async def _refresh(self, key: tuple) -> None:
+        worker = asyncio.create_task(asyncio.to_thread(self.read_current))
+        try:
+            try:
+                result = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # The native read still owns its resources until its callback
+                # exits; cancellation may not publish or finish ownership early.
+                try:
+                    await asyncio.shield(worker)
+                except Exception:  # noqa: BLE001 - preserve cancellation identity.
+                    pass
+                raise
+            if (
+                not isinstance(result, ConsoleReadinessConfigRead)
+                or result.source_before != key[0]
+                or result.source_after != key[0]
+                or key != self._key()
+            ):
+                return
+            value = result.value
+            controller = getattr(self.screen, "_session", None)
+            store = getattr(self.screen, "_console_chat_store", None)
+            owner = (
+                next((item for item in store.sessions() if item.id == key[5]), None)
+                if store is not None
+                else None
+            )
+            if controller is not None and owner is not None:
+                controller._maybe_refresh_stale_default_console_settings(
+                    store, owner, checked_config=value
+                )
+            # Convergence may change this same owner's settings revision. It
+            # cannot authorize publishing to a different profile or owner.
+            current_key = self._key()
+            if current_key[:-1] != key[:-1]:
+                return
+            changed = self.key != current_key or self.value != value
+            self.key, self.value, self.at = current_key, value, time.monotonic()
+        except Exception:  # noqa: BLE001 - remain cold and retryable.
+            return
+        finally:
+            self.pending = False
+        if changed:
+            self.screen.run_worker(
+                self.screen._sync_native_console_chat_ui(),
+                exclusive=False,
+                group="console-readiness-publication",
+            )
+
+
+def console_readiness_presentation(function: Callable) -> Callable:
+    """Limit disposable configuration data to named synchronous UI refreshes."""
+
+    @wraps(function)
+    def wrapped(screen, *args, **kwargs):
+        config = _screen_readiness_config(screen)
+        if not config or not screen._console_config_snapshot_is_disk_loaded(config):
+            return function(screen, *args, **kwargs)
+        return ConsoleReadinessConfigProjection.for_screen(screen).run(
+            lambda: function(screen, *args, **kwargs)
+        )
+
+    return wrapped
+
+
+def run_console_config_sync(
+    sync: Callable[[], None],
+    *,
+    maintenance_paused: bool,
+    request_retry: Callable[[], None],
+) -> bool:
+    """Keep one checked native config lifetime through a synchronous projection."""
+    from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+    from tldw_chatbook.Backup_Recovery.config_participants import (
+        ConfigOperationBusy,
+        operation,
+    )
+
+    if maintenance_paused:
+        request_retry()
+        return False
+    failure: BaseException | None = None
+    entered = False
+    try:
+        with operation(config, wait_for_locks=False):
+            entered = True
+            try:
+                sync()
+            except BaseException as error:  # noqa: BLE001 - re-raised after native owner exit.
+                # A UI error must not mark config persistence as failed.
+                # Nested config failures retain their own failure state.
+                failure = error
+    except BaseException as error:
+        if not entered and (
+            type(error) is ConfigOperationBusy
+            or type(error) is RecoveryRequired
+            and error.args == ("storage_locally_paused",)
+        ):
+            request_retry()
+            return False
+        if failure is not None and error is not failure:
+            raise error from failure
+        raise
+    if failure is not None:
+        raise failure
+    return True
+
+
+class ConsoleContextReadSnapshot:
+    """Share disposable presentation inputs behind exact owner/revision fences.
+
+    Presentation callers outside the general refresh (spend and credentials)
+    share this memo too. Live controller action/dispatch reads never use it.
+    """
+
+    def __init__(
+        self,
+        *,
+        max_age: float = 1.0,
+        schedule: Callable | None = None,
+        refresh: Callable | None = None,
+    ) -> None:
+        self.task = None
+        self.key = None
+        self.value = None
+        self.at = 0.0
+        self.max_age = max_age
+        self.schedule = schedule
+        self.refresh = refresh
+        self.pending_key = None
+        self.lock = asyncio.Lock()
+
+    @classmethod
+    def for_screen(cls, screen: Any, *, max_age: float) -> ConsoleContextReadSnapshot:
+        """Reuse one screen-owned disposable presentation reader."""
+        snapshot = getattr(screen, "_console_context_read_snapshot", None)
+        if snapshot is None:
+            snapshot = cls(
+                max_age=max_age,
+                schedule=screen.run_worker,
+                refresh=screen._sync_native_console_chat_ui,
+            )
+            screen._console_context_read_snapshot = snapshot
+        return snapshot
+
+    @contextmanager
+    def scope(self) -> Iterator[None]:
+        """Keep the refresh owner while retaining its fenced presentation memo."""
+        previous = self.task
+        self.task = asyncio.current_task()
+        try:
+            yield
+        finally:
+            self.task = previous
+
+    @staticmethod
+    def _key(controller: Any, session_id: str) -> tuple | None:
+        try:
+            store = controller.store
+            owner = next(item for item in store.sessions() if item.id == session_id)
+            return (
+                controller,
+                store,
+                getattr(store, "persistence", None),
+                getattr(controller, "_context_repository", None),
+                getattr(getattr(controller, "_context_repository", None), "db", None),
+                getattr(getattr(store, "persistence", None), "db", None),
+                getattr(getattr(controller, "app", None), "chachanotes_db", None),
+                store.active_session_id,
+                session_id,
+                owner.persisted_conversation_id,
+                owner.workspace_id,
+                getattr(owner, "active_run_id", None),
+                owner.context_policy_overrides,
+                store.payload_revision(session_id),
+                store.display_projection_revision(session_id),
+                store.conversation_context_epoch(session_id),
+                store.session_settings_revision(session_id),
+                store.session_context_summary(session_id),
+                controller.run_state_for(session_id).status,
+            )
+        except (AttributeError, KeyError, StopIteration):
+            return None
+
+    async def warm(self, controller: Any, session_id: str) -> bool:
+        """Publish only a result whose captured owner survived the await."""
+        async with self.lock:
+            return await self._warm(controller, session_id)
+
+    async def _warm(self, controller: Any, session_id: str) -> bool:
+        key = self._key(controller, session_id)
+        if (
+            key is not None
+            and key == self.key
+            and self.value is not None
+            and time.monotonic() - self.at < self.max_age
+        ):
+            return True
+        if key != self.key:
+            self.key = self.value = None
+        read = getattr(controller, "context_control_presentation_inputs", None)
+        if not callable(read):
+            return False
+        try:
+            value = await read(session_id)
+        except Exception:  # noqa: BLE001 - the existing live reader owns error policy.
+            return False
+        if key is None or key != self._key(controller, session_id):
+            return False
+        self.key, self.value = key, value
+        self.at = time.monotonic()
+        return True
+
+    def inputs(self, controller: Any, session_id: str) -> tuple:
+        """Read cheap UI state, scheduling finite work for cold/expired owners."""
+        key = self._key(controller, session_id)
+        read = getattr(controller, "context_control_presentation_inputs", None)
+        if not callable(read):
+            return controller.context_control_inputs(session_id)
+        current = key is not None and self.key == key and self.value is not None
+        if not current or time.monotonic() - self.at >= self.max_age:
+            if (
+                self.schedule is not None
+                and key is not None
+                and self.pending_key != key
+            ):
+                self.pending_key = key
+                self.schedule(
+                    self._refresh(controller, session_id, key),
+                    exclusive=False,
+                    group="console-context-presentation",
+                )
+        if current:
+            # Expiry keeps the last rendered presentation for this exact owner
+            # until its finite refresh publishes. It is never send authority.
+            return self.value
+        owner = next(
+            (item for item in controller.store.sessions() if item.id == session_id),
+            None,
+        )
+        if owner is None:
+            raise KeyError(session_id)
+        return owner.context_policy_overrides, None, None
+
+    async def _refresh(self, controller: Any, session_id: str, key: tuple) -> None:
+        previous = self.key, self.value
+        try:
+            async with self.lock:
+                published = key == self._key(
+                    controller, session_id
+                ) and await self._warm(controller, session_id)
+        finally:
+            if self.pending_key == key:
+                self.pending_key = None
+        if (
+            published
+            and previous != (self.key, self.value)
+            and self.refresh is not None
+        ):
+            self.schedule(
+                self.refresh(), exclusive=False, group="console-context-publication"
+            )
 
 
 def fold_system_prompt(system_prompt: str | None, greeting: str) -> str:

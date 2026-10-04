@@ -18439,3 +18439,36 @@ Cross-machine, differently instrumented times establish reproduced work, not
 an OS speed ratio. A Windows Server runner's separate WAL wrong-owner refusal
 also showed why a failed native run must stay visible instead of being counted
 as a successful cross-platform conversation.
+
+## Performance observers must preserve native function identity contracts
+
+**TASK-34404, 2026-10-04.** The fourth native Console probe stopped before provider
+entry with `config_source_not_installed` after a diagnostic observer replaced the
+module attributes of `_load_settings_guarded` and `_load_settings_uncached`.
+Their existing checked decorators require the installed attribute to retain the
+exact wrapped identity. A fake cache/posture privacy control had passed while
+missing that native contract; the invalid probe's repeated leaf-inode misses
+could not establish a production rebuild defect.
+
+Before running a full instrumented app, compare an unobserved real cold/forced
+configuration read with the same read after installing the observer, and assert
+that guarded identities remain unchanged. That actual Windows control failed
+both cases before correction. The observer now wraps only unguarded public cache,
+posture and invalidation seams, explicitly limits public-loader counts to module
+attribute calls, and leaves the checked functions installed unchanged. Both real
+reads and the heartbeat control passed afterward. Do not temporarily swap checked
+attributes around calls, relax the guard, or treat a failed capture as performance
+evidence.
+
+
+### TASK-34403: qualify the intended post-restore edit on Windows
+The current-generation unknown-state test expected an edited selector, but its shared `_completed` fixture replaced only the LF byte sequence `[general]\n`. Actual restored Windows bytes contained CRLF: no `post_restore=true` marker was present and the current fingerprint still matched the enrolled profile. The metadata result was correctly checked; the claimed negative fixture never existed. Normalizing that controlled fixture newline boundary before inserting its existing edit retained every assertion and made the representative pass (8.70 seconds). Qualify real changed bytes or fingerprints before attributing a negative-state result to a production gate; a setter/replacement call alone is not evidence that the edit occurred. The pristine whole-HEAD comparison was blocked earlier by Windows directory-flush rights, so it could not establish the later metadata result as a baseline failure.
+
+In the 2026-10-04 Console pause repair, the installed MCP pause RMW fixture used `set_kill_switch(False)` on an absent store: False is the default, so no bytes were written and the supposed accepted read/pause barrier never ran. Seeding True then False and asserting both file existence and a reached pause exposed the real post-pause reacquisition bug. Controls that depend on a mutation must prove the real side effect/barrier happened before their negative assertion; a successful default no-op is not that evidence.
+
+
+## A real provider response does not prove a verified trace request
+
+**TASK-34368 / TASK-34367.1, 2026-10-04.** A real Together adapter HTTP429 initially looked like a successfully captured failed call. Its unchanged retry failed with surface_replacement_checkpoint_unavailable. An observer of the actual durable comparator showed the saved user revision matching an alignment_mismatch omission: independent expected reconstruction had missed the engine's resolved api_base_url and continuation forwarding. Test the first request header, saved revision and absence of omissions before asserting retry behavior. Merely receiving the provider outcome can hide capture loss and make changed-request negative controls pass for the wrong reason.
+
+The same review found Python mapping equality admitting boolean/number changes in frozen JSON settings, and actual schema enum arrays failing their first capture because frozen tuples reached an ordinary-JSON repository boundary. Use the existing canonical JSON identity contract and thaw at the existing serialization boundary; do not relax native/provider/source guards to get a retry through. Actual Groq HTTP qualification then found its supported response_format argument absent from the generic parameter map. These incidents needed gateway + adapter + durable trace observations together, while all sources stayed installed and independently verified.

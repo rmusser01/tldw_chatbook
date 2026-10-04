@@ -21,7 +21,7 @@ from tldw_chatbook.RAG_Search import recovery
 selector=Path(os.environ['TLDW_CONFIG_PATH'])
 base=selector.parent.parent
 data=base/'data'
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+str(data)+'"\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+data.as_posix()+'"\n')
 selector.chmod(0o600)
 media=MediaDatabase(data/'media.db',client_id='generation')
 media.add_media_with_keywords(url='https://example.invalid/a',title='Source',media_type='document',content='Original authoritative searchable source text for recovery.',keywords=['fixture'],overwrite=True)
@@ -295,7 +295,7 @@ from tldw_chatbook.RAG_Search import recovery
 selector=Path(os.environ['TLDW_CONFIG_PATH'])
 base=selector.parent.parent
 data=base/'data'
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+str(data)+'"\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+data.as_posix()+'"\n')
 selector.chmod(0o600)
 media=MediaDatabase(data/'media.db',client_id='generation')
 media.add_media_with_keywords(url='https://example.invalid/a',title='Source',media_type='document',content='Original authoritative searchable source text for recovery.',keywords=['fixture'],overwrite=True)
@@ -383,7 +383,7 @@ from tldw_chatbook.RAG_Search import recovery
 selector=Path(os.environ['TLDW_CONFIG_PATH'])
 base=selector.parent.parent
 data=base/'data'
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+str(data)+'"\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+data.as_posix()+'"\n')
 selector.chmod(0o600)
 media=MediaDatabase(data/'media.db',client_id='generation')
 media.add_media_with_keywords(url='https://example.invalid/a',title='Source',media_type='document',content='Original authoritative searchable source text for recovery.',keywords=['fixture'],overwrite=True)
@@ -464,7 +464,7 @@ from tldw_chatbook.RAG_Search import recovery
 selector=Path(os.environ['TLDW_CONFIG_PATH'])
 base=selector.parent.parent
 data=base/'data'
-selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+str(data)+'"\n')
+selector.write_text('[general]\nusers_name="test"\n[paths]\ndata_dir="'+data.as_posix()+'"\n')
 selector.chmod(0o600)
 media=MediaDatabase(data/'media.db',client_id='generation')
 media.add_media_with_keywords(url='https://example.invalid/a',title='Source',media_type='document',content='Original authoritative searchable source text for recovery.',keywords=['fixture'],overwrite=True)

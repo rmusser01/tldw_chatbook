@@ -531,10 +531,12 @@ def test_an_absence_proved_root_is_never_served_from_evidence(
 
 
 def test_a_failed_recheck_after_counting_closes_the_reused_lease(
-    local_scope, reuse_switch, monkeypatch  # noqa: F811
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
 ):
-    """An observation that raises after reuse counted its lease closes the lease,
-    as the derivation's own failure path does, so the hold can still drain
+    """An optional observation failure closes the counted lease before fallback,
+    so the unchanged full derivation can succeed and the hold can still drain
     (Qodo, #2919).
 
     Args:
@@ -552,13 +554,22 @@ def test_a_failed_recheck_after_counting_closes_the_reused_lease(
             assert _verdict(target)[0] == "allowed"
         held = sum(hold.count for hold in storage._holds.values())
 
-        def unreadable(self):
-            raise PermissionError("an admitted directory became unreadable")
+        derivations = []
+        original_scope = storage._scope
 
-        monkeypatch.setattr(storage._Evidence, "observe", unreadable)
-        with pytest.raises((PermissionError, bootstrap.RecoveryRequired)):
-            with storage.acquire_storage(target):
-                pass
+        def full_derivation(*args, **kwargs):
+            derivations.append(True)
+            return original_scope(*args, **kwargs)
+
+        def unreadable(*paths):
+            raise PermissionError("optional admission evidence became unreadable")
+
+        monkeypatch.setattr(storage, "_scope", full_derivation)
+        monkeypatch.setattr(storage, "_observe_stamps", unreadable)
+        # An unavailable optional observation falls back to full authority;
+        # it cannot fabricate a refusal while the real filesystem is unchanged.
+        assert _verdict(target)[0] == "allowed"
+        assert derivations
         assert sum(hold.count for hold in storage._holds.values()) == held
     finally:
         startup.close()

@@ -16,10 +16,9 @@ touches an ``MCPClient`` session) is submitted to the main loop via
 (``gate_tool_test``, ``record_tool_decision``, ``is_session_approved``,
 ``approve_for_session``, ``set_tool_state``, ``get_kill_switch``,
 ``effective_tool_states``) do small, atomic file I/O with no event-loop
-affinity, so this provider calls them *directly* from whichever thread it is
-currently running on (worker thread for ``invoke()``/``pending_gate_for()``,
-main loop for ``compose_catalog()``) rather than paying a second
-cross-thread round trip for each one.
+affinity. Invocation gates read them directly on their calling worker.
+Catalog composition offloads its synchronous store reads to finite workers;
+the async catalog service and publication stay on the main loop.
 
 ``compose_catalog()`` is the one method that itself performs async I/O
 (:meth:`UnifiedMCPControlPlaneService.local_external_catalog`) — it is
@@ -620,7 +619,7 @@ class MCPToolProvider:
         with self._decisions_lock:
             self._stamped_decisions.clear()
 
-        if self._service.get_kill_switch():
+        if await asyncio.to_thread(self._service.get_kill_switch):
             self._catalog = []
             self._entry_by_llm_name = {}
             self._not_connected_count = 0
@@ -640,7 +639,7 @@ class MCPToolProvider:
         get_inventory = getattr(local_service, "get_inventory", None)
         if callable(get_inventory):
             try:
-                inventory = get_inventory()
+                inventory = await asyncio.to_thread(get_inventory)
             except Exception as exc:  # noqa: BLE001 -- never abort composition
                 logger.warning(
                     f"MCPToolProvider: built-in inventory read failed: {exc}"
@@ -663,8 +662,12 @@ class MCPToolProvider:
                     ]
                 hub_tools.extend(builtin_tools)
 
-        effective = self._service.effective_tool_states(
-            hub_tools, **self._profile_kwargs()
+        # Profile callbacks can be session/UI-owned; resolve them on this loop.
+        # Only the documented worker-safe file read crosses the await. The
+        # invocation gate still re-reads its current permission store.
+        profile_kwargs = self._profile_kwargs()
+        effective = await asyncio.to_thread(
+            self._service.effective_tool_states, hub_tools, **profile_kwargs
         )
         from tldw_chatbook.MCP.permission_store import definition_hash
 

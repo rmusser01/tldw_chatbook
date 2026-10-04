@@ -21,7 +21,7 @@ def mcp_sources(tmp_path, monkeypatch, local_root):
     data = tmp_path / "data"
     data.mkdir(mode=0o700)
     target = tmp_path / "config.toml"
-    target.write_text(f'[paths]\ndata_dir = "{data}"\n')
+    target.write_text(f'[paths]\ndata_dir = "{data.as_posix()}"\n', encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
     config = install_config_source(monkeypatch)
     data = config.get_user_data_dir()
@@ -50,10 +50,24 @@ def test_actual_reader_refuses_before_read_or_recovery(mcp_sources, index):
 
 
 def test_permission_rmw_admitted_before_pause_finishes(mcp_sources, monkeypatch):
+    from tldw_chatbook.MCP import recovery_activation
+
     source = mcp_sources[3]
+    # False is the absent-store default, so a no-op does not create bytes.
+    # Seed a real persisted policy before observing its admitted RMW read.
+    source.set_kill_switch(True)
     source.set_kill_switch(False)
+    assert source.path.exists()
     original = json.loads
     pauses = []
+    acquisitions = []
+    acquire = recovery_activation.acquire_storage
+
+    def admitted(*args, **kwargs):
+        acquisitions.append(bool(pauses))
+        return acquire(*args, **kwargs)
+
+    monkeypatch.setattr(recovery_activation, "acquire_storage", admitted)
 
     def loaded_then_pause(value, *args, **kwargs):
         result = original(value, *args, **kwargs)
@@ -65,6 +79,9 @@ def test_permission_rmw_admitted_before_pause_finishes(mcp_sources, monkeypatch)
     try:
         source.set_kill_switch(True)
         assert pauses
+        assert acquisitions and not any(
+            acquisitions
+        ), "accepted mutation reacquired after pause"
         assert original(source.path.read_text())["kill_switch"] is True
     finally:
         for pause in pauses:
@@ -115,7 +132,9 @@ def test_same_path_distinct_source_cannot_borrow_admitted_permission(
 ):
     source = mcp_sources[3]
     other = type(source)(source.path)
+    source.set_kill_switch(True)
     source.set_kill_switch(False)
+    assert source.path.exists()
     original = json.loads
     pauses = []
 
@@ -132,6 +151,7 @@ def test_same_path_distinct_source_cannot_borrow_admitted_permission(
     monkeypatch.setattr(json, "loads", loaded)
     try:
         source.set_kill_switch(True)
+        assert pauses, "foreign source refusal barrier was never reached"
         assert original(source.path.read_text())["kill_switch"]
     finally:
         for pause in pauses:
