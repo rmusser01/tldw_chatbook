@@ -445,6 +445,9 @@ async def test_providers_models_states_the_entry_endpoint_and_credential(
 
 _REGISTRY_LOCKED_FIELDS = (
     "#settings-model-value",
+    # TASK-33007.3, extended on purpose: the Default model picker is the
+    # visible control in front of the adapter, and it locks with it (R9).
+    "#settings-model-picker",
     "#settings-provider-endpoint-value",
     "#settings-provider-api-key",
     "#settings-provider-api-key-clear",
@@ -498,6 +501,7 @@ async def test_providers_models_locks_a_registry_default_and_links_to_its_editor
         await pilot.pause()
         for selector in (
             "#settings-model-value",
+            "#settings-model-picker",
             "#settings-provider-endpoint-value",
             "#settings-provider-api-key",
             "#settings-provider-credential-env-var",

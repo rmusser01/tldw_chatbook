@@ -7,15 +7,17 @@ compact row adaptation must fail the 20-cell and painted-policy assertions.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Input, Select, Static
+from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.test_destination_shells import _active_destination_screen
 from Tests.UI.test_screen_navigation import _build_test_app
 from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness, _settle
 
 THEMES = ("textual-dark", "textual-light")
+# TASK-33007.3, rewritten on purpose: Model is the Default model picker's
+# field, and an id no list holds is typed after its Custom ID action.
 PROVIDER_FIELDS = (
-    ("#settings-model-value", "Model", "audit-model-with-context"),
+    ("#model-search-picker-input", "Model", "audit-model-with-context"),
     ("#settings-provider-endpoint-value", "Endpoint", "https://example.invalid/v1"),
 )
 NETWORK_FIELD = (
@@ -36,6 +38,12 @@ def _paint(widget) -> str:
     return "\n".join(
         strips[y].crop(region.x, region.right).text
         for y in range(max(0, region.y), min(len(strips), region.bottom))
+    )
+
+
+def _row(field):
+    return next(
+        node for node in field.ancestors if node.has_class("settings-input-row")
     )
 
 
@@ -64,6 +72,10 @@ async def test_compact_fields_keep_labels_focus_and_values_across_resize(
             field = screen.query_one(selector, Input)
             field.focus()
             await pilot.pause()
+            if selector == "#model-search-picker-input":
+                # Custom ID shows while the picker holds focus.
+                screen.query_one("#model-search-picker-custom", Button).press()
+                await pilot.pause()
             await pilot.press("home", "shift+end", *value)
             await pilot.pause()
             assert field.value == value
@@ -77,7 +89,7 @@ async def test_compact_fields_keep_labels_focus_and_values_across_resize(
             assert sidebar.display and sidebar.region.width >= 24
             for selector, label, value in fields:
                 field = screen.query_one(selector, Input)
-                row = field.parent
+                row = _row(field)
                 field_label = row.query_one(".settings-input-label", Static)
                 host.set_focus(None)
                 await _reveal(pilot, field)

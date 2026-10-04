@@ -313,7 +313,9 @@ async def test_model_is_at_most_five_tab_presses_from_provider(
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
-        model = screen.query_one("#settings-model-value", Input)
+        # TASK-33007.3, rewritten on purpose: the Model stop is the Default
+        # model picker's field (the Input behind it is a hidden adapter).
+        model = screen.query_one("#model-search-picker-input", Input)
         test_button = screen.query_one("#settings-test-provider", Button)
         screen.query_one("#settings-provider-search", Input).focus()
         await pilot.pause()
@@ -329,7 +331,7 @@ async def test_model_is_at_most_five_tab_presses_from_provider(
         if owner_pending_stops is None:
             assert len(stops) <= 5, stops
         else:
-            assert stops == [*owner_pending_stops, "settings-model-value"]
+            assert stops == [*owner_pending_stops, "model-search-picker-input"]
         assert test_button.display and not test_button.disabled
 
 

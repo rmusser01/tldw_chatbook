@@ -23,6 +23,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
 from textual.errors import NoWidget
+from textual.message import Message
 from textual.widgets import (
     Button,
     Checkbox,
@@ -53,7 +54,7 @@ from ...config import provider_settings_for_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
-from ...Widgets.model_search_picker import PickerSearchInput
+from ...Widgets.model_search_picker import ModelSearchPicker, PickerSearchInput
 from ..Screens.settings_context_memory import model_context_window_state
 from ..Screens.settings_provider_view_model import (
     custom_endpoint_rows,
@@ -102,6 +103,9 @@ SELECTION_SOURCE_WORDS = {
 KEY_CHECK_ACTION_LABEL = "Test (t)"
 #: ADR-012:29: the env var is the safer path, and the field holds a name.
 ENV_VAR_HELP_COPY = "safer: keeps keys out of config.toml"
+#: TASK-33007.3: the Default model row's help; Custom ID shows while the
+#: picker holds focus.
+MODEL_PICKER_HELP_COPY = "type to search · Custom ID for others"
 PROVIDER_CONTROL_TOOLTIP = (
     "Type to filter providers by name or ID; Up/Down move, Enter chooses, "
     "Esc keeps the current provider."
@@ -183,6 +187,51 @@ class ProviderFilterInput(PickerSearchInput):
         except (QueryError, NoWidget):  # e.g. the card unmounted meanwhile
             return False
         return picker in under.ancestors_with_self
+
+
+class DefaultModelPicker(ModelSearchPicker):
+    """The Default model control (TASK-33007.3).
+
+    The shared picker, scoped to the provider the form holds. The hidden
+    ``Input#settings-model-value`` beside it stays the value that staging,
+    save and revert read; the screen keeps the two in step.
+    """
+
+    def on_mount(self) -> None:
+        """Give the field the one-row Connect edge (task-1586).
+
+        The base ``on_mount`` still runs after this one (MRO dispatch).
+        """
+        self.query_one("#model-search-picker-input", Input).add_class(
+            "settings-compact-input"
+        )
+
+    def _current_provider(self) -> str | None:
+        # A manual provider key leaves the provider Select on its manual
+        # entry, so ask the form, not the Select.
+        return self.screen._provider_widget_value() or None
+
+    def _render_matches(self, query: str, *, show_empty_query: bool = False) -> None:
+        if not self.query_one("#model-search-picker-input", Input).has_focus:
+            # The field posts Changed for its resting value on mount; the
+            # list opens only for the field being edited (as Provider's does).
+            return
+        super()._render_matches(query, show_empty_query=show_empty_query)
+        if self._committed_index is not None:
+            # AC#1: the saved default is highlighted as soon as the list opens.
+            self.query_one(
+                "#model-search-picker-results", OptionList
+            ).highlighted = self._committed_index
+
+    def _cancel_edit(self, event: Message) -> None:
+        if not self.custom_mode:
+            # An unfinished filter is dropped and the list closes.
+            super()._cancel_edit(event)
+        # task-1560: one Esc also leaves the field, so the footer's "Esc, s"
+        # holds -- and saves a typed Custom ID instead of dropping it. Queued
+        # after any refocus the cancel itself queued.
+        event.stop()
+        self.app.call_later(self.screen.set_focus, None)
 
 
 def open_provider_list(screen: SettingsScreen) -> None:
@@ -899,22 +948,49 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             id="settings-default-model-title",
             classes="destination-section",
         )
+        # TASK-33007.3: a searchable picker over saved, catalog and
+        # discovered ids. The hidden Input keeps #settings-model-value and
+        # its value for staging, save and revert (the modal's legacy-adapter
+        # precedent).
         with Horizontal(id="settings-model-row", classes="settings-input-row"):
             yield Static("Model", classes="settings-input-label")
-            yield Input(
-                value=str(values["model"]),
-                id="settings-model-value",
-                classes="settings-compact-input",
-                placeholder="Model name",
-                suggester=screen._model_field_suggester(),
-                disabled=registry_locked,
+            app_instance = screen.app_instance
+            providers_models = getattr(app_instance, "providers_models", None)
+            model_picker = DefaultModelPicker(
+                id="settings-model-picker",
+                provider_select_id="#settings-provider-value",
+                current_model=str(values["model"]),
+                # The screen's app owns both, as for every Settings read.
+                providers_models=(
+                    providers_models if isinstance(providers_models, Mapping) else None
+                ),
+                show_provenance=True,
+                catalog_scope_service=getattr(
+                    app_instance, "llm_provider_catalog_scope_service", None
+                ),
             )
+            model_picker.disabled = registry_locked
+            yield model_picker
             yield Static(
                 selection_source_word(resolved.model_source),
                 id="settings-model-source",
                 classes="settings-source-word",
                 markup=False,
             )
+            yield Static(
+                MODEL_PICKER_HELP_COPY,
+                id="settings-model-help",
+                classes="settings-row-help",
+                markup=False,
+            )
+        model_adapter = Input(
+            value=str(values["model"]),
+            id="settings-model-value",
+            disabled=registry_locked,
+        )
+        model_adapter.display = False
+        model_adapter.can_focus = False
+        yield model_adapter
         yield Static("Context capacity", classes="destination-section")
         yield Static(
             screen._provider_model_context_window_status(

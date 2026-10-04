@@ -128,12 +128,14 @@ async def test_settings_provider_fields_keep_committed_value_on_focus(request):
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = host.screen_stack[-1]
         committed = {field.id: field.value for field in screen.query(Input)}
-        assert committed["settings-model-value"] == "model-a"
+        # TASK-33007.3, rewritten on purpose: Model is the Default model
+        # picker's field; #settings-model-value is its hidden adapter.
+        assert committed["model-search-picker-input"] == "model-a"
 
         probed = await _tab_through(host, pilot, screen, committed, presses=45)
 
     assert {
-        "settings-model-value",
+        "model-search-picker-input",
         "settings-provider-endpoint-value",
         "settings-provider-credential-env-var",
     } <= probed

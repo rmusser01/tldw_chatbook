@@ -724,6 +724,43 @@ async def test_unverified_served_now_option_is_grouped_as_unverified() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("served_now", "group"),
+    [(False, "Custom / unverified"), (True, "Served now")],
+)
+async def test_discovered_overlay_groups_as_served_now_only_when_its_host_says_so(
+    served_now, group
+) -> None:
+    """TASK-33007.3: Settings drops its listing whenever the endpoint changes,
+    so its overlay's new ids are served now; the default stays unverified."""
+    app = PickerTestApp({"OpenRouter": []}, ())
+    async with app.run_test() as pilot:
+        picker = app.query_one(ModelSearchPicker)
+        picker.set_provenance_options(
+            "OpenRouter",
+            (
+                _provenance_option(
+                    "catalog/model", ConsoleModelProvenance.CURRENT_CATALOG
+                ),
+            ),
+        )
+        picker.set_discovered_models(
+            "OpenRouter", ["catalog/model", "listed/model"], served_now=served_now
+        )
+        picker.focus_input()
+        await pilot.pause()
+
+        prompts = _result_prompts(_results(app))
+        assert prompts[prompts.index(group) + 1] == "listed/model", prompts
+        assert prompts[prompts.index("Current catalog") + 1] == "catalog/model"
+        assert picker.provenance_for_model("listed/model") == (
+            ConsoleModelProvenance.SERVED_NOW
+            if served_now
+            else ConsoleModelProvenance.CUSTOM_UNVERIFIED
+        )
+
+
+@pytest.mark.asyncio
 async def test_provenance_filter_only_renders_non_empty_groups() -> None:
     """Filtering must not leave orphan headings for groups with no matches."""
     app = PickerTestApp({"OpenRouter": []}, ())

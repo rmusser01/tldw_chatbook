@@ -52,6 +52,24 @@ async def _edit(host, pilot, selector, value):
     _assert_painted(host.screen, field)
 
 
+async def _edit_custom_model(host, pilot, value):
+    """TASK-33007.3: an id no list holds goes in through Custom ID."""
+    field = await _tab_to(host, pilot, "#model-search-picker-input")
+    picker = host.screen.query_one("#settings-model-picker")
+    if not picker.custom_mode:
+        await pilot.press("tab")
+        await _settle(host, pilot)
+        assert host.focused.id == "model-search-picker-custom"
+        await pilot.press("enter")
+        await _settle(host, pilot)
+    assert host.focused is field and picker.custom_mode
+    await pilot.press("home", "shift+end", "backspace", *value)
+    await _settle(host, pilot)
+    assert field.value == value
+    assert host.screen.query_one("#settings-model-value", Input).value == value
+    _assert_painted(host.screen, field)
+
+
 async def _revert(host, pilot, *, discard):
     await pilot.press("escape", "r")
     await _settle(host, pilot)
@@ -90,12 +108,14 @@ async def test_provider_keyboard_edit_revert_save_and_return(theme, size, monkey
         # TASK-33007.2, rewritten on purpose: Connect ends in the Key check
         # row and Model moved under "Default model for new chats". Test (t)
         # is not a Tab stop ('t' runs it; parent AC#2), so the actual
-        # keyboard traversal runs Endpoint -> Model.
+        # keyboard traversal runs Endpoint -> Model. TASK-33007.3, rewritten
+        # on purpose: Model is the Default model picker, and an id no list
+        # holds is typed after Custom ID.
         await pilot.press("tab")
         await _settle(host, pilot)
-        assert screen.focused is screen.query_one("#settings-model-value")
+        assert screen.focused is screen.query_one("#model-search-picker-input")
         _assert_painted(screen, screen.focused)
-        await _edit(host, pilot, "#settings-model-value", MODEL)
+        await _edit_custom_model(host, pilot, MODEL)
         assert screen._category_has_unsaved_changes(CATEGORY)
         assert mutations == []
         assert app.app_config["chat_defaults"]["model"] == "model-a"
@@ -118,7 +138,7 @@ async def test_provider_keyboard_edit_revert_save_and_return(theme, size, monkey
         assert not screen._category_has_unsaved_changes(CATEGORY)
         assert mutations == []
 
-        await _edit(host, pilot, "#settings-model-value", MODEL)
+        await _edit_custom_model(host, pilot, MODEL)
         await _edit(host, pilot, "#settings-provider-endpoint-value", ENDPOINT)
         await pilot.press("escape", "s")
         await _settle(host, pilot)

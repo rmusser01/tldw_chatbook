@@ -636,6 +636,31 @@ rail_nodes = set(rail.query("*").nodes) | {rail}
 [w for w in screen.focus_chain if w in rail_nodes]
 ```
 
+## `A:focus-within B` restyles B only if A carries a `:focus-within` rule of its own (TASK-33007.3, 2026-10-03)
+
+The Settings Default model picker opens across its row while it holds focus:
+`#settings-model-row:focus-within .settings-source-word { display: none; }` and a
+matching width rule on the picker. The picker's own `:focus-within` rules
+applied, but the live 211x44 capture showed the row's Source word and help still
+painted, and the picker squeezed to a third of the row (it now shared `1fr` with
+two siblings that should have gone).
+
+`Screen._update_focus_styles` does not re-match every selector. It walks the
+focused widget's ancestors from the screen down and restyles the subtree of the
+FIRST ancestor whose `_has_focus_within` is set, and `Stylesheet.apply` sets that
+flag on a node only when a rule whose selector ENDS on that node uses
+`:focus-within`. A descendant selector `A:focus-within B` ends on `B`, so it flags
+`B`, never `A`. Here the picker was the outermost flagged node, so only its
+subtree was restyled; its siblings in the row never heard about the focus change.
+
+**The rule:** when a `:focus-within` on a container must restyle that
+container's other children, give the container a `:focus-within` rule of its
+own (any property; `#settings-model-row:focus-within { height: auto; }` here),
+and pin the effect with an assertion on a sibling's `display`, not only on the
+focused widget's subtree. Related trap from the same task: `Button.press()`
+returns without posting `Pressed` while the button is `display: none`, so a test
+that presses a focus-revealed button must focus its owner first.
+
 ## `Widget.size` excludes borders and padding; `outer_size` includes them
 
 **TASK-23193, 2026-08-29.** Measuring the Context rail's vertical budget, section

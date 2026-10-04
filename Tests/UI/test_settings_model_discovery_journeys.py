@@ -3,7 +3,7 @@
 import asyncio
 
 import pytest
-from textual.widgets import Button, Input, Select, SelectionList, Static
+from textual.widgets import Button, Input, OptionList, Select, SelectionList, Static
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_settings_configuration_hub import (
@@ -101,6 +101,21 @@ def _status(screen):
     return str(screen.query_one("#settings-model-discovery-status", Static).renderable)
 
 
+async def _picker_rows(host, pilot, screen) -> list[str]:
+    """TASK-33007.3: the rows the Default model picker lists when it opens."""
+    field = screen.query_one("#model-search-picker-input", Input)
+    field.focus()
+    await _settle(host, pilot)
+    results = screen.query_one("#model-search-picker-results", OptionList)
+    rows = [
+        str(results.get_option_at_index(index).prompt)
+        for index in range(results.option_count)
+    ]
+    screen.set_focus(None)
+    await _settle(host, pilot)
+    return rows
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
 @pytest.mark.parametrize("size", [(170, 48), (80, 24)])
@@ -116,6 +131,8 @@ async def test_discovery_keyboard_selection_survives_rebuild_and_save(theme, siz
         assert _list(screen).option_count == 2
         assert not _list(screen).selected
         assert not scope.persist_calls
+        # TASK-33007.3: the listing is offered in the Default model picker.
+        assert {"Served now", *MODELS} <= set(await _picker_rows(host, pilot, screen))
         await _tab_to(host, pilot, "#settings-discovered-models-list")
         await pilot.press("home", "down", "space")
         await _settle(host, pilot)
@@ -140,7 +157,9 @@ async def test_discovery_keyboard_selection_survives_rebuild_and_save(theme, siz
         await pilot.press("enter")
         await _settle(host, pilot)
         assert _list(screen).option_count == 0
-        assert screen.query_one("#settings-model-value", Input).suggester is None
+        # TASK-33007.3, rewritten on purpose: the typeahead is gone; Clear
+        # drops the unsaved discovered id from the Default model picker.
+        assert MODELS[0] not in await _picker_rows(host, pilot, screen)
         assert app.providers_models["OpenAI"] == [MODELS[1]]
         assert "cleared" in _status(screen)
 
@@ -265,7 +284,9 @@ async def test_discovery_operations_report_failure_and_allow_retry(operation):
             assert app.providers_models["OpenAI"] == [MODELS[1]]
         elif operation == "clear":
             assert _list(screen).option_count == 0
-            assert screen.query_one("#settings-model-value", Input).suggester is None
+            # TASK-33007.3, rewritten on purpose: no typeahead; the cleared
+            # unsaved id is gone from the Default model picker.
+            assert MODELS[0] not in await _picker_rows(host, pilot, screen)
         else:
             assert _list(screen).option_count == 2
         assert app.app_config["chat_defaults"]["model"] == "existing-active-model"

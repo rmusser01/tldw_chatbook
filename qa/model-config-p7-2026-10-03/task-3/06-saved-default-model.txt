@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │ │ │  ▶ Prompt-cache snapshots                                                                                         │ │  │  │  │  Save (s) — no changes                  │
+│    > Providers & Models      │  │  │ │ │                                                                                                                   │ │  │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │ │ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │  │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │ │                                                                                                                       │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │  Connect                                                                                                              │  │  │  │  Focused setting: Model                 │
+│      Appearance              │  │  │ │ Provider                │ llama.cpp                          new-chat default configured: llama.cpp · 59 more         │▄ │  │  │  Purpose: Sets the model new chats      │
+│      Theme                   │  │  │ │ API key                 │ No credential required     Clear   not required     this provider needs no key              │  │  │  │  start with; open chats nobody has    ▆ │
+│      Splash Screen           │  │  │ │ Env var                 │ No credential required             not used         safer: keeps keys out of config.toml    │  │  │  │  used yet follow it.                    │
+│      Console Behavior        │  │  │ │ Endpoint                │ http://127.0.0.1:18766             config           required: the server's base URL         │  │  │  │  Saved as: chat_defaults.model          │
+│  Data & Privacy              │  │  │ │ Key check                Ready · not tested                                                                Test (t)   │  │  │  │  Save: staged - press s to save, r to   │
+│      Storage                 │  │  │ │  Provider settings saved: new chats and open chats nobody has used yet take them; chats with work keep their own      │  │  │  │  revert                                 │
+│      Workspaces              │  │  │ │  settings (change them in Console with Alt+M).                                                                        │  │  │  │  Validation: model name is required     │
+│      Tool Profiles           │  │  │ │                                                                                                                       │  │  │  │  before provider-backed generation      │
+│      Privacy & Security      │  │  │ │  Default model for new chats                                                                                          │  │  │  │  can run                                │
+│      Network                 │  │  │ │ Model                   │ gemma-4-26B-A4B-it-ultra.Q4_K_M.g  new-chat default type to search · Custom ID for others   │  │  │  │ Key                                     │
+│      My Profile              │  │  │ │                                                                                                                       │  │  │  │  Checks the settings, then lists        │
+│  Troubleshooting             │  │  │ │  Context capacity                                                                                                     │  │  │  │  models without generating: a cloud   ▃ │
+│      Diagnostics (view)      │  │  │ │  Context window unknown. Enter the provider's documented token limit so Automatic conversation budgets can be         │  │  │  │  provider's listing checks the API      │
+│      About (view)            │  │  │ │  verified.                                                                                                            │  │  │  │  key, a local server's shows it         │
+│      Agents                  │  │  │ │ Context window          │ tokens (required when unknown)                                                              │  │  │  │  answers. Nothing is saved.             │
+│  Expert                      │  │  │ │                          Reset to detected                                                                            │  │  │  │ Configuration check has not run.        │
+│      Hooks                   │  │  │ │  This is the model's total token capacity, not a conversation length preference. Repairs update the existing          │  │  │  │  Runtime owner: Settings persisted      │
+│      Internal Prompts        │  │  │ │  model-capability registry used by request safety checks.                                                             │  │  │  │  defaults; Console runtime selection    │
+│      Advanced Config         │  │  │ │                                                                                                                       │  │  │  │  Writes allowed: Yes                    │
+│   Domain Defaults ▸ (11)     │  │  │ │  Model discovery                                                                                                      │  │  │  │  Owns: chat_defaults.provider           │
+│                              │  │  │ │  Discovered 3 model(s) from Llama_cpp.                                                                                │  │  │  │  chat_defaults.model                    │
+│                              │  │  │ │  Capabilities unknown until saved or verified; text chat is assumed.                                                  │  │  │  │  api_settings.<provider>.               │
+│                              │  │  │ │  Discover models  Save selected       Clear                                                                           │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Choose or search the model for this provider.
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

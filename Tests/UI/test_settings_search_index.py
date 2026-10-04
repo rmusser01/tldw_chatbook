@@ -71,6 +71,10 @@ NON_SETTING_CONTROLS: frozenset[tuple[str, str]] = frozenset(
         # (settings-provider-search) is now the indexed field, and the Select
         # it drives is a hidden adapter holding the provider key.
         ("providers-models", "settings-provider-value"),
+        # TASK-33007.3: likewise the Default model picker's field
+        # (model-search-picker-input) is indexed as Model, and the Input
+        # behind it is a hidden adapter holding the model id.
+        ("providers-models", "settings-model-value"),
         # Transient discovery output picker, not a persisted setting.
         ("providers-models", "settings-discovered-models-list"),
         # Manual-provider entry is the fallback leg of the already-indexed
