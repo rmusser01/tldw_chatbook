@@ -209,3 +209,101 @@ no new ADR; ADR-120 and ADR-198 remain controlling. Repeat the frozen baseline
 and complete low-allocation observer comparison before selecting a performance
 remedy. Native, Windows, participant, resource and semantic dependency gates
 remain open.
+
+## Frozen 8c source: real CLI walkthrough and full-scale results
+
+Source `8c2c6b16a8d9e40c26e026f7cdacc7439a689671` remained clean throughout
+these runs. The 47 fixture/measurement tests passed again in 10.86s, no pytest
+warnings, strict exit 0 and zero retained fixture database files at each
+teardown (`/tmp/switcher-current-8c-fixture-tests.log`). This does not extend the
+fixture resource result to an application's whole lifetime.
+
+The actual installed app ran in a new CLI PTY using only the private native
+fixture. No Terminal.app/iTerm GUI or alternate native-control driver was used.
+Observed actual input and output:
+
+- Ctrl+K distinguished CURRENT from the MRU other tab; Enter switched from
+  Indigo 07 to Amber 07 and displayed its unique transcript marker.
+- The Character mode button was keyboard reachable. Keyword body search for
+  `NATIVE_MARKER_AMBER_01` offered the exact Amber 01 conversation. Cold Enter
+  opened it and increased Active from three to four. Repeating the search
+  showed CURRENT TAB; warm Enter resumed it without increasing Active again.
+- F2 from the query refused truthfully. Focusing the open Amber 07 result then
+  F2 opened the rename dialog. The accepted title `QA Amber renamed PTY`
+  appeared in the native tab and switcher. An independent read-only query of
+  the private mutable SQLite file confirmed that exact conversation's durable
+  title. The immutable source corpus was unchanged.
+- Escape followed by Ctrl+Q exited normally, process return code 0; no kill or
+  controller interrupt was used.
+
+Limits and findings: this is CLI-functional evidence, **not macOS native GUI,
+font, Windows Terminal, participant or release qualification**. The injected
+legacy Shift+F3 sequence `ESC [ 1 ; 2 R` did not cycle modes. Installed Textual's
+parser recognizes this ambiguous sequence as a cursor-position report before
+key dispatch, so simply adding an F15 binding would not repair this path.
+Mode buttons worked; no global parser or keybinding policy was changed.
+A combined Tab/text input chunk initially did not populate the query; standalone
+text delivery did. The receipt retains this input timing limitation.
+
+At `App.run()` return, while its app owner was retained, the receipt still
+listed 35 owned SQLite/main/WAL/SHM descriptors. That is not zero-resource
+retirement, nor alone proof of a cumulative leak. Process exit is not a
+substitute for proving owner retirement before interpreter exit. No manual
+sweeping of app-owned databases was applied. Raw startup/return and observations:
+`/tmp/task31245-freeze-5uPHpo/pty-functional-8c/{native-startup.json,native-return.json,functional-observations.json}`.
+
+Fresh full-scale Keyword qualification passed on the same frozen head:
+10,000 conversations, 250,000 eligible messages, all 300 measured identities
+correct, warm P95 **112.412334 ms**, maximum loop gap **15.228834 ms**, index
+ready, zero registered handles and an empty owned-database descriptor list
+after cleanup. Source digest:
+`e574781b032e9dab13c5298cbae40c766029ffb5bd2ddebf8a092748910d28d5`.
+Receipt: `/tmp/task31245-freeze-5uPHpo/keyword-8c/keyword-receipt.json`.
+
+The corrected UI command consumes that **passed Keyword receipt**, not the
+build receipt. An initial wrong-input invocation failed its `status == passed`
+assertion before collecting samples (`ui-baseline-8c`); it is not UI evidence.
+The fresh `ui-baseline-keyword-8c` matrix completed all 60 searches and eight
+exact OPENED activations at 52x20 and 120x50, with unchanged source/corpus and
+no app exception. The expected 50-fetched/four-visible and 50-fetched/11-visible
+geometries passed. Search maximum loop gap was 49.454708 ms; maximum busy paint
+was 66.257875 ms. Activation loop gaps were **118.825917, 49.644667, 51.326750,
+87.713709, 53.206459, 85.814792, 85.979916, 77.967834 ms**: seven failures
+against the unchanged 50 ms limit. This is a failed UI qualification despite
+correct identities. Post-run-test-unmount registered handles were 16; that
+boundary is not terminal app resource qualification. Raw receipt:
+`/tmp/task31245-freeze-5uPHpo/ui-baseline-keyword-8c/ui-evidence/ui-latency-evidence.json`.
+
+### Bounded stall diagnostics, not acceptance or a production remedy
+
+The complete main-thread generation-2 timing comparison retained 60 events,
+zero drops or unmatched pairs, with maximum direct callback cost 0.008708 ms.
+It observed 57–66 ms collections during two wide activation windows, but also
+a 70.454958 ms activation gap with **no** main-thread generation-2 event.
+Collections contribute; they do not explain every failed gap. The normal paint
+observer in this diagnostic had maximum per-activation durations 0.52–1.29 ms.
+The baseline acceptance probe, without added GC/span instrumentation, separately
+had a 34.99 ms maximum paint observer duration, so neither run is a universal
+observer-cost bound.
+
+A first-activation cProfile diagnostic substantially perturbed timing and
+retained implausible interleaved caller attribution (including stylesheet calls
+attributed to database methods). Its caller graph is not reliable allocation
+ownership evidence. A direct main-thread synchronous-span observer was used
+instead. Its first 5 ms recording floor exhausted the 200-span cap (133 dropped)
+before wide activations; their empty span lists are **not** no-work evidence.
+The app-first-import-order 20 ms-floor rerun retained all 87 spans and 54 GC
+events, zero drops. Across all eight activations it recorded five to nine
+synchronous Console control refresh spans per window, mostly 20–48 ms, with
+some 50–74 ms spans. These include nested work and automatic GC, not exclusive
+function cost. Readiness, exact activation and owner guards remain installed.
+
+Retained diagnostic roots under `/tmp/task31245-freeze-5uPHpo`:
+`ui-gc-diagnostic-8c`, `ui-activation-profile-8c`, `ui-sync-spans-8c` and
+`ui-sync-spans-v2-8c`. Temporary diagnostic scripts record their own digests;
+they introduce no source patch, forced collection, threshold increase, GC
+disable, renderer replacement or fake activation result. Existing desktop
+background load remained; these were serial runs, not alongside my own tests
+or CLI walkthrough. Attribution and a reviewed bounded correction remain
+necessary before claiming the latency/resource gates passed. TASK-31246's
+qualification dependency and the final combined PR remain pending.
