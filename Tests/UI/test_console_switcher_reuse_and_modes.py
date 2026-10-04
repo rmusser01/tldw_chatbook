@@ -43,7 +43,12 @@ async def test_character_activation_publishes_target_during_coalesced_console_sy
     activation_library,  # noqa: F811
     monkeypatch,
 ):
-    """An occupied whole-Console refresh cannot falsely fail an exact warm open."""
+    """An occupied whole-Console refresh cannot falsely fail an exact warm open.
+
+    Args:
+        activation_library: Isolated installed app, profile, and local SQLite owners.
+        monkeypatch: Test-scoped patch holding the broad sync before publication.
+    """
     owner, _, db = activation_library
     _seed(owner, db)
     owner.local_chat_conversation_service = ChatConversationService(db)

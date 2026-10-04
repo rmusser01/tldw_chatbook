@@ -177,3 +177,27 @@ and completed successfully. Changed-path Ruff, formatting, and whitespace
 checks also passed after the rebase.
 Native terminal, Windows, participant, and deferred performance qualifications
 remain open. TASK-31245 remains In Progress.
+
+### Qodo cancellation follow-up
+
+Qodo's review of the original patch identified a real postcommit cancellation
+gap: the renderer could suspend after a cold runtime was captured but before
+its token reached the outer rollback owner. Caller shielding does not prevent
+cancellation of that child task. The deterministic real-store RED run leaked
+the cold runtime (one failure) while the warm-preservation case passed.
+
+The opener now catches cancellation at that publication seam, synchronously
+removes only its exact captured cold instance using the store's existing
+ownership guard, and rethrows. The incumbent caller still drains its shielded
+prior-session restoration; warm and unrelated runtimes are retained. No new
+cleanup task or suspension point was added. The two regression cases and
+covering activation/reuse-decision unit files passed **42 tests** in 5.83s.
+Independent follow-up review found no issues. The new installed regression's
+Google-style docstring now describes both fixture arguments, addressing Qodo's
+documentation finding. ADR-120 and all qualification limits remain unchanged.
+
+Final covering verification of this correction passed **29 mounted reuse/mode
+and activation-presentation tests** in 180.60s with no warnings, in addition to
+the 42 unit tests. All eleven artifact guards passed again. Changed tests pass
+Ruff, all four Python paths pass formatting, and whitespace is clean; workspace
+still has exactly the base's 69 inherited lint findings with no additions.

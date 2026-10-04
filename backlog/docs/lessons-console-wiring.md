@@ -31,6 +31,15 @@ weakening identity, visibility, focus, or overlay-owner checks. Capture the
 typed outcome and transcript owner at the failure boundary; a later timeout
 alone cannot distinguish a rejected activation from a slow successful one.
 
+Qodo's PR #3009 review exposed a second seam in this repair: direct cancellation
+of the postcommit child during publication stranded a newly hydrated runtime
+before its ownership token was returned. A real-store regression failed for
+the cold case and passed for the warm case. Shielding a caller is not shielding
+the child itself. An opener adding a suspension after acquiring ownership must
+settle that exact ownership on cancellation before propagating it; the repair
+uses the existing synchronous exact-instance guard, retaining warm sessions and
+letting the caller restore prior UI. Both cases then passed.
+
 ---
 
 ## An unchanged recovery projection can still need its click latch released
