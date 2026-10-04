@@ -1,0 +1,76 @@
+import ast,copy,difflib,json,subprocess,sys,xml.etree.ElementTree as ET
+sys.path.insert(0,'/private/tmp/pr2995-task15')
+from verify import *
+R='/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff'
+def blob(p):return git('show',BASE+':'+p)
+def ad(n):return ast.dump(n,include_attributes=False)
+def funcs(s):
+ out={}
+ def walk(n,path=''):
+  for x in getattr(n,'body',[]):
+   if isinstance(x,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)):
+    key=path+x.name;out[key]=ad(x)
+    if isinstance(x,ast.ClassDef):walk(x,key+'.')
+ walk(ast.parse(s));return out
+def imports(s):return [ad(n) for n in ast.walk(ast.parse(s)) if isinstance(n,(ast.Import,ast.ImportFrom))]
+changes=git('diff','--name-only',BASE).decode().splitlines();assert sorted(changes)==sorted(OWN),changes
+mapping={}
+for p in OWN:
+ before=blob(p);after=(W/p).read_bytes();old=funcs(before);new=funcs(after)
+ changed=[k for k in old if old[k]!=new.get(k)]
+ mapping[p]={'base_sha256':sha(before),'final_sha256':sha(after),'bytes':len(after),'changed_definitions':changed,'added_definitions':[k for k in new if k not in old],'imports_exact':imports(before)==imports(after)}
+ if p.startswith('Tests/'):
+  assert after.startswith(before),p
+  assert not changed,p
+  mapping[p]['original_prefix_byte_exact']=True
+  mapping[p]['original_assertions_waits_markers_exact']=True
+ else:assert imports(before)==imports(after)
+ if p.endswith('automatic_work.py'):
+  assert changed==['AutomaticWorkLedger'],changed
+  assert old['AutomaticWorkLedger.abort_chat_start']==new['AutomaticWorkLedger.abort_chat_start']
+  mapping[p]['public_abort_AST_exact']=True
+  # Removing only the private added method restores the whole ledger AST.
+  t=ast.parse(after);c=next(n for n in t.body if isinstance(n,ast.ClassDef) and n.name=='AutomaticWorkLedger');c.body=[n for n in c.body if getattr(n,'name','')!='_confirm_chat_start_absent'];assert ad(t)==ad(ast.parse(before))
+  mapping[p]['all_other_executable_AST_exact']=True
+ if p.endswith('console_chat_fork.py'):
+  x=ast.parse(before);y=ast.parse(after)
+  a=next(n for n in x.body if getattr(n,'name','')=='console_fork_visible_selection');b=next(n for n in y.body if getattr(n,'name','')=='console_fork_visible_selection');b.body[0]=a.body[0];assert ad(x)==ad(y)
+  mapping[p]['whole_module_executable_AST_signature_returns_exact']=True
+ if p=='tldw_chatbook/Chat/console_chat_start.py':
+  assert set(changed)=={'ConsoleChatStartCoordinator','ConsoleChatStartCoordinator._run'},changed
+  assert [k for k in new if k not in old]==['ConsoleChatStartCoordinator._restrict_cleanup']
+  mapping[p]['all_other_methods_AST_exact']=True
+  # Both distinct physical drain blocks and all original admission/preparation
+  # authority methods remain exact; only the bounded finally settlement changes.
+  b=ast.parse(before);a=ast.parse(after)
+  def get_run(t):return next(n for n in ast.walk(t) if isinstance(n,ast.AsyncFunctionDef) and n.name=='_run')
+  ob,na=get_run(b),get_run(a);assert [ad(n) for n in ob.body[:-1]]==[ad(n) for n in na.body[:-1]]
+  ot,nt=ob.body[-1],na.body[-1];assert isinstance(ot,ast.Try) and isinstance(nt,ast.Try)
+  assert ad(ast.Module(body=ot.body,type_ignores=[]))==ad(ast.Module(body=nt.body,type_ignores=[]))
+  assert [ad(n) for n in ot.handlers]==[ad(n) for n in nt.handlers]
+  assert [ad(n) for n in ot.finalbody[3:5]]==[ad(n) for n in nt.finalbody[3:5]]
+  mapping[p]['main_run_body_handlers_and_both_physical_drains_exact']=True
+dump('source-AST-import-authority-custody-map.json',mapping)
+# Everything outside the five owned paths is the original HEAD blob.
+initial=json.loads((O/'initial-tree-map.json').read_text());assert tree()==initial
+assert not git('diff','--name-only',BASE,'--',*[':(exclude)'+p for p in OWN])
+q={p:h for p,h in initial.items() if p.startswith(('Docs/QA/','Docs/superpowers/qa/'))}
+dump('tracked-source-QA-Task14-carry.json',{'base':BASE,'all_unowned_tracked_paths_exact':True,'tracked_count':len(initial),'owned_exceptions':OWN,'QA_count':len(q),'QA_git_blobs':q,'Task14_source34cf170802_in_ancestry':subprocess.run(['git','merge-base','--is-ancestor','34cf170802',BASE],cwd=W).returncode==0})
+pins=json.loads((O/'frozen-carry-pins.json').read_text());bad=[]
+for p,v in pins.items():
+ f=S/p
+ if not f.is_file() or sha(f.read_bytes())!=v['sha256']:bad.append(p)
+assert not bad,bad
+dump('frozen-artifact-carry.json',{'frozen_count':len(pins),'all_exact':True,'live_coordination_metadata_excluded':True})
+carry=json.loads((S/'task-14-safe-evidence/historical-qa-archive-carry.json').read_text())
+z=carry['archive_carry'];assert sha((W/z['zip_path']).read_bytes())==z['zip_sha256'];assert (W/z['zip_path']).stat().st_size==z['zip_bytes']
+dump('historical-archive-carry.json',{'task14_receipt_sha256':sha((S/'task-14-safe-evidence/historical-qa-archive-carry.json').read_bytes()),'carry':z,'fresh_whole_ZIP_hash_exact':True,'original2118_entry_bytes_preserved_by_exact_container':True,'no_archive_replay':True})
+load=json.loads((S/'task-14-safe-evidence/loading-authority-carry.json').read_text())
+dump('loading-caps-Close-carry.json',{'task14_receipt_sha256':sha((S/'task-14-safe-evidence/loading-authority-carry.json').read_bytes()),'caps':load['caps'],'historical_warnings':load['historical_warnings'],'historical35_loading_evidence_unmodified':True,'fresh_loading_pass_claim':False,'all_controller_store_native_Close_import_authority_paths_outside_five_exact':True})
+allcases={}
+for p in O.glob('*.xml'):
+ allcases[p.name]=[{'nodeid':t.attrib['classname'].replace('.','/')+'.py::'+t.attrib['name'],'outcome':'failed' if t.find('failure') is not None else 'error' if t.find('error') is not None else 'skipped' if t.find('skipped') is not None else 'passed','seconds':t.attrib['time']} for t in ET.parse(p).iter('testcase')]
+dump('actual-case-outcomes.json',allcases)
+assert len(allcases['existing.xml'])==31 and all(t['outcome']=='passed' for t in allcases['existing.xml'])
+run('fatal-ruff',[R,'check','--select','E9,F63,F7,F82',*OWN]);run('whitespace',['git','diff','--check',BASE])
+print('Source/AST/import/authority/custody, Task14 carry and historical evidence maps verified.')

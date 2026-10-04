@@ -1,0 +1,12 @@
+{
+  "HEAD": "b084d720e98e4c2a7aaaf17ab5c8386c84495aa9",
+  "argv": [
+    "git",
+    "update-ref",
+    "refs/recovery/pr2995-task16-fixture-fix-b084d720",
+    "b084d720e98e4c2a7aaaf17ab5c8386c84495aa9"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "environment_overrides": {},
+  "source_sha256": {}
+}
