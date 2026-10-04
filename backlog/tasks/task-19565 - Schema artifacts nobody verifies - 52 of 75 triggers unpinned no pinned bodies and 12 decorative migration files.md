@@ -157,5 +157,6 @@ Found while rebasing, all fixed here:
 - Three `index_plan_pin_census.tsv` rows (`idx_notes_file_path_on_disk`, `idx_notes_is_externally_synced`, `idx_notes_sync_root_folder`) named indexes only the never-executed `add_sync_fields_to_notes.sql` declared. A fresh database has `idx_notes_file_path`, `idx_notes_is_synced` and `idx_notes_sync_root` instead, so the rows are deleted.
 - `expected_table_columns.py` gains `dev`'s v74 column and v75 table; the two tests that pin the current version move from 75 to 76.
 
-Two other open branches also claim ChaChaNotes v76 at the time of writing. This step does not depend on theirs; whichever lands second renumbers.
+- Review (Qodo, PR #3002): the backup/restore policy still pinned ChaChaNotes at v75, so a v76 database was refused for backup and restore with `unsupported_schema_version`. Requalified from a fresh constructor: all 533 catalog entries are unchanged, so only the version moves, in `DB/recovery_core_schema.py`, `DB/recovery_operations.py` and `Backup_Recovery/sqlite_validation.py`. `migrations/README.md` now lists this as a step of adding a migration; neither the original branch nor the rebase had run `Tests/Backup_Recovery`.
 
+Two other open branches also claim ChaChaNotes v76 at the time of writing. This step does not depend on theirs; whichever lands second renumbers.
