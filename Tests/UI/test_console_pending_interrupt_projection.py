@@ -1,7 +1,9 @@
 """Session-owned interrupt copy and counts through the real Console view."""
 
+import gc
 import threading
 import time
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +11,7 @@ import pytest
 from textual.widgets import Button, Static
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import drain_active_service_patches, drain_created_dirs
 from Tests.UI.test_console_headless_approval import (
     _arm,
     _arm_install,
@@ -773,4 +776,12 @@ async def test_session_owned_pending_projection_journeys(
     for index, journey in enumerate(journeys):
         case_path = tmp_path / str(index)
         case_path.mkdir()
-        await journey(request, case_path)
+        try:
+            await journey(request, case_path)
+        finally:
+            drain_active_service_patches()
+            drain_created_dirs()
+            gc.unfreeze()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", ResourceWarning)
+                gc.collect()

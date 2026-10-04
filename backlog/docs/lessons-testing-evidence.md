@@ -17994,3 +17994,22 @@ rebuild, mounted candidate budget, complete approval journeys and token/bundle
 guards then passed. Check actual parsed specificity and the fully mounted
 census when narrowing a selector; matching the same controls alone does not
 prove its global styling cost is unchanged.
+
+
+## A batched UI wrapper must preserve each journey's cleanup boundary
+
+**PR #2953, 2026-10-03.** Two hosted UI lanes reached the20-minute cap at
+92% and83% without reporting an assertion failure. The Close harness eagerly
+loaded all destination sheets rather than the shipping Console's startup CSS.
+A call-through comparison retained every action/geometry assertion; group
+JUnit totals changed from287.194s to199.903s. The ordinary scoped harness
+then passed all four groups in133.63s process elapsed. These are observed
+runs, not repeated benchmarks or a guaranteed hosted duration.
+
+The pending-interrupt batch also retained factory patches/directories until
+its outer test ended. A real call-through probe drained7of each at6journey
+boundaries and passed. Mirror the existing Close/compact cleanup there, while
+keeping fresh app/DB owners and all worker shutdown/assertion operations.
+Six old apps still remained weak-reference reachable in that diagnostic: GC
+and factory cleanup do not establish an app-retention fix. The whole original
+test ASTs restore after removing only scoped harness/cleanup substitutions.

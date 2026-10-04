@@ -46,6 +46,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 )
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Agents.run_context import use_run_id
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -77,6 +78,12 @@ from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 _SIZE = (160, 44)
 _TAB_PREFIX = "console-session-tab-"
 _SAVED_TITLE = "Saved notes"
+
+
+class ProductionConsoleHarness(ConsoleHarness):
+    """Use shipping Console startup sheets and inherited widget/modal defaults."""
+
+    CSS_PATH = TldwCli.CSS_PATH
 
 
 def _ready_app():
@@ -228,7 +235,7 @@ async def _verify_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(request, t
     app = _ready_app()
     db, conversation_id, message_id = _saved_conversation(app, tmp_path)
     notes = _record_notifications(app)
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     try:
         async with host.run_test(size=_SIZE) as pilot:
             console = await _mounted_console(host, pilot, "#console-native-composer")
@@ -265,7 +272,7 @@ async def _verify_at_risk_tab_dialog_stay_keeps_it_and_close_closes_it(request):
 
     app = _ready_app()
     notes = _record_notifications(app)
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
@@ -307,7 +314,7 @@ async def _verify_middle_click_closes_a_tab_without_switching_to_it(request):
 
     app = _ready_app()
     notes = _record_notifications(app)
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
@@ -352,7 +359,7 @@ async def _verify_internal_close_error_names_the_tab_but_never_the_error_text(
     notes = _record_notifications(app)
     records: list[str] = []
     sink = logger.add(records.append, level="WARNING", format="{message}")
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     try:
         async with host.run_test(size=_SIZE) as pilot:
             console = await _mounted_console(host, pilot, "#console-native-composer")
@@ -432,7 +439,7 @@ async def _verify_close_that_does_not_finish_is_reported_and_keeps_tab_state(
     app = _ready_app()
     db, conversation_id, message_id = _saved_conversation(app, tmp_path)
     notes = _record_notifications(app)
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     try:
         async with host.run_test(size=_SIZE) as pilot:
             console = await _mounted_console(host, pilot, "#console-native-composer")
@@ -470,7 +477,7 @@ async def _verify_close_flow_that_cannot_start_tells_the_user(request, monkeypat
 
     app = _ready_app()
     notes = _record_notifications(app)
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
@@ -570,7 +577,7 @@ async def _verify_a_refusal_the_user_can_act_on_shows_its_own_reason(request):
 
     app = _ready_app()
     notes = _record_notifications(app)
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
@@ -612,7 +619,7 @@ async def _verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
 
     app = _ready_app()
     notes = _record_notifications(app)
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
@@ -762,7 +769,7 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
         ),
     ]:
         app = _ready_app()
-        host = ConsoleHarness(app)
+        host = ProductionConsoleHarness(app)
         async with host.run_test(size=_SIZE) as pilot:
             console = await _mounted_console(host, pilot, "#console-native-composer")
             controller = console._ensure_console_chat_controller()
@@ -892,7 +899,7 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
         ("chat_create", {"allow": False, "remember": False}),
     ):
         app = _ready_app()
-        host = ConsoleHarness(app)
+        host = ProductionConsoleHarness(app)
         async with host.run_test(size=_SIZE) as pilot:
             console = await _mounted_console(host, pilot, "#console-native-composer")
             controller = console._ensure_console_chat_controller()
@@ -952,7 +959,7 @@ async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
         monkeypatch: Pause the real bridge at its payload-enrichment boundary.
     """
     app = _ready_app()
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         controller = console._ensure_console_chat_controller()
@@ -1007,7 +1014,7 @@ async def _verify_failed_confirmed_close_reoffers_confirmation_without_retrying(
     """
     app = _ready_app()
     notes = _record_notifications(app)
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
         console = await _mounted_console(host, pilot, "#console-native-composer")
         store = console._ensure_console_chat_store()
@@ -1053,7 +1060,7 @@ async def _verify_all_close_consequences_keep_named_title_and_actions_painted_at
     """
     for title in ("Pending [notes]", "A" * 60):
         app = _ready_app()
-        host = ConsoleHarness(app)
+        host = ProductionConsoleHarness(app)
         async with host.run_test(size=(80, 24)) as pilot:
             console = await _mounted_console(host, pilot, "#console-native-composer")
             store = console._ensure_console_chat_store()
@@ -1185,7 +1192,7 @@ async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry
             app = _ready_app()
             _attach_real_dbs(app, case_path)
             notes = _record_notifications(app)
-            host = ConsoleHarness(app)
+            host = ProductionConsoleHarness(app)
             async with host.run_test(size=_SIZE) as pilot:
                 console = await _mounted_console(
                     host, pilot, "#console-native-composer"

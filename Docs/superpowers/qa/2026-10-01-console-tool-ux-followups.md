@@ -1396,3 +1396,37 @@ tasks remain In Progress until fresh exact-head Qodo/all four hosted gates,
 then final Done metadata-head review/checks before protected normal merge.
 Auto-merge off. Earlier native/Close/provider evidence retains its original
 source identity; no new native/full-suite/live-server-UAT claim.
+
+
+Latest request-capture and UI-lane integration (2026-10-03 UTC)
+
+Rebased onto dev 01a2020981c6197e5cd9945e5287567ad977edfe (PR2975).51of53 patches are exact; the
+other two differ only in generated diagnostic inventory and additive lesson
+context. Reversing only the incoming Python diff restores all20 complete
+sources to the preceding published head. A checkout-owned Python3.12.11
+interpreter imports this worktree under-I; dependencies are reused read-only.
+
+Two preceding hosted UI lanes reached the unchanged20-minute cap at92%/83%
+without an observed assertion failure. Scoped Close/compact harnesses now
+use the shipping TldwCli.CSS_PATH with inherited widget/modal defaults.
+Whole original test ASTs and every real geometry/action assertion remain.
+The pending batch now drains existing factory patches/directories and runs
+existing unfreeze/GC cleanup between fresh journeys. Its probe drains7actual
+patches/directories and passes;6old apps remain reachable, so no app-retention
+fix is claimed. Timings are observed comparisons, not a benchmark guarantee.
+
+Final ordinary affected UI:53pass at180s per-case cap, no instrumentation,
+247.48s elapsed. Startup22, latency13, real storage5 and
+governance13 pass with unchanged runtime/measurement/style source closure;
+earlier receipt source maps remain explicit. Incoming469/472 and Close71/77
+pass: QA retains9untouched-dev fixture/profile/entry-admission failures and
+ordinary repeat/whole-source or entry-AST identities; they are not green or
+fixed. No admission/config/worker/guard or assertion bypass is used.
+
+Artifact preflight passes; zero-new Ruff35, signatures, changed-range format,
+Backlog/UI-census and diff checks pass. Final285source hashes are recorded.
+No production, CSS declaration/token, census/workflow or budget change in the
+timeout fix. Existing boot/token/component/GC ADRs apply; no new ADR. Earlier
+native/provider evidence retains its identity. All3selected tasks remain
+In Progress pending all4fresh hosted gates and clean/resolved Qodo, then final
+Done-metadata-head review/checks and verified protected normal merge.

@@ -20,8 +20,15 @@ from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+
+class ProductionConsoleHarness(ConsoleHarness):
+    """Use shipping Console startup sheets and inherited widget/modal defaults."""
+
+    CSS_PATH = TldwCli.CSS_PATH
 
 
 def _pending_card(console, round_id="compact-round"):
@@ -75,7 +82,7 @@ async def _verify_every_approval_action_is_painted_and_focusable(request):
     app = _build_test_app()
     attach_chachanotes_db(app)
     _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     async with host.run_test(size=(80, 24)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
@@ -121,7 +128,7 @@ async def _verify_reflow_preserves_decision_and_reused_round_controls(request):
     app = _build_test_app()
     attach_chachanotes_db(app)
     _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     async with host.run_test(size=(80, 24)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
@@ -169,7 +176,7 @@ async def _verify_height_only_resize_reflows_existing_controls(request):
     app = _build_test_app()
     attach_chachanotes_db(app)
     _configure_native_ready_console(app)
-    host = ConsoleHarness(app)
+    host = ProductionConsoleHarness(app)
     async with host.run_test(size=(80, 40)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
