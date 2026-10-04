@@ -2405,6 +2405,27 @@ class S:
     assert _w003(source) == []
 
 
+def test_w003_a_push_with_no_callback_is_not_a_hand_rolled_wait():
+    """``callback=None`` is no callback: Textual queues nothing for the pump,
+    so the push is not the hand-rolled wait, whatever the function awaits.
+    Only a real callback beside it counts."""
+    source = """
+class S:
+    async def on_button_pressed(self, event):
+        answer = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Notice(), callback=None)
+        self.app.push_screen(Review(), None)
+        await answer
+"""
+    assert _w003(source) == []
+    with_callback = source.replace(
+        "        await answer",
+        "        self.app.push_screen(Review(), callback=answer.set_result)\n"
+        "        await answer",
+    )
+    assert _w003(with_callback) == [_row("S.on_button_pressed")]
+
+
 # The hand-rolled wait split across two functions, as ``(split, joined,
 # push site)``: ``split`` creates the future and pushes in a helper and
 # awaits it in the handler; ``joined`` is the same wait in ONE function.
@@ -2863,30 +2884,6 @@ class S:
     assert _w003(source) == []
 
 
-#: Which future a push's callback completes, and whether that is the one the
-#: function awaits or hands back. ``answer`` is awaited/returned; ``other``
-#: is created alongside it and completed by nothing the caller waits on.
-_SETTLING_CALLBACKS = {
-    "completer-of-the-awaited-future": ("answer.set_result", True),
-    "completer-of-another-future": ("other.set_result", False),
-    "lambda-completing-the-awaited-future": (
-        "lambda result: answer.set_result(result)",
-        True,
-    ),
-    "lambda-completing-another-future": (
-        "lambda result: other.set_result(result)",
-        False,
-    ),
-    "nested-def-completing-the-awaited-future": ("done_answer", True),
-    # An accepted false positive: only a DIRECT settle (the completer itself,
-    # a `partial` of it, a lambda whose whole body is that one call) is left
-    # out. A def's body is never read for a proof (PR #2987 review, round 4).
-    "nested-def-completing-another-future": ("done_other", True),
-    # Nothing visible completes anything: matched by shape, as before.
-    "callback-of-unknown-effect": ("record", True),
-    "lambda-of-unknown-effect": ("lambda result: record(result)", True),
-}
-
 #: The hand-rolled wait in one function, and split across two by returning
 #: the future: (template, push site).
 _SETTLING_FORMS = {
@@ -2894,32 +2891,20 @@ _SETTLING_FORMS = {
     "returned-to-the-caller": ("def", "return answer"),
 }
 
+#: The nested defs a ``_settling_source`` callback may name.
+_SETTLING_DEFS = {
+    "done_answer": "\n    def done_answer(result):\n        answer.set_result(result)\n",
+    "done_other": "\n    def done_other(result):\n        other.set_result(result)\n",
+}
 
-@pytest.mark.parametrize("form", sorted(_SETTLING_FORMS))
-@pytest.mark.parametrize("callback", sorted(_SETTLING_CALLBACKS))
-def test_w003_a_callback_push_waits_only_if_it_may_complete_the_awaited_future(
-    form, callback
-):
-    """A ``push_screen(..., callback=...)`` whose callback is a DIRECT
-    settle of another future the function created -- ``other.set_result``
-    itself, or a lambda whose whole body is that one call -- is not a
-    hand-rolled wait: the caller's await is settled elsewhere, and the pump
-    never waits on the modal. Pairing any callback push with any created
-    future reported it (PR #2987 review). Every other callback counts by
-    shape, a nested def that only settles ``other`` included: that one is
-    an accepted false positive (recall over precision).
 
-    Only the nested def the callback names is defined: since round 5 a
-    ``set_result`` STATEMENT on ``other`` elsewhere -- ``done_other``'s
-    body -- hands ``other`` on, because it raises once the callback has run
-    (see ``_SETTLE_OUTCOME_OBSERVED``)."""
-    value, flagged = _SETTLING_CALLBACKS[callback]
+def _settling_source(callback: str, form: str) -> str:
+    """``review`` creates ``answer`` and ``other``, pushes with ``callback``,
+    settles ``answer`` itself and awaits or returns it (``form``); a handler
+    awaits ``review``. ``other`` is completed by nothing the caller waits
+    on."""
     keyword, finish = _SETTLING_FORMS[form]
-    nested = {
-        "done_answer": "\n    def done_answer(result):\n        answer.set_result(result)\n",
-        "done_other": "\n    def done_other(result):\n        other.set_result(result)\n",
-    }.get(value, "")
-    source = f"""
+    return f"""
 def record(result):
     print(result)
 
@@ -2927,8 +2912,8 @@ def record(result):
 {keyword} review(screen):
     answer = asyncio.get_running_loop().create_future()
     other = asyncio.get_running_loop().create_future()
-{nested}
-    screen.app.push_screen(Review(), callback={value})
+{_SETTLING_DEFS.get(callback, "")}
+    screen.app.push_screen(Review(), callback={callback})
     answer.set_result(None)
     {finish}
 
@@ -2937,30 +2922,41 @@ class S:
     async def on_button_pressed(self, event):
         await review(self)
 """
-    expected = [_row("S.on_button_pressed", "review")] if flagged else []
-    assert _w003(source) == expected
+
+
+#: Callbacks that may settle the awaited or returned ``answer``: they settle
+#: it, or nothing shows what they do.
+_SETTLING_CALLBACKS = {
+    "completer-of-the-awaited-future": "answer.set_result",
+    "lambda-completing-the-awaited-future": "lambda result: answer.set_result(result)",
+    "nested-def-completing-the-awaited-future": "done_answer",
+    "callback-of-unknown-effect": "record",
+    "lambda-of-unknown-effect": "lambda result: record(result)",
+}
+
+
+@pytest.mark.parametrize("form", sorted(_SETTLING_FORMS))
+@pytest.mark.parametrize("callback", sorted(_SETTLING_CALLBACKS))
+def test_w003_a_callback_push_that_may_settle_the_awaited_future_waits(form, callback):
+    """A ``push_screen(..., callback=...)`` in a function that awaits or
+    returns a future it created is a hand-rolled wait, whatever the
+    callback is: the future's completer, a lambda, a nested def, or a
+    callback whose effect nothing shows. W003 matches it by SHAPE, so a
+    callback that settles only ANOTHER future counts too -- those cases are
+    listed in ``_ACCEPTED_FALSE_POSITIVES``."""
+    source = _settling_source(_SETTLING_CALLBACKS[callback], form)
+    assert _w003(source) == [_row("S.on_button_pressed", "review")]
 
 
 @pytest.mark.parametrize(
     "value",
-    [
-        "self._answer.set_result",
-        "self._settle_answer",
-        # An accepted false positive: a method callback counts by shape.
-        "self._settle_other",
-    ],
-    ids=[
-        "completes-the-stored-future",
-        "method-completing-the-stored-future",
-        "method-completing-another-future",
-    ],
+    ["self._answer.set_result", "self._settle_answer"],
+    ids=["completes-the-stored-future", "method-completing-the-stored-future"],
 )
 def test_w003_a_future_on_self_waits_on_a_push_that_may_complete_it(value):
-    """The same for a future stored on ``self``. A direct settle of ANOTHER
-    stored future counts too -- reading ``self._other`` can run a property
-    or a reactive (round 5), see ``_ACCEPTED_FALSE_POSITIVES`` -- and so
-    does a method callback, whatever its body settles (recall over
-    precision: no dispatch or body proof to keep correct)."""
+    """The same for a future stored on ``self``: the handler awaiting it waits
+    on ``_open``'s push. A callback settling ANOTHER stored future counts
+    too (``_ACCEPTED_FALSE_POSITIVES``)."""
     source = f"""
 class S:
     def _open(self):
@@ -2981,35 +2977,19 @@ class S:
     assert _w003(source) == [_row("S.on_button_pressed", "S._open")]
 
 
-def test_w003_a_site_counts_only_the_pushes_that_may_complete_its_future():
-    """Two callback pushes, one completing the awaited future and one another:
-    the site holds ONE wait push, so the row's count is one."""
-    source = """
-async def review(screen):
-    answer = asyncio.get_running_loop().create_future()
-    other = asyncio.get_running_loop().create_future()
-    screen.app.push_screen(Review(), callback=answer.set_result)
-    screen.app.push_screen(Notice(), callback=other.set_result)
-    return await answer
-
-
-class S:
-    async def on_button_pressed(self, event):
-        await review(self)
-"""
-    assert _w003(source) == [_row("S.on_button_pressed", "review")]
-
-
-# A push is left out of a future's wait only when its callback is a DIRECT
-# settle (the completer, a `partial` of it, a lambda whose whole body is that
-# one call) of another fresh future of the pushing function that nothing else
-# reads; every other callback counts by shape. The first cut compared the
-# names a callback settles with the pushing function's own future names even
-# when they lived in different scopes or bindings, and dropped the shapes
-# below -- each a row on 5918cfd1df, while the real-tree census stayed
-# byte-identical (PR #2987 review, round 2). Three review rounds in a row
-# then found pushes the next "proof" dropped, so no def or method body is
-# read for one any more (round 4).
+# Every shape from here to the end of this section is a hand-rolled wait that
+# 5918cfd1df reports and that some version of a "leave this push out" rule
+# dropped during the PR #2987 review (rounds 2-6, 2026-10-03/04). The rule
+# left a callback push out when its callback seemed to settle a future other
+# than the awaited one: first by comparing names, then by proving what the
+# callback's body does, then by also requiring that nothing else could read
+# the settled future, and last only for a direct `callback=other.set_result`
+# (or a one-call lambda) of a local future nothing else read. Each version
+# missed a way the awaited future can depend on the callback running. The
+# real-tree census stayed byte-identical every time, because the rule never
+# dropped a real push. The rule is gone: every callback push counts by shape,
+# and `_ACCEPTED_FALSE_POSITIVES` lists what that costs. These shapes stay
+# pinned, so any future precision rule has to keep every one of them.
 
 _AWAIT_REVIEW = """
 
@@ -3365,12 +3345,9 @@ def test_w003_a_callback_settling_the_future_under_another_name_still_waits(shap
     default, a pusher-side alias, a rebinding (a nested def's ``nonlocal``
     or a rebound ``self`` included), a chained assignment, or a parameter
     only conditionally rebound can all be the awaited future (or chained to
-    it). When the settled name is not shown to be a different future, the
-    push counts (recall over precision). Each is a row on 5918cfd1df. The
-    round-2 cases were silent on c2e4b15fe7; a ``nonlocal`` in a nested
-    class was silent at 4c87eb4d3e; the four round-4 pins were rows there
-    with no case covering them. Most callbacks here are defs or methods,
-    which now count by shape whatever they settle."""
+    it). Each is a row on 5918cfd1df. The round-2 cases were silent on
+    c2e4b15fe7; a ``nonlocal`` in a nested class was silent at 4c87eb4d3e;
+    the four round-4 pins were rows there with no case covering them."""
     source, (root, site) = _SETTLED_UNDER_ANOTHER_NAME[shape]
     assert _w003(source) == [_row(root, site)]
 
@@ -3496,18 +3473,69 @@ class Sub(S):
 def test_w003_a_callback_that_may_also_settle_the_awaited_future_still_waits(shape):
     """Settling one future visibly proves nothing about the rest of the
     callback: a call it makes, or the override ``self`` may dispatch to,
-    can settle the awaited future too. Only a DIRECT settle of another
-    contained future leaves the push out; every def, method or forwarding
-    lambda counts by shape. Each of these was a row on 5918cfd1df and
-    silent on c2e4b15fe7."""
+    can settle the awaited future too. Each of these was a row on
+    5918cfd1df and silent on c2e4b15fe7."""
     source, (root, site) = _SETTLES_MORE_THAN_IT_SHOWS[shape]
     assert _w003(source) == [_row(root, site)]
 
 
-#: Callbacks that are a DIRECT settle of a LOCAL future other than the awaited
-#: one, which nothing else reads.
-_SETTLES_ONLY_ANOTHER_FUTURE = {
-    "the-completer-of-a-local-future-in-a-handler": """
+#: (source, rows): ACCEPTED FALSE POSITIVES -- the precision gap PR #2987's
+#: "unrelated callback" thread reported, and why W003 keeps it. Each callback
+#: settles only a future the awaited or returned one cannot depend on, so the
+#: push cannot complete it and the row is false. Five versions of a rule that
+#: left such pushes out each dropped waits 5918cfd1df reports (the shapes
+#: pinned above and below: a chain through a done-callback or a relay, a
+#: store, a property or a watcher, a settle's answer, a frame, a closure
+#: cell), and none of them ever dropped a push on the real tree. So every
+#: callback push counts by shape and these rows are expected: a false row
+#: costs one census line that a reviewer can read and annotate, while a
+#: missed wait is a frozen UI. Each case was a precision control at some
+#: head of that review or in its reviewers' shape runs, except the last,
+#: which pins that a publisher's site counts every callback push it makes.
+_ACCEPTED_FALSE_POSITIVES = {
+    # The thread's own shape (returned to the caller) and its one-function
+    # form, for each kind of callback that settles only `other`.
+    **{
+        f"{callback}-{form}": (
+            _settling_source(value, form),
+            [_row("S.on_button_pressed", "review")],
+        )
+        for callback, value in {
+            "completer-of-another-future": "other.set_result",
+            "lambda-completing-another-future": "lambda result: other.set_result(result)",
+            "nested-def-completing-another-future": "done_other",
+        }.items()
+        for form in _SETTLING_FORMS
+    },
+    # Two pushes in one site, only one of which can settle the awaited
+    # future: the row is counted twice.
+    "two-pushes-one-settling-another-future": (
+        """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    other = asyncio.get_running_loop().create_future()
+    screen.app.push_screen(Review(), callback=answer.set_result)
+    screen.app.push_screen(Notice(), callback=other.set_result)
+    return await answer
+"""
+        + _AWAIT_REVIEW,
+        [_row("S.on_button_pressed", "review")] * 2,
+    ),
+    "another-future-beside-a-lambda-settling-the-awaited-one": (
+        """
+class S:
+    async def on_button_pressed(self, event):
+        loop = asyncio.get_running_loop()
+        answer = loop.create_future()
+        other = loop.create_future()
+        self.app.push_screen(Review(), callback=other.set_result)
+        self.app.push_screen(Notice(), callback=lambda r, other=answer: other.set_result(r))
+        await answer
+""",
+        [_row("S.on_button_pressed")] * 2,
+    ),
+    "the-completer-of-a-local-future-in-a-handler": (
+        """
 class S:
     async def on_button_pressed(self, event):
         loop = asyncio.get_running_loop()
@@ -3516,7 +3544,10 @@ class S:
         self.app.push_screen(Review(), callback=other.set_result)
         await answer
 """,
-    "an-event-a-lambda-sets": """
+        [_row("S.on_button_pressed")],
+    ),
+    "an-event-a-lambda-sets": (
+        """
 async def review(screen):
     answer = asyncio.get_running_loop().create_future()
     closed = asyncio.Event()
@@ -3524,9 +3555,50 @@ async def review(screen):
     answer.set_result(None)
     return await answer
 """
-    + _AWAIT_REVIEW,
-    # Settling it again elsewhere hands nothing on: no reader can see it.
-    "settled-again-on-the-way-out": """
+        + _AWAIT_REVIEW,
+        [_row("S.on_button_pressed", "review")],
+    ),
+    "an-event-a-lambda-sets-beside-an-awaited-event": (
+        """
+async def review(screen):
+    answer = asyncio.Event()
+    other = asyncio.Event()
+    screen.app.push_screen(Review(), callback=lambda _: other.set())
+    answer.set()
+    await answer.wait()
+"""
+        + _AWAIT_REVIEW,
+        [_row("S.on_button_pressed", "review")],
+    ),
+    "a-lambda-settling-it-with-a-constant": (
+        """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    other = asyncio.get_running_loop().create_future()
+    screen.app.push_screen(Review(), callback=lambda _: other.set_result(None))
+    answer.set_result(None)
+    return await answer
+"""
+        + _AWAIT_REVIEW,
+        [_row("S.on_button_pressed", "review")],
+    ),
+    "another-future-made-fresh-on-either-branch": (
+        """
+async def review(screen, flag):
+    answer = asyncio.get_running_loop().create_future()
+    if flag:
+        other = asyncio.get_running_loop().create_future()
+    else:
+        other = asyncio.Future()
+    screen.app.push_screen(Review(), callback=other.set_result)
+    answer.set_result(None)
+    return await answer
+"""
+        + _AWAIT_REVIEW,
+        [_row("S.on_button_pressed", "review")],
+    ),
+    "settled-again-on-the-way-out": (
+        """
 async def review(screen):
     answer = asyncio.get_running_loop().create_future()
     other = asyncio.get_running_loop().create_future()
@@ -3537,18 +3609,11 @@ async def review(screen):
     finally:
         other.cancel()
 """
-    + _AWAIT_REVIEW,
-    "a-lambda-settling-it-with-a-constant": """
-async def review(screen):
-    answer = asyncio.get_running_loop().create_future()
-    other = asyncio.get_running_loop().create_future()
-    screen.app.push_screen(Review(), callback=lambda _: other.set_result(None))
-    answer.set_result(None)
-    return await answer
-"""
-    + _AWAIT_REVIEW,
-    # Nor does a `set()` statement: it neither raises nor answers anything.
-    "an-event-set-again-on-the-way-out": """
+        + _AWAIT_REVIEW,
+        [_row("S.on_button_pressed", "review")],
+    ),
+    "an-event-set-again-on-the-way-out": (
+        """
 async def review(screen):
     answer = asyncio.get_running_loop().create_future()
     closed = asyncio.Event()
@@ -3559,33 +3624,38 @@ async def review(screen):
     finally:
         closed.set()
 """
-    + _AWAIT_REVIEW,
-}
+        + _AWAIT_REVIEW,
+        [_row("S.on_button_pressed", "review")],
+    ),
+    "cancelled-again-in-a-nested-def": (
+        """
+class S:
+    async def on_button_pressed(self, event):
+        loop = asyncio.get_running_loop()
+        answer = loop.create_future()
+        other = loop.create_future()
+        self.app.push_screen(Review(), callback=other.set_result)
 
+        def stop():
+            other.cancel()
 
-@pytest.mark.parametrize("shape", sorted(_SETTLES_ONLY_ANOTHER_FUTURE))
-def test_w003_a_callback_settling_only_another_future_still_does_not_wait(shape):
-    """The precision the PR #2987 review asked for holds for the DIRECT
-    forms: a callback that is the completer of a different LOCAL future the
-    pushing function created -- itself, or a lambda whose whole body is that
-    one settle call with plain-name or constant arguments -- adds no wait
-    when nothing else reads that future, and a ``cancel()`` or ``set()``
-    statement settling it again elsewhere hands nothing on."""
-    assert _w003(_SETTLES_ONLY_ANOTHER_FUTURE[shape]) == []
-
-
-#: (source, row): ACCEPTED FALSE POSITIVES. Each callback settles only a
-#: future that nothing else reads, so the push cannot complete the awaited
-#: one -- but through a def or a method, whose body W003 no longer reads for
-#: a proof. Each was a precision control through 4c87eb4d3e. Three review
-#: rounds in a row found that proof dropping pushes 5918cfd1df reported, and
-#: on the real tree it proved nothing, so def and method callbacks count by
-#: shape (recall over precision; PR #2987 review, round 4). The last four
-#: were precision controls through a106783a85 and are direct forms: of a
-#: ``self`` future, whose read or store can run a property, a reactive or a
-#: ``__setattr__`` that no attribute count shows, and a ``partial``, where
-#: only the name said it was ``functools.partial`` (round 5).
-_ACCEPTED_FALSE_POSITIVES = {
+        answer.add_done_callback(lambda _: stop())
+        await answer
+""",
+        [_row("S.on_button_pressed")],
+    ),
+    "a-partial-of-its-completer": (
+        """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    other = asyncio.get_running_loop().create_future()
+    screen.app.push_screen(Review(), callback=partial(other.set_result))
+    answer.set_result(None)
+    return await answer
+"""
+        + _AWAIT_REVIEW,
+        [_row("S.on_button_pressed", "review")],
+    ),
     "a-nested-def-inspecting-the-future-it-settles": (
         """
 async def review(screen):
@@ -3601,7 +3671,7 @@ async def review(screen):
     return await answer
 """
         + _AWAIT_REVIEW,
-        ("S.on_button_pressed", "review"),
+        [_row("S.on_button_pressed", "review")],
     ),
     "a-lambda-forwarding-to-a-nested-def": (
         """
@@ -3617,7 +3687,22 @@ async def review(screen):
     return await answer
 """
         + _AWAIT_REVIEW,
-        ("S.on_button_pressed", "review"),
+        [_row("S.on_button_pressed", "review")],
+    ),
+    # Futures stored on `self`.
+    "a-method-settling-another-stored-future": (
+        """
+class S:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._other = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Review(), callback=self._settle_other)
+
+    def _settle_other(self, result):
+        self._other.set_result(result)
+"""
+        + _AWAIT_STORED,
+        [_row("S.on_button_pressed", "S._open")],
     ),
     "an-inherited-method": (
         """
@@ -3633,7 +3718,7 @@ class S(Base):
         self.app.push_screen(Review(), callback=self._settle)
 """
         + _AWAIT_STORED,
-        ("S.on_button_pressed", "S._open"),
+        [_row("S.on_button_pressed", "S._open")],
     ),
     "a-method-inspecting-the-future-it-settles": (
         """
@@ -3649,7 +3734,7 @@ class S:
             self._other.set_result(result)
 """
         + _AWAIT_STORED,
-        ("S.on_button_pressed", "S._open"),
+        [_row("S.on_button_pressed", "S._open")],
     ),
     "the-completer-of-another-stored-future": (
         """
@@ -3660,7 +3745,7 @@ class S:
         self.app.push_screen(Review(), callback=self._other.set_result)
 """
         + _AWAIT_STORED,
-        ("S.on_button_pressed", "S._open"),
+        [_row("S.on_button_pressed", "S._open")],
     ),
     "a-lambda-settling-another-stored-future": (
         """
@@ -3671,7 +3756,7 @@ class S:
         self.app.push_screen(Review(), callback=lambda _: self._other.set_result(None))
 """
         + _AWAIT_STORED,
-        ("S.on_button_pressed", "S._open"),
+        [_row("S.on_button_pressed", "S._open")],
     ),
     "a-stored-event-a-lambda-sets": (
         """
@@ -3683,40 +3768,38 @@ class S:
         self.app.push_screen(Review(), callback=lambda _: self._closed.set())
 """
         + _AWAIT_STORED,
-        ("S.on_button_pressed", "S._open"),
+        [_row("S.on_button_pressed", "S._open")],
     ),
-    "a-partial-of-its-completer": (
+    # A publisher's site counts every callback push it makes, as an own
+    # site does.
+    "two-pushes-in-a-publisher-one-settling-another-stored-future": (
         """
-async def review(screen):
-    answer = asyncio.get_running_loop().create_future()
-    other = asyncio.get_running_loop().create_future()
-    screen.app.push_screen(Review(), callback=partial(other.set_result))
-    answer.set_result(None)
-    return await answer
+class S:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._other = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Review(), callback=self._answer.set_result)
+        self.app.push_screen(Notice(), callback=self._other.set_result)
 """
-        + _AWAIT_REVIEW,
-        ("S.on_button_pressed", "review"),
+        + _AWAIT_STORED,
+        [_row("S.on_button_pressed", "S._open")] * 2,
     ),
 }
 
 
 @pytest.mark.parametrize("shape", sorted(_ACCEPTED_FALSE_POSITIVES))
-def test_w003_a_def_or_method_callback_counts_even_when_it_settles_only_another_future(
-    shape,
-):
-    """Accepted false positives: a nested def, a forwarding lambda, an
-    inherited method or a method that inspects what it settles counts by
-    shape, although each settles only a future nothing else reads. Leaving
-    them out needed a proof that the callback does nothing else, and every
-    version of that proof missed effects a callback can have (calls, then
-    chained futures, then stores, awaits, ``with`` blocks and returned
-    values). So does a direct settle of a ``self`` future (reading or
-    storing it can run code no attribute count shows) and a ``partial`` of
-    a completer (a call is ``functools.partial`` only by its name). Not
-    reporting one of these again needs a reviewed design, not a quieter
-    rule."""
-    source, (root, site) = _ACCEPTED_FALSE_POSITIVES[shape]
-    assert _w003(source) == [_row(root, site)]
+def test_w003_a_callback_push_counts_even_when_it_settles_only_another_future(shape):
+    """Accepted false positives: a callback that settles only a future the
+    awaited one cannot depend on -- directly (``other.set_result``, a
+    lambda, ``partial``), through a nested def, an own or inherited method,
+    or on ``self`` -- still makes its push a wait row. The finding is
+    accurate as a precision gap; it is kept on purpose. Five versions of a
+    rule leaving these out each lost waits 5918cfd1df reports, and none
+    dropped a push on the real tree. Not reporting one of these again needs
+    a reviewed design that keeps every recall case in this section, not a
+    quieter rule."""
+    source, rows = _ACCEPTED_FALSE_POSITIVES[shape]
+    assert _w003(source) == rows
 
 
 # Settling a DIFFERENT future does not make the push unrelated to the
@@ -3857,20 +3940,15 @@ def test_w003_a_callback_settling_a_future_the_awaited_one_hangs_on_still_waits(
 ):
     """A done-callback, a relay that awaits or polls it, a handoff, or
     ``locals()`` can chain the settled future to the awaited one, and then
-    the await hangs exactly as if the callback settled it directly. A push
-    is left out only when the settled LOCAL future cannot reach anything: it
-    is read nowhere but as the push's own direct callback or as the receiver
-    of a ``cancel()``/``set()`` statement. A ``self`` future always counts
-    (round 5)."""
+    the await hangs exactly as if the callback settled it directly."""
     source, (root, site) = _SETTLED_FUTURE_FEEDS_THE_AWAITED_ONE[shape]
     assert _w003(source) == [_row(root, site)]
 
 
 #: (source, row): the shapes the round-3 proof needed premises for -- "this
 #: name is only ever that fresh future", "this callback is that def or
-#: method". Neither is needed any more: a direct settle of a ``self`` future
-#: counts by shape (round 5), and so does every def or method callback
-#: (round 4). These stay pinned.
+#: method". Counting every callback push by shape needs neither. These stay
+#: pinned.
 _SETTLED_ATTRIBUTE_REBOUND_OR_CALLBACK_INDIRECT = {
     "a-nested-def-rebinds-the-settled-attribute": (
         """
@@ -4107,13 +4185,11 @@ async def review(screen):
 )
 def test_w003_a_rebound_settled_attribute_or_an_indirect_callback_still_waits(shape):
     """A nested def or another method can rebind a settled ``self``
-    attribute, and a lambda's default can rebind ``self``: a direct
-    ``callback=self._other.set_result`` counts by shape whatever else uses
-    ``._other``. Every other shape here is a def or method
-    callback -- decorated, shadowed by an instance attribute, a subclass
-    body's assignment or import, only maybe bound, or with a class body
-    inside -- which counts by shape whatever it settles. Each is a row on
-    5918cfd1df."""
+    attribute, and a lambda's default can rebind ``self``. Every other
+    shape here is a def or method callback that is not what it looks like:
+    decorated, shadowed by an instance attribute, a subclass body's
+    assignment or import, only maybe bound, or with a class body inside.
+    Each is a row on 5918cfd1df."""
     source, (root, site) = _SETTLED_ATTRIBUTE_REBOUND_OR_CALLBACK_INDIRECT[shape]
     assert _w003(source) == [_row(root, site)]
 
@@ -4366,9 +4442,8 @@ def test_w003_a_callback_that_settles_another_future_and_does_more_still_waits(
 ):
     """A callback can settle a future nothing reads and still complete the
     awaited one through any other effect -- a store, an await, a ``with``
-    block, a returned value, a property read -- none of which is a call. So
-    no def or method body is read for a proof, and a lambda counts as a
-    direct settle only when its arguments are plain names or constants."""
+    block, a returned value, a property read -- none of which is a call, so
+    a proof that read only the callback's calls missed every one."""
     source, (root, site) = _CALLBACK_EFFECTS_BEYOND_SETTLING[shape]
     assert _w003(source) == [_row(root, site)]
 
@@ -4440,6 +4515,108 @@ async def review(screen):
     assert _w003(source) == [_row("S.on_button_pressed", "review")]
 
 
+# Round 6 (PR #2987 review of f606e0c3ef). The last version of the rule left
+# out only a direct settle of a LOCAL future that nothing else read, counting
+# a `cancel()`/`set()` statement as no read, and naming the introspection
+# that hands on every local. It still missed these. A nested scope holds the
+# future in a closure cell, which `__closure__`, `inspect.getclosurevars` or a
+# generator's locals read without loading the name; and
+# `asyncio.current_task().get_stack()` or `sys._current_frames()` reach the
+# pusher's frame through APIs the list did not name. Each is a row on
+# origin/dev and 5918cfd1df and was silent at a106783a85 and f606e0c3ef.
+
+_PUSH_SETTLING_OTHER = """
+class S:
+    async def on_button_pressed(self, event):
+        loop = asyncio.get_running_loop()
+        answer = loop.create_future()
+        other = loop.create_future()
+        self.app.push_screen(Review(), callback=other.set_result)
+"""
+
+#: The handler's lines after it pushes with ``callback=other.set_result``,
+#: before it awaits ``answer``.
+_CLOSURE_AND_FRAME_HAND_ONS = {
+    "a-closure-cell-of-a-nested-cancel": """
+        def stop():
+            other.cancel()
+
+        chain(stop.__closure__[0].cell_contents, answer)
+""",
+    "inspect-getclosurevars": """
+        def stop():
+            other.cancel()
+
+        chain(inspect.getclosurevars(stop).nonlocals["other"], answer)
+""",
+    "a-closure-read-by-a-constant-name": """
+        def stop():
+            other.cancel()
+
+        chain(getattr(stop, "__closure__")[0].cell_contents, answer)
+""",
+    "a-nested-generators-locals": """
+        def stop():
+            other.cancel()
+            yield
+
+        gen = stop()
+        next(gen)
+        chain(inspect.getgeneratorlocals(gen)["other"], answer)
+""",
+    "a-closure-cell-of-a-lambda-cancel": """
+        stop = lambda: other.cancel()
+        chain(stop.__closure__[0].cell_contents, answer)
+""",
+    "a-tasks-stack-frame": """
+        frame = asyncio.current_task().get_stack()[0]
+        chain(inspect.getargvalues(frame).locals["other"], answer)
+""",
+    "the-threads-current-frame": """
+        frame = sys._current_frames()[threading.get_ident()]
+        chain(inspect.getargvalues(frame).locals["other"], answer)
+""",
+    "a-tasks-stack-handed-to-a-relay": """
+        chain(asyncio.current_task().get_stack(), answer)
+""",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_CLOSURE_AND_FRAME_HAND_ONS))
+def test_w003_a_settled_future_reached_through_a_closure_or_a_frame_still_waits(
+    shape,
+):
+    """A closure cell or a frame hands the settled future on with no load of
+    its name, so the awaited future can be chained to it: the push counts,
+    as every callback push does."""
+    source = (
+        _PUSH_SETTLING_OTHER
+        + _CLOSURE_AND_FRAME_HAND_ONS[shape]
+        + "        await answer\n"
+    )
+    assert _w003(source) == [_row("S.on_button_pressed")]
+
+
+def test_w003_a_settled_event_reached_through_a_closure_still_waits():
+    """The same through an Event: a lambda pushed as the callback sets
+    ``closed``, a nested def sets it again, and the nested def's closure
+    cell hands ``closed`` to a relay."""
+    source = """
+class S:
+    async def on_button_pressed(self, event):
+        answer = asyncio.get_running_loop().create_future()
+        closed = asyncio.Event()
+        self.app.push_screen(Review(), callback=lambda _: closed.set())
+
+        def finish():
+            closed.set()
+
+        relay(finish.__closure__[0].cell_contents, answer)
+        await answer
+"""
+    assert _w003(source) == [_row("S.on_button_pressed")]
+
+
 #: (hand-on in the pushing function, hand-on in another method).
 _SELF_DYNAMIC_HAND_ONS = {
     "getattr-by-a-constant-name-in-another-method": (
@@ -4463,8 +4640,7 @@ def test_w003_a_settled_self_future_handed_on_by_name_still_waits(shape):
     """The same for a ``self`` future, which hands on through ``getattr``
     with a constant name, a bound settle method's ``__self__``,
     ``self.__dict__`` or ``vars(self)``. All are rows on 5918cfd1df; all
-    but ``vars(self)`` were silent at 4c87eb4d3e. Since round 5 a direct
-    settle of a ``self`` future counts by shape anyway."""
+    but ``vars(self)`` were silent at 4c87eb4d3e."""
     in_pusher, elsewhere = _SELF_DYNAMIC_HAND_ONS[shape]
     source = (
         f"""
@@ -4491,9 +4667,7 @@ class S:
 # in a base class in another module), a reactive's watcher or validator, a
 # `__setattr__` override; and a class-level `X` is what the callback settles
 # whenever the instance store is skipped. Each shape below is a row on
-# 5918cfd1df and on origin/dev and was silent at a106783a85. Only a LOCAL
-# future's direct settle is left out now: reading or storing a local name
-# runs no code.
+# 5918cfd1df and on origin/dev and was silent at a106783a85.
 
 _M1 = "tldw_chatbook/UI/m1.py"
 
@@ -4706,12 +4880,11 @@ def wire():
 
 @pytest.mark.parametrize("shape", sorted(_SELF_FUTURE_READ_OR_STORE_RUNS_CODE))
 def test_w003_a_direct_settle_of_a_self_future_still_waits(shape):
-    """Reading ``self.X`` -- a direct-form callback's receiver -- or storing
-    a fresh future there can run code that no ``.X`` attribute node shows:
-    a property's getter or setter, a reactive's watcher or validator, a
+    """Reading ``self.X`` -- the callback's receiver -- or storing a fresh
+    future there can run code that no ``.X`` attribute node shows: a
+    property's getter or setter, a reactive's watcher or validator, a
     ``__setattr__`` override. And a class-level ``X`` is what the callback
-    settles whenever the instance store is skipped. So a ``self`` future is
-    never taken for an unrelated one: its push counts by shape."""
+    settles whenever the instance store is skipped."""
     sources, row = _SELF_FUTURE_READ_OR_STORE_RUNS_CODE[shape]
     assert _w003(*sources) == [row]
 
@@ -4769,9 +4942,8 @@ _SETTLE_OUTCOME_OBSERVED = {
 @pytest.mark.parametrize("shape", sorted(_SETTLE_OUTCOME_OBSERVED))
 def test_w003_a_settle_whose_outcome_is_used_still_waits(shape):
     """A settle call outside the push whose result or error the body uses
-    tells whether the callback ran, so it hands the settled future on: the
-    push counts. Only a ``cancel()`` or ``set()`` STATEMENT -- its result
-    discarded, and neither raises on a settled future -- hands nothing on."""
+    tells whether the callback ran, so the awaited future can depend on the
+    callback running: the push counts."""
     source = (
         """
 async def review(screen):
@@ -4820,19 +4992,17 @@ async def review(screen):
 
 @pytest.mark.parametrize("shape", sorted(_A_CALL_NAMED_PARTIAL))
 def test_w003_a_partial_of_a_settle_counts_by_shape(shape):
-    """``partial(fut.set_result)`` is the same callable as
-    ``fut.set_result``, so nothing needs the form -- and a call that is only
-    NAMED ``partial`` can hand ``fut`` on (``settle.__self__``). The
-    completer itself or a one-call lambda is the only direct form left."""
+    """A call that is only NAMED ``partial`` can hand ``fut`` on
+    (``settle.__self__``) to whatever settles the awaited future."""
     assert _w003(_A_CALL_NAMED_PARTIAL[shape] + _AWAIT_REVIEW) == [
         _row("S.on_button_pressed", "review")
     ]
 
 
 def test_w003_a_settle_through_a_computed_receiver_hands_the_future_on():
-    """Only a settle whose receiver IS the bare name hands nothing on:
-    ``screen.chain(other, answer).cancel()`` hands ``other`` to ``chain``
-    before anything is cancelled."""
+    """``screen.chain(other, answer).cancel()`` hands ``other`` to ``chain``
+    before anything is cancelled. A row on 5918cfd1df and at every head of
+    the PR #2987 review."""
     source = (
         """
 async def review(screen):
@@ -4849,9 +5019,9 @@ async def review(screen):
 
 def test_w003_a_settle_handed_to_a_partial_hands_its_future_on():
     """Handing ``other.set_result`` to a call -- one named ``partial``
-    included -- hands ``other`` on, so a second push that settles ``other``
-    directly counts too: two rows. Both are rows on 5918cfd1df; neither was
-    at a106783a85."""
+    included -- hands ``other`` on, and a second push that settles
+    ``other`` directly is a second row. Both are rows on 5918cfd1df;
+    neither was at a106783a85."""
     source = (
         _A_CALL_NAMED_PARTIAL["a-module-function"].replace(
             "    return await answer\n",
@@ -4864,14 +5034,13 @@ def test_w003_a_settle_handed_to_a_partial_hands_its_future_on():
     assert _w003(source) == [_row("S.on_button_pressed", "review")] * 2
 
 
-#: (source, row): KNOWN MISSES. W003 finds futures and pushes by NAME, here as
-#: everywhere: ``create_future()``/``Future()``/``Event()`` is taken to make a
-#: new future nothing else holds, and ``push_screen`` to be Textual's (the
-#: package's own ``push_screen`` properties and keyword lambdas forward to
-#: it). A package definition under one of those names that breaks that is
-#: not seen. Each is a row on 5918cfd1df and on origin/dev; nothing in the
-#: package defines ``create_future``, ``Future`` or ``Event`` today.
-_TRUSTED_BY_NAME = {
+#: (source, row): a package definition named like a future factory or like
+#: ``push_screen`` that hands the "fresh" future, or the callback's, on to
+#: the awaited one. Strict-xfail known misses at a106783a85 and f606e0c3ef:
+#: leaving a direct settle of a fresh local out had to trust those names.
+#: Counting every callback push needs no such premise, so each is a row
+#: again, as on 5918cfd1df and origin/dev.
+_DEFINED_UNDER_A_FACTORY_OR_PUSH_NAME = {
     "a-package-create-future-returning-the-awaited-future": (
         """
 class S:
@@ -4928,70 +5097,13 @@ class S:
 }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="W003 trusts create_future/Future/Event and push_screen by name",
-)
-@pytest.mark.parametrize("shape", sorted(_TRUSTED_BY_NAME))
-def test_w003_a_package_definition_under_a_trusted_name_is_a_known_miss(shape):
-    """Strict xfail, so the day W003 resolves these names it XPASSes and
-    this pin has to move: a package ``create_future`` that hands back an
-    existing or a kept future, and a package ``push_screen`` that hands its
-    callback's future on, each make a direct settle of a "fresh" local
-    chain to the awaited future."""
-    source, (root, site) = _TRUSTED_BY_NAME[shape]
+@pytest.mark.parametrize("shape", sorted(_DEFINED_UNDER_A_FACTORY_OR_PUSH_NAME))
+def test_w003_a_package_definition_under_a_factory_or_push_name_still_waits(shape):
+    """A package ``create_future`` that hands back an existing or a kept
+    future, and a package ``push_screen`` that hands its callback's future
+    on, chain the settled future to the awaited one: the push counts."""
+    source, (root, site) = _DEFINED_UNDER_A_FACTORY_OR_PUSH_NAME[shape]
     assert _w003(source) == [_row(root, site)]
-
-
-def test_the_names_w003_trusts_hold_on_the_real_tree(real_tree):
-    """The premise behind ``_TRUSTED_BY_NAME``, checked rather than assumed:
-    no package def or class is named ``create_future``, ``Future`` or
-    ``Event``, and every package ``push_screen`` is a bare property handing
-    back the app's own (the Console controllers'). A new one fails here and
-    has to be read against that premise."""
-    factories = [
-        fn.key
-        for _, functions in real_tree.values()
-        for fn in functions
-        if fn.name in _mod._FUTURE_FACTORIES
-    ] + [
-        f"{rel}::{cls}"
-        for rel, (module, _) in real_tree.items()
-        for cls in module.classes
-        if cls in _mod._FUTURE_FACTORIES
-    ]
-    assert factories == []
-    owners = sorted(
-        {
-            (fn.module.rel, fn.cls)
-            for _, functions in real_tree.values()
-            for fn in functions
-            if fn.name == "push_screen"
-        },
-        key=str,
-    )
-    assert len(owners) == 5, owners
-    for rel, cls in owners:
-        assert cls is not None, rel
-        tree = _parse_file(_mod.REPO_ROOT / rel)
-        owner = next(
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ClassDef) and node.name == cls
-        )
-        for node in owner.body:
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if node.name != "push_screen":
-                continue
-            *docs, last = node.body
-            assert [ast.unparse(d) for d in node.decorator_list] == ["property"]
-            assert all(
-                isinstance(doc, ast.Expr) and isinstance(doc.value, ast.Constant)
-                for doc in docs
-            ), (rel, cls)
-            assert isinstance(last, ast.Return), (rel, cls)
-            assert ast.unparse(last.value) == "self._screen.app.push_screen", (rel, cls)
 
 
 # --------------------------------------------------------------------------

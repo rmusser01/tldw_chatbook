@@ -67,57 +67,43 @@ W003 (census ratchet, TASK-33621.13)
     Inspector's ``@on`` handler awaited a recovery callable that awaited a
     folder picker, and the whole app froze -- Ctrl+Q included.
 
-    The same wait by hand counts too: ``push_screen(..., callback=done)``
-    in a function that also awaits a future or event it created, matched
-    by shape. A push is left out only when ``done`` is a DIRECT settle of
-    another fresh LOCAL future of that function that nothing else reads --
-    ``callback=other.set_result``, or a lambda whose whole body is one
-    settle call with plain-name or constant arguments (``lambda _:
-    closed.set()``); see ``_completion``. Every def, nested def, method or
-    other callback counts, whatever it settles: proving that a body does
-    nothing but settle lost recall in three review rounds running (PR
-    #2987), so such a def is an accepted false positive. So is a direct
-    settle of a ``self`` future -- reading or storing ``self.X`` can run a
-    property, a reactive's watcher or validator, or ``__setattr__``, none
-    of which is visible as a use of ``.X`` -- and a ``partial`` of a
-    completer, which only its name made ``functools.partial``. "Nothing
-    else reads" is syntactic: no load of the name in the function's
-    subtree except as that callback's receiver or a ``cancel()``/``set()``
-    STATEMENT's (neither raises on a settled future, and the statement
-    drops ``cancel()``'s answer), and no ``locals()``, ``vars()``, ``eval`` or ``exec``, frame
-    of the function (``currentframe``, ``_getframe``, ``stack``,
-    ``trace``, ``walk_stack``, ``exc_info``, ``__traceback__``,
-    ``f_back``, ``cr_frame``) or ``f_locals`` there, nor a string naming
-    one (``_escaping_names``). Taken on trust, by name, as
-    W003 finds futures and pushes everywhere: ``create_future``/
-    ``Future``/``Event`` make a new future nothing else holds, and
-    ``push_screen`` is Textual's (the package's own ``push_screen``
-    properties and keyword lambdas forward to it). Not seen: a package
-    definition under one of those names that breaks that (strict-xfail
-    pins), a callee reading its caller's frame, and any other way to a
-    frame or to every object (``gc``, a tracing hook, a computed name). No
-    ``NoActiveWorker`` -- but Textual runs ``done`` through the requester
-    pump's ``call_next``, and from a handler that pump is the one blocked on
-    the await, so it deadlocks. PR #2922's
-    ``request_hook_review`` was this, and froze the Console's Send
+    The same wait by hand counts too: ``push_screen(..., callback=done)`` in
+    a function that also awaits a future or event it created, matched by
+    SHAPE -- every such push counts, whatever ``done`` is or settles. A
+    callback that settles only a different future, one the awaited future
+    cannot depend on, is reported as well: an accepted false positive. The
+    PR #2987 review tried five rules for leaving such pushes out: comparing
+    names; proving what the callback's body does; also requiring that
+    nothing else could read the settled future; then only a direct settle
+    (``callback=other.set_result``, a one-call lambda, a ``partial``); and
+    last only a direct settle of a LOCAL that nothing else reads. Each
+    version dropped waits that W003 without the rule reports -- a
+    done-callback, relay or handoff chaining the two futures, a store, a
+    property or a watcher, a settle's answer, a frame, a closure cell -- and
+    none ever dropped a push on the real tree. So there is no such rule: a
+    false row costs one census line, which a reviewer can read and annotate,
+    while a missed wait is a frozen UI. No ``NoActiveWorker`` -- but Textual
+    runs ``done`` through the requester pump's ``call_next``, and from a
+    handler that pump is the one blocked on the await, so it deadlocks. PR
+    #2922's ``request_hook_review`` was this, and froze the Console's Send
     (TASK-33621.28). It now awaits a future the modal settles in its own
     ``dismiss``, which no pump has to flush -- a shape W003 does not match.
     That is not a licence to await it on the APP pump: the app pump delivers
     the keys that dismiss the modal, so awaiting any screen's answer there
-    still freezes the app, and W003 cannot see that either. The Console hands
-    a Send's review to a worker unless the caller IS a worker's own task
-    (``hooks.in_worker_task``: a screen pushed from a worker inherits that
-    worker's contextvar, so ``get_current_worker()`` alone answers "worker"
-    on its pump), and ``request_hook_review`` logs an ERROR when awaited off
-    one; the runtime proof is
+    still freezes the app, and W003 cannot see that either. The Console
+    hands a Send's review to a worker unless the caller IS a worker's own
+    task (``hooks.in_worker_task``: a screen pushed from a worker inherits
+    that worker's contextvar, so ``get_current_worker()`` alone answers
+    "worker" on its pump), and ``request_hook_review`` logs an ERROR when
+    awaited off one; the runtime proof is
     ``Tests/UI/test_console_hook_review_send_freeze.py``. The wait may be
     split across two functions (TASK-33621.33): a helper that creates the
     future and pushes with ``callback=``, then RETURNS the future, is a site
     wherever it is awaited -- ``await helper()``, ``fut = helper(); await
     fut``, ``await helper().wait()`` -- and so is a helper that STORES it on
-    ``self`` for a method of the same object (its class, a base, a
-    subclass) to await. Not followed: a future created by the caller and
-    completed by a push in a helper it calls.
+    ``self`` for a method of the same object (its class, a base, a subclass)
+    to await. Not followed: a future created by the caller and completed by
+    a push in a helper it calls.
 
     The roots are message handlers (``@on``, ``on_*``/``_on_*``, ``key_*``),
     actions (``action_*``) and watchers (``watch_*``), none of which Textual
@@ -517,46 +503,6 @@ _FUTURE_FACTORIES = {"create_future", "Future", "Event"}
 #: ``await asyncio.wait_for(fut, t)`` / ``asyncio.shield(fut)`` await ``fut``.
 _FUTURE_WAITERS = {"wait_for", "shield"}
 
-#: ``fut.set_result(...)``, ``event.set()``: what settles a future or event.
-_COMPLETERS = {"set_result", "set_exception", "set", "cancel"}
-
-#: Of those, the ones whose call, as a STATEMENT, tells nobody whether the
-#: future was already settled: ``Future.cancel()`` and ``Event.set()`` never
-#: raise (``set()`` on a future or ``cancel()`` on an event raises whatever
-#: the state), and the statement discards ``cancel()``'s answer.
-#: ``set_result`` and ``set_exception`` raise ``InvalidStateError`` on a
-#: done future.
-_SILENT_COMPLETERS = {"cancel", "set"}
-
-#: Calls that hand on every local of the function making them
-#: (``chain(**locals())``, ``vars()``, ``eval("fut")``, ``exec(...)``;
-#: ``vars(self)`` hands on ``self``'s attributes), matched by the called
-#: name however it is reached (``builtins.eval``).
-_SCOPE_READERS = {"locals", "vars", "eval", "exec"}
-
-#: Calls that hand back a frame of the function making them, from which its
-#: locals are one ``getargvalues`` away: ``inspect.currentframe()``,
-#: ``sys._getframe()``, ``inspect.stack()``/``trace()``,
-#: ``traceback.walk_stack(None)``, ``sys.exc_info()``.
-_FRAME_GETTERS = {
-    "currentframe",
-    "_getframe",
-    "stack",
-    "trace",
-    "walk_stack",
-    "exc_info",
-}
-
-#: Attributes that hand on a frame's locals (``f_locals``, even of a frame a
-#: callee hands back) or reach a frame of the function: a frame's caller
-#: (``f_back``), a coroutine's frame (``cr_frame``), an exception's
-#: traceback (``__traceback__``). (``self.__dict__`` once counted too; it
-#: reaches only attributes, and a ``self`` future always counts now.)
-_NAMESPACE_ATTRS = {"f_locals", "f_back", "cr_frame", "__traceback__"}
-
-#: A string naming any of those (``getattr(builtins, "eval")``) reaches it too.
-_INTROSPECTION_NAMES = _SCOPE_READERS | _FRAME_GETTERS | _NAMESPACE_ATTRS
-
 #: A callable reference: ``("self", name)`` for ``self.name``, ``("name",
 #: name)`` for a bare name, ``("attr", name)`` for ``anything.name``, and
 #: ``("lambda", name)`` for a bare name called in a lambda's body -- read when
@@ -664,96 +610,6 @@ def _result_awaited(node: ast.AST) -> ast.Call | None:
     return None
 
 
-def _completion(callback: ast.AST) -> frozenset[str] | None:
-    """The LOCAL future a ``push_screen`` result callback settles, when the
-    callback is a DIRECT settle and nothing else.
-
-    Two forms qualify: the completer of a bare local (``fut.set_result``,
-    ``event.set``), and a lambda whose body is one such settle call with
-    plain-name or constant arguments (``lambda r: fut.set_result(r)``,
-    ``lambda _: event.set()``). Evaluating either runs no code of the
-    package's: reading a local name cannot be intercepted, and a fresh
-    future's completer is asyncio's own (W003 takes ``create_future``,
-    ``Future`` and ``Event`` by name; see the module docstring).
-
-    Everything else counts by shape. A ``self.X`` receiver: reading
-    ``self.X`` can run a property getter, a reactive or
-    ``__getattribute__``, and storing the future there a setter, a
-    watcher, a validator or ``__setattr__`` -- none of which is an ``.X``
-    attribute node a package-wide count could see (PR #2987 review, round
-    5). ``partial(fut.set_result)``: the same callable as
-    ``fut.set_result``, and ``functools.partial`` only by its name (round
-    5). A def, a method, or any other lambda: three review rounds in a row
-    found that a "proof" of what a body does missed effects it can have --
-    calls, then chained futures, then stores, awaits, ``with`` blocks and
-    returned values (round 4).
-
-    This says only WHAT the callback settles. Whether that local is a fresh
-    future of the pushing function that nothing else reads is decided once
-    the module is collected (:func:`_collect_module`).
-
-    Args:
-        callback: The callback expression handed to ``push_screen``.
-
-    Returns:
-        The local it settles, as a one-name set, or ``None`` for any other
-        callback -- including a lambda whose parameter shadows that name
-        (``lambda r, fut=answer: fut.set_result(r)``), or whose arguments
-        compute anything (an attribute read may run a property getter).
-    """
-    target = callback
-    shadowed: set[str] = set()
-    if isinstance(target, ast.Lambda):
-        body = target.body
-        if not isinstance(body, ast.Call) or not all(
-            isinstance(value, (ast.Name, ast.Constant))
-            for value in (*body.args, *(keyword.value for keyword in body.keywords))
-        ):
-            return None
-        args = target.args
-        shadowed = {
-            arg.arg
-            for arg in (
-                *args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg
-            )
-            if arg is not None
-        }
-        target = body.func
-    if not (
-        isinstance(target, ast.Attribute)
-        and target.attr in _COMPLETERS
-        and isinstance(target.value, ast.Name)
-        and target.value.id not in shadowed
-    ):
-        return None
-    return frozenset((target.value.id,))
-
-
-def _settle_targets(call: ast.Call) -> list[ast.Attribute]:
-    """For a ``push_screen``, the ``fut.<completer>`` node of its direct
-    callback: ``callback=fut.set_result``, or the one call of ``lambda r:
-    fut.set_result(r)``.
-
-    A load of ``fut`` as their receiver hands nothing on: Textual keeps the
-    callback for the requester's ``call_next`` and discards what it returns
-    (``invoke``). Any other use of ``fut.set_result`` does -- handed to
-    another call, a ``partial`` included, or ``.__self__``, which IS the
-    future (PR #2987 review, rounds 4 and 5).
-    """
-    found: list[ast.Attribute] = []
-    if _call_name(call) != "push_screen":
-        return found
-    for value in (
-        *call.args[1:2],
-        *(keyword.value for keyword in call.keywords if keyword.arg == "callback"),
-    ):
-        if isinstance(value, ast.Lambda) and isinstance(value.body, ast.Call):
-            value = value.body.func
-        if isinstance(value, ast.Attribute) and value.attr in _COMPLETERS:
-            found.append(value)
-    return found
-
-
 class _Function:
     """One ``def``/``async def`` and what W003 needs to know about it."""
 
@@ -798,13 +654,8 @@ class _Function:
         # `push_screen_wait(...)` / `push_screen(..., wait_for_dismiss=True)`.
         self.wait_pushes = 0
         # `push_screen(..., callback=...)`, and the futures/events this
-        # function creates and awaits: together, a hand-rolled wait. Each
-        # push's entry names the LOCAL future its callback settles when the
-        # callback is a direct settle (`_completion`) of a fresh local of
-        # this function that its body hands on nowhere (`_collect_module`);
-        # `None` for every other callback, which counts by shape.
+        # function creates and awaits: together, a hand-rolled wait.
         self.callback_pushes = 0
-        self.push_callbacks: list[frozenset[str] | None] = []
         self.futures: set[str] = set()
         self.awaited_futures: set[str] = set()
         # The futures it hands back: `return fut` (TASK-33621.33).
@@ -841,31 +692,20 @@ class _Function:
         owner = f"{self.cls}." if self.cls else ""
         return f"{self.module.rel}::{owner}{self.name}"
 
-    def _pushes_settling(self, futures: set[str]) -> int:
-        """This body's callback pushes that may settle one of ``futures``,
-        or a future that one of them is chained to.
+    def _hand_rolled(self, settled: set[str]) -> int:
+        """This body's callback pushes, when it created one of the futures
+        ``settled`` -- those a caller waits on; else 0.
 
-        Every push counts unless its callback does nothing but settle
-        another fresh LOCAL future this function created -- a DIRECT
-        settle (:func:`_completion`): the completer, or a one-call lambda
-        -- and that future can reach nothing else: read nowhere but as that
-        callback's receiver or a ``cancel()``/``set()`` statement's
-        (:func:`_collect_module`). Settling a DIFFERENT future is not
-        enough: a done-callback, a relay or a handoff can chain it to the
-        awaited one, which then hangs just the same (PR #2987 review, round
-        3). Every def or method callback, a ``self`` future (reading or
-        storing it can run code), and any settled name this function cannot
-        show is a separate, contained future -- a helper's parameter, a
-        local alias -- counts by shape (recall over precision; rounds 2, 4
-        and 5).
-
-        Which future a left-out push settles never needs comparing with
-        ``futures``: it is left out only while nothing reads that local, and
-        awaiting or returning a future reads it. So a push left out never
-        settles one of them, and every other push counts."""
-        if not futures:
-            return 0
-        return sum(1 for settles in self.push_callbacks if settles is None)
+        Matched by SHAPE: every ``push_screen(..., callback=...)`` here
+        counts, whatever its callback is or settles. Which future the
+        callback settles is deliberately not asked. Even a callback that
+        settles a different future can complete the awaited one: a
+        done-callback, a relay or a handoff can chain the two, and Textual
+        never runs the callback while this pump waits. Each rule the PR
+        #2987 review tried for leaving such pushes out dropped waits like
+        that and dropped no real-tree push, so a push whose callback really
+        cannot complete the awaited future is an accepted false positive."""
+        return self.callback_pushes if self.futures & settled else 0
 
     @property
     def own_pushes(self) -> int:
@@ -884,46 +724,31 @@ class _Function:
         (TASK-33621.33). An ``async def`` returning it is not: ``await
         helper()`` only obtains the future (see :attr:`pending_pushes`).
 
-        Only a push whose callback may settle THAT future, or one chained to
-        it, counts: one whose callback is a direct settle of a different,
-        contained future leaves this await to be settled elsewhere (PR #2987
-        review; :meth:`_pushes_settling`).
+        Every callback push here counts, whatever its callback settles
+        (:meth:`_hand_rolled`).
         """
         settled = self.awaited_futures
         if not self.is_async:
             settled = settled | self.returned_futures
-        return self.wait_pushes + self._pushes_settling(self.futures & settled)
+        return self.wait_pushes + self._hand_rolled(settled)
 
     @property
     def pending_pushes(self) -> int:
-        """For an ``async def``, the callback pushes that may settle a future
-        it created and RETURNS: a caller waits on them by awaiting the
-        call's result -- ``await (await helper())``."""
+        """For an ``async def``, the callback pushes behind a future it
+        created and RETURNS: a caller waits on them by awaiting the call's
+        result -- ``await (await helper())``."""
         if not self.is_async:
             return 0
-        return self._pushes_settling(self.futures & self.returned_futures)
+        return self._hand_rolled(self.returned_futures)
 
     @property
     def self_futures(self) -> set[str]:
         """The ``self`` attributes this function stores a NEW future or event
-        in, with a ``callback=`` push that may settle it: a caller that
-        awaits one of them waits on this function's push."""
+        in while pushing with ``callback=``: a caller that awaits one of
+        them waits on this function's push."""
         if not self.callback_pushes:
             return set()
-        return {
-            name[5:]
-            for name in self.futures
-            if name.startswith("self.") and self._pushes_settling({name})
-        }
-
-    @property
-    def published_pushes(self) -> int:
-        """The callback pushes behind what this function publishes -- futures
-        it stores on ``self`` or returns -- counted at its census key."""
-        published = {f"self.{attr}" for attr in self.self_futures}
-        return self._pushes_settling(
-            self.futures & (published | self.returned_futures)
-        )
+        return {name[5:] for name in self.futures if name.startswith("self.")}
 
 
 #: What a reference can resolve to: one definition; every top-level
@@ -993,10 +818,8 @@ def _record_call(sink: _Function, call: ast.Call) -> None:
             *call.args[1:2],
             *(kw.value for kw in call.keywords if kw.arg == "callback"),
         ]
-        given = [cb for cb in callbacks if not _is_none(cb)]
-        if not _is_wait_push(call) and given:
+        if not _is_wait_push(call) and any(not _is_none(cb) for cb in callbacks):
             sink.callback_pushes += 1
-            sink.push_callbacks.append(_completion(given[0]))
         for value in callbacks:
             ref = _ref(value)
             if ref is not None:
@@ -1282,179 +1105,6 @@ def _bind(table: dict[str, _Function], new: _Function) -> None:
         table[new.name] = new
 
 
-def _scope_bindings(
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
-) -> tuple[set[str], dict[str, int], dict[str, int]]:
-    """How a pushing def's OWN scope binds each name: what shows that a
-    future a direct-form callback settles is only ever that one fresh
-    future there (PR #2987 review, round 2). Whether it reaches anything
-    else is :func:`_escaping_names`'s question.
-
-    Read only for the defs with a direct-form callback push, while their
-    module's tree is still alive.
-
-    Args:
-        node: The pushing ``def``/``async def``.
-
-    Returns:
-        ``(params, bound, fresh)``: its parameter names; how many times its
-        body binds each bare name (assignment, ``del``,
-        ``for``/``with``/``except``/``import``/``match`` targets, nested
-        ``def``/``class`` names, ``global``/``nonlocal``, and a
-        ``nonlocal`` anywhere in a nested def or class); and how many of
-        those bindings are one fresh future alone (``x =
-        loop.create_future()``, not ``x = y = loop.create_future()``).
-    """
-    args = node.args
-    params = {
-        arg.arg
-        for arg in (
-            *args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg
-        )
-        if arg is not None
-    }
-    bound: dict[str, int] = {}
-    fresh: dict[str, int] = {}
-
-    def bind(name: str) -> None:
-        bound[name] = bound.get(name, 0) + 1
-
-    stack: list[ast.AST] = list(node.body)
-    while stack:
-        child = stack.pop()
-        kind = type(child)
-        if kind in _DEFS or kind is ast.Lambda or kind is ast.ClassDef:
-            # Its name, and everything but its body -- decorators, defaults,
-            # bases -- belong here; the body runs later, in a scope of its
-            # own, but a `nonlocal` in it rebinds a name of this one.
-            if kind is not ast.Lambda:
-                bind(child.name)
-                for inner in ast.walk(child):
-                    if type(inner) is ast.Nonlocal:
-                        for name in inner.names:
-                            bind(name)
-            for field, value in ast.iter_fields(child):
-                if field == "body":
-                    continue
-                if value.__class__ is list:
-                    stack.extend(item for item in value if isinstance(item, ast.AST))
-                elif isinstance(value, ast.AST):
-                    stack.append(value)
-            continue
-        if kind is ast.Name:
-            if child.ctx.__class__ is not ast.Load:
-                bind(child.id)
-            continue
-        if kind is ast.Assign or kind is ast.AnnAssign:
-            targets = child.targets if kind is ast.Assign else [child.target]
-            value = child.value
-            if (
-                len(targets) == 1
-                and isinstance(targets[0], ast.Name)
-                and isinstance(value, ast.Call)
-                and _call_name(value) in _FUTURE_FACTORIES
-            ):
-                name = targets[0].id
-                fresh[name] = fresh.get(name, 0) + 1
-        elif kind is ast.Import or kind is ast.ImportFrom:
-            for alias in child.names:
-                bind((alias.asname or alias.name).partition(".")[0])
-        elif kind is ast.Global or kind is ast.Nonlocal:
-            for name in child.names:
-                bind(name)
-        elif kind is ast.ExceptHandler or kind is ast.MatchAs or kind is ast.MatchStar:
-            if child.name:
-                bind(child.name)
-        elif kind is ast.MatchMapping and child.rest:
-            bind(child.rest)
-        stack.extend(ast.iter_child_nodes(child))
-    return params, bound, fresh
-
-
-def _escaping_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str] | None:
-    """The bare names a def's subtree may hand on: every name it loads,
-    nested defs, lambdas and class bodies included, except as the receiver
-    of a push's direct callback (``callback=fut.set_result``, the one call
-    of ``lambda r: fut.set_result(r)``; :func:`_settle_targets`) or of a
-    ``fut.cancel()``/``event.set()`` STATEMENT.
-
-    A future the push's callback settles must not be among them. Textual
-    runs the callback through the requester's ``call_next``, so while the
-    handler awaits, that future is never settled -- and an awaited future
-    chained to it by a done-callback, a relay that awaits or polls it
-    (``done()`` and ``result()`` are loads like any other), a handoff
-    (``watch(closed, answer)``) or ``closed.set_result.__self__`` hangs
-    just the same (PR #2987 review, rounds 3 and 4). Settling it again
-    elsewhere can tell whether the callback ran: ``fut.cancel()`` answers
-    it (``if fut.cancel():``), and ``set_result``/``set_exception`` raise
-    ``InvalidStateError`` once it has, to whatever ``try`` the call sits in
-    or whoever called the def it sits in (round 5). Only a ``cancel()`` or
-    ``set()`` statement tells nobody: neither raises on a settled future,
-    and the statement discards ``cancel()``'s answer.
-
-    Args:
-        node: The pushing ``def``/``async def``.
-
-    Returns:
-        Those names, or ``None`` when the body may hand on EVERY local --
-        ``locals()``, ``vars()``, ``eval`` or ``exec`` (however reached:
-        ``builtins.eval`` too); a frame of this function (``currentframe()``,
-        ``sys._getframe()``, ``inspect.stack()``/``trace()``,
-        ``traceback.walk_stack()``, ``sys.exc_info()``, an exception's
-        ``__traceback__``, a frame's ``f_back``, a coroutine's
-        ``cr_frame``); a frame's ``f_locals``, even of a frame a callee
-        handed back; or a string naming one of those (``getattr(builtins,
-        "eval")``). Anything else that reaches a frame or every object --
-        ``gc``, a tracing hook, a computed name, a callee reading its
-        caller's frame -- is not seen.
-    """
-    escaped: set[str] = set()
-    # `id()` of each `fut.<completer>` node whose receiver hands nothing on
-    # (see above): its statement or push is popped, and marks it, before it
-    # is.
-    silent: set[int] = set()
-    stack: list[ast.AST] = list(node.body)
-    while stack:
-        child = stack.pop()
-        kind = type(child)
-        if kind is ast.Name:
-            if child.ctx.__class__ is ast.Load:
-                escaped.add(child.id)
-            continue
-        if kind is ast.Constant:
-            value = child.value
-            if value.__class__ is str and value in _INTROSPECTION_NAMES:
-                return None
-            continue
-        if kind is ast.Attribute:
-            if child.attr in _NAMESPACE_ATTRS:
-                return None
-            value = child.value
-            if value.__class__ is not ast.Name or id(child) not in silent:
-                stack.append(value)
-            continue
-        if kind is ast.Expr:
-            call = child.value
-            if call.__class__ is ast.Call:
-                func = call.func
-                if func.__class__ is ast.Attribute and func.attr in _SILENT_COMPLETERS:
-                    silent.add(id(func))
-        elif kind is ast.Call:
-            name = _call_name(child)
-            if name in _SCOPE_READERS or name in _FRAME_GETTERS:
-                return None
-            silent.update(map(id, _settle_targets(child)))
-        for field in child._fields:
-            if field == "ctx":
-                continue
-            value = getattr(child, field, None)
-            if value.__class__ is list:
-                stack.extend(item for item in value if isinstance(item, ast.AST))
-            elif isinstance(value, ast.AST):
-                stack.append(value)
-    return escaped
-
-
 def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function]]:
     """One iterative pass: defs, their pushes/awaits/schedules, and aliases.
 
@@ -1472,8 +1122,6 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
     """
     module = _Module(rel)
     functions: list[_Function] = []
-    # Each def's node, for this pass only (see `_scope_bindings`).
-    nodes: dict[_Function, ast.FunctionDef | ast.AsyncFunctionDef] = {}
     # `id()` of each dead def node: the tree outlives this pass.
     dead: set[int] = set()
     AST = ast.AST
@@ -1501,7 +1149,6 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
                 enclosing is None or enclosing.live
             )
             functions.append(new)
-            nodes[new] = node
             if fn is not None:
                 _bind(fn.nested, new)
             elif cls is not None:
@@ -1600,37 +1247,6 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
                         stack.append((item, cls, fn, child_sink, outer))
             elif isinstance(value, AST):
                 stack.append((value, cls, fn, child_sink, outer))
-    # A direct-form callback (`_completion`) leaves its push out of a
-    # future's wait only when the LOCAL it settles is FRESH here -- every
-    # binding of the name is a single-target fresh-future assignment, not a
-    # parameter -- and the body hands it on nowhere (`_escaping_names`).
-    # Settling a different future is not enough on its own: a done-callback,
-    # a relay or a handoff can chain it to the awaited one (PR #2987 review,
-    # round 3). The first cut compared names across scopes, and took a
-    # helper's parameter, a callback's local alias or a pusher-side alias for
-    # "a different future" (round 2). A `self.X` future is never accepted:
-    # reading or storing it can run code (round 5). Anything short of that
-    # is `None`, and the push counts by shape.
-    for function in functions:
-        if not any(entry is not None for entry in function.push_callbacks):
-            continue
-        node = nodes[function]
-        escaped = _escaping_names(node)
-        if escaped is None:
-            function.push_callbacks = [None] * len(function.push_callbacks)
-            continue
-        params, bound, fresh = _scope_bindings(node)
-        fresh_futures = frozenset(
-            name
-            for name in function.futures
-            if name not in params
-            and name not in escaped
-            and bound.get(name, 0) == fresh.get(name, 0)
-        )
-        function.push_callbacks = [
-            entry if entry is not None and entry <= fresh_futures else None
-            for entry in function.push_callbacks
-        ]
     return module, functions
 
 
@@ -1920,10 +1536,10 @@ class _WaitGraph:
     ) -> list[_Function]:
         """The functions that store, on ``self``, one of the futures
         ``names`` (which ``fn`` awaits or returns) that ``fn`` did not
-        create, while pushing with a ``callback=`` that may settle it -- on
-        any class ``self`` can be (``cls``, its bases, its subclasses and
-        theirs), as ``self.x()`` resolves. Awaiting it is the hand-rolled
-        wait split across two methods (TASK-33621.33)."""
+        create, while pushing with ``callback=`` -- on any class ``self``
+        can be (``cls``, its bases, its subclasses and theirs), as
+        ``self.x()`` resolves. Awaiting it is the hand-rolled wait split
+        across two methods (TASK-33621.33)."""
         foreign = {
             name[5:] for name in names - fn.futures if name.startswith("self.")
         }
@@ -2393,7 +2009,7 @@ class _WaitGraph:
                 # The push is the publisher's, but only this await waits on it.
                 fn.sites = fn.sites | {publisher.key}
                 self.site_pushes[publisher.key] = max(
-                    self.site_pushes.get(publisher.key, 0), publisher.published_pushes
+                    self.site_pushes.get(publisher.key, 0), publisher.callback_pushes
                 )
                 if not publisher.wait_pushes:
                     self.callback_only_sites.add(publisher.key)
