@@ -267,10 +267,8 @@ def test_the_scan_reaches_the_quit_flow_it_guards() -> None:
         # TASK-34000.1: Library's hooks, and the module they delegate to.
         "tldw_chatbook/UI/Screens/library_screen.py:LibraryScreen.confirm_quit",
         "tldw_chatbook/UI/Screens/library_screen.py:LibraryScreen.prepare_for_quit",
-        "tldw_chatbook/UI/Library_Modules/library_pending_work.py:"
-        "confirm_library_quit",
-        "tldw_chatbook/UI/Library_Modules/library_pending_work.py:"
-        "prepare_library_quit",
+        "tldw_chatbook/UI/Library_Modules/library_pending_work.py:confirm_library_quit",
+        "tldw_chatbook/UI/Library_Modules/library_pending_work.py:prepare_library_quit",
     }
     missing = expected - set(roots)
     assert not missing, f"the scan no longer reaches: {sorted(missing)}"

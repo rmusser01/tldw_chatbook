@@ -106,7 +106,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # "RuntimeError". Measured 24 s wall (14 s call) alone and 56 s wall under
 # local load, against the lane's 60 s per-file rule -- keep it a SINGLE test;
 # further attention variants go in non-gated files.
-MINIMUM_FILES = 140
+# Re-measured at 142 after rebasing onto dev (138 files there + this branch's
+# four): TASK-34000.3's test_library_export_replace_confirm.py (two real-app
+# boots: a note and a prompt export ask before replacing) and the TASK-32633
+# slice's test_library_notes_sync_delete_restore.py (one boot: Delete holds the
+# synced folder, Undo returns it) joined the census without a floor bump of
+# their own, which left them free to be deleted unnoticed.
+MINIMUM_FILES = 142
 
 
 def read_census(path: Path) -> list[str]:
