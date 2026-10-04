@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from Tests.Chat.console_interrupt_test_bindings import (
@@ -43,6 +45,7 @@ def _controller(app, *, attached: bool, pending: int = 0):
     return controller
 
 
+@pytest.mark.bootstrap_profile
 def test_a_round_raised_while_console_is_away_rings_once_and_badges():
     app = _App()
     controller = _controller(app, attached=False, pending=1)
@@ -55,6 +58,7 @@ def test_a_round_raised_while_console_is_away_rings_once_and_badges():
     assert app.bells == 1 and getattr(app, CONSOLE_ATTENTION_ATTR) == 0
 
 
+@pytest.mark.bootstrap_profile
 def test_a_round_raised_while_console_is_visible_badges_but_does_not_ring():
     app = _App()
     controller = _controller(app, attached=True, pending=2)
@@ -62,6 +66,7 @@ def test_a_round_raised_while_console_is_visible_badges_but_does_not_ring():
     assert app.bells == 0 and getattr(app, CONSOLE_ATTENTION_ATTR) == 2
 
 
+@pytest.mark.bootstrap_profile
 def test_retained_hidden_console_rings_without_detaching_its_view():
     app = _App()
     controller = _controller(app, attached=True, pending=1)
@@ -106,6 +111,7 @@ def test_bell_setting_precedence_is_environment_then_config_then_default(monkeyp
     assert _rings(monkeypatch, env="yes", config=None) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_headless_never_rings_and_a_zero_total_raise_never_rings(monkeypatch):
     headless = _App(headless=True)
     _controller(headless, attached=False).on_pending_rounds_changed(1, "approval", True)
@@ -126,6 +132,7 @@ def test_the_badge_shows_the_hosts_current_total_not_a_stale_dispatch():
     assert getattr(app, CONSOLE_ATTENTION_ATTR) == 1
 
 
+@pytest.mark.bootstrap_profile
 def test_a_raising_marshal_never_escapes_the_hook():
     class _Broken(_App):
         def call_from_thread(self, fn, *args, **kwargs):

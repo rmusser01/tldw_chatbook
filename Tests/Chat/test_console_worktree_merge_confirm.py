@@ -316,6 +316,7 @@ def _console_plan(*, worktree_merge_enabled: bool | None = None, fleet_max_live=
     return build_console_first_request_plan(**kwargs)
 
 
+@pytest.mark.bootstrap_profile
 def test_console_plan_offers_worktree_mutation_schemas_when_confirm_enabled():
     plan = _console_plan(worktree_merge_enabled=True, fleet_max_live=2)
     names = [schema.name for schema in plan.schemas.runtime_schemas]
@@ -326,6 +327,7 @@ def test_console_plan_offers_worktree_mutation_schemas_when_confirm_enabled():
     assert "discard_agent_worktree" in names
 
 
+@pytest.mark.bootstrap_profile
 def test_console_plan_omits_worktree_merge_schemas_when_flag_is_omitted():
     """Default (flag not passed) must match the pre-fix-round-2 behavior
     for every caller that hasn't been taught about the confirm surface --
@@ -400,6 +402,7 @@ def _capture_run_turn_kwargs(
     return captured
 
 
+@pytest.mark.bootstrap_profile
 def test_bridge_forwards_the_confirm_kwarg_to_run_turn(tmp_path, monkeypatch):
     def confirm(payload: dict[str, Any]) -> dict[str, bool]:
         return {"allow": True}
@@ -410,6 +413,7 @@ def test_bridge_forwards_the_confirm_kwarg_to_run_turn(tmp_path, monkeypatch):
     assert captured.get("request_worktree_merge_confirm") is confirm
 
 
+@pytest.mark.bootstrap_profile
 def test_bridge_forwards_none_when_omitted(tmp_path, monkeypatch):
     """`AgentService.run_turn` defaults this kwarg to None -- a caller that
     never passes it (e.g. no UI wired) must not accidentally forward some
@@ -482,6 +486,7 @@ def _capture_first_request_plan_kwargs(
     return captured
 
 
+@pytest.mark.bootstrap_profile
 def test_bridge_enables_worktree_merge_disclosure_when_confirm_is_wired(
     tmp_path, monkeypatch
 ):
@@ -494,6 +499,7 @@ def test_bridge_enables_worktree_merge_disclosure_when_confirm_is_wired(
     assert captured.get("worktree_merge_enabled") is True
 
 
+@pytest.mark.bootstrap_profile
 def test_bridge_disables_worktree_merge_disclosure_when_confirm_is_absent(
     tmp_path, monkeypatch
 ):
