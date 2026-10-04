@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
@@ -13,6 +14,9 @@ from tldw_chatbook.Agents.ask_user_questions import AskUserBusyRefusal
 from tldw_chatbook.Agents.run_context import CurrentRunActor, use_run_actor, use_run_id
 from tldw_chatbook.Chat.console_agent_bridge import format_question_marker
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+#: Bound only test synchronization; production questions remain deadline-free.
+_QUESTION_CLOSE_SYNC_TIMEOUT_SECONDS = 5
 
 
 def _questions():
@@ -377,3 +381,105 @@ def test_primary_agent_payload_has_no_label(make_controller):
     assert controller.pending_question_payloads[0]["asker_label"] is None
     controller.resolve_pending_question([], request_id=controller.pending_question_ids()[0])
     thread.join(timeout=5)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize(
+    "close_at", ["already_closed", "before_registration", "after_registration"]
+)
+def test_question_admission_cannot_outlive_its_committed_close(
+    make_controller: Callable[[], ConsoleChatController],
+    monkeypatch: pytest.MonkeyPatch,
+    close_at: str,
+) -> None:
+    """A closed owner's delayed question exits without changing its sibling.
+
+    Args:
+        make_controller: Real question host and session lifecycle fixture.
+        monkeypatch: Pauses only the source worker at a chosen admission boundary.
+        close_at: Closes before request, before registration, or after registration.
+    """
+    import tldw_chatbook.Chat.console_chat_controller as module
+
+    controller = make_controller()
+    source = controller.new_session(title="Closing question owner")
+    sibling = controller.new_session(title="Still answerable")
+    sibling_worker, sibling_result = _start(
+        controller, _questions(), session_id=sibling.id, run_id="sibling-question"
+    )
+    entered = threading.Event()
+    release = threading.Event()
+    result = {}
+
+    def request():
+        with use_run_id("closing-question"):
+            try:
+                result["outcome"] = controller.request_user_questions(
+                    _questions(), session_id=source.id
+                )
+            except Exception as exc:  # noqa: BLE001 - expose worker failures
+                result["error"] = exc
+
+    worker = threading.Thread(target=request)
+    original_uuid4 = module.uuid4
+    original_bind = controller._bind_round_cancel_signal
+
+    def before_registration():
+        if threading.current_thread() is worker:
+            entered.set()
+            assert release.wait(_QUESTION_CLOSE_SYNC_TIMEOUT_SECONDS)
+        return original_uuid4()
+
+    def after_registration(session_id):
+        if session_id == source.id:
+            entered.set()
+            assert release.wait(_QUESTION_CLOSE_SYNC_TIMEOUT_SECONDS)
+        return original_bind(session_id)
+
+    def close_source():
+        ticket = controller.begin_session_close(
+            source.id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=source.id
+            ).revision,
+        )
+        controller.finalize_session_close(ticket)
+
+    try:
+        _wait_until(lambda: bool(controller.pending_question_ids()))
+        sibling_round = controller.pending_question_ids()[0]
+        if close_at == "already_closed":
+            close_source()
+        elif close_at == "before_registration":
+            monkeypatch.setattr(module, "uuid4", before_registration)
+        else:
+            monkeypatch.setattr(
+                controller, "_bind_round_cancel_signal", after_registration
+            )
+        worker.start()
+        if close_at != "already_closed":
+            assert entered.wait(_QUESTION_CLOSE_SYNC_TIMEOUT_SECONDS)
+            close_source()
+        release.set()
+        worker.join(timeout=_QUESTION_CLOSE_SYNC_TIMEOUT_SECONDS)
+        assert not worker.is_alive(), "Close left a late question waiting"
+        assert result == {"outcome": {"answered": False, "reason": "cancelled"}}
+        assert not any(
+            session.id == source.id for session in controller.store.sessions()
+        )
+        assert controller.pending_question_ids() == [sibling_round]
+        assert set(controller._parked_question_payloads) == {sibling_round}
+        assert not any(
+            payload and payload.get("session_id") == source.id
+            for payload in controller.pending_question_payloads
+        )
+        controller.resolve_pending_question([], request_id=sibling_round)
+        sibling_worker.join(timeout=_QUESTION_CLOSE_SYNC_TIMEOUT_SECONDS)
+        assert not sibling_worker.is_alive()
+        assert sibling_result["result"]["answered"] is True
+    finally:
+        release.set()
+        controller.begin_shutdown()
+        if worker.ident is not None:
+            worker.join(timeout=_QUESTION_CLOSE_SYNC_TIMEOUT_SECONDS)
+        sibling_worker.join(timeout=_QUESTION_CLOSE_SYNC_TIMEOUT_SECONDS)

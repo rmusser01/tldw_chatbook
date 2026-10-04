@@ -1891,7 +1891,7 @@ def test_console_evidence_for_a_keyed_connection_follows_the_saved_key():
     assert readiness_after("sk-other-key").operability == "ready_to_send"
 
 
-def test_shared_evidence_adds_no_provider_config_reads():
+def test_shared_evidence_adds_no_provider_config_reads() -> None:
     """TASK-33005.2 (AC#6, the task-24454 probe): the connection key comes
     from values the readiness build already resolved, so a build that reads
     shared evidence normalizes provider keys exactly as often as one that
@@ -1927,6 +1927,12 @@ def test_shared_evidence_adds_no_provider_config_reads():
             sys.setprofile(None)
         return calls
 
+    # Initialize the shared support set before comparing per-build work.
+    build_console_settings_readiness(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app_config=_LLAMA_CONFIG,
+        environ={},
+    )
     baseline = config_reads()
     assert baseline > 0
     assert config_reads(connection_evidence=owner) == baseline

@@ -402,6 +402,10 @@ importers) for confirm flows; `SafeModalDismissMixin`
 (`Widgets/modal_dismissal.py`, 58 of 66 modals) for every modal's
 escape/click dismissal contract.
 
+The standard `ConfirmationDialog` body uses native vertical scrolling with a
+viewport height cap and docked actions; its cancel button retains initial focus.
+Specialized confirmations that compose their own body retain their layout.
+
 **Lifecycle.** Canonical family (owning sheet `components/_dialogs.tcss`;
 `dialog-title`/`dialog-buttons` promoted and registered in ADR-161 task 4 —
 the move is cascade-neutral: every competing rule is id- or widget-scoped

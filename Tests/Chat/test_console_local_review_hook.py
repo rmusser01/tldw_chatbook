@@ -621,6 +621,7 @@ def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_stop_mid_approval_records_only_the_unresolved_row(tmp_path):
     """R23, local half: mirrors `test_mcp_tool_provider.py::
     test_stop_mid_approval_records_only_the_unresolved_row`. A Stop while

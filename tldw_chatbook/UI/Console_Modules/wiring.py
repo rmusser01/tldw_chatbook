@@ -302,7 +302,6 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> 
 
 async def _resend_refused_console_echo(screen: Any, echo: Any) -> str | None:
     """TASK-33661: re-send a refused echo through the normal send path."""
-    # Lazy: keeps console_turn_resend off the boot path (_ui_ready census).
     from tldw_chatbook.Chat.console_turn_resend import resend_refused_echo
 
     store = screen._ensure_console_chat_store()

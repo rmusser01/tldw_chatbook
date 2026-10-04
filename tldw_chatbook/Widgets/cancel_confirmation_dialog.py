@@ -23,7 +23,8 @@ class CancelConfirmationDialog(ConfirmationDialog):
         align: center middle;
     }
 
-    CancelConfirmationDialog > Container {
+    CancelConfirmationDialog > Container,
+    CancelConfirmationDialog > .confirmation-scroll {
         border: thick $primary;
     }
 

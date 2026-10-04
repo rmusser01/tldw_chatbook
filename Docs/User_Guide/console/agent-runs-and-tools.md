@@ -66,14 +66,14 @@ answer · 12s` for a question, or `Waiting for your confirmation · 12s` for
 a skill/worktree confirm — instead of `Thinking…`, since a decision only
 you can make outranks whatever the model's last step happened to be — and
 the "Run:" status chip above the composer reads the same kind-aware line.
-The Inspector's `Live work` row and the pinned authority summary's `Run`
-fact stay approval-specific, though: they read "Waiting for your approval"
-only while an actual approval card (not a question or confirm) is mounted,
-and otherwise show their ordinary copy — `Generating…`, or no active work —
-even while a question or confirm card is the one genuinely pending. The
-elapsed figure
-advances while you watch. The line is live-only — it vanishes the moment
-the reply's own text arrives, and a conversation you reopen later shows the
+The Inspector's `Live work` row uses the same waiting copy. Its `Approvals`
+count and the pinned authority summary's `Run` fact cover tool-approval rounds
+for the viewed conversation, including approvals queued behind another card.
+Questions and skill/worktree confirmations do not increase that count. Older
+integrations can show an approval without attaching it to a conversation; when
+it is the only pending tool decision, the Inspector and Files attention count
+it while you decide. The elapsed figure advances while you watch. The line is live-only — it vanishes
+the moment the reply's own text arrives, and a conversation you reopen later shows the
 completed `Tool` rows below instead. During a fleet turn, while the primary
 waits on its children, the line reads `2 sub-agents · ⚙ grep_files · 12s`
 (the count of running sub-agents and their longest-running tool) instead of
@@ -161,9 +161,14 @@ its rows and actions is unchanged.
 **In the status chips** (above the composer) — "Tools: N ready" counts the
 tools available to the agent (the chip stays hidden until tools are counted,
 which happens after your first send), and
-"Approvals: N pending" counts tool calls waiting on you. The Approvals chip is
-clickable: it jumps you to the pending approval card (with nothing pending it
-just says "No approval is pending."). A mutation already in **Finishing** is
+"Approvals: N pending" counts outstanding tool-approval rounds in the viewed
+conversation; a round may contain several calls. Chat-creation confirmations
+use "Waiting for your confirmation" and do not count as tool approvals.
+The Approvals chip is
+clickable: it jumps to the visible decision card, preferring an approval when
+one is displayed. If approvals are queued behind a skill confirmation, review
+reaches that confirmation first. With no decision visible it says
+"No approval is pending." A mutation already in **Finishing** is
 status, not a pending decision, so it no longer contributes to this count.
 
 ## Features & controls
@@ -249,7 +254,7 @@ Region     Which regions? (pick any)
   turn, leaving the question up for you to answer on the card.
 - The card never grabs focus from something you are typing. If you need to
   reach it from the keyboard, the inspector's **Review approval** action
-  focuses the question card when no approval is pending.
+  focuses the question card when no approval card is displayed.
 - By default the question waits as long as it takes. To make an unanswered
   question expire instead, set `ask_user_timeout_seconds` under `[console]`
   in your config; the card then shows *Auto-continues in m:ss* and the run
@@ -274,6 +279,15 @@ cannot be saved, the failed run explains that the checkout is retained for
 manual review. It may be absent from the recovery picker when no ownership row
 was saved. Chatbook does not delete or adopt an unrecorded checkout automatically.
 
+
+### Approval controls in small terminals
+
+When the chat column is narrow or Console uses its short-height layout, the
+existing decision Select sits above the **Approve once** and **Deny** pair.
+The bulk bar puts **Deny all** first, followed by **Approve all** and **Submit**.
+Review details scroll inside the card so those actions stay visible. Tab brings
+the optional denial-reason field into view. Resizing preserves the current
+choice and focus; taller, wider layouts restore the original arrangement.
 
 ### Consecutive tool denials
 
@@ -412,7 +426,7 @@ approval"; the inspector's **Review approval** button is the same route. A
 session tab wearing the **◆** marker (the status legend reads "● running · ◆
 needs approval · ✓ finished · ✗ failed") routes straight to whichever
 decision card is actually pending — approval, question, skill-install, or
-skill-script confirm, checked in that precedence (a worktree-merge confirm
+skill-script or chat-creation confirm, checked in that precedence (a worktree-merge confirm
 has no card wired on this screen) — when you press it: the session is
 activated first — a parked round only mounts its card once its session is
 the one you are viewing — and the usual "press the active tab to rename it"
@@ -2004,8 +2018,10 @@ proposes chats.
   and any instructions. When the agent didn't name the new chat, the card
   shows the default title it would get ("Fork of <source chat>" for a fork,
   "New Chat" otherwise). Buttons: **Allow** / **Allow for this session** /
-  **Deny**. A round that never gets answered — you stop the run, or the
-  card is torn down — fails closed as a denial: nothing is created.
+  **Deny**. Stopping the run or closing its source tab cancels the
+  confirmation: nothing is created. Switching tabs keeps the decision with
+  its source tab; return there to answer it. Delayed updates from that tab
+  cannot replace another tab's live confirmation.
 - **"Allow for this session" is per tool and ends with the session.**
   `fork_chat` and `new_chat` are remembered separately, a remembered tool
   skips its card for the rest of the Console session, and the next session
