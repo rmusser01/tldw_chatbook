@@ -215,7 +215,7 @@ async def test_open_item_by_id_media_is_canvas_scoped() -> None:
             for _ in range(20):
                 await pilot.pause(0.05)
         assert calls == []
-        assert screen.query_one("#library-rail") is not None
+        screen.query_one("#library-rail")  # raises NoMatches if the rail is gone
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
         assert screen._media_state.view == "viewer"
 
@@ -293,7 +293,7 @@ async def test_export_open_from_media_is_canvas_scoped() -> None:
             for _ in range(10):
                 await pilot.pause(0.05)
         assert calls == []
-        assert screen.query_one("#library-rail") is not None
+        screen.query_one("#library-rail")  # raises NoMatches if the rail is gone
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
 
 
