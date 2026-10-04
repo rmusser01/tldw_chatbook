@@ -73,12 +73,15 @@ parentless roots between the flat rows. They are later rows of the same
 chain, so a Delete that removes chained roots also removes every such hidden
 root after the first deleted root, in the database's root order
 (TASK-33628.7). Undo restores them with the rest. They are not counted in the
-prompt, which counts only what the transcript shows.
+prompt, which counts only what the transcript shows. Finding them reads only
+the conversation's parentless rows, a page at a time
+(``CharactersRAGDB.get_root_message_rows_page``), and only when the delete
+removes a chained root.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -93,6 +96,10 @@ if TYPE_CHECKING:
         ConsoleDurableTurnAcceptance,
     )
     from tldw_chatbook.Chat.console_voice_promotion import VoicePromotionContext
+
+
+#: Parentless rows read per page while looking for hidden flat roots.
+ROOT_ROWS_PAGE_SIZE = 500
 
 
 class _ForkProjectionFlag(Protocol):
@@ -280,21 +287,37 @@ def delete_seeds(
     session = store._sessions.get(session_id)
     conversation_id = getattr(session, "persisted_conversation_id", None)
     database = getattr(store.persistence, "db", None) if store.persistence else None
-    reader = getattr(database, "get_message_tree_rows_for_conversation", None)
+    reader = getattr(database, "get_root_message_rows_page", None)
     if conversation_id is None or not callable(reader):
         return seeds
-    roots = [row for row in reader(conversation_id) if row["parent_message_id"] is None]
+    roots = _root_rows(reader, conversation_id)
     return seeds + hidden_rows_after(roots, {seed for seed in seeds if seed})
 
 
+def _root_rows(
+    reader: Callable[..., Sequence[Mapping[str, Any]]], conversation_id: str
+) -> Iterator[Mapping[str, Any]]:
+    """Yield the conversation's live parentless rows, one page at a time."""
+    after: str | None = None
+    while True:
+        page = reader(
+            conversation_id, after_message_id=after, limit=ROOT_ROWS_PAGE_SIZE
+        )
+        yield from page
+        if len(page) < ROOT_ROWS_PAGE_SIZE:
+            return
+        after = str(page[-1]["id"])
+
+
 def hidden_rows_after(
-    root_rows: Sequence[Mapping[str, Any]], deleted: set[str]
+    root_rows: Iterable[Mapping[str, Any]], deleted: set[str]
 ) -> list[str]:
     """Return the never-shown root rows after the first deleted root.
 
     Args:
         root_rows: The conversation's live parentless rows in the database's
-            root order (timestamp order, as resume reads them).
+            root order (timestamp order, as resume reads them), shaped as
+            ``CharactersRAGDB.get_root_message_rows_page`` returns them.
         deleted: Saved ids the delete already removes.
 
     Returns:
@@ -335,9 +358,10 @@ def _was_chained(
 def _never_shown(row: Mapping[str, Any]) -> bool:
     """Whether resume leaves this row out of the transcript, and it is unmarked.
 
-    Mirrors ``console_messages_from_conversation_tree`` (an empty row is
-    dropped) and ``ConsoleChatStore._ingest_full_tree`` (a tool row is never a
-    node).
+    Mirrors ``console_messages_from_conversation_tree`` (a row with no text,
+    image, generation state or provider continuation is dropped) and
+    ``ConsoleChatStore._ingest_full_tree`` (a tool row is never a node), over
+    the presence flags the root-row page carries instead of the columns.
     """
     from tldw_chatbook.Chat.console_conversation_hydration import (
         _console_message_role_from_persisted,
@@ -347,11 +371,10 @@ def _never_shown(row: Mapping[str, Any]) -> bool:
     if marker is not None and marker.root_fork:
         return False
     shown = (
-        bool(row.get("content"))
+        bool(row.get("has_content"))
         or bool(row.get("has_image"))
-        or row.get("image_data") is not None
-        or row.get("assistant_generation_state") is not None
-        or row.get("provider_continuation_json") is not None
+        or bool(row.get("has_generation_state"))
+        or bool(row.get("has_provider_continuation"))
     )
     return not shown or (
         _console_message_role_from_persisted(row) is ConsoleMessageRole.TOOL

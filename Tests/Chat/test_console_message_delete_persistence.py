@@ -1468,19 +1468,25 @@ _EMPTY_ROW = ("x1", "assistant", None, "")
         ),
     ],
 )
+# The root rows are read a page at a time; a page of one puts a page boundary
+# between every pair of roots, so no position in the chain escapes one.
+@pytest.mark.parametrize("page_size", [None, 1], ids=["one-page", "page-of-one"])
 def test_flat_delete_tombstones_hidden_rows_later_in_the_chain(
-    rows, target, removed, metadata
+    monkeypatch, page_size, rows, target, removed, metadata
 ):
     """AC#1/#2: hidden flat rows later in the chain go with it, and come back."""
     from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
         export_conversation_to_text,
     )
+    from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
     from tldw_chatbook.Chat.console_message_delete import (
         console_delete_scope,
         delete_subtree_for_undo,
         restore_deleted_subtree,
     )
 
+    if page_size is not None:
+        monkeypatch.setattr(flat_roots, "ROOT_ROWS_PAGE_SIZE", page_size)
     ids = [row[0] for row in rows]
     hidden = {"t1", "x1"} & set(ids)
     db = CharactersRAGDB(":memory:", "flat-delete")
@@ -1517,6 +1523,69 @@ def test_flat_delete_tombstones_hidden_rows_later_in_the_chain(
     assert _tree_ids(reopened, reopened_session) == set(ids) - hidden
 
 
+#: The two conversation-wide readers a Delete could reach for root rows.
+_CONVERSATION_READERS = (
+    "get_message_tree_rows_for_conversation",
+    "get_root_message_rows_page",
+)
+
+
+def _count_conversation_reads(monkeypatch, db: CharactersRAGDB) -> dict:
+    """Record the ids each call to either conversation reader returned."""
+    reads: dict[str, list[list[str]]] = {}
+    for name in _CONVERSATION_READERS:
+
+        def _counted(*args, _name=name, _reader=getattr(db, name), **kwargs):
+            rows = _reader(*args, **kwargs)
+            reads.setdefault(_name, []).append([row["id"] for row in rows])
+            return rows
+
+        monkeypatch.setattr(db, name, _counted)
+    return reads
+
+
+def test_flat_delete_reads_root_rows_in_pages_not_every_row(monkeypatch):
+    """The hidden-row lookup reads parentless rows only, a page at a time.
+
+    PR #3004 review: the lookup read every live row of the conversation and
+    kept the parentless ones. A flat conversation continued after branching
+    shipped holds parent-linked rows under its last flat row; none of them
+    can be a hidden root, so none is read.
+    """
+    from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+    from tldw_chatbook.Chat.console_message_delete import delete_subtree_for_undo
+
+    threaded = [
+        (f"c{i}", "user" if i % 2 == 0 else "assistant", f"c{i - 1}" if i else "f3",
+         f"c{i} text")
+        for i in range(6)
+    ]
+    rows = [
+        _flat("f0", "user"), _flat("f1", "assistant"), _TOOL_ROW,
+        _flat("f2", "user"), _flat("f3", "assistant"), *threaded,
+    ]
+    ids = [row[0] for row in rows]
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed_flat(db, rows, leaf="c5")
+    store, session_id, native = _open_store(db, conversation_id)
+    # Precondition: the flat rows chained, with the threaded rows after them.
+    assert [m for m, _role in _visible(store, session_id)] == [
+        "f0", "f1", "f2", "f3", *(row[0] for row in threaded)
+    ]
+    monkeypatch.setattr(flat_roots, "ROOT_ROWS_PAGE_SIZE", 2)
+    reads = _count_conversation_reads(monkeypatch, db)
+
+    deleted, _held = delete_subtree_for_undo(store, native["f1"])
+
+    assert "get_message_tree_rows_for_conversation" not in reads
+    pages = reads["get_root_message_rows_page"]
+    # Five roots in pages of two: the last page is short, so it ends the read.
+    assert pages == [["f0", "f1"], ["t1", "f2"], ["f3"]]
+    removed = set(ids) - {"f0"}
+    assert {message_id for message_id, _version in deleted.tombstones} == removed
+    assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
+
+
 @pytest.mark.parametrize(
     ("target", "removed"),
     [("c0", {"c0", "c1", "c2", "c3"}), ("c2", {"c2", "c3"})],
@@ -1545,18 +1614,11 @@ def test_threaded_delete_reads_no_root_rows_and_leaves_a_hidden_root(
     conversation_id = _seed_flat(db, rows, leaf="c3")
     store, session_id, native = _open_store(db, conversation_id)
     assert [m for m, _role in _visible(store, session_id)] == ["c0", "c1", "c2", "c3"]
-    reads: list[str] = []
-    read_rows = db.get_message_tree_rows_for_conversation
-
-    def _counted(conversation, *args, **kwargs):
-        reads.append(conversation)
-        return read_rows(conversation, *args, **kwargs)
-
-    monkeypatch.setattr(db, "get_message_tree_rows_for_conversation", _counted)
+    reads = _count_conversation_reads(monkeypatch, db)
 
     deleted, _held = delete_subtree_for_undo(store, native[target])
 
-    assert reads == []
+    assert reads == {}
     assert {message_id for message_id, _version in deleted.tombstones} == removed
     assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
 
@@ -1591,18 +1653,11 @@ def test_threaded_delete_over_an_unsaved_note_reads_no_root_rows(monkeypatch):
     assert db.get_message_by_id(saved_reply)["parent_message_id"] == "c2"
     ids = [*(row[0] for row in rows), saved_reply]
     removed = {"c0", "c1", "c2", saved_reply}
-    reads: list[str] = []
-    read_rows = db.get_message_tree_rows_for_conversation
-
-    def _counted(conversation, *args, **kwargs):
-        reads.append(conversation)
-        return read_rows(conversation, *args, **kwargs)
-
-    monkeypatch.setattr(db, "get_message_tree_rows_for_conversation", _counted)
+    reads = _count_conversation_reads(monkeypatch, db)
 
     deleted, _held = delete_subtree_for_undo(store, native["c0"])
 
-    assert reads == []
+    assert reads == {}
     assert {message_id for message_id, _version in deleted.tombstones} == removed
     assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
 
