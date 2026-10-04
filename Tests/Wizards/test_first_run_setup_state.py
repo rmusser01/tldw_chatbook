@@ -2186,10 +2186,13 @@ class TestSummaryThreeState:
         # live, a fresh profile's assistant listed sub-agents, web search,
         # Watchlists and the built-in source's notes tools, and the first
         # chat asked approval for one.
+        # Review round 1 (F10): a first send planned against a window nobody
+        # verified (a fresh local server) carries no tools at all, so the row
+        # says what MAY be offered, not what always is.
         assert rows["Tools"].detail == (
-            "gates off; the assistant still has chatbook's own tools "
-            "(sub-agents, web search, notes, Watchlists). Turn gates on "
-            f"under {TOOL_GATES_PANE_PATH}"
+            "gates off; the assistant may still use chatbook's own tools "
+            "(sub-agents, web search, notes, Watchlists) when the model's "
+            f"context window has room. Turn gates on under {TOOL_GATES_PANE_PATH}"
         )
         assert "all off" not in rows["Tools"].detail
         assert TOOL_GATES_PANE_PATH == "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
