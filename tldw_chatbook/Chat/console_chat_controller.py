@@ -2718,7 +2718,7 @@ def _build_speculative_voice_capture_request(
     """Build one durable provisional request with complete capture provenance."""
     from .console_trace_row_sources import unsaved_trace_artifact_source
 
-    rows =tuple(dict(row) for row in messages)
+    rows = tuple(dict(row) for row in messages)
     if not rows or rows[-1].get("role") != ConsoleMessageRole.USER.value:
         raise TraceProvenancePersistenceError()
     descriptors: list[TraceProvenance] = []
@@ -11835,7 +11835,9 @@ class ConsoleChatController:
                 persisted_id = committed_user_id
             else:
                 try:  # TASK-33621.2: a row that omits saved media is not that revision
-                    persisted_id = saved_message_id(self.store.get_message(owner_id), visible)
+                    persisted_id = saved_message_id(
+                        self.store.get_message(owner_id), visible
+                    )
                 except KeyError:
                     persisted_id = None
             if type(persisted_id) is str and persisted_id:
