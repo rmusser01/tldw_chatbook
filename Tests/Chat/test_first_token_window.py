@@ -16,15 +16,15 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.Chat.provider_failures import describe_stream_failure
-
-#: The first-token wait line's opening words.
-_WAITING = "Waiting for a reply"
 from tldw_chatbook.Chat.stream_stall_watchdog import (
     DEFAULT_LOCAL_FIRST_TOKEN_TIMEOUT_SECONDS,
     StreamStallError,
     first_token_timeout_seconds,
     watch_content_stalls,
 )
+
+#: The first-token wait line's opening words.
+_WAITING = "Waiting for a reply"
 
 
 async def _collect(source, timeout, **kwargs):
