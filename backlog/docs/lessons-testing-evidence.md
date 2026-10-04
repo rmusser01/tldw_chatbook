@@ -17796,3 +17796,27 @@ pytest temp dir (36); the Linux runner's shorter path gives 26. The 73 was the
 billed window, about one run in ten; the census now holds that probe still for
 the phase. Pin `os_opens` at the depth the gate actually runs at (the default
 temp dir, or CI's), and trace callers before calling an upward step "jitter".
+
+## A format-only change can turn dev red, and neither AST-equality nor the PR fast lane sees it
+
+**PR #2993 (TASK-26000 series), 2026-10-03.** 1,681 of the 1,727 changed Python files
+were AST-identical to `dev` and both fast lanes were green. Three checks still went
+green to red, none of them collected by the fast lane:
+
+- `test_egress_adoption_census` rewrote an import by literal string; the reflow split
+  that import one name per line, so the substitution stopped matching.
+- Two size-ratchet rows are pinned to `dev`'s exact line count, so reflow alone overran
+  them (`personas_screen.py` +128, `console_settings_modal.py` +60).
+- The post-await DOM census gained one row and lost five because its detector compared
+  line numbers; a lookup inside the first await's own arguments moved to a later line
+  when the call was wrapped. The detector now compares positions.
+
+The same PR's signature change added a fourth: 36 writers began calling
+`transaction(immediate=True)`, and a test's zero-argument `transaction` double raised
+`TypeError` before it measured anything.
+
+Before landing a reformat or a signature change: run `Tests/Architecture -p no:xdist` on
+a clean `origin/dev` worktree and on the branch and diff the failing ids (about ten
+ratchet rows are already red on `dev`, so only the difference means anything); search
+the test suite's string literals for text the reformat removed from a source line; and
+grep `Tests/` for doubles of the changed method, then run those files on both trees.
