@@ -506,6 +506,7 @@ def test_production_diagnostic_inventory_and_sink_topology_are_unchanged() -> No
     )
     assert result.returncode == 0, result.stderr or result.stdout
 
+
 def test_reviewed_diagnostic_changes_are_metadata_only() -> None:
     """TASK-14651: reviewed drift cannot persist private values or tracebacks."""
     failures: list[str] = []

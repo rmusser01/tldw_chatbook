@@ -21,6 +21,7 @@ CONTROLLER_PATH = Path("tldw_chatbook/Chat/console_chat_controller.py")
 DIRECT_TRANSITION_ROUTES = frozenset(
     {
         "add_variant",
+        "adopt_session_ephemeral_endpoint",
         "accept_roleplay_projection_persistence_result",
         "append_generation_message",
         "append_generation_variant",
@@ -60,6 +61,8 @@ DIRECT_TRANSITION_ROUTES = frozenset(
         "release_dispatch_recovery_action",
         "reload_quarantined_generation",
         "rollback_transient_send",
+        "rollback_session_settings_replacement",
+        "rollback_session_ephemeral_endpoint_adoption",
         "replace_message_thinking",
         "replace_session_settings",
         "retire_generation_attempt",
@@ -69,6 +72,7 @@ DIRECT_TRANSITION_ROUTES = frozenset(
         "set_active_leaf",
         "set_message_feedback",
         "set_message_metadata",
+        "update_message_thinking_block",
         "set_message_usage",
         "set_session_character_name",
         "set_session_context_policy_overrides",

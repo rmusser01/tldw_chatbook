@@ -815,8 +815,10 @@ class ConsolePromptQueueUIController:
             return None
         target = None
         try:
-            messages = self._chat_controller_accessor().store.iter_messages_newest_first(
-                session_id
+            messages = (
+                self._chat_controller_accessor().store.iter_messages_newest_first(
+                    session_id
+                )
             )
             for item in messages:
                 if target is None:
