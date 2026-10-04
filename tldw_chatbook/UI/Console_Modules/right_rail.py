@@ -200,9 +200,7 @@ class ConsoleSelectedTurnActivity(Vertical):
         if record.occurred_at is None:
             return "time unavailable"
         try:
-            occurred_at = datetime.fromtimestamp(
-                record.occurred_at, tz=timezone.utc
-            )
+            occurred_at = datetime.fromtimestamp(record.occurred_at, tz=timezone.utc)
         except (OSError, OverflowError, ValueError):
             return "time unavailable"
         return occurred_at.strftime("%H:%M:%S UTC")
@@ -549,9 +547,7 @@ class ConsoleInspectorRail(Vertical):
             selected_turn_id=None,
             actions=(),
         )
-        self._library_activity_citation_count = max(
-            0, library_activity_citation_count
-        )
+        self._library_activity_citation_count = max(0, library_activity_citation_count)
         self._library_activity_flush_result = library_activity_flush_result
         self._library_activity_retry = library_activity_retry
         self._ownership_policy = (
@@ -1050,9 +1046,8 @@ class ConsoleInspectorRail(Vertical):
             # Continue from where navigation actually was instead. Only for
             # the outer body, and only when navigation has run: entering the
             # rail cold still starts at boundary 0.
-            if (
-                self._last_boundary_index is not None
-                and focused is self.query_one("#console-inspector-rail-body")
+            if self._last_boundary_index is not None and focused is self.query_one(
+                "#console-inspector-rail-body"
             ):
                 target_index = self._last_boundary_index + direction
                 if target_index < 0 or target_index >= len(boundaries):
@@ -1666,7 +1661,10 @@ class ConsoleInspectorRail(Vertical):
                 id="console-agent-section-subagents",
             )
             fleet_section.styles.display = (
-                "block" if self._agent_fleet_section_state.rows or self._agent_fleet_section_state.summary else "none"
+                "block"
+                if self._agent_fleet_section_state.rows
+                or self._agent_fleet_section_state.summary
+                else "none"
             )
             yield fleet_section
 

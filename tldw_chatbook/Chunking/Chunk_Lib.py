@@ -354,9 +354,7 @@ def _normalize_legacy_method(method: Any) -> str:
         "propositions",
     }:
         return name
-    raise InvalidChunkingMethodError(
-        f"Unsupported chunking method: '{method}'"
-    )
+    raise InvalidChunkingMethodError(f"Unsupported chunking method: '{method}'")
 
 
 def _coerce_int_option(options: Dict[str, Any], key: str, default: int) -> int:
@@ -607,9 +605,7 @@ def _guard_tokens_overlap(max_size: Any, overlap: Any) -> None:
         )
 
 
-def _synthesize_flat_offsets(
-    text: str, chunk_texts: List[str]
-) -> List[Dict[str, int]]:
+def _synthesize_flat_offsets(text: str, chunk_texts: List[str]) -> List[Dict[str, int]]:
     """Compute (start_char, end_char) spans for chunks lacking offsets.
 
     Primary strategy: word-position mapping. Text-method chunks (words,
@@ -837,7 +833,9 @@ class Chunker:
             self.options.get("tokenizer_name_or_path", tokenizer_name_or_path)
         )
 
-        self._engine = _EngineChunker(_build_engine_config(self.options, self._tokenizer_path))
+        self._engine = _EngineChunker(
+            _build_engine_config(self.options, self._tokenizer_path)
+        )
         # TokenBasedChunker retained for legacy attribute compatibility.
         self._token_chunker: Optional[TokenBasedChunker] = None
         logger.debug(f"Chunker initialized with options: {self.options}")
@@ -917,9 +915,7 @@ class Chunker:
         self,
         text: str,
         method: Optional[str] = None,
-        llm_call_function: Optional[
-            Callable[[Dict[str, Any]], Any]
-        ] = None,
+        llm_call_function: Optional[Callable[[Dict[str, Any]], Any]] = None,
         llm_api_config: Optional[Dict[str, Any]] = None,
         use_template: Optional[bool] = None,
     ) -> List[Union[str, Dict[str, Any]]]:
@@ -951,9 +947,7 @@ class Chunker:
         try:
             text_size_bytes = len(text.encode("utf-8"))
         except AttributeError:
-            raise InvalidInputError(
-                f"Expected string input, got {type(text).__name__}"
-            )
+            raise InvalidInputError(f"Expected string input, got {type(text).__name__}")
         if text_size_bytes > MAX_DOCUMENT_SIZE_BYTES:
             text_size_mb = text_size_bytes / (1024 * 1024)
             raise MemoryLimitError(
@@ -1031,8 +1025,7 @@ class Chunker:
                 llm_config=llm_api_config,
             )
             return [
-                {"text": item["text"], "metadata": item["metadata"]}
-                for item in results
+                {"text": item["text"], "metadata": item["metadata"]} for item in results
             ]
 
         if resolved_method == "propositions" and llm_call_function is not None:
@@ -1399,7 +1392,10 @@ class Chunker:
         """
         return improved_chunking_process(
             text,
-            chunk_options_dict={**self.options, **({"method": method} if method else {})},
+            chunk_options_dict={
+                **self.options,
+                **({"method": method} if method else {}),
+            },
             tokenizer_name_or_path=self._tokenizer_path,
         )
 
@@ -1649,18 +1645,23 @@ def improved_chunking_process(
             and "metadata" in chunk_item
         ):
             normalized.append(
-                {"text": json.dumps(chunk_item["json"], ensure_ascii=False), "metadata": chunk_item["metadata"]}
+                {
+                    "text": json.dumps(chunk_item["json"], ensure_ascii=False),
+                    "metadata": chunk_item["metadata"],
+                }
             )
-        elif isinstance(chunk_item, dict) and "text" in chunk_item and "metadata" in chunk_item:
+        elif (
+            isinstance(chunk_item, dict)
+            and "text" in chunk_item
+            and "metadata" in chunk_item
+        ):
             normalized.append(
                 {"text": chunk_item["text"], "metadata": chunk_item["metadata"]}
             )
         elif isinstance(chunk_item, str):
             normalized.append({"text": chunk_item, "metadata": {}})
         else:
-            logger.warning(
-                f"Unexpected chunk item type: {type(chunk_item)}. Skipping."
-            )
+            logger.warning(f"Unexpected chunk item type: {type(chunk_item)}. Skipping.")
 
     # Flat-contract conversion (§6.3.2): legacy metadata enrichment plus
     # top-level start_char/end_char/word_count, synthesizing offsets when
@@ -1681,7 +1682,9 @@ def improved_chunking_process(
             "max_size_setting": effective_options["max_size"],
             "overlap_setting": effective_options["overlap"],
             "language": effective_options.get("language", "unknown"),
-            "relative_position": float((i + 1) / len(normalized)) if normalized else 0.0,
+            "relative_position": float((i + 1) / len(normalized))
+            if normalized
+            else 0.0,
             "adaptive_chunking_used": effective_options.get("adaptive", False),
         }
         current_chunk_metadata.update(chunk_specific_metadata)

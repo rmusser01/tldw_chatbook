@@ -518,9 +518,7 @@ class HomeScreen(BaseAppScreen):
             include_keywords=False,
         )
 
-        merged = _home_content_records(
-            notes_result, conversations_result, media_result
-        )
+        merged = _home_content_records(notes_result, conversations_result, media_result)
         resume_kind, resume_id, resume_title, resume_updated_at = (
             _home_content_resume_fields(merged)
         )
@@ -566,8 +564,12 @@ class HomeScreen(BaseAppScreen):
                     return await result
                 return result
 
-            from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
-            from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
+            from tldw_chatbook.Media.media_reading_scope_service import (
+                MediaReadingScopeService,
+            )
+            from tldw_chatbook.Media.local_media_reading_service import (
+                LocalMediaReadingService,
+            )
             from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase
 
             scope_service = getattr(callable_obj, "__self__", None)
@@ -909,9 +911,7 @@ class HomeScreen(BaseAppScreen):
 
         if button_id.startswith(f"{RAIL_SECTION_TOGGLE_PREFIX}home-"):
             event.stop()
-            section_id = button_id.removeprefix(
-                f"{RAIL_SECTION_TOGGLE_PREFIX}home-"
-            )
+            section_id = button_id.removeprefix(f"{RAIL_SECTION_TOGGLE_PREFIX}home-")
             currently_open = bool(
                 getattr(self._home_rail_preferences(), f"{section_id}_open", True)
             )

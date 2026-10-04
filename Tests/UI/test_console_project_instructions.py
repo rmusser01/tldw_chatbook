@@ -1453,12 +1453,12 @@ async def test_captured_context_uses_own_session_destination_model_system_and_re
         async def resolve_for_send(self, selection):
             self.selections.append(selection)
             return provider_resolution(
-                       ready=True,
-                       provider=selection.provider,
-                       execution_key=f"exec-{selection.provider}",
-                       model=selection.explicit_model,
-                       max_tokens=selection.max_tokens,
-                   )
+                ready=True,
+                provider=selection.provider,
+                execution_key=f"exec-{selection.provider}",
+                model=selection.explicit_model,
+                max_tokens=selection.max_tokens,
+            )
 
     gateway = Gateway()
     bridge = ConsoleAgentBridge(
@@ -1565,13 +1565,13 @@ async def test_captured_context_uses_provider_fallbacks_for_images_and_admission
         async def resolve_for_send(self, selection):
             self.selections.append(selection)
             return provider_resolution(
-                       ready=True,
-                       provider=selection.provider,
-                       execution_key=selection.provider,
-                       model=selection.explicit_model or selection.configured_model,
-                       max_tokens=selection.max_tokens,
-                       base_url=selection.base_url,
-                   )
+                ready=True,
+                provider=selection.provider,
+                execution_key=selection.provider,
+                model=selection.explicit_model or selection.configured_model,
+                max_tokens=selection.max_tokens,
+                base_url=selection.base_url,
+            )
 
     gateway = Gateway()
     bridge = ConsoleAgentBridge(

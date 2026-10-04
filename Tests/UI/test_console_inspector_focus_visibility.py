@@ -188,9 +188,7 @@ def test_the_container_focus_cue_is_an_edge_not_a_tint():
     stylesheet = app_css_text()
     start = stylesheet.index("#console-inspector-rail-body:focus")
     block = stylesheet[start : stylesheet.index("}", start)]
-    assert "outline-left" in block, (
-        f"the container focus cue is not an edge: {block!r}"
-    )
+    assert "outline-left" in block, f"the container focus cue is not an edge: {block!r}"
     assert "$ds-action-focus" in block, (
         f"the focus edge does not use the accent token: {block!r}"
     )

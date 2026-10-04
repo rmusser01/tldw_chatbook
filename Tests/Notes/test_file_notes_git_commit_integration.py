@@ -403,6 +403,7 @@ class _ControlledCommitRunner(_RecordingRunner):
         assert stat.S_IMODE(self.hooks_directory.stat().st_mode) == 0o700
         assert self.hooks_directory.stat().st_dev == Path(cwd).stat().st_dev
         assert not self.hooks_directory.is_relative_to(Path(cwd))
+
         def mark_spawned() -> None:
             if on_spawn is not None:
                 on_spawn()
@@ -996,10 +997,7 @@ async def test_candidate_publication_escapes_bidi_and_format_path_provenance(
     assert outcome.state == "succeeded"
     availability = service._owner.snapshot(binding).push_candidate
     assert availability is not None
-    assert (
-        availability.candidate.included_notes[0].display_text
-        == expected_display
-    )
+    assert availability.candidate.included_notes[0].display_text == expected_display
     await service.shutdown()
 
 
@@ -1262,8 +1260,9 @@ async def test_complete_commit_proof_blocks_unrelated_staged_without_disclosure(
     assert "unrelated-secret" not in repr(service._owner.snapshot(binding))
     assert "unrelated-secret" not in repr(service._commit_review_snapshots)
     assert _git(repository, "rev-parse", "HEAD") == pre_review_state["head"]
-    assert _git(repository, "ls-files", "-z", "--stage", "-v") == (
-        pre_review_state["index"]
+    assert (
+        _git(repository, "ls-files", "-z", "--stage", "-v")
+        == (pre_review_state["index"])
     )
     assert not any(
         any(
@@ -1524,8 +1523,9 @@ async def test_complete_commit_proof_blocks_unsupported_index_states(
     assert result.state == "blocked"
     assert result.handle is None
     assert _git(repository, "rev-parse", "HEAD") == pre_review_state["head"]
-    assert _git(repository, "ls-files", "-z", "--stage", "-v") == (
-        pre_review_state["index"]
+    assert (
+        _git(repository, "ls-files", "-z", "--stage", "-v")
+        == (pre_review_state["index"])
     )
     assert not any(
         any(
@@ -2828,9 +2828,9 @@ async def test_guarded_commit_retains_newer_post_commit_worktree_edit(
     assert [change.sequence for change in snapshot.changes] == [1]
     assert dict(snapshot.staging_ownership) == {}
     assert snapshot.git_status is not None
-    assert tuple(
-        (row.group_id, row.state) for row in snapshot.git_status.rows
-    ) == ((1, "unstaged"),)
+    assert tuple((row.group_id, row.state) for row in snapshot.git_status.rows) == (
+        (1, "unstaged"),
+    )
     assert snapshot.push_candidate is not None
     assert snapshot.push_candidate.candidate.candidate_oid == outcome.commit_object_id
     assert snapshot.push_candidate.candidate.included_notes[0].display_text == (
@@ -2906,11 +2906,9 @@ async def test_commit_check_again_refuses_live_exact_child_without_new_commit(
     tmp_path: Path,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode="uncertain",
-        )
+    service, binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="uncertain",
     )
     evidence = service._uncertain_commit
     assert evidence is not None
@@ -2937,11 +2935,9 @@ async def test_commit_recovery_evidence_drops_captured_staging_ownership(
     tmp_path: Path,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, _binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode="uncertain",
-        )
+    service, _binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="uncertain",
     )
 
     evidence = service._uncertain_commit
@@ -2961,11 +2957,9 @@ async def test_commit_check_again_waits_for_lock_or_special_state(
     blocker: str,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode="uncertain",
-        )
+    service, binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="uncertain",
     )
     runner.terminal = True
     blocker_path = repository / ".git" / blocker
@@ -3052,10 +3046,7 @@ async def test_commit_check_again_converges_to_exact_delayed_success(
     assert snapshot.push_candidate is not None
     assert review.projection is not None
     assert snapshot.push_candidate.candidate.candidate_oid == new_head
-    assert (
-        snapshot.push_candidate.candidate.parent_oid
-        == review.projection.old_commit
-    )
+    assert snapshot.push_candidate.candidate.parent_oid == review.projection.old_commit
     assert snapshot.push_candidate.candidate.subject == "Review subject"
     assert snapshot.push_candidate.change_types == ("Modified",)
     await service.shutdown()
@@ -3066,27 +3057,19 @@ async def test_commit_check_again_keeps_unchanged_state_without_natural_failure(
     tmp_path: Path,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode="zero_without_commit",
-        )
+    service, binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="zero_without_commit",
     )
     initial_projection = service._owner.snapshot(binding).commit_recovery
     assert initial_projection is not None
     assert initial_projection.can_check_again is True
-    initial_generation = service._owner.snapshot(
-        binding
-    ).git_authority_generation
+    initial_generation = service._owner.snapshot(binding).git_authority_generation
 
     first = await service.check_commit_again(binding)
-    first_generation = service._owner.snapshot(
-        binding
-    ).git_authority_generation
+    first_generation = service._owner.snapshot(binding).git_authority_generation
     second = await service.check_commit_again(binding)
-    second_generation = service._owner.snapshot(
-        binding
-    ).git_authority_generation
+    second_generation = service._owner.snapshot(binding).git_authority_generation
 
     assert first.state == second.state == "uncertain"
     assert first == second
@@ -3107,11 +3090,9 @@ async def test_commit_check_again_does_not_restore_after_signal_exit(
     mode: str,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode=mode,
-        )
+    service, binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode=mode,
     )
     if mode == "uncertain_signal":
         runner.terminal = True
@@ -3133,11 +3114,9 @@ async def test_commit_check_again_accepts_terminal_stopped_result_without_token(
     mode: str,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode=mode,
-        )
+    service, binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode=mode,
     )
     hooks_directory = runner.hooks_directory
     evidence = service._uncertain_commit
@@ -3171,11 +3150,9 @@ async def test_commit_check_again_requires_fresh_status_before_restoring_ownersh
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode="uncertain",
-        )
+    service, binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="uncertain",
     )
     runner.terminal = True
     original_query = service._query_status
@@ -3201,11 +3178,9 @@ async def test_commit_check_again_keeps_repository_differing_from_both_states(
     tmp_path: Path,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode="uncertain",
-        )
+    service, binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="uncertain",
     )
     runner.terminal = True
     (repository / "note.md").write_text("different staged state\n", encoding="utf-8")
@@ -3229,11 +3204,9 @@ async def test_commit_recovery_rebinding_discards_terminal_exact_evidence(
     tmp_path: Path,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode="zero_without_commit",
-        )
+    service, binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="zero_without_commit",
     )
     rebound = service._owner.select_root(tmp_path / "other")
 
@@ -3252,11 +3225,9 @@ async def test_live_commit_child_rebind_discards_proof_and_blocks_new_mutations(
     tmp_path: Path,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, _binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode="uncertain",
-        )
+    service, _binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="uncertain",
     )
     evidence = service._uncertain_commit
     assert evidence is not None
@@ -3330,11 +3301,9 @@ async def test_terminal_commit_child_rebind_settles_without_stale_check(
     tmp_path: Path,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, _binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode="uncertain",
-        )
+    service, _binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="uncertain",
     )
     evidence = service._uncertain_commit
     assert evidence is not None
@@ -3384,11 +3353,9 @@ async def test_commit_check_again_caller_cancellation_keeps_recovery_owned(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode="zero_without_commit",
-        )
+    service, binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="zero_without_commit",
     )
     started = asyncio.Event()
     release = asyncio.Event()
@@ -3429,11 +3396,9 @@ async def test_commit_recovery_process_exit_discards_quarantine_after_settlement
     tmp_path: Path,
 ) -> None:
     repository = _init_repository(tmp_path)
-    service, binding, _review, runner = (
-        await _prepare_uncertain_commit_recovery(
-            repository,
-            mode="uncertain",
-        )
+    service, binding, _review, runner = await _prepare_uncertain_commit_recovery(
+        repository,
+        mode="uncertain",
     )
     service._owner.attach_git_service(service)
     runner.terminal = True
@@ -3520,9 +3485,7 @@ async def test_success_uses_one_status_snapshot_for_retirement_and_projection(
             publish_ownership_changes=publish_ownership_changes,
         )
         rows = tuple(
-            replace(row, state="unstaged")
-            if row.group_id == 2
-            else row
+            replace(row, state="unstaged") if row.group_id == 2 else row
             for row in status.rows
         )
         if len(queried_changes) == 1:
@@ -3560,13 +3523,12 @@ async def test_success_uses_one_status_snapshot_for_retirement_and_projection(
     assert publication.divergent_sequence_ids == (2,)
     assert publication.refreshed_status is not None
     assert tuple(
-        (row.group_id, row.state)
-        for row in publication.refreshed_status.rows
+        (row.group_id, row.state) for row in publication.refreshed_status.rows
     ) == ((2, "unstaged"),)
-    assert [
-        change.sequence
-        for change in service._owner.snapshot(binding).changes
-    ] == [2, 3]
+    assert [change.sequence for change in service._owner.snapshot(binding).changes] == [
+        2,
+        3,
+    ]
     await service.shutdown()
 
 
@@ -3725,8 +3687,7 @@ async def test_guarded_commit_ignores_ambient_author_and_committer_dates(
     assert b" 1000000000 +0000\n" not in raw_commit
     assert b" 1000000001 +0000\n" not in raw_commit
     assert all(
-        "GIT_AUTHOR_DATE" not in environment
-        and "GIT_COMMITTER_DATE" not in environment
+        "GIT_AUTHOR_DATE" not in environment and "GIT_COMMITTER_DATE" not in environment
         for _argv, environment in runner.calls
         if "--no-replace-objects" in _argv
     )

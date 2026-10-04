@@ -261,7 +261,9 @@ class ChatbookCreationWindow(ModalScreen):
                 script_count = kept_script_counts.get(kept["id"], 0)
                 label = kept.get("watchlist_name") or f"Kept briefing {kept['id']}"
                 if script_count:
-                    label += f" ({script_count} script{'s' if script_count != 1 else ''})"
+                    label += (
+                        f" ({script_count} script{'s' if script_count != 1 else ''})"
+                    )
                 node = kept_node.add(
                     label,
                     data={"type": ContentType.KEPT_BRIEFING, "id": str(kept["id"])},

@@ -1114,9 +1114,7 @@ def load_imported_trace(source: Path | str | Mapping) -> ImportedTrace:
             "authenticity": False,
             "verified": True,
             "verdict": "valid",
-            "notice": (
-                "SHA-256 digest valid; source authenticity not established."
-            ),
+            "notice": ("SHA-256 digest valid; source authenticity not established."),
         }
         privacy = dict(manifest["privacy_inventory"])
     else:

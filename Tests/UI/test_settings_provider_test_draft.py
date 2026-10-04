@@ -242,9 +242,7 @@ def test_failed_save_does_not_rebase_evidence_to_saved_identity():
     tested = _semantic_identity(
         "https://example.test/v1/chat/completions", draft_generation=1
     )
-    saved = _semantic_identity(
-        "https://example.test/v1/models", draft_generation=2
-    )
+    saved = _semantic_identity("https://example.test/v1/models", draft_generation=2)
     store = _settled_store(tested)
 
     assert not _rebase_after_save(
@@ -261,9 +259,7 @@ def test_conflict_invalidates_even_when_mutation_claims_fully_applied():
     tested = _semantic_identity(
         "https://example.test/v1/chat/completions", draft_generation=1
     )
-    saved = _semantic_identity(
-        "https://example.test/v1/models", draft_generation=2
-    )
+    saved = _semantic_identity("https://example.test/v1/models", draft_generation=2)
     store = _settled_store(tested)
 
     assert not _rebase_after_save(
@@ -280,9 +276,7 @@ def test_conflict_invalidates_active_test_token():
     tested = _semantic_identity(
         "https://example.test/v1/chat/completions", draft_generation=1
     )
-    saved = _semantic_identity(
-        "https://example.test/v1/models", draft_generation=2
-    )
+    saved = _semantic_identity("https://example.test/v1/models", draft_generation=2)
     store = ProviderTestEvidenceStore()
     token = store.begin(tested)
     lease = store.begin_save(tested)
@@ -379,9 +373,7 @@ def test_successful_save_cannot_rebase_to_an_older_draft_generation():
     tested = _semantic_identity(
         "https://example.test/v1/chat/completions", draft_generation=3
     )
-    older = _semantic_identity(
-        "https://example.test/v1/models", draft_generation=2
-    )
+    older = _semantic_identity("https://example.test/v1/models", draft_generation=2)
     store = _settled_store(tested)
 
     assert not _rebase_after_save(
@@ -463,9 +455,7 @@ def test_same_identity_late_save_cannot_cancel_newer_active_test(mutation):
 
 
 def test_save_lease_is_single_use_after_successful_rebase():
-    tested = _semantic_identity(
-        "https://example.test/v1/models", draft_generation=2
-    )
+    tested = _semantic_identity("https://example.test/v1/models", draft_generation=2)
     saved = _semantic_identity(
         "https://example.test/v1/chat/completions", draft_generation=3
     )
@@ -624,15 +614,20 @@ def test_current_fully_applied_save_advances_generation_without_preserved_eviden
             ProviderTestEvidence(tested, "reachable", ("model-a",)),
         )
     with pytest.raises(ValueError):
-        store.begin(_semantic_identity(
-            "https://example.test/v1/chat/completions", draft_generation=7
-        ))
+        store.begin(
+            _semantic_identity(
+                "https://example.test/v1/chat/completions", draft_generation=7
+            )
+        )
 
 
 def _base_config():
     return {
         "api_settings": {
-            "llama_cpp": {"api_url": "http://localhost:8080/completion", "api_key": "fake-saved-key-not-real"},
+            "llama_cpp": {
+                "api_url": "http://localhost:8080/completion",
+                "api_key": "fake-saved-key-not-real",
+            },
             "openai": {"api_key": "fake-other-key-not-real"},
         }
     }
@@ -654,7 +649,10 @@ def test_overlay_endpoint_only_deep_copies_and_preserves_others():
     assert merged["api_settings"]["llama_cpp"]["api_key"] == "fake-saved-key-not-real"
     assert merged["api_settings"]["openai"]["api_key"] == "fake-other-key-not-real"
     # input not mutated
-    assert base["api_settings"]["llama_cpp"]["api_url"] == "http://localhost:8080/completion"
+    assert (
+        base["api_settings"]["llama_cpp"]["api_url"]
+        == "http://localhost:8080/completion"
+    )
 
 
 def test_overlay_api_key_and_env_var():
@@ -811,8 +809,11 @@ def test_findings_show_draft_endpoint_tagged():
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("llama.cpp", app_config, environ={})
     detail, _summary, _passed = screen._build_provider_readiness_findings(
-        "llama.cpp", "llama-3", readiness,
-        draft_endpoint="http://localhost:9099", dirty={"endpoint"},
+        "llama.cpp",
+        "llama-3",
+        readiness,
+        draft_endpoint="http://localhost:9099",
+        dirty={"endpoint"},
     )
     assert "http://localhost:9099 (draft)" in detail
     assert "8080" not in detail
@@ -1061,12 +1062,18 @@ def test_findings_relabel_draft_api_key_source_and_hide_value():
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
     detail, summary, _passed = screen._build_provider_readiness_findings(
-        "OpenAI", "gpt-4o", readiness,
-        draft_endpoint="", dirty={"api_key"},
+        "OpenAI",
+        "gpt-4o",
+        readiness,
+        draft_endpoint="",
+        dirty={"api_key"},
     )
     rows = _assert_labelled_rows(detail)
     assert rows["Key"] == "entered here, not saved yet · present, not verified"
-    assert "fake-draft-key-not-real" not in detail and "fake-draft-key-not-real" not in summary
+    assert (
+        "fake-draft-key-not-real" not in detail
+        and "fake-draft-key-not-real" not in summary
+    )
 
 
 def test_findings_tag_draft_env_var_and_never_leak_value():
@@ -1078,8 +1085,11 @@ def test_findings_tag_draft_env_var_and_never_leak_value():
     with patch.dict(os.environ, {"MY_CUSTOM_CRED": "env-secret-XYZ"}, clear=False):
         readiness = get_provider_readiness("OpenAI", app_config)
         detail, summary, _passed = screen._build_provider_readiness_findings(
-            "OpenAI", "gpt-4o", readiness,
-            draft_endpoint="", dirty={"credential_env_var"},
+            "OpenAI",
+            "gpt-4o",
+            readiness,
+            draft_endpoint="",
+            dirty={"credential_env_var"},
         )
     rows = _assert_labelled_rows(detail)
     assert rows["Key"] == (
@@ -1099,7 +1109,11 @@ def test_findings_key_row_names_its_source_never_its_value(missing_env):
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("OpenAI", app_config, environ=environ)
     detail, summary, _passed = screen._build_provider_readiness_findings(
-        "OpenAI", "gpt-4o", readiness, draft_endpoint="", dirty=set(),
+        "OpenAI",
+        "gpt-4o",
+        readiness,
+        draft_endpoint="",
+        dirty=set(),
     )
 
     rows = _assert_labelled_rows(detail)
@@ -1113,7 +1127,10 @@ def test_findings_key_row_names_its_source_never_its_value(missing_env):
         )
         assert rows["Config"] == "OpenAI is not ready"
         assert "api_settings" not in detail + summary
-        assert summary == "Configuration check blocked: OpenAI is not ready: Missing API key."
+        assert (
+            summary
+            == "Configuration check blocked: OpenAI is not ready: Missing API key."
+        )
     else:
         assert rows["Key"] == "from env var OPENAI_API_KEY · present, not verified"
     assert "sk-env-value-canary" not in detail + summary
@@ -1131,7 +1148,11 @@ def test_findings_key_row_names_its_source_never_its_value(missing_env):
         ),
         (
             "Databricks",
-            {"api_settings": {"databricks": {"api_key": "dapi-canary-value-0123456789"}}},
+            {
+                "api_settings": {
+                    "databricks": {"api_key": "dapi-canary-value-0123456789"}
+                }
+            },
             {},
             ("Endpoint", "not set — enter the workspace URL in the Endpoint field"),
         ),
@@ -1159,7 +1180,11 @@ def test_key_row_never_claims_missing_when_another_setting_blocks(
     readiness = get_provider_readiness(provider, app_config, environ=environ)
     assert not readiness.ready
     detail, summary, _passed = screen._build_provider_readiness_findings(
-        provider, "some-model", readiness, draft_endpoint="", dirty=set(),
+        provider,
+        "some-model",
+        readiness,
+        draft_endpoint="",
+        dirty=set(),
     )
 
     rows = _assert_labelled_rows(detail)
@@ -1185,7 +1210,9 @@ def test_findings_never_print_a_custom_named_credential_query_param():
         ProviderProbeResult(endpoint="reachable", model_ids=("llama-3",)),
     ):
         detail, summary, _passed = screen._build_provider_readiness_findings(
-            "llama_cpp", "llama-3", readiness,
+            "llama_cpp",
+            "llama-3",
+            readiness,
             draft_endpoint="http://localhost:9099/v1?mycred=SEKRET",
             dirty={"endpoint"},
             evidence=evidence,
@@ -1205,8 +1232,11 @@ def test_failed_probe_leads_with_the_failure_and_a_next_step():
     readiness = get_provider_readiness("llama_cpp", app_config, environ={})
 
     detail, summary, passed = screen._build_provider_readiness_findings(
-        "llama_cpp", "llama-3", readiness,
-        draft_endpoint="http://127.0.0.1:9099", dirty=set(),
+        "llama_cpp",
+        "llama-3",
+        readiness,
+        draft_endpoint="http://127.0.0.1:9099",
+        dirty=set(),
         evidence=ProviderProbeResult(
             endpoint="unreachable", model_ids=(), category="connection_refused"
         ),
@@ -1231,12 +1261,14 @@ def test_failed_probe_leads_with_the_failure_and_a_next_step():
 def test_generation_row_and_in_flight_line_read_stored_generation_evidence():
     """TASK-33002 rider: the Generation row and the in-flight (checking) line
     report the stored generation fact, never a hard-coded "not tested"."""
-    identity = _semantic_identity(
-        "http://127.0.0.1:9099", provider_key="llama_cpp"
-    )
+    identity = _semantic_identity("http://127.0.0.1:9099", provider_key="llama_cpp")
     evidence = ProviderTestEvidence(
         # Qodo #2958 (rewritten on purpose): a paid test names its model.
-        identity, "testing", (), generation="succeeded", generation_model="llama-3"
+        identity,
+        "testing",
+        (),
+        generation="succeeded",
+        generation_model="llama-3",
     )
     readiness = get_provider_readiness(
         "llama.cpp",
@@ -1267,8 +1299,11 @@ def test_findings_never_print_endpoint_userinfo():
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("llama.cpp", app_config, environ={})
     detail, summary, _passed = screen._build_provider_readiness_findings(
-        "llama.cpp", "llama-3", readiness,
-        draft_endpoint="http://user:hunter2@localhost:9099/v1", dirty={"endpoint"},
+        "llama.cpp",
+        "llama-3",
+        readiness,
+        draft_endpoint="http://user:hunter2@localhost:9099/v1",
+        dirty={"endpoint"},
     )
     rows = _assert_labelled_rows(detail)
     assert "user" not in rows["Endpoint"] and "hunter2" not in rows["Endpoint"]
@@ -1280,8 +1315,11 @@ def test_findings_no_draft_has_no_tags():
     screen = _bare_settings_screen(app_config)
     readiness = get_provider_readiness("llama.cpp", app_config, environ={})
     detail, _summary, _passed = screen._build_provider_readiness_findings(
-        "llama.cpp", "llama-3", readiness,
-        draft_endpoint="http://localhost:8080", dirty=set(),
+        "llama.cpp",
+        "llama-3",
+        readiness,
+        draft_endpoint="http://localhost:8080",
+        dirty=set(),
     )
     assert "(draft)" not in detail and "(unsaved)" not in detail
     assert "http://localhost:8080" in detail
@@ -1297,8 +1335,11 @@ def test_findings_avoid_ready_claim_when_blocked_on_missing_model():
     assert readiness.ready is True  # config-level readiness is fine...
 
     detail, _summary, passed = screen._build_provider_readiness_findings(
-        "OpenAI", "", readiness,
-        draft_endpoint="", dirty=set(),
+        "OpenAI",
+        "",
+        readiness,
+        draft_endpoint="",
+        dirty=set(),
     )
 
     assert passed is False
@@ -1319,8 +1360,11 @@ def test_findings_keep_configuration_only_verdict_when_passing():
     readiness = get_provider_readiness("OpenAI", app_config, environ={})
 
     detail, summary, passed = screen._build_provider_readiness_findings(
-        "OpenAI", "gpt-4o", readiness,
-        draft_endpoint="", dirty=set(),
+        "OpenAI",
+        "gpt-4o",
+        readiness,
+        draft_endpoint="",
+        dirty=set(),
     )
 
     assert passed is True
@@ -1343,10 +1387,13 @@ def test_overview_shows_the_leading_test_row_and_the_endpoint_row():
     Endpoint row follows the lead."""
     headline = SettingsScreen._provider_test_headline
 
-    assert headline(
-        "Endpoint    http://127.0.0.1:9099 · model listing failed (timeout)\n"
-        "Config      llama.cpp is configured\nGeneration  not tested"
-    ) == "Endpoint: http://127.0.0.1:9099 · model listing failed (timeout)"
+    assert (
+        headline(
+            "Endpoint    http://127.0.0.1:9099 · model listing failed (timeout)\n"
+            "Config      llama.cpp is configured\nGeneration  not tested"
+        )
+        == "Endpoint: http://127.0.0.1:9099 · model listing failed (timeout)"
+    )
     assert headline(
         "Config      llama.cpp is configured\nKey         not required\n"
         "Endpoint    http://127.0.0.1:9198 · model listing reached\n"
@@ -1980,7 +2027,9 @@ async def test_test_provider_result_shows_draft_endpoint(request):
         detail = _provider_test_result_text(screen)
         rows = _assert_labelled_rows(detail)
         assert probed == ["http://localhost:9099"]
-        assert rows["Endpoint"] == "http://localhost:9099 (draft) · model listing reached"
+        assert (
+            rows["Endpoint"] == "http://localhost:9099 (draft) · model listing reached"
+        )
         assert _result_rows(detail)[1] == ("Model", "not set — choose a default model")
 
 
@@ -2196,7 +2245,9 @@ async def test_wrapped_endpoint_row_stays_in_the_value_column_at_211x44(request)
         assert _result_rows(_provider_test_result_text(screen))[1][0] == "Endpoint"
 
 
-async def _test_reachable_llama_cpp(screen, pilot, probe=_reachable_endpoint_probe) -> str:
+async def _test_reachable_llama_cpp(
+    screen, pilot, probe=_reachable_endpoint_probe
+) -> str:
     with patch(
         "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
         probe,
@@ -2364,9 +2415,10 @@ def test_settings_identity_stamps_the_key_digest_every_surface_computes():
     )
     assert saved == connection_credential_revision("sk-saved-test-key")
     untouched = {"api_key": "", "credential_env_var": ""}
-    assert screen._provider_draft_credential_revision(
-        "openai", "stored", untouched
-    ) == saved
+    assert (
+        screen._provider_draft_credential_revision("openai", "stored", untouched)
+        == saved
+    )
     typed = {"api_key": "sk-typed-test-key", "credential_env_var": ""}
     assert screen._provider_draft_credential_revision(
         "openai", "draft", typed
@@ -2543,7 +2595,9 @@ async def test_a_cloud_provider_is_one_connection_in_settings_and_chat_settings(
 
     async with host.run_test(size=(190, 55)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
-        in_settings = _active_destination_screen(host)._provider_current_draft_identity()
+        in_settings = _active_destination_screen(
+            host
+        )._provider_current_draft_identity()
         await host.push_screen(
             ConsoleSettingsModal(
                 settings=ConsoleSessionSettings(provider="openai", model="gpt-4o"),

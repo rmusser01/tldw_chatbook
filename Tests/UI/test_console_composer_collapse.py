@@ -65,12 +65,16 @@ async def test_improvement_recovery_row_tracks_exact_composer_lifecycle() -> Non
         def assert_recovery(visible: bool) -> None:
             row = composer.query_one("#console-prompt-improvement-recovery")
             assert row.display is visible
-            assert composer.query_one(
-                "#console-prompt-improvement-undo", Button
-            ).disabled is not visible
-            assert composer.query_one(
-                "#console-prompt-improvement-review", Button
-            ).disabled is not visible
+            assert (
+                composer.query_one("#console-prompt-improvement-undo", Button).disabled
+                is not visible
+            )
+            assert (
+                composer.query_one(
+                    "#console-prompt-improvement-review", Button
+                ).disabled
+                is not visible
+            )
 
         apply_replacement()
         await pilot.pause()
@@ -922,9 +926,7 @@ async def test_console_bottom_stack_single_separator_contract():
 
     async with host.run_test(size=(150, 44)) as pilot:
         console = await _mounted_console(host, pilot)
-        transcript = console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         region = console.query_one("#console-transcript-region")
         grid = console.query_one("#console-workspace-grid")
         chips = console.query_one("#console-status-chips")
@@ -950,7 +952,10 @@ async def test_console_bottom_stack_single_separator_contract():
         assert composer.region.height == 1
         assert footer.region.y == composer.region.y + composer.region.height + 1
         strips = host.screen._compositor.render_strips()
-        for gap_y in (composer.region.y - 1, composer.region.y + composer.region.height):
+        for gap_y in (
+            composer.region.y - 1,
+            composer.region.y + composer.region.height,
+        ):
             gap_row = "".join(seg.text for seg in strips[gap_y])
             assert not gap_row.strip(), (gap_y, repr(gap_row[:20]))
 
@@ -973,9 +978,7 @@ async def test_console_composer_focus_edge_is_live_and_stable():
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         # The Console auto-focuses the composer on mount; move focus away
         # to capture the genuine rest state first.
-        console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        ).focus()
+        console.query_one("#console-native-transcript", ConsoleTranscript).focus()
         await pilot.pause()
         rest_kind, rest_color = composer.styles.border_left
         rest_region = composer.region
@@ -983,8 +986,7 @@ async def test_console_composer_focus_edge_is_live_and_stable():
         # Painted evidence for the REST edge too — style reads cannot see
         # the global *:focus outline overpainting the row (task-17651).
         rest_row = "".join(
-            seg.text
-            for seg in host.screen._compositor.render_strips()[rest_region.y]
+            seg.text for seg in host.screen._compositor.render_strips()[rest_region.y]
         )
         assert rest_row[0] == "│", repr(rest_row[:4])
 

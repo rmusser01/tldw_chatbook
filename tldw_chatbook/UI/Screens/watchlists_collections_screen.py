@@ -1375,8 +1375,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 section != "artifacts"
                 or str(context.get(WATCHLISTS_NAV_CONTEXT_BACKEND) or "").strip()
                 != "local"
-                or _LOCAL_BRIEFING_RECEIPT_RE.fullmatch(canonical_briefing_id)
-                is None
+                or _LOCAL_BRIEFING_RECEIPT_RE.fullmatch(canonical_briefing_id) is None
             ):
                 return
 
@@ -1714,9 +1713,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         dismissal + schedules.
         """
         if bool(
-            get_cli_setting(
-                "scheduling", "daily_report_demo_banner_dismissed", False
-            )
+            get_cli_setting("scheduling", "daily_report_demo_banner_dismissed", False)
         ):
             return
         db = self._briefings_db()
@@ -2743,9 +2740,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             # Scoped (TASK-2304 AC#2): a rebuild must not quietly re-widen
             # the table back to every source while the header still names one
             # watchlist.
-            sources_pane.set_reactive(
-                SourcesPane.sources, self.scoped_loaded_sources()
-            )
+            sources_pane.set_reactive(SourcesPane.sources, self.scoped_loaded_sources())
             sources_pane.set_authoritative_source_ids(
                 self._loaded_source_canonical_ids()
             )
@@ -6908,9 +6903,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                     message = f"Existing source is available in {destination}."
             else:
                 message = f"Source created in {destination}." + (
-                    " The watchlist you chose could not be used."
-                    if degraded
-                    else ""
+                    " The watchlist you chose could not be used." if degraded else ""
                 )
             # markup=False: the destination is a user-typed watchlist name.
             self._notify_watchlists(
@@ -8504,9 +8497,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             if (
                 expect_durable_receipt
                 and select_briefing_id is not None
-                and not any(
-                    row.get("id") == select_briefing_id for row in loaded_rows
-                )
+                and not any(row.get("id") == select_briefing_id for row in loaded_rows)
             ):
                 self._durable_briefing_reload_target = (
                     watchlist_id,
@@ -8840,7 +8831,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
             )
             if (
                 generation_failed
-                and (watchlist_id is None or self._briefing_watchlist_id() == watchlist_id)
+                and (
+                    watchlist_id is None
+                    or self._briefing_watchlist_id() == watchlist_id
+                )
                 and self._artifacts_view_state != "storage_mismatch"
             ):
                 self._set_artifacts_view_state(
@@ -9182,9 +9176,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         watchlist_id = self._briefing_watchlist_id()
         target = self._durable_briefing_reload_target
         select_briefing_id = (
-            target[1]
-            if target is not None and target[0] == watchlist_id
-            else None
+            target[1] if target is not None and target[0] == watchlist_id else None
         )
         self._request_briefings_refresh(
             select_briefing_id=select_briefing_id,
@@ -10181,9 +10173,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
     async def _write_briefing_cadence(
         self, watchlist_id: int, seconds: int | None
     ) -> None:
-        command_service = getattr(
-            self.app_instance, "watchlists_command_service", None
-        )
+        command_service = getattr(self.app_instance, "watchlists_command_service", None)
         try:
             if command_service is None:
                 raise RuntimeError("schedule command service is unavailable")
@@ -10346,7 +10336,11 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         if value is None:
             return "Never"
         try:
-            parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+            parsed = (
+                value
+                if isinstance(value, datetime)
+                else datetime.fromisoformat(str(value))
+            )
         except (TypeError, ValueError):
             return "Unknown"
         if parsed.tzinfo is None:
@@ -10627,7 +10621,10 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
         recorded, still inside `_start_generation`'s own `to_thread` hop.
         Passed as `exclude_watchlists`, never in place of `exclude`.
         """
-        if getattr(self.app_instance, "watchlists_operation_coordinator", None) is not None:
+        if (
+            getattr(self.app_instance, "watchlists_operation_coordinator", None)
+            is not None
+        ):
             # App startup owns process-loss reconciliation. A screen-local
             # sweep cannot distinguish navigation from process loss and must
             # never race the coordinator's accepted generation.
@@ -10848,9 +10845,7 @@ class WatchlistsCollectionsScreen(BaseAppScreen):
                 # Repaint on every same-scope path: a refusal has just changed
                 # a row's status, and a failure may leave a generating row.
                 self._request_briefings_refresh(
-                    select_briefing_id=(
-                        None if generation_failed else generated_id
-                    ),
+                    select_briefing_id=(None if generation_failed else generated_id),
                     expect_durable_receipt=durable_receipt,
                     generation_failed=generation_failed,
                     watchlist_id=watchlist_id,

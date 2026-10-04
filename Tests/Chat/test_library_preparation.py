@@ -133,12 +133,15 @@ def test_only_the_two_disclosure_outcomes_create_events(outcome: str) -> None:
 def test_cancelled_and_failure_outcomes_create_no_durable_event(
     outcome: str | None,
 ) -> None:
-    assert library_preparation_event_for_outcome(
-        outcome,
-        attempt_id="attempt-1",
-        result_count=0,
-        source_types=("notes", "media", "conversations"),
-    ) is None
+    assert (
+        library_preparation_event_for_outcome(
+            outcome,
+            attempt_id="attempt-1",
+            result_count=0,
+            source_types=("notes", "media", "conversations"),
+        )
+        is None
+    )
 
 
 def test_unknown_outcome_does_not_silently_widen_the_event_vocabulary() -> None:
@@ -302,7 +305,9 @@ def test_contribution_rejects_a_runtime_owner_override() -> None:
     assert writer.operations == []
 
 
-def test_projection_is_active_turn_filtered_bounded_and_input_order_independent() -> None:
+def test_projection_is_active_turn_filtered_bounded_and_input_order_independent() -> (
+    None
+):
     first = {
         "message_id": "turn-1",
         "conversation_id": "conversation-1",
@@ -346,7 +351,9 @@ def test_projection_is_active_turn_filtered_bounded_and_input_order_independent(
     assert expected[1].source_types == ("notes", "media")
 
 
-def test_projection_omits_malformed_wrong_owner_and_duplicate_rows_fail_closed() -> None:
+def test_projection_omits_malformed_wrong_owner_and_duplicate_rows_fail_closed() -> (
+    None
+):
     valid_payload = encode_library_preparation_event(_event())
     rows = [
         {
@@ -386,15 +393,18 @@ def test_projection_omits_malformed_wrong_owner_and_duplicate_rows_fail_closed()
         },
     ]
 
-    assert project_library_preparation(
-        rows,
-        [
-            "turn-bad-json",
-            "turn-wrong-owner",
-            "turn-duplicate",
-            "turn-other-kind",
-        ],
-    ) == ()
+    assert (
+        project_library_preparation(
+            rows,
+            [
+                "turn-bad-json",
+                "turn-wrong-owner",
+                "turn-duplicate",
+                "turn-other-kind",
+            ],
+        )
+        == ()
+    )
 
 
 def test_generic_trajectory_sidecar_cannot_displace_or_duplicate_user_anchor() -> None:
@@ -544,7 +554,10 @@ def test_imported_sidecar_and_unknown_fields_are_inert(db) -> None:
         if record.message_id == user_row["id"]
     )
     assert imported_user.step_started_at != 999.0
-    assert project_library_preparation(
-        payload["trajectory_rows"],
-        [str(user_row["id"])],
-    ) == ()
+    assert (
+        project_library_preparation(
+            payload["trajectory_rows"],
+            [str(user_row["id"])],
+        )
+        == ()
+    )

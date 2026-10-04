@@ -262,7 +262,12 @@ def resolve_auto(
     """
     reasons: list[str] = []
     winner = _select_template(
-        db, media_type=media_type, title=title, filename=filename, url=url, reasons=reasons
+        db,
+        media_type=media_type,
+        title=title,
+        filename=filename,
+        url=url,
+        reasons=reasons,
     )
     if winner is not None:
         score, priority, name = winner
@@ -331,10 +336,7 @@ def _select_template(
     best: tuple[tuple[float, int], str] | None = None
     for record in listing:
         name = str(record.get("name") or "")
-        if (
-            name.strip().lower() == AUTO_SENTINEL
-            or record.get("name_reserved") is True
-        ):
+        if name.strip().lower() == AUTO_SENTINEL or record.get("name_reserved") is True:
             # Legacy sentinel-named row (any whole-word casing — the
             # decoration's widened flag is the signal; Qodo #4): flagged by
             # the listing, never a candidate (never selected, never

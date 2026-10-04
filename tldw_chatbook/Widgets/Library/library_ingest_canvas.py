@@ -269,8 +269,10 @@ def ingest_tooling_summary_line(state: Any) -> str:
     staged_total = int(getattr(forecast, "staged_total", 0) or 0)
     doomed = int(getattr(forecast, "will_fail_tooling", 0) or 0)
     degraded = int(getattr(forecast, "at_risk", 0) or 0)
-    scope = f"{affected} of {staged_total} files" if staged_total else (
-        f"{affected} file" if affected == 1 else f"{affected} files"
+    scope = (
+        f"{affected} of {staged_total} files"
+        if staged_total
+        else (f"{affected} file" if affected == 1 else f"{affected} files")
     )
     singular = affected == 1 and not staged_total
     verb = "needs" if singular else "need"
@@ -278,8 +280,7 @@ def ingest_tooling_summary_line(state: Any) -> str:
         # Both fates in one selection: stating one verb for both is the
         # defect, so both are stated, in the commit line's own vocabulary.
         return (
-            f"⚠ {scope} {verb} more tooling — "
-            f"{doomed} will fail, {degraded} may fail."
+            f"⚠ {scope} {verb} more tooling — {doomed} will fail, {degraded} may fail."
         )
     if doomed:
         outcome = "that import will fail." if singular else "those imports will fail."
@@ -335,9 +336,7 @@ class LibraryIngestPreflightSummary(Vertical):
             return
         expanded = isinstance(event, Collapsible.Expanded)
         self.tooling_detail_expanded = expanded
-        self.post_message(
-            LibraryIngestCanvas.ToolingDetailToggled(expanded=expanded)
-        )
+        self.post_message(LibraryIngestCanvas.ToolingDetailToggled(expanded=expanded))
 
     def compose(self) -> ComposeResult:
         state = self.state
@@ -409,9 +408,7 @@ class LibraryIngestPreflightSummary(Vertical):
                 yield Button(
                     "Copy install command",
                     id=INGEST_COPY_ALL_COMMANDS_ID,
-                    classes=(
-                        "library-canvas-action ingest-preflight-copy-command"
-                    ),
+                    classes=("library-canvas-action ingest-preflight-copy-command"),
                     compact=True,
                 )
             with Collapsible(
@@ -446,8 +443,7 @@ class LibraryIngestPreflightSummary(Vertical):
                             install_command_button_label(command),
                             id=f"ingest-preflight-copy-command-{index}",
                             classes=(
-                                "library-canvas-action "
-                                "ingest-preflight-copy-command"
+                                "library-canvas-action ingest-preflight-copy-command"
                             ),
                             compact=True,
                         )
@@ -682,9 +678,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
                     )
             for member in group.members:
                 if group.expanded:
-                    yield from self._compose_queue_row(
-                        index, member, member_headers
-                    )
+                    yield from self._compose_queue_row(index, member, member_headers)
                 index += 1
         if state.queue_show_clear_finished:
             yield Button(
@@ -704,9 +698,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
             ):
                 for job in state.recent_jobs:
                     dismissed_suffix = (
-                        " (dismissed)"
-                        if getattr(job, "dismissed", False)
-                        else ""
+                        " (dismissed)" if getattr(job, "dismissed", False) else ""
                     )
                     # (task-2223) Basename + relative time first -- a list
                     # of ~130-char absolute paths was unscannable. The full
@@ -725,8 +717,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
                     # these literally -- escaping on top of it painted the
                     # escape backslashes into bracketed filenames.
                     yield Static(
-                        f"{name} — "
-                        f"{job.state.value}{dismissed_suffix}{age_suffix}",
+                        f"{name} — {job.state.value}{dismissed_suffix}{age_suffix}",
                         classes="library-ingest-recent-item",
                         markup=False,
                     )
@@ -830,9 +821,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
             for line_index, detail_line in enumerate(row.detail_lines):
                 yield Static(
                     detail_line,
-                    id=(
-                        f"library-ingest-detail-{row.job_id}-{line_index}"
-                    ),
+                    id=(f"library-ingest-detail-{row.job_id}-{line_index}"),
                     classes="library-ingest-detail-line",
                     markup=False,
                 )
@@ -873,9 +862,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
                     )
                 if row.can_show_details:
                     yield Button(
-                        "Hide details"
-                        if row.details_expanded
-                        else "Show details",
+                        "Hide details" if row.details_expanded else "Show details",
                         id=f"library-ingest-details-{row.job_id}",
                         classes=(
                             "library-canvas-action library-ingest-details "
@@ -896,10 +883,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
                 if "retry_faster_whisper" in stt_actions:
                     yield Button(
                         "Retry with faster-whisper",
-                        id=(
-                            "library-ingest-retry-faster-whisper-"
-                            f"{row.job_id}"
-                        ),
+                        id=(f"library-ingest-retry-faster-whisper-{row.job_id}"),
                         classes=(
                             "library-canvas-action "
                             "library-ingest-retry-faster-whisper "
@@ -909,11 +893,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
                     )
                 if row.can_retry and not stt_actions:
                     yield Button(
-                        (
-                            "Retry Research source"
-                            if row.research_owned
-                            else "Retry"
-                        ),
+                        ("Retry Research source" if row.research_owned else "Retry"),
                         id=f"library-ingest-retry-{row.job_id}",
                         classes=(
                             "library-canvas-action library-ingest-retry "
@@ -954,9 +934,7 @@ class LibraryIngestQueuePanel(PostRecomposeCallback, Vertical):
                     )
 
 
-_STT_RECOVERY_ACTIONS = frozenset(
-    {"choose_another_gguf", "retry_faster_whisper"}
-)
+_STT_RECOVERY_ACTIONS = frozenset({"choose_another_gguf", "retry_faster_whisper"})
 
 
 def _stt_recovery_actions(row: IngestQueueRow) -> frozenset[str]:
@@ -1105,9 +1083,7 @@ def build_type_group_title(
     invalid_labels: list[str] = []
     for field in cap.fields:
         value = values.get(field.name, field.default)
-        disabled, reason = field_disabled_state(
-            field, cap, values, is_installed=probe
-        )
+        disabled, reason = field_disabled_state(field, cap, values, is_installed=probe)
         if disabled:
             # (task-14825 #7) No disabled field contributes a value pair --
             # advertising a setting the user cannot change is a promise the
@@ -1137,11 +1113,7 @@ def build_type_group_title(
     # second copy of the schema. This keeps the default state scannable.
     shown: list[str] = []
     if invalid_labels:
-        extra = (
-            f" (+{len(invalid_labels) - 1} more)"
-            if len(invalid_labels) > 1
-            else ""
-        )
+        extra = f" (+{len(invalid_labels) - 1} more)" if len(invalid_labels) > 1 else ""
         shown.append(f"⚠ {invalid_labels[0]} needs fixing{extra}")
     blocked_clause = ""
     if blocked_count:
@@ -1230,7 +1202,11 @@ class StateGlyphCheckbox(Checkbox):
 
 def _toggle_label(*, enabled: bool, text: str) -> str:
     """Return a toggle Button's visible label, ``☐``/``☑`` convention (task-32235)."""
-    from ...Library.library_shell_state import LIBRARY_GLYPH_SELECTED, LIBRARY_GLYPH_UNSELECTED
+    from ...Library.library_shell_state import (
+        LIBRARY_GLYPH_SELECTED,
+        LIBRARY_GLYPH_UNSELECTED,
+    )
+
     return f"{LIBRARY_GLYPH_SELECTED if enabled else LIBRARY_GLYPH_UNSELECTED} {text}"
 
 
@@ -1238,6 +1214,7 @@ def _toggle_label(*, enabled: bool, text: str) -> str:
 #: bottom row saying more content exists, shown only while the canvas
 #: actually overflows -- a mid-sentence clip must never be the only signal.
 INGEST_FOLD_HINT_COPY = "▼ more — scroll for the rest"
+
 
 class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
     """Render the Library ingest canvas: the local-file ingest form and its job queue.
@@ -1559,8 +1536,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 # (and everything persisted/submitted) stays the internal
                 # token.
                 select_options = [
-                    (select_option_label(field, opt), opt)
-                    for opt in field.options
+                    (select_option_label(field, opt), opt) for opt in field.options
                 ]
                 select_value = value if value in field.options else field.default
                 if select_value not in field.options and field.options:
@@ -1573,7 +1549,9 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                     # while the persisted provider remains invalid. Selecting
                     # Auto must emit a real change that corrects the form.
                     select_value = "__invalid_saved_option__"
-                    select_options.insert(0, ("Choose a supported provider", select_value))
+                    select_options.insert(
+                        0, ("Choose a supported provider", select_value)
+                    )
                 self._reported_option_values[(group, field.name)] = select_value
                 select_label = _option_label(field, disabled_note if disabled else "")
                 children.append(
@@ -1737,9 +1715,9 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             )
             if picker_value not in available:
                 picker_value = INGEST_CHUNK_TEMPLATE_NONE_VALUE
-            self._reported_option_values[
-                ("generic", INGEST_CHUNK_TEMPLATE_FIELD)
-            ] = picker_value
+            self._reported_option_values[("generic", INGEST_CHUNK_TEMPLATE_FIELD)] = (
+                picker_value
+            )
             chunk_on = bool(values.get("chunk", True))
             picker_label = INGEST_CHUNK_TEMPLATE_LABEL
             if not chunk_on:
@@ -1777,9 +1755,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
 
         if group == "audio_video":
             provider = cap_fields_by_name["transcription_provider"]
-            provider_value = values.get(
-                "transcription_provider", provider.default
-            )
+            provider_value = values.get("transcription_provider", provider.default)
             install_gated = provider_value != "parakeet-onnx"
             install_label = _parakeet_install_label(provider_value)
             children.append(
@@ -2103,7 +2079,6 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         fold_hint.display = False
         yield fold_hint
 
-
     def on_mount(self) -> None:
         """Settle the fold indicator once first layout has real sizes."""
         self.call_after_refresh(self.sync_fold_hint)
@@ -2211,9 +2186,9 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
                 picker.set_options(options)
                 picker.value = selected
         else:
-            self._reported_option_values[
-                ("generic", INGEST_CHUNK_TEMPLATE_FIELD)
-            ] = INGEST_CHUNK_TEMPLATE_NONE_VALUE
+            self._reported_option_values[("generic", INGEST_CHUNK_TEMPLATE_FIELD)] = (
+                INGEST_CHUNK_TEMPLATE_NONE_VALUE
+            )
             picker.set_options(options)
 
     def on_resize(self, _event: Any) -> None:
@@ -2238,9 +2213,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             hint = self.query_one("#library-ingest-fold-hint", Static)
         except NoMatches:
             return
-        hint.display = (
-            self.virtual_size.height > self.container_size.height
-        )
+        hint.display = self.virtual_size.height > self.container_size.height
 
     @on(Button.Pressed, ".ingest-preflight-copy-command")
     async def _copy_preflight_install_command(self, event: Button.Pressed) -> None:
@@ -2262,7 +2235,7 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
             if not button_id.startswith(prefix):
                 return
             try:
-                index = int(button_id[len(prefix):])
+                index = int(button_id[len(prefix) :])
                 command = self.state.warning_commands[index]
             except (ValueError, IndexError):
                 return
@@ -2327,7 +2300,10 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         value = widget.text if isinstance(widget, TextArea) else event.value
         if not isinstance(widget, TextArea) and value != widget.value:
             return
-        if key in self._reported_option_values and self._reported_option_values[key] == value:
+        if (
+            key in self._reported_option_values
+            and self._reported_option_values[key] == value
+        ):
             return
         self._reported_option_values[key] = value
         self.post_message(
@@ -2345,9 +2321,11 @@ class LibraryIngestCanvas(PostRecomposeCallback, VerticalScroll):
         widget_id = collapsible.id
         if not widget_id or not widget_id.startswith("type-group-"):
             return
-        group = widget_id[len("type-group-"):]
+        group = widget_id[len("type-group-") :]
         self.post_message(
-            self.OptionPanelToggled(group, expanded=isinstance(event, Collapsible.Expanded))
+            self.OptionPanelToggled(
+                group, expanded=isinstance(event, Collapsible.Expanded)
+            )
         )
 
     @on(Button.Pressed, "#opt-audio_video-install-parakeet-v2")

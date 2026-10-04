@@ -219,9 +219,7 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
         )
 
         # (1) exactly one wake turn reached the provider.
-        assert await _settle(
-            lambda: len(gateway.payloads) > before, seconds=10.0
-        ), (
+        assert await _settle(lambda: len(gateway.payloads) > before, seconds=10.0), (
             "a background sub-agent settled while NO Console screen was mounted "
             "and no wake turn ever reached the provider"
         )
@@ -243,13 +241,15 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
 
         # (2) both rows landed in the app-owned store AND in ChaChaNotes.
         assert await _settle(
-            lambda: any(
-                m.content.startswith(WAKE_NOTICE_HEADER)
-                for m in store.messages_for_session(session_id)
-            )
-            and any(
-                m.content == WAKE_REPLY
-                for m in store.messages_for_session(session_id)
+            lambda: (
+                any(
+                    m.content.startswith(WAKE_NOTICE_HEADER)
+                    for m in store.messages_for_session(session_id)
+                )
+                and any(
+                    m.content == WAKE_REPLY
+                    for m in store.messages_for_session(session_id)
+                )
             ),
             seconds=10.0,
         ), (
@@ -330,10 +330,7 @@ async def test_a_survivor_settling_with_no_console_mounted_wakes_the_supervisor(
         await pilot.pause()
         assert await _settle(
             lambda: WAKE_REPLY in _rendered_text(chat2), seconds=10.0
-        ), (
-            "the headless wake turn is not in the transcript the returning user "
-            "sees"
-        )
+        ), "the headless wake turn is not in the transcript the returning user sees"
         rendered = _rendered_text(chat2)
         assert WAKE_NOTICE_HEADER in rendered, (
             "the wake notice never rendered for the returning user"
@@ -345,9 +342,9 @@ async def test_headless_wake_uses_active_live_only_vllm_endpoint(tmp_path):
     """An unmounted wake resolves the process-local endpoint, not config."""
 
     app, seed_gateway = _build_console_app(tmp_path)
-    app.app_config.setdefault("api_settings", {}).setdefault("vllm", {})[
-        "api_url"
-    ] = CONFIGURED_VLLM_URL
+    app.app_config.setdefault("api_settings", {}).setdefault("vllm", {})["api_url"] = (
+        CONFIGURED_VLLM_URL
+    )
 
     async with app.run_test(size=(160, 48)) as pilot:
         chat, controller, store, session_id, conversation_id = await _seed_console(
@@ -386,9 +383,9 @@ async def test_headless_wake_blocks_after_real_vllm_rollback_conflict(tmp_path):
     """A real metadata winner prevents an unmounted wake from misrouting."""
 
     app, seed_gateway = _build_console_app(tmp_path)
-    app.app_config.setdefault("api_settings", {}).setdefault("vllm", {})[
-        "api_url"
-    ] = CONFIGURED_VLLM_URL
+    app.app_config.setdefault("api_settings", {}).setdefault("vllm", {})["api_url"] = (
+        CONFIGURED_VLLM_URL
+    )
 
     async with app.run_test(size=(160, 48)) as pilot:
         chat, controller, store, session_id, conversation_id = await _seed_console(

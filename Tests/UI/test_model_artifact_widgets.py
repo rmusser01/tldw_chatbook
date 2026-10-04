@@ -158,7 +158,9 @@ async def test_plan_panel_shows_the_usage_terms_at_consent(tmp_path: Path) -> No
     the descriptor's Apache-2.0 + Boson terms never reached the user.
     """
     terms = "Two licenses: weights Apache-2.0; tokenizer Boson Higgs Audio 2."
-    app = _PanelApp(_report(tmp_path / "managed", license_id="other", usage_notice=terms))
+    app = _PanelApp(
+        _report(tmp_path / "managed", license_id="other", usage_notice=terms)
+    )
     async with app.run_test() as pilot:
         await pilot.pause()
         text = "\n".join(str(item.renderable) for item in app.query(Static))
@@ -313,9 +315,7 @@ async def test_runtime_choice_modal_explains_and_returns_explicit_provider() -> 
         await app.push_screen(ManagedGGUFRuntimeChoiceModal(), decisions.append)
         await pilot.pause()
 
-        painted = "\n".join(
-            str(item.renderable) for item in app.screen.query(Static)
-        )
+        painted = "\n".join(str(item.renderable) for item in app.screen.query(Static))
         assert "Llama.cpp" in str(
             app.screen.query_one("#managed-gguf-runtime-llamacpp", Button).label
         )

@@ -55,12 +55,8 @@ async def test_write_denied_in_ro_folder_allowed_in_rw(bound_workspace) -> None:
     ro_target = bound_workspace["ro"] / "out.txt"
     rw_target = bound_workspace["rw"] / "out.txt"
     with wfr.run_workspace("ws-a"):
-        denied = await WriteFileTool().execute(
-            file_path=str(ro_target), content="x"
-        )
-        allowed = await WriteFileTool().execute(
-            file_path=str(rw_target), content="x"
-        )
+        denied = await WriteFileTool().execute(file_path=str(ro_target), content="x")
+        allowed = await WriteFileTool().execute(file_path=str(rw_target), content="x")
     assert denied.get("error")
     assert allowed.get("error") is None
     assert rw_target.read_text() == "x"
@@ -145,9 +141,7 @@ async def test_symlink_inside_bound_folder_cannot_escape(
         result = await ListDirectoryTool().execute(
             directory_path=str(ro_folder), recursive=True, max_depth=5
         )
-        direct_link_result = await ListDirectoryTool().execute(
-            directory_path=str(link)
-        )
+        direct_link_result = await ListDirectoryTool().execute(directory_path=str(link))
 
     # (a) Nothing from inside the symlink target leaks into the recursive
     # listing, but legitimate sibling content is still present.
@@ -303,9 +297,7 @@ async def test_glob_grep_and_the_read_family_all_refuse_a_path_outside_every_roo
         write_result = await WriteFileTool().execute(
             file_path=str(outside_file), content="pwned"
         )
-        list_result = await ListDirectoryTool().execute(
-            directory_path=str(outside_dir)
-        )
+        list_result = await ListDirectoryTool().execute(directory_path=str(outside_dir))
 
         link = bound_workspace["ro"] / "escape"
         os.symlink(outside_dir, link)

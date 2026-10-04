@@ -521,9 +521,7 @@ async def test_task_16001_console_directional_rail_buttons_visual_sweep(
             # rail, which is why the collapsed form mirrors the open one
             # rather than copying it.
             context_label = "Context ◂" if effective_context_open else "Context ▸"
-            inspector_label = (
-                "▸ Inspect" if effective_inspector_open else "◂ Inspect"
-            )
+            inspector_label = "▸ Inspect" if effective_inspector_open else "◂ Inspect"
             context_tooltip = (
                 "Collapse Console context rail"
                 if effective_context_open

@@ -623,7 +623,7 @@ class WorldBookManager:
                     value = json.dumps(value) if value else None
                 elif field in ("priority", "insertion_order"):
                     value = _coerce_int(value, 0)
-                elif field == 'regex':
+                elif field == "regex":
                     value = bool(value)  # symmetry with create's bool(regex) write
                 updates.append(f"{field} = ?")
                 params.append(value)
@@ -794,9 +794,7 @@ class WorldBookManager:
         return ext
 
     @staticmethod
-    def _embedded_character_world_books(
-        record: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+    def _embedded_character_world_books(record: Dict[str, Any]) -> List[Dict[str, Any]]:
         ext = WorldBookManager._normalize_extensions(record)
         raw = ext.get(CHARACTER_WORLD_BOOKS_KEY) or []
         if not isinstance(raw, list):
@@ -894,9 +892,7 @@ class WorldBookManager:
             "detached": detached,
         }
 
-    def get_world_books_for_character(
-        self, character_id: int
-    ) -> List[Dict[str, Any]]:
+    def get_world_books_for_character(self, character_id: int) -> List[Dict[str, Any]]:
         """Summarize a character's embedded world books (from snapshots only).
 
         Deduped by name (a hostile card can carry two same-named blocks; the

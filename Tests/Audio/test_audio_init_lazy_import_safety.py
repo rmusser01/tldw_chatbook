@@ -32,6 +32,7 @@ point any of these tests run (this repo's own suite exercises real
 dictation/streaming-sink code elsewhere), making an in-process
 `sys.modules` check meaningless either way.
 """
+
 from __future__ import annotations
 
 import subprocess

@@ -175,7 +175,9 @@ async def test_active_studio_quick_note_actions_reflow_and_focus_into_view(
         ):
             action = section.query_one(f"#{widget_id}", Button)
             assert not action.disabled, (size, widget_id)
-            assert action.display and action.region.width > 0 and action.region.height > 0
+            assert (
+                action.display and action.region.width > 0 and action.region.height > 0
+            )
             action.focus()
             await pilot.pause()
             assert app.focused is action, (size, widget_id)

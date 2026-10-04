@@ -22,9 +22,7 @@ from tldw_chatbook.Widgets.Console import ConsoleComposerBar, ConsoleTranscript
 def _wheel_up(transcript: ConsoleTranscript) -> None:
     """Deliver a mouse wheel-up the way the pointer path would."""
     transcript.post_message(
-        events.MouseScrollUp(
-            transcript, 4, 4, 0, -1, 0, False, False, False
-        )
+        events.MouseScrollUp(transcript, 4, 4, 0, -1, 0, False, False, False)
     )
 
 
@@ -56,9 +54,7 @@ async def test_wheel_scrollback_detaches_follow_during_stream():
 
         composer = console.query_one("#console-native-composer", ConsoleComposerBar)
         composer.load_draft("stream please")
-        transcript = console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         assert transcript.max_scroll_y > 0, "transcript must overflow for this test"
 
         console.query_one("#console-send-message").press()
@@ -118,9 +114,7 @@ async def test_send_after_scrollback_still_jumps_to_tail():
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        transcript = console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         _wheel_up(transcript)
         _wheel_up(transcript)
         await pilot.pause()
@@ -162,9 +156,7 @@ async def test_wheel_accepted_while_layout_transiently_collapsed():
         await console._sync_native_console_chat_ui()
         await pilot.pause()
 
-        transcript = console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         # Content fits: the base gate would read False here — the same
         # False the churn-collapsed layout produces mid-stream.
         assert transcript.max_scroll_y == 0

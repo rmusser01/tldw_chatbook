@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Dict, List, Any, Optional, Tuple
 
 from loguru import logger
 
-from tldw_chatbook.Character_Chat.world_info_regex import validate_regex_pattern, regex_search
+from tldw_chatbook.Character_Chat.world_info_regex import (
+    validate_regex_pattern,
+    regex_search,
+)
 
 if TYPE_CHECKING:
     from .world_info_diagnostics import WorldBookScanDiagnostics
@@ -582,6 +585,7 @@ class WorldInfoProcessor:
         """Decompose an entry's match for diagnostics. Returns
         (primary_hit, primary_key, secondary_required, secondary_hit, secondary_key).
         Mirrors _entry_matches' logic exactly but reports WHICH key matched / why not."""
+
         def hit(key):
             return self._key_hits(entry, key, scan_text, scan_text_lower)
 

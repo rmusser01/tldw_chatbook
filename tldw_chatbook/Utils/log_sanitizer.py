@@ -107,7 +107,9 @@ _STANDALONE_CREDENTIALS = (
     # TASK-26022: Claude subscription OAuth access/refresh tokens (borrowed
     # read-only from Claude Code's credential file) — same envelope as API
     # keys, different prefix family.
-    re.compile(r"(?<![A-Za-z0-9_-])sk-ant-o[ar]t\d{2}-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"),
+    re.compile(
+        r"(?<![A-Za-z0-9_-])sk-ant-o[ar]t\d{2}-[A-Za-z0-9_-]{20,}(?![A-Za-z0-9_-])"
+    ),
     # TASK-19555 review: OpenRouter keys carry hyphens inside the body, so the
     # generic `sk-[A-Za-z0-9]{20,}` rule below never matched one.
     re.compile(r"(?<![A-Za-z0-9_-])sk-or-v1-[A-Za-z0-9]{20,}(?![A-Za-z0-9_-])"),
@@ -121,7 +123,9 @@ _STANDALONE_CREDENTIALS = (
     re.compile(r"(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{30,}(?![A-Za-z0-9_-])"),
     # AWS access key ids (the id alone identifies an account and is paired
     # with a secret often logged on the same line).
-    re.compile(r"(?<![A-Za-z0-9_-])(?:AKIA|ASIA|AGPA|AIDA|AROA)[0-9A-Z]{16}(?![A-Za-z0-9_-])"),
+    re.compile(
+        r"(?<![A-Za-z0-9_-])(?:AKIA|ASIA|AGPA|AIDA|AROA)[0-9A-Z]{16}(?![A-Za-z0-9_-])"
+    ),
     # Slack bot/user/app tokens.
     re.compile(r"(?<![A-Za-z0-9_-])xox[baprs]-[A-Za-z0-9-]{10,}(?![A-Za-z0-9_-])"),
     # JSON Web Tokens: three base64url segments, header first. Bearer-prefixed

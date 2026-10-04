@@ -465,7 +465,9 @@ def test_screen_preimport_route_order_excludes_alias_shadowed_routes():
     ordered_ids = {route.screen_name for route in app._screen_preimport_route_order()}
 
     shadowed_ids = set(registered_screen_aliases())
-    assert shadowed_ids, "sanity: the alias table must be non-empty for this test to mean anything"
+    assert shadowed_ids, (
+        "sanity: the alias table must be non-empty for this test to mean anything"
+    )
     assert not (ordered_ids & shadowed_ids), (
         f"pre-import scheduled alias-shadowed (unreachable) route ids: "
         f"{ordered_ids & shadowed_ids}"

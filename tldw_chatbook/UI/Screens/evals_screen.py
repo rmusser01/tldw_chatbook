@@ -168,7 +168,9 @@ def _extract_chat_reply_text(response: Any) -> str:
     )
 
 
-def _default_character_probe_chat_factory(_config: CharacterProbeConfig) -> ChatCallable:
+def _default_character_probe_chat_factory(
+    _config: CharacterProbeConfig,
+) -> ChatCallable:
     """Production ``ChatCallable``: a real call through the app's normal
     chat path (``Chat_Functions.chat_api_call``), per the design spec's own
     "Execution" section ("multi-turn messages in, text out, real sampler,
@@ -618,9 +620,7 @@ class EvalsScreen(LabScreen):
                         pass
 
                 body = self.build_lab_body()
-                await self._replace_region(
-                    "#lab-body", [] if body is None else [body]
-                )
+                await self._replace_region("#lab-body", [] if body is None else [body])
                 await self._replace_region(
                     "#lab-inspector", list(self.compose_lab_inspector())
                 )
@@ -643,8 +643,7 @@ class EvalsScreen(LabScreen):
                 await self._feed_skill_eval_panel_if_unfed()
             except Exception:
                 logger.opt(exception=True).warning(
-                    "Skill eval panel safety net failed "
-                    "(bench={!r}, revision={}{})",
+                    "Skill eval panel safety net failed (bench={!r}, revision={}{})",
                     self._selection.id,
                     revision,
                     " (rail rebuilt too)" if rail_dirty else "",
@@ -902,11 +901,18 @@ class EvalsScreen(LabScreen):
                     self._view_model.character_bench_by_id(task_id) is not None
                     or self._view_model.skill_eval_bench_by_id(task_id) is not None
                 )
-        if self._selection.kind == "run_group" and self._selection.id and not is_non_grid_run:
+        if (
+            self._selection.kind == "run_group"
+            and self._selection.id
+            and not is_non_grid_run
+        ):
             self.register_footer_shortcuts(
                 source="evals-grid",
                 shortcuts=(
-                    ("l", "lens"), ("b", "baseline"), ("s", "sort"), ("e", "export"),
+                    ("l", "lens"),
+                    ("b", "baseline"),
+                    ("s", "sort"),
+                    ("e", "export"),
                 ),
             )
         else:
@@ -1206,15 +1212,18 @@ class EvalsScreen(LabScreen):
         app_config = self._current_app_config()
         if sample_bench.configured_llama_cpp_url(app_config) is None:
             self.app_instance.notify(
-                "No llama.cpp server is configured; set one in Settings "
-                "first.",
+                "No llama.cpp server is configured; set one in Settings first.",
                 severity="error",
                 markup=False,
             )
             return
         model_id = sample_bench.configured_llama_cpp_model_id(app_config) or "default"
         typed_name = event.name.strip() if event.name else ""
-        name = event.name if typed_name else _unique_name(sample_bench.BENCH_EDITOR_TARGET_NAME)
+        name = (
+            event.name
+            if typed_name
+            else _unique_name(sample_bench.BENCH_EDITOR_TARGET_NAME)
+        )
         config: dict[str, str] = {}
         if event.prefix:
             config["prefix"] = event.prefix
@@ -1418,7 +1427,9 @@ class EvalsScreen(LabScreen):
             return
         button.disabled = True
         button.label = (
-            f"Running sample bench… ({done}/{total})" if total else "Creating sample bench…"
+            f"Running sample bench… ({done}/{total})"
+            if total
+            else "Creating sample bench…"
         )
 
     def _reset_sample_bench_running_ui(self) -> None:
@@ -1710,8 +1721,7 @@ class EvalsScreen(LabScreen):
                 db.update_run_status(run_id, status)
             except Exception:
                 logger.opt(exception=True).warning(
-                    f"Could not mark character bench run {run_id!r} "
-                    f"{status!r}."
+                    f"Could not mark character bench run {run_id!r} {status!r}."
                 )
 
     async def _run_character_bench_worker(self) -> None:
@@ -1934,9 +1944,7 @@ class EvalsScreen(LabScreen):
                 )
 
     @on(SkillEvalPanel.RunRequested)
-    def _on_skill_eval_run_requested(
-        self, event: SkillEvalPanel.RunRequested
-    ) -> None:
+    def _on_skill_eval_run_requested(self, event: SkillEvalPanel.RunRequested) -> None:
         """Runs the selected skill-eval bench via ``_run_skill_eval_worker``.
 
         The guard mirrors ``_on_primary_action_pressed``'s four-way
@@ -2105,9 +2113,7 @@ class EvalsScreen(LabScreen):
             )
             save_skill_eval_bench(db, config)
         except Exception as exc:
-            logger.opt(exception=True).warning(
-                "Could not persist skill eval subject."
-            )
+            logger.opt(exception=True).warning("Could not persist skill eval subject.")
             # markup=False: `exc` can carry free text (a storage error
             # naming the bench) -- the same hazard every other handler
             # here documents for interpolated exception strings.
@@ -2124,9 +2130,7 @@ class EvalsScreen(LabScreen):
         panel.set_subject(event.subject_ref, event.subject_kind)
 
     @on(SkillEvalPanel.DepthChanged)
-    def _on_skill_eval_depth_changed(
-        self, event: SkillEvalPanel.DepthChanged
-    ) -> None:
+    def _on_skill_eval_depth_changed(self, event: SkillEvalPanel.DepthChanged) -> None:
         """TASK-32888: persist the depth pick onto the bench config so an
         in-progress launch survives navigation away and back (only the
         subject round-tripped before -- the live HCI pass lost a whole
@@ -2143,9 +2147,7 @@ class EvalsScreen(LabScreen):
             )
             save_skill_eval_bench(db, config)
         except Exception:
-            logger.opt(exception=True).warning(
-                "Could not persist skill eval depth."
-            )
+            logger.opt(exception=True).warning("Could not persist skill eval depth.")
 
     @on(SkillEvalPanel.TargetsPicked)
     def _on_skill_eval_targets_picked(
@@ -2218,8 +2220,7 @@ class EvalsScreen(LabScreen):
 
             def _has_real_options(select: Select) -> bool:
                 return any(
-                    value is not Select.NULL
-                    for _label, value in select._options
+                    value is not Select.NULL for _label, value in select._options
                 )
 
             if not _has_real_options(generator):
@@ -2244,9 +2245,7 @@ class EvalsScreen(LabScreen):
                     pass
                 self._start_subject_feed(panel)
                 try:
-                    panel.query_one("#skill-eval-depth", Select).value = (
-                        config.depth
-                    )
+                    panel.query_one("#skill-eval-depth", Select).value = config.depth
                 except Exception:
                     pass
 
@@ -2266,9 +2265,7 @@ class EvalsScreen(LabScreen):
             # the guard rejects and a dead Stop button).
             if self._skill_eval_run_running:
                 self._set_skill_eval_running_ui()
-            live_ids = {
-                row["id"] for row in self._view_model.skill_eval_targets()
-            }
+            live_ids = {row["id"] for row in self._view_model.skill_eval_targets()}
             for picker_id, saved in (
                 ("skill-eval-generator", config.generator_target_id),
                 ("skill-eval-judge", config.judge_target_id),
@@ -2328,9 +2325,7 @@ class EvalsScreen(LabScreen):
         feed, so the next mount re-feeds its own panel.
         """
         try:
-            summaries, _names = await store_skill_names(
-                self._current_app_config()
-            )
+            summaries, _names = await store_skill_names(self._current_app_config())
         except Exception:
             return
         try:
@@ -2403,9 +2398,7 @@ class EvalsScreen(LabScreen):
         screen recompose (task-15475).
         """
         try:
-            summaries, _names = await store_skill_names(
-                self._current_app_config()
-            )
+            summaries, _names = await store_skill_names(self._current_app_config())
         except Exception:
             return
         has_skills = bool(summaries)
@@ -2607,9 +2600,7 @@ class EvalsScreen(LabScreen):
                 # Final-review Critical 2: the subject's own name must NOT
                 # be in the reserved set -- every store-sourced subject
                 # otherwise flags its own NAME_COLLISION (−5%).
-                reserved_names=reserved_names_for(
-                    subject.name, skill_names, builtin
-                ),
+                reserved_names=reserved_names_for(subject.name, skill_names, builtin),
                 progress=self._on_skill_eval_progress,
             )
             status = "cancelled" if cancel_token.is_cancelled else "completed"
@@ -2673,8 +2664,7 @@ class EvalsScreen(LabScreen):
                 if failure is not None:
                     # Type only -- see the `except Exception` clause below.
                     logger.warning(
-                        "Skill eval persistence failed "
-                        "(exception_category={}).",
+                        "Skill eval persistence failed (exception_category={}).",
                         type(failure).__name__,
                     )
 
@@ -2979,8 +2969,10 @@ class EvalsScreen(LabScreen):
         # Qodo F16: `skill_eval_bench` joins the accepted set for the
         # identical reason -- the inspector pane composes this button for
         # it too (Delete-only, like character benches).
-        if selection.kind not in ("bench", "character_bench",
-                                  "skill_eval_bench") or not selection.id:
+        if (
+            selection.kind not in ("bench", "character_bench", "skill_eval_bench")
+            or not selection.id
+        ):
             return
         if self._bench_delete_disabled_reason(selection.id):
             # Defensive only: `_compose_inspector_pane` already disables
@@ -3334,9 +3326,7 @@ class EvalsScreen(LabScreen):
 
         if selection.kind == "run_group":
             group = (
-                self._view_model.run_group_by_id(selection.id)
-                if selection.id
-                else None
+                self._view_model.run_group_by_id(selection.id) if selection.id else None
             )
             if group is None:
                 yield Static(
@@ -3391,9 +3381,7 @@ class EvalsScreen(LabScreen):
             # `EvalsViewModel.run_groups()`'s pivot, the grid reads its own
             # `load_grid` snapshot -- two reads of related but distinct
             # data that must not drift against each other in the UI).
-            yield ResultsGrid(
-                self._view_model, selection.id, id="evals-results-grid"
-            )
+            yield ResultsGrid(self._view_model, selection.id, id="evals-results-grid")
             return
 
         yield Static(
@@ -3440,9 +3428,7 @@ class EvalsScreen(LabScreen):
         selection = self._selection
 
         if selection.kind == "bench":
-            bench = (
-                self._view_model.bench_by_id(selection.id) if selection.id else None
-            )
+            bench = self._view_model.bench_by_id(selection.id) if selection.id else None
             if bench is not None:
                 yield EvalsInspector(
                     self._view_model,
@@ -3522,11 +3508,13 @@ class EvalsScreen(LabScreen):
 
         if selection.kind == "run_group":
             group = (
-                self._view_model.run_group_by_id(selection.id)
-                if selection.id
-                else None
+                self._view_model.run_group_by_id(selection.id) if selection.id else None
             )
-            if group is not None and not self._character_run_group(group) and not self._skill_eval_run_group(group):
+            if (
+                group is not None
+                and not self._character_run_group(group)
+                and not self._skill_eval_run_group(group)
+            ):
                 # Focused-cell detail (full top-K + probe table), updated
                 # by `_on_grid_cell_focused` as the grid's cell cursor
                 # moves -- see that handler and results_grid.py's module
@@ -3703,7 +3691,11 @@ class EvalsScreen(LabScreen):
                 bench = self._view_model.character_bench_by_id(selection.id)
             else:
                 bench = None
-            name = escape_markup(str(bench.get("name") or "Untitled bench")) if bench else None
+            name = (
+                escape_markup(str(bench.get("name") or "Untitled bench"))
+                if bench
+                else None
+            )
             return (
                 f"Run {name}" if name else "Run Bench",
                 True,
@@ -3711,15 +3703,12 @@ class EvalsScreen(LabScreen):
             )
 
         if selection.kind == "bench":
-            bench = (
-                self._view_model.bench_by_id(selection.id) if selection.id else None
-            )
+            bench = self._view_model.bench_by_id(selection.id) if selection.id else None
             if bench is None:
                 return (
                     "Run Bench",
                     True,
-                    "The selected bench no longer exists; choose another "
-                    "bench to run.",
+                    "The selected bench no longer exists; choose another bench to run.",
                 )
             # escape_markup: `name` is free-text and reaches TWO markup-
             # parsed surfaces from here -- this tooltip string (both
@@ -3797,8 +3786,7 @@ class EvalsScreen(LabScreen):
                 return (
                     "Run Bench",
                     True,
-                    "The selected bench no longer exists; choose another "
-                    "bench to run.",
+                    "The selected bench no longer exists; choose another bench to run.",
                 )
             name = escape_markup(str(bench.get("name") or "Untitled bench"))
             config_data = bench.get("config_data") or {}
@@ -3914,8 +3902,7 @@ class EvalsScreen(LabScreen):
             return (
                 "Run Bench",
                 True,
-                "This run has already completed; select a bench to start a "
-                "new run.",
+                "This run has already completed; select a bench to start a new run.",
             )
 
         return (

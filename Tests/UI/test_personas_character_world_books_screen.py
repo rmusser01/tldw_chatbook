@@ -277,8 +277,7 @@ class TestCharacterWorldBookAttachDetach:
             manager = WorldBookManager(worldbooks_db)
             attached = manager.get_world_books_for_character(char_id)
             assert any(b["name"] == "Lore" for b in attached), (
-                "attach must persist a real snapshot in the real db, "
-                f"got {attached!r}"
+                f"attach must persist a real snapshot in the real db, got {attached!r}"
             )
 
             table = screen.query_one("#personas-char-worldbooks-table", DataTable)
@@ -366,9 +365,7 @@ class TestAttachmentSectionsFlowGeometry:
 
             assert card.size.height > 0, f"card clipped at size={size}"
             assert wb.size.height > 0, f"world-books section clipped at size={size}"
-            assert dicts.size.height > 0, (
-                f"dictionaries section clipped at size={size}"
-            )
+            assert dicts.size.height > 0, f"dictionaries section clipped at size={size}"
             # The card fills the viewport; the sections flow below it in
             # document order (no dock, no dead void between them).
             assert card.region.height == stack.region.height

@@ -169,9 +169,7 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
         (a fully stamped library shows neither).
         """
         try:
-            line = self.query_one(
-                f"#{self.LEGACY_CHUNK_REPORT_LINE_ID}", Static
-            )
+            line = self.query_one(f"#{self.LEGACY_CHUNK_REPORT_LINE_ID}", Static)
         except NoMatches:
             # Mid-recompose: the cache is set, so the rebuild renders it.
             return
@@ -215,9 +213,7 @@ class LibrarySearchRagPanel(PostRecomposeCallback, VerticalScroll):
         preserves progress and receipts through child or panel replacement.
         """
         run = get_library_rechunk_run(self.app)
-        shown = bool(self._legacy_chunk_report) or bulk_rag_slot_in_flight(
-            RECHUNK_SLOT
-        )
+        shown = bool(self._legacy_chunk_report) or bulk_rag_slot_in_flight(RECHUNK_SLOT)
         button = Button(
             "Re-chunk older-engine items",
             id=self.RECHUNK_BUTTON_ID,
@@ -932,9 +928,7 @@ def library_rag_query_status_children(state: LibraryRagPanelState) -> list[Widge
     notice.display = bool(notice_text)
     children: list[Widget] = [quiet_line, notice]
     shows_full_recovery = library_rag_query_shows_full_recovery(query_state)
-    _log_query_recovery_record(
-        query_state.recovery_copy if shows_full_recovery else ""
-    )
+    _log_query_recovery_record(query_state.recovery_copy if shows_full_recovery else "")
     if shows_full_recovery:
         reason = query_state.run_action.disabled_reason
         # task-32236: the reason alone, in the Media reader's "reason ·
@@ -1261,9 +1255,7 @@ def library_rag_results_body_children(state: LibraryRagPanelState) -> list[Widge
                     classes="library-rag-quiet-line",
                 )
             ]
-        return note_children + [
-            Static(state.recovery_copy, id=state.recovery_selector)
-        ]
+        return note_children + [Static(state.recovery_copy, id=state.recovery_selector)]
     if not state.scope.has_available_sources:
         # No Library sources at all: the scope region's single quiet gate
         # line + "Open Import media" action are the entire guidance for
@@ -1333,8 +1325,7 @@ def library_rag_history_children(state: LibraryRagPanelState) -> list[Widget]:
             # exact replay, and stays truthful across a mode flip because
             # it reads `state.query_state.mode_label` fresh on every build.
             tooltip=(
-                f"Re-runs under the current mode "
-                f"({state.query_state.mode_label})."
+                f"Re-runs under the current mode ({state.query_state.mode_label})."
             ),
         )
         for index, entry in enumerate(state.history)

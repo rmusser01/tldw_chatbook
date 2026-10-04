@@ -43,7 +43,9 @@ PROFILE_CONTROLS = ("tts-profile-preview-status", "audio-save-profile-btn")
 
 _BUNDLE = (
     pathlib.Path(__file__).resolve().parents[2]
-    / "tldw_chatbook" / "css" / "tldw_cli_modular.tcss"
+    / "tldw_chatbook"
+    / "css"
+    / "tldw_cli_modular.tcss"
 )
 
 

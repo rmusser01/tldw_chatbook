@@ -88,7 +88,10 @@ def _seed_media(dbs, body: str = MEDIA_BODY, title: str = "Lighthouse optics") -
 def _seed_conversation(dbs, title: str = "Optics chat") -> str:
     conversation_id = dbs.chacha.add_conversation({"title": title})
     assert conversation_id, "precondition: the conversation writer returned an id"
-    for sender, content in (("user", "Why does the beam carry?"), ("assistant", MEDIA_BODY)):
+    for sender, content in (
+        ("user", "Why does the beam carry?"),
+        ("assistant", MEDIA_BODY),
+    ):
         dbs.chacha.add_message(
             {
                 "conversation_id": conversation_id,
@@ -159,9 +162,7 @@ async def test_media_label_only_row_expands(dbs):
     media_id = _seed_media(dbs)
     stored = dbs.media.get_media_by_id(int(media_id))
 
-    result = await _tool().execute(
-        source_type="media", source_id=media_id, chunk_id=""
-    )
+    result = await _tool().execute(source_type="media", source_id=media_id, chunk_id="")
 
     _assert_shape(result)
     assert result["status"] == "ok"
@@ -327,7 +328,7 @@ def test_tool_description_names_chunk_start_as_the_window_anchor():
 
 
 async def test_absurd_budget_is_capped_at_the_hard_max(dbs):
-    """"the tool never returns more than the budget regardless of what is
+    """ "the tool never returns more than the budget regardless of what is
     asked" (spec) -- `HARD_MAX_CHARS` is that promise, and it was untested."""
     from tldw_chatbook.Tools.document_expansion_tool import HARD_MAX_CHARS
 
@@ -612,9 +613,7 @@ async def test_conversation_fetch_asks_for_no_image_blobs(dbs, monkeypatch):
         calls.append({"args": args, "kwargs": dict(kwargs)})
         return real_reader(*args, **kwargs)
 
-    monkeypatch.setattr(
-        dbs.chacha, "get_messages_for_conversation", _recording_reader
-    )
+    monkeypatch.setattr(dbs.chacha, "get_messages_for_conversation", _recording_reader)
 
     result = await _tool().execute(
         source_type="conversation", source_id=str(conversation_id)
@@ -629,9 +628,9 @@ async def test_conversation_fetch_asks_for_no_image_blobs(dbs, monkeypatch):
         "control: the flag is what suppresses the BLOB, and the message "
         "really does carry one"
     )
-    assert (
-        real_reader(str(conversation_id), limit=10)[0]["image_data"] is not None
-    ), "control: the default still returns it, so the pin is a real reading"
+    assert real_reader(str(conversation_id), limit=10)[0]["image_data"] is not None, (
+        "control: the default still returns it, so the pin is a real reading"
+    )
 
     _assert_shape(result)
     assert result["status"] == "ok"

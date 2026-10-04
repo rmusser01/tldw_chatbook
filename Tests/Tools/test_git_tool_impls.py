@@ -29,7 +29,9 @@ from tldw_chatbook.Tools.git_tool_impls import (
 from tldw_chatbook.Tools.local_tool_impls import LocalToolError
 
 GIT_AVAILABLE = shutil.which("git") is not None
-pytestmark = pytest.mark.skipif(not GIT_AVAILABLE, reason="git is not available on this system")
+pytestmark = pytest.mark.skipif(
+    not GIT_AVAILABLE, reason="git is not available on this system"
+)
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -307,7 +309,9 @@ def test_read_only_git_operations_use_cwd_without_dash_c(
     operation_calls = [
         (argv, kwargs)
         for argv, kwargs in captured
-        if any(command in argv for command in ("status", "diff", "log", "blame", "branch"))
+        if any(
+            command in argv for command in ("status", "diff", "log", "blame", "branch")
+        )
     ]
     assert len(operation_calls) == 5
     for argv, kwargs in operation_calls:
@@ -484,7 +488,9 @@ def test_git_diff_truncated_returns_partial_output(tmp_git_repo: Path) -> None:
     assert out.rstrip().endswith("...[output truncated]")
 
 
-def test_run_git_kills_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_git_kills_process_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # A fake git that spawns a long-lived child: the timeout kill must reap
     # the whole process group, not just the direct child.
     import os
@@ -494,7 +500,9 @@ def test_run_git_kills_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyP
     bin_dir.mkdir()
     pid_file = tmp_path / "child.pid"
     fake_git = bin_dir / "git"
-    fake_git.write_text(f"#!/bin/sh\nsleep 60 &\necho $! > {pid_file}\nwait\n", encoding="utf-8")
+    fake_git.write_text(
+        f"#!/bin/sh\nsleep 60 &\necho $! > {pid_file}\nwait\n", encoding="utf-8"
+    )
     fake_git.chmod(0o755)
 
     monkeypatch.setattr(git_tool_impls.shutil, "which", lambda _name: str(fake_git))

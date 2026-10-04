@@ -1,5 +1,6 @@
 # Tests/Chunking/test_chunk_lib_shim.py
 """Chunk_Lib shim contract (spec §6.2): legacy signatures + flat output shape."""
+
 import pytest
 
 from tldw_chatbook.Chunking import Chunk_Lib
@@ -53,8 +54,9 @@ def test_flat_contract_top_level_offsets():
     chunks = Chunk_Lib.improved_chunking_process(
         "One two three four. Five six seven eight.", {"method": "words", "max_size": 2}
     )
-    assert all("start_char" in c and "end_char" in c for c in chunks), \
+    assert all("start_char" in c and "end_char" in c for c in chunks), (
         "offsets must be top-level for _persist_chunks"
+    )
     assert all(c["word_count"] > 0 for c in chunks)
 
 
@@ -64,8 +66,11 @@ def test_module_level_chunk_xml_restored():
 
 def test_exception_aliases():
     from tldw_chatbook.Chunking.engine import (
-        LanguageNotSupportedError, InvalidInputError, ChunkingError as EngineChunkingError,
+        LanguageNotSupportedError,
+        InvalidInputError,
+        ChunkingError as EngineChunkingError,
     )
+
     assert Chunk_Lib.LanguageDetectionError is LanguageNotSupportedError
     assert Chunk_Lib.MemoryLimitError is InvalidInputError
     assert Chunk_Lib.ChunkingError is EngineChunkingError
@@ -87,11 +92,16 @@ def test_tokens_no_silent_fallback():
     # legacy-parity overlap guard would raise first -- see
     # test_tokens_overlap_geq_max_size_raises -- masking the Q2 path.)
     from tldw_chatbook.Chunking.engine.strategies import tokens as tokens_mod
+
     monkeypatch_obj = pytest.MonkeyPatch()
     original = tokens_mod.TokenChunkingStrategy._resolve_tokenizer
+
     def fake_resolve(self):
         return tokens_mod.FallbackTokenizer("gpt2")
-    monkeypatch_obj.setattr(tokens_mod.TokenChunkingStrategy, "_resolve_tokenizer", fake_resolve)
+
+    monkeypatch_obj.setattr(
+        tokens_mod.TokenChunkingStrategy, "_resolve_tokenizer", fake_resolve
+    )
     try:
         with pytest.raises(Chunk_Lib.ChunkingError, match="tiktoken"):
             Chunk_Lib.improved_chunking_process(
@@ -99,7 +109,9 @@ def test_tokens_no_silent_fallback():
                 {"method": "tokens", "max_size": 3, "overlap": 0},
             )
     finally:
-        monkeypatch_obj.setattr(tokens_mod.TokenChunkingStrategy, "_resolve_tokenizer", original)
+        monkeypatch_obj.setattr(
+            tokens_mod.TokenChunkingStrategy, "_resolve_tokenizer", original
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +209,7 @@ def test_rolling_summarize_provider_exception_raises():
     def failing_llm(payload):
         raise RuntimeError("provider down")
 
-    with pytest.raises(
-        Chunk_Lib.ChunkingError, match=r"failed for part 1"
-    ) as excinfo:
+    with pytest.raises(Chunk_Lib.ChunkingError, match=r"failed for part 1") as excinfo:
         Chunk_Lib.improved_chunking_process(
             _ROLLING_FAIL_TEXT,
             dict(_ROLLING_FAIL_OPTS),
@@ -218,9 +228,7 @@ def test_rolling_summarize_error_string_result_raises():
     def error_string_llm(payload):
         return "Error: summarization provider exploded"
 
-    with pytest.raises(
-        Chunk_Lib.ChunkingError, match=r"failed for part 1"
-    ) as excinfo:
+    with pytest.raises(Chunk_Lib.ChunkingError, match=r"failed for part 1") as excinfo:
         Chunk_Lib.improved_chunking_process(
             _ROLLING_FAIL_TEXT,
             dict(_ROLLING_FAIL_OPTS),
@@ -236,9 +244,7 @@ def test_rolling_summarize_non_string_result_raises():
     def non_string_llm(payload):
         return 123
 
-    with pytest.raises(
-        Chunk_Lib.ChunkingError, match=r"failed for part 1"
-    ) as excinfo:
+    with pytest.raises(Chunk_Lib.ChunkingError, match=r"failed for part 1") as excinfo:
         Chunk_Lib.improved_chunking_process(
             _ROLLING_FAIL_TEXT,
             dict(_ROLLING_FAIL_OPTS),
@@ -395,7 +401,7 @@ def test_flat_offsets_correct_for_overlapping_chunks():
         for word in chunk["text"].split():
             assert word in span_words, (
                 f"chunk {chunk['text']!r} mapped to span "
-                f"{text[chunk['start_char']:chunk['end_char']]!r}"
+                f"{text[chunk['start_char'] : chunk['end_char']]!r}"
             )
 
 
@@ -578,9 +584,7 @@ def test_propositions_no_llm_callback_heuristic_default():
         _PROPS_TEXT, {"method": "propositions", "max_size": 5}
     )
     assert default_chunks
-    assert all(
-        c["metadata"]["chunk_method"] == "propositions" for c in default_chunks
-    )
+    assert all(c["metadata"]["chunk_method"] == "propositions" for c in default_chunks)
 
 
 def test_propositions_adapter_via_chunker_chunk_text():

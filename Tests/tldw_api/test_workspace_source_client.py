@@ -194,8 +194,7 @@ async def test_source_list_accepts_more_than_one_public_page_without_truncating(
     client = TLDWAPIClient("http://localhost:8000")
     request = AsyncMock(
         return_value=[
-            source_row(id=f"source-{index}", position=index)
-            for index in range(101)
+            source_row(id=f"source-{index}", position=index) for index in range(101)
         ]
     )
     monkeypatch.setattr(client, "_request", request)
@@ -214,8 +213,7 @@ async def test_source_list_rejects_owner_response_above_finite_offset_cap(
     client = TLDWAPIClient("http://localhost:8000")
     request = AsyncMock(
         return_value=[
-            source_row(id=f"source-{index}")
-            for index in range(MAX_OWNER_ROWS + 1)
+            source_row(id=f"source-{index}") for index in range(MAX_OWNER_ROWS + 1)
         ]
     )
     monkeypatch.setattr(client, "_request", request)

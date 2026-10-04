@@ -28,7 +28,10 @@ from Tests.UI.consolidated_css import ConsolidatedCSSApp
 
 _CSS = (
     Path(__file__).resolve().parents[2]
-    / "tldw_chatbook" / "css" / "components" / "_agentic_terminal.tcss"
+    / "tldw_chatbook"
+    / "css"
+    / "components"
+    / "_agentic_terminal.tcss"
 )
 
 
@@ -36,9 +39,9 @@ _CSS = (
 def test_provider_and_model_chips_are_action_chips():
     """task-1670: both chips must be activatable, not inert labels."""
     for action in ("enter", "space"):
-        assert any(
-            binding.key == action for binding in ConsoleModelChip.BINDINGS
-        ), action
+        assert any(binding.key == action for binding in ConsoleModelChip.BINDINGS), (
+            action
+        )
     assert issubclass(ConsoleModelChip, ConsoleChip)
     assert hasattr(ConsoleModelChip, "OpenRequested")
 
@@ -57,9 +60,9 @@ def test_assistant_chip_is_an_action_chip():
 def test_library_chip_is_an_action_chip():
     """The Library policy chip opens its policy editor."""
     for action in ("enter", "space"):
-        assert any(
-            binding.key == action for binding in ConsoleLibraryChip.BINDINGS
-        ), action
+        assert any(binding.key == action for binding in ConsoleLibraryChip.BINDINGS), (
+            action
+        )
     assert issubclass(ConsoleLibraryChip, ConsoleChip)
     assert hasattr(ConsoleLibraryChip, "OpenRequested")
 
@@ -71,9 +74,10 @@ def test_sources_and_tools_chips_are_action_chips():
     Inspector's staged-sources tray and tool rows."""
     for chip in (ConsoleSourcesChip, ConsoleToolsChip):
         for action in ("enter", "space"):
-            assert any(
-                binding.key == action for binding in chip.BINDINGS
-            ), (chip.__name__, action)
+            assert any(binding.key == action for binding in chip.BINDINGS), (
+                chip.__name__,
+                action,
+            )
         assert issubclass(chip, ConsoleChip)
         assert hasattr(chip, "OpenRequested")
 
@@ -108,9 +112,7 @@ def test_character_filter_ranks_name_matches_first():
 @pytest.mark.unit
 def test_character_filter_blank_query_and_limit():
     """A blank query lists the head of the library, bounded."""
-    options = tuple(
-        ConsoleCharacterOption(i, f"C{i}") for i in range(1, 60)
-    )
+    options = tuple(ConsoleCharacterOption(i, f"C{i}") for i in range(1, 60))
     assert len(filter_character_options(options, "")) == 40
     assert len(filter_character_options(options, "", limit=5)) == 5
     assert filter_character_options(options, "nope") == ()

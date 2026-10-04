@@ -247,9 +247,7 @@ def _capture_commit_authority(
         authority_generation=owner.snapshot(binding).git_authority_generation,
         repository=repository,
         head=(
-            HeadIdentity.attached("refs/heads/main", "b" * 40)
-            if head is None
-            else head
+            HeadIdentity.attached("refs/heads/main", "b" * 40) if head is None else head
         ),
         group_sequence_ids=sequence_ids,
         subject=subject,
@@ -293,8 +291,7 @@ def _request_commit_authority(
         group_sequence_ids=group_sequence_ids,
         subject="Reviewed notes",
         included_notes=tuple(
-            PushIncludedNote(group_id, f"group-{group_id}.md")
-            for group_id in group_ids
+            PushIncludedNote(group_id, f"group-{group_id}.md") for group_id in group_ids
         ),
         change_types=tuple("Modified" for _group_id in group_ids),
     )
@@ -317,9 +314,7 @@ def _clone_push_candidate_seed(
         included_notes=(
             seed.included_notes if included_notes is None else included_notes
         ),
-        change_types=(
-            seed.change_types if change_types is None else change_types
-        ),
+        change_types=(seed.change_types if change_types is None else change_types),
     )
 
 
@@ -679,17 +674,10 @@ def test_repository_trust_revokes_downstream_destination_authority(
     assert owner.clear_trust_if_matches(binding, repository)
 
     after = owner.snapshot(binding)
+    assert after.repository_trust_generation == before.repository_trust_generation + 1
+    assert after.destination_policy_generation > before.destination_policy_generation
     assert (
-        after.repository_trust_generation
-        == before.repository_trust_generation + 1
-    )
-    assert (
-        after.destination_policy_generation
-        > before.destination_policy_generation
-    )
-    assert (
-        after.destination_authorization_epoch
-        > before.destination_authorization_epoch
+        after.destination_authorization_epoch > before.destination_authorization_epoch
     )
     assert not owner._destination_authorization_matches(policy, authorization)
 
@@ -807,17 +795,14 @@ def test_push_review_wrong_exact_fact_revokes_authorization(
         owner._consume_push_review(
             handle,
             operation_id=(object() if wrong_fact == "operation" else operation_id),
-            network_context=(
-                object() if wrong_fact == "context" else network_context
-            ),
+            network_context=(object() if wrong_fact == "context" else network_context),
         )
         is None
     )
 
     after = owner.snapshot(binding)
     assert (
-        after.destination_authorization_epoch
-        > before.destination_authorization_epoch
+        after.destination_authorization_epoch > before.destination_authorization_epoch
     )
     assert not owner._destination_authorization_matches(policy, authorization)
     assert owner._authorize_destination_policy(policy) is not authorization
@@ -897,8 +882,7 @@ def test_push_review_bound_drift_and_aba_require_fresh_authorization(
     assert not owner._destination_authorization_matches(policy, authorization)
     if replacement_policy is not None:
         assert (
-            owner._authorize_destination_policy(replacement_policy)
-            is not authorization
+            owner._authorize_destination_policy(replacement_policy) is not authorization
         )
     else:
         assert owner._authorize_destination_policy(policy) is None
@@ -1707,9 +1691,7 @@ def test_newer_guarded_commit_replaces_push_candidate_and_stale_cannot_clear(
     assert replacement.generation > first.generation
     assert replacement.candidate.parent_oid == "d" * 40
     assert replacement.candidate.candidate_oid == "f" * 40
-    assert replacement.candidate.included_notes == (
-        PushIncludedNote(3, "third.md"),
-    )
+    assert replacement.candidate.included_notes == (PushIncludedNote(3, "third.md"),)
     assert not owner.clear_push_candidate(stale_capture)
     assert owner.snapshot(binding).push_candidate == replacement
     assert (
@@ -1877,9 +1859,7 @@ def test_commit_authority_rejects_caller_supplied_identity(
         owner._capture_commit_authority_after_review(
             lease,
             binding=binding,
-            authority_generation=owner.snapshot(
-                binding
-            ).git_authority_generation,
+            authority_generation=owner.snapshot(binding).git_authority_generation,
             repository=repository,
             head=HeadIdentity.attached("refs/heads/main", "b" * 40),
             group_sequence_ids=sequence_ids,
@@ -2062,9 +2042,7 @@ def test_commit_authority_discard_requires_exact_latest_capture(
     current = owner._capture_commit_authority_after_review(
         lease,
         binding=binding,
-        authority_generation=owner.snapshot(
-            binding
-        ).git_authority_generation,
+        authority_generation=owner.snapshot(binding).git_authority_generation,
         repository=repository,
         head=stale.head,
         group_sequence_ids=sequence_ids,
@@ -2301,20 +2279,14 @@ def test_commit_capture_waits_for_active_status_before_uncertain_outcome(
         refreshed_status,
         invalidation_generation=status_admission.invalidation_generation,
     )
-    assert (
-        owner.snapshot(binding).git_authority_generation
-        == reviewed_generation
-    )
+    assert owner.snapshot(binding).git_authority_generation == reviewed_generation
     mutation.release()
     assert owner.publish_status(
         binding,
         refreshed_status,
         invalidation_generation=status_admission.invalidation_generation,
     )
-    assert (
-        owner.snapshot(binding).git_authority_generation
-        > reviewed_generation
-    )
+    assert owner.snapshot(binding).git_authority_generation > reviewed_generation
     status_admission.lease.release()
 
     mutation = owner.try_acquire_mutation(binding)
@@ -3357,9 +3329,7 @@ def test_record_change_atomically_invalidates_status_and_preserves_ownership(
     )
 
     snapshot = owner.snapshot(binding)
-    assert tuple(item.change.relative_path for item in snapshot.changes) == (
-        "note.md",
-    )
+    assert tuple(item.change.relative_path for item in snapshot.changes) == ("note.md",)
     assert snapshot.git_status is None
     assert dict(snapshot.staging_ownership) == {1: ownership}
 
@@ -3497,10 +3467,7 @@ def test_checked_root_selection_allows_only_legitimate_same_candidate_join(
 
     initial = owner.try_select_root(tmp_path / "a", expected_binding=None)
     assert initial is not None
-    assert (
-        owner.try_select_root(tmp_path / "a", expected_binding=None)
-        == initial
-    )
+    assert owner.try_select_root(tmp_path / "a", expected_binding=None) == initial
 
     replacement = owner.try_select_root(
         tmp_path / "b",
@@ -3743,9 +3710,9 @@ def test_stale_binding_cannot_publish_or_acquire_any_lease(
 
     assert not owner.record_change(stale, SessionChange("modified", "late.md"))
     assert owner.snapshot(stale).changes == ()
-    assert [
-        item.change.relative_path for item in owner.snapshot(current).changes
-    ] == ["current.md"]
+    assert [item.change.relative_path for item in owner.snapshot(current).changes] == [
+        "current.md"
+    ]
     assert owner.try_acquire_transition(stale, "path") is None
     assert owner.try_acquire_mutation(stale) is None
     assert owner.try_acquire_status(stale) is None

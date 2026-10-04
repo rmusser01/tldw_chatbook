@@ -559,8 +559,7 @@ class PersonasInspectorPane(VerticalScroll):
                     extras.append(f"cap {rule['max_calls_per_turn']}")
                 suffix = f" ({', '.join(extras)})" if extras else ""
                 lines.append(
-                    f"{rule.get('rule_kind')}: {rule.get('rule_name')} "
-                    f"→ {verb}{suffix}"
+                    f"{rule.get('rule_kind')}: {rule.get('rule_name')} → {verb}{suffix}"
                 )
             summary = "\n".join(lines)
         try:
@@ -769,8 +768,7 @@ class PersonasInspectorPane(VerticalScroll):
                     disabled = True
                 elif has_more:
                     tail_copy = (
-                        f"Load {PERSONAS_CONVERSATIONS_PAGE_SIZE} "
-                        "older conversations"
+                        f"Load {PERSONAS_CONVERSATIONS_PAGE_SIZE} older conversations"
                     )
                     actionable = True
                     disabled = False
@@ -943,7 +941,9 @@ class PersonasInspectorPane(VerticalScroll):
                 target_index = (
                     first_new_index
                     if advance_from_loading_tail
-                    else list_view.index if index_changed else tail_index
+                    else list_view.index
+                    if index_changed
+                    else tail_index
                 )
                 list_view.index = tail_index
                 if target_index != tail_index:
@@ -982,9 +982,9 @@ class PersonasInspectorPane(VerticalScroll):
         )
         # Policy rules are a persona-record attribute (task-11); the section
         # hides for every other kind (the task-443 kind idiom).
-        self.query_one(
-            "#personas-policy-rules-summary", Static
-        ).display = selected and kind == "persona"
+        self.query_one("#personas-policy-rules-summary", Static).display = (
+            selected and kind == "persona"
+        )
         # F-036: only characters have saved conversations - the section hides
         # for persona/dictionary/lore selections (the task-443 kind idiom)
         # instead of dangling a header over an empty list.
@@ -1243,8 +1243,7 @@ class PersonasInspectorPane(VerticalScroll):
         if conversation_id is not None:
             self.post_message(ConversationRowSelected(conversation_id))
         elif (
-            event.item is self._conversation_tail
-            and self._conversation_tail_actionable
+            event.item is self._conversation_tail and self._conversation_tail_actionable
         ):
             self.post_message(OlderConversationsRequested())
 

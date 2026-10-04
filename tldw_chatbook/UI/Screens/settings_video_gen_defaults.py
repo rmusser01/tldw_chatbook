@@ -63,7 +63,9 @@ FIELD_SCHEMA: dict[str, tuple[FieldSpec, ...]] = {
     "minimax": (
         FieldSpec("base_url", "Base URL", "url"),
         FieldSpec("default_model", "Default model", "text"),
-        FieldSpec("poll_interval_seconds", "Poll interval (seconds)", "int", min_value=1),
+        FieldSpec(
+            "poll_interval_seconds", "Poll interval (seconds)", "int", min_value=1
+        ),
         FieldSpec("timeout_seconds", "Timeout (seconds)", "int", min_value=60),
         FieldSpec("allow_uploads", "Allow image uploads (i2v)", "bool"),
         FieldSpec("api_key", "API key", "secret"),
@@ -143,7 +145,9 @@ def build_backend_rows(cfg: VideoGenerationConfig) -> list[VideoGenBackendRow]:
     return rows
 
 
-def effective_placeholder(cfg: VideoGenerationConfig, backend_id: str, toml_key: str) -> str:
+def effective_placeholder(
+    cfg: VideoGenerationConfig, backend_id: str, toml_key: str
+) -> str:
     """Return the resolved effective value for an unset non-secret field.
 
     Used as the editor's placeholder text so an empty field never hides
@@ -203,7 +207,10 @@ def playback_tool_rows() -> list[tuple[str, bool]]:
     """
     import shutil
 
-    return [(tool, shutil.which(tool) is not None) for tool in ("ffmpeg", "ffplay", "yt-dlp")]
+    return [
+        (tool, shutil.which(tool) is not None)
+        for tool in ("ffmpeg", "ffplay", "yt-dlp")
+    ]
 
 
 _GLOBAL_DRAFT_KEYS: tuple[str, ...] = (
@@ -431,9 +438,18 @@ def validate_draft(draft: VideoGenDraftValues) -> tuple[list[str], list[str]]:
                     )
 
     if draft.enabled_backends:
-        if draft.default_backend is not None and draft.default_backend not in draft.enabled_backends:
+        if (
+            draft.default_backend is not None
+            and draft.default_backend not in draft.enabled_backends
+        ):
             errors.append("The default backend must be one of the enabled backends.")
-    elif draft.enabled_backends is not None and not draft.enabled_backends and draft.default_backend:
-        warnings.append("No backends are enabled; generation commands will refuse to run.")
+    elif (
+        draft.enabled_backends is not None
+        and not draft.enabled_backends
+        and draft.default_backend
+    ):
+        warnings.append(
+            "No backends are enabled; generation commands will refuse to run."
+        )
 
     return errors, warnings

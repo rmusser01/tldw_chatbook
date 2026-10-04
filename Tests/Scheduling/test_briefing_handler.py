@@ -502,7 +502,9 @@ def _chacha_db(tmp_path) -> CharactersRAGDB:
     Mirrors `Tests/Subscriptions/test_briefing_keep.py`'s own `_chacha_db`
     helper.
     """
-    return CharactersRAGDB(tmp_path / "chacha.sqlite", client_id="briefing-handler-test")
+    return CharactersRAGDB(
+        tmp_path / "chacha.sqlite", client_id="briefing-handler-test"
+    )
 
 
 def _seed_complete_briefing(
@@ -706,7 +708,9 @@ async def test_a_keep_refused_race_is_treated_as_benign_not_an_error(tmp_path):
         debug_lines: list[str] = []
         warning_or_louder: list[str] = []
         debug_sink = logger.add(debug_lines.append, level="DEBUG", catch=False)
-        warning_sink = logger.add(warning_or_louder.append, level="WARNING", catch=False)
+        warning_sink = logger.add(
+            warning_or_louder.append, level="WARNING", catch=False
+        )
         try:
             with patch(
                 "tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler.keep_briefing",

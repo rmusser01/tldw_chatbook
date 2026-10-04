@@ -453,7 +453,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
             optional summary + optional chevron), the body ``Vertical`` of
             row widgets, and the optional "View all" ``Button``.
         """
-        header = Horizontal(id=self._header_id, classes="console-inspector-section-header")
+        header = Horizontal(
+            id=self._header_id, classes="console-inspector-section-header"
+        )
         header.remove_class(*(name for name in header.classes if name.startswith("h-")))
         header.set_styles(height=None)
         header.add_class("h-1")
@@ -465,7 +467,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 classes="console-inspector-section-title",
                 markup=False,
             )
-            title.remove_class(*(name for name in title.classes if name.startswith("w-")))
+            title.remove_class(
+                *(name for name in title.classes if name.startswith("w-"))
+            )
             title.set_styles(width=None)
             title.add_class("w-fill")
             title.styles.min_width = 0
@@ -481,11 +485,15 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 # for any host, including a bare test harness that never
                 # loads the app's CSS bundle (the CSS class carries the
                 # cosmetic color/dim styling only).
-                summary.remove_class(*(name for name in summary.classes if name.startswith("w-")))
+                summary.remove_class(
+                    *(name for name in summary.classes if name.startswith("w-"))
+                )
                 summary.set_styles(width=None)
                 summary.add_class("w-auto")
                 summary.styles.min_width = 0
-                summary.remove_class(*(name for name in summary.classes if name.startswith("h-")))
+                summary.remove_class(
+                    *(name for name in summary.classes if name.startswith("h-"))
+                )
                 summary.set_styles(height=None)
                 summary.add_class("h-1")
                 if self._summary_is_suppressed():
@@ -501,18 +509,21 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                     # which taxed every Button in the app -- see
                     # `Tests/Performance/test_textual_css_fastpath.py`.
                     classes=(
-                        "console-inspector-section-toggle "
-                        "console-rail-focus-carrier"
+                        "console-inspector-section-toggle console-rail-focus-carrier"
                     ),
                     compact=True,
                 )
                 toggle.tooltip = self._toggle_tooltip()
-                toggle.remove_class(*(name for name in toggle.classes if name.startswith("w-")))
+                toggle.remove_class(
+                    *(name for name in toggle.classes if name.startswith("w-"))
+                )
                 toggle.set_styles(width=None)
                 toggle.add_class("w-3")
                 toggle.styles.min_width = SECTION_TOGGLE_WIDTH
                 toggle.styles.max_width = SECTION_TOGGLE_WIDTH
-                toggle.remove_class(*(name for name in toggle.classes if name.startswith("h-")))
+                toggle.remove_class(
+                    *(name for name in toggle.classes if name.startswith("h-"))
+                )
                 toggle.set_styles(height=None)
                 toggle.add_class("h-1")
                 yield toggle
@@ -529,7 +540,9 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                 yield self._build_row_widget(row, index)
             if self.notice:
                 notice = Static(self.notice, id=self._notice_id, markup=False)
-                notice.remove_class(*(name for name in notice.classes if name.startswith("h-")))
+                notice.remove_class(
+                    *(name for name in notice.classes if name.startswith("h-"))
+                )
                 notice.set_styles(height=None)
                 notice.add_class("h-auto")
                 notice.styles.text_wrap = "wrap"
@@ -740,7 +753,8 @@ class ConsoleInspectorSection(RecomposeCaptureGuard, Vertical):
                     # `appearance.ascii_glyphs` flip would patch rows in
                     # place and strand every boundary-width row in the
                     # shape the OTHER mode chose.
-                    not row.wrap_secondary and row_fits_one_line(
+                    not row.wrap_secondary
+                    and row_fits_one_line(
                         resolve_glyph_text(row.primary_text),
                         row.secondary_text,
                         indent=max(0, row.indent) * ROW_INDENT_COLUMNS,
@@ -1025,7 +1039,9 @@ class ConsoleInspectorSectionRow(Vertical):
             classes="console-inspector-section-row-primary",
             markup=False,
         )
-        primary.remove_class(*(name for name in primary.classes if name.startswith("h-")))
+        primary.remove_class(
+            *(name for name in primary.classes if name.startswith("h-"))
+        )
         primary.set_styles(height=None)
         primary.add_class("h-1")
         return primary
@@ -1037,7 +1053,9 @@ class ConsoleInspectorSectionRow(Vertical):
             classes="console-inspector-section-row-secondary",
             markup=False,
         )
-        secondary.remove_class(*(name for name in secondary.classes if name.startswith("h-")))
+        secondary.remove_class(
+            *(name for name in secondary.classes if name.startswith("h-"))
+        )
         secondary.set_styles(height=None)
         secondary.add_class("h-auto" if self._wrap_secondary else "h-1")
         if self._wrap_secondary:
@@ -1072,13 +1090,17 @@ class ConsoleInspectorSectionRow(Vertical):
                 # `1fr` + `auto` is the header's own title/summary split:
                 # the primary takes everything the secondary does not, which
                 # is what puts the secondary flush against the right edge.
-                primary.remove_class(*(name for name in primary.classes if name.startswith("w-")))
+                primary.remove_class(
+                    *(name for name in primary.classes if name.startswith("w-"))
+                )
                 primary.set_styles(width=None)
                 primary.add_class("w-fill")
                 primary.styles.min_width = 0
                 yield primary
                 secondary = self._make_secondary()
-                secondary.remove_class(*(name for name in secondary.classes if name.startswith("w-")))
+                secondary.remove_class(
+                    *(name for name in secondary.classes if name.startswith("w-"))
+                )
                 secondary.set_styles(width=None)
                 secondary.add_class("w-auto")
                 secondary.styles.min_width = 0
@@ -1102,7 +1124,9 @@ class ConsoleInspectorSectionRow(Vertical):
     def action_activate_row(self) -> None:
         if not self.clickable:
             return
-        self.post_message(ConsoleInspectorSection.RowActivated(self.section_id, self.row_id))
+        self.post_message(
+            ConsoleInspectorSection.RowActivated(self.section_id, self.row_id)
+        )
 
     def action_cancel_row(self) -> None:
         if not self.cancellable:

@@ -182,3 +182,4 @@ Use numeric filenames:
 Do not reuse numbers.
 
 | [ADR-187](187-server-sharing-release-contracts.md) | Accepted | Consume durable clone receipts, paginated shared sources, and observed Notes link deletion versions without weakening server contracts. |
+| [ADR-206](206-shared-ssrf-address-classification.md) | Accepted | One shared `Utils.egress.address_is_fetchable` predicate classifies resolved addresses for every fetch-side SSRF guard (egress pipeline and skill remote fetch); NAT64 `64:ff9b::/96` reconciled to rejected on both layers. |

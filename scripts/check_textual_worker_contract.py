@@ -385,10 +385,16 @@ def collect_w002(tree: ast.Module, path: Path) -> list[str]:
         node for node in ast.walk(tree) if isinstance(node, ast.AsyncFunctionDef)
     ]:
         own, parents = _own_nodes(func)
-        awaits = [node.lineno for node in own if isinstance(node, ast.Await)]
+        awaits = [node for node in own if isinstance(node, ast.Await)]
         if not awaits:
             continue
-        first_await = min(awaits)
+        # Positions, not line numbers: a lookup INSIDE the first await's own
+        # expression (`await save(self.query_one(...))`) runs before the
+        # suspension however the call is wrapped. Comparing lines made the
+        # verdict depend on formatting -- a reflow added one row and removed
+        # five with no statement changed (PR #2993).
+        first = min(awaits, key=lambda node: (node.lineno, node.col_offset))
+        first_await_end = (first.end_lineno, first.end_col_offset)
         for node in own:
             if not (
                 isinstance(node, ast.Call)
@@ -396,7 +402,7 @@ def collect_w002(tree: ast.Module, path: Path) -> list[str]:
                 and node.func.attr in DOM_LOOKUPS
             ):
                 continue
-            if node.lineno <= first_await:
+            if (node.lineno, node.col_offset) <= first_await_end:
                 continue
             guarded = False
             child: ast.AST = node

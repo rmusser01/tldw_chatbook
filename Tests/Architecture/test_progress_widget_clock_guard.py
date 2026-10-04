@@ -161,9 +161,7 @@ _FORBIDDEN_FIXTURES = {
         "    return LI()\n"
     ),
     "attribute call": (
-        "import textual.widgets\n"
-        "def f():\n"
-        "    return textual.widgets.ProgressBar()\n"
+        "import textual.widgets\ndef f():\n    return textual.widgets.ProgressBar()\n"
     ),
     "widgets-module alias call": (
         "from textual import widgets as tw\n"
@@ -176,14 +174,10 @@ _FORBIDDEN_FIXTURES = {
         "    return ProgressBar[int](total=None)\n"
     ),
     "subclass": (
-        "from textual.widgets import ProgressBar\n"
-        "class Mine(ProgressBar):\n"
-        "    pass\n"
+        "from textual.widgets import ProgressBar\nclass Mine(ProgressBar):\n    pass\n"
     ),
     "private-module Bar import call": (
-        "from textual.widgets._progress_bar import Bar\n"
-        "def f():\n"
-        "    return Bar()\n"
+        "from textual.widgets._progress_bar import Bar\ndef f():\n    return Bar()\n"
     ),
 }
 

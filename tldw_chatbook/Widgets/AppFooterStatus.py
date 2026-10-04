@@ -361,19 +361,13 @@ class AppFooterStatus(Widget):
             already advertises under its own (available) label -- task-2860.
         """
         visible_actions = self._context_actions if actions is None else actions
-        covered = {
-            action.key.lower()
-            for action in visible_actions
-            if action.available
-        }
+        covered = {action.key.lower() for action in visible_actions if action.available}
         return " · ".join(label for key, label in items if key not in covered)
 
     @staticmethod
     def _render_actions(actions: tuple[ShortcutAction, ...]) -> str:
         """Render an ordered subset of available workflow hints."""
-        return " | ".join(
-            action.render() for action in actions if action.available
-        )
+        return " | ".join(action.render() for action in actions if action.available)
 
     @staticmethod
     def _combine(context_text: str, globals_text: str) -> str:

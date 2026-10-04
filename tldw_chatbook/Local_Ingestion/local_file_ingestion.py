@@ -14,9 +14,12 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from numbers import Real
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from ..Utils.egress import UrlProvenance
 
 # Per-format processing libraries (process_pdf/process_document/process_ebook/
 # LocalAudioProcessor/LocalVideoProcessor) are intentionally NOT imported at
@@ -511,9 +514,7 @@ def get_supported_extensions() -> Dict[str, List[str]]:
 # the form's size/overlap govern it. The image branch calls
 # ``process_image`` with ``chunk_options=None`` and clears its convenience
 # single chunk so exactly one layer chunks.
-_TEXT_CHUNK_TYPES = frozenset(
-    {"plaintext", "html", "document", "article", "image"}
-)
+_TEXT_CHUNK_TYPES = frozenset({"plaintext", "html", "document", "article", "image"})
 
 # Text-shaped types whose branch produces no analysis of its own. The
 # ``document`` type is excluded: ``process_document`` runs its own
@@ -629,9 +630,7 @@ def read_ingest_file_bytes(file_path: Union[str, Path]) -> bytes:
     return data
 
 
-def _decode_ingest_text(
-    raw: bytes, encoding: Optional[str]
-) -> tuple[str, list[str]]:
+def _decode_ingest_text(raw: bytes, encoding: Optional[str]) -> tuple[str, list[str]]:
     """Decode raw text-file bytes per the ingest form's Encoding selection.
 
     (task-3301) The Encoding select (auto / utf-8 / utf-16 / latin-1 /
@@ -754,9 +753,7 @@ def _chunk_text_for_ingest(
 
 
 #: Default analysis instruction when the caller supplies no custom prompt.
-_DEFAULT_ANALYSIS_PROMPT = (
-    "Please provide a comprehensive summary of this document."
-)
+_DEFAULT_ANALYSIS_PROMPT = "Please provide a comprehensive summary of this document."
 
 #: (task-3301 xhigh review round 2, F7) Sentinel distinguishing "caller never
 #: passed chunk_options" from an explicit ``None``. When task-3301 made
@@ -795,7 +792,7 @@ def _analysis_failure_reason(analysis: Any) -> Optional[str]:
     if not stripped.lower().startswith("error:"):
         return None
     first_line = stripped.splitlines()[0].strip()
-    reason = first_line[len("error:"):].strip() or first_line
+    reason = first_line[len("error:") :].strip() or first_line
     return reason[:200]
 
 
@@ -918,6 +915,7 @@ def parse_local_file_for_ingest(
     *,
     transcription_runner: Optional[Callable[..., Dict[str, Any]]] = None,
     progress_callback: Callable[[str, str, float | None], None] | None = None,
+    url_provenance: Optional["UrlProvenance"] = None,
 ) -> Dict[str, Any]:
     """
     Parse a local file into a picklable payload, performing no database I/O.
@@ -968,6 +966,18 @@ def parse_local_file_for_ingest(
         progress_callback: Optional best-effort callback receiving a controlled
             phase, user-facing message, and truthful stage percentage when one
             is observable.
+        url_provenance: (TASK-20973) How this process came to hold the
+            source when it is a URL. Only
+            ``Utils.egress.UrlProvenance.USER_ENTERED`` lets a private
+            host through the egress check of any URL arm (video, audio,
+            article); ``None`` (the default) means UNKNOWN and fails
+            closed. This function is a
+            shared pipeline, not a trust boundary -- it never mints trust
+            itself. The Library ingest queue is the caller that knows the
+            answer, and the spawn-pool worker transports it here through
+            ``options["url_provenance"]`` (translated by
+            ``ingest_parse_worker.run_parse_job``, which accepts the enum
+            only).
 
     Returns:
         A payload dict consumed by ``persist_parsed_media``:
@@ -1014,6 +1024,14 @@ def parse_local_file_for_ingest(
         "inspecting",
         "Inspecting source",
     )
+    # (TASK-20973) Normalize the threaded provenance ONCE, lazily (this
+    # module's import weight is budgeted -- see the import-deferral block
+    # above): ``None`` (direct callers, or a worker that found nothing in
+    # ``options``) means UNKNOWN and fails closed at the egress check.
+    if url_provenance is None:
+        from ..Utils.egress import UrlProvenance as _UrlProvenance
+
+        url_provenance = _UrlProvenance.UNKNOWN
     raw_source = str(file_path)
     is_url = _is_http_url(raw_source)
     if is_url:
@@ -1407,6 +1425,9 @@ def parse_local_file_for_ingest(
                 ),
                 custom_title=title,
                 author=author,
+                # (TASK-20973) Same rule as the video arm: only a URL the
+                # user entered may vouch for its own private origin.
+                url_provenance=url_provenance,
                 **(
                     {"transcription_progress_callback": transcription_progress}
                     if progress_callback is not None
@@ -1468,6 +1489,14 @@ def parse_local_file_for_ingest(
             results = video_processor.process_videos(
                 inputs=[str(file_path)],
                 download_video_flag=False,  # Extract audio only for transcription
+                # (TASK-20973) A URL source here is an ingest source, and
+                # the trust question for it is answered by the CALLER, not
+                # by this shared pipeline: ``url_provenance`` arrives from
+                # the ingest queue (USER_ENTERED for form submissions,
+                # UNKNOWN for research-catalog URLs) or defaults to
+                # UNKNOWN for direct programmatic callers -- the pipeline
+                # itself never mints trust.
+                url_provenance=url_provenance,
                 transcription_provider=options.get(
                     "transcription_provider", "faster-whisper"
                 ),
@@ -1648,7 +1677,9 @@ def parse_local_file_for_ingest(
             )
             from .web_article_ingestion import extract_article_for_ingest
 
-            result = extract_article_for_ingest(raw_source, options)
+            result = extract_article_for_ingest(
+                raw_source, options, url_provenance=url_provenance
+            )
             source_url = result.get("url", source_url)  # canonical post-redirect URL
 
         # Check if processing was successful. NOTE: some processors (e.g.
@@ -1677,8 +1708,8 @@ def parse_local_file_for_ingest(
         # (task-3301) ``process_document`` reports its internal analysis
         # under ``summary``; surface it as the payload's analysis rather
         # than dropping it on the floor.
-        if not analysis and isinstance(result.get('summary'), str):
-            analysis = result['summary']
+        if not analysis and isinstance(result.get("summary"), str):
+            analysis = result["summary"]
 
         # (task-3301 xhigh review round, F4) A processor "analysis" that is
         # an in-band error string (``analyze()`` RETURNS its failures as
@@ -1687,9 +1718,7 @@ def parse_local_file_for_ingest(
         # and the import itself stays successful.
         analysis_failed_reason = _analysis_failure_reason(analysis)
         if analysis_failed_reason:
-            warnings = list(warnings) + [
-                f"Analysis failed: {analysis_failed_reason}"
-            ]
+            warnings = list(warnings) + [f"Analysis failed: {analysis_failed_reason}"]
             analysis = ""
 
         if not perform_chunking:
@@ -1699,11 +1728,7 @@ def parse_local_file_for_ingest(
             # consistency fallback); storing it would make the OFF state
             # indistinguishable from a one-chunk ON state in the DB.
             chunks = []
-        elif (
-            file_type in _TEXT_CHUNK_TYPES
-            and not chunks
-            and content
-        ):
+        elif file_type in _TEXT_CHUNK_TYPES and not chunks and content:
             # (task-3301) Chunk ON must chunk text types too. These
             # branches produce no chunks of their own, and no deferred
             # pass exists downstream (``add_media_with_keywords`` ignores
@@ -1759,9 +1784,7 @@ def parse_local_file_for_ingest(
                 analysis_call=analysis_call,
             )
             if tail_failure:
-                logger.warning(
-                    f"Analysis failed for {file_path}: {tail_failure}"
-                )
+                logger.warning(f"Analysis failed for {file_path}: {tail_failure}")
                 warnings = list(warnings) + [f"Analysis failed: {tail_failure}"]
                 analysis_failed_reason = tail_failure
             else:
@@ -1988,9 +2011,7 @@ def _persist_chunking_template_columns(
     if auto_decision is not None:
         config["mode"] = "auto"
         config["auto_tier"] = str(auto_decision.get("tier") or "").strip()
-        config["auto_rationale"] = list(
-            auto_decision.get("rationale") or []
-        )
+        config["auto_rationale"] = list(auto_decision.get("rationale") or [])
     if template_name:
         config["template"] = template_name
     if "method" in params:
@@ -2121,6 +2142,7 @@ def persist_parsed_media(
                 if template_name:
                     chunk.setdefault("chunking_template", template_name)
                     chunk.setdefault("chunking_params", chunking_params_json)
+
         # Note: add_media_with_keywords returns tuple: (media_id, media_uuid, message)
         def _persist() -> tuple[Optional[int], Optional[str], str]:
             return media_db.add_media_with_keywords(

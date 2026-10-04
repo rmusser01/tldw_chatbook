@@ -99,7 +99,9 @@ async def _open_real_settings_destination(app, pilot, *, timeout: float = 5.0):
             break
         await pilot.pause(0.02)
     else:
-        raise AssertionError("Settings destination never mounted its Image Gen category")
+        raise AssertionError(
+            "Settings destination never mounted its Image Gen category"
+        )
 
     button = screen.query_one("#settings-category-image_generation")
     if not button.display:
@@ -509,9 +511,7 @@ api_key = "sk-saved-key"
         # column at this terminal size. Posting Button.Pressed directly is
         # the same real message a click sends, without depending on pixel
         # geometry this harness doesn't style.
-        panel.query_one(
-            "#settings-imagegen-clear-openrouter-api_key", Button
-        ).press()
+        panel.query_one("#settings-imagegen-clear-openrouter-api_key", Button).press()
         await pilot.pause()
 
         source_line = screen.query_one(
@@ -556,9 +556,7 @@ api_key = "fake-stale-legacy-token"
         await _open_image_gen(pilot)
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
 
-        panel.query_one(
-            "#settings-imagegen-clear-swarmui-swarm_token", Button
-        ).press()
+        panel.query_one("#settings-imagegen-clear-swarmui-swarm_token", Button).press()
         await pilot.pause()
 
         await pilot.click("#settings-imagegen-save")
@@ -1186,7 +1184,9 @@ default_model = "old-model"
 
 
 @pytest.mark.asyncio
-async def test_swarmui_token_saves_and_resolves_end_to_end(scratch_config, tmp_path, monkeypatch):
+async def test_swarmui_token_saves_and_resolves_end_to_end(
+    scratch_config, tmp_path, monkeypatch
+):
     """CRITICAL fix, end-to-end: a pasted swarmui token must both persist
     to config.toml AND actually resolve (key_sources == "config", input
     resets, source line updates) through the real save -> cache-reset ->
@@ -1223,9 +1223,7 @@ enabled_backends = ["swarmui"]
         )
         assert token_input.value == ""
 
-        source_line = panel.query_one(
-            "#settings-imagegen-key-source-swarmui", Static
-        )
+        source_line = panel.query_one("#settings-imagegen-key-source-swarmui", Static)
         assert str(source_line.renderable) == "local config key saved"
 
     config_path = tmp_path / "config.toml"
@@ -1276,9 +1274,7 @@ enabled_backends = ["openrouter", "swarmui"]
         for backend_id in BACKEND_IDS:
             row = screen.query_one(f"#settings-imagegen-backend-{backend_id}")
             test_btn = screen.query_one(f"#settings-imagegen-test-{backend_id}", Button)
-            cb = screen.query_one(
-                f"#settings-imagegen-enabled-{backend_id}", Checkbox
-            )
+            cb = screen.query_one(f"#settings-imagegen-enabled-{backend_id}", Checkbox)
             # task-7: eight rows (was six) no longer all fit within these
             # small terminal sizes without scrolling -- scroll each row into
             # view first (same pattern already used below for save_btn)
@@ -1353,9 +1349,7 @@ enabled_backends = ["openrouter"]
         )
         assert "Default" in str(default_marker.renderable)
 
-        select = panel.query_one(
-            "#settings-imagegen-default_backend", Select
-        )
+        select = panel.query_one("#settings-imagegen-default_backend", Select)
         select.value = Select.NULL
         await pilot.pause()
 
@@ -1561,9 +1555,7 @@ default_sampler = "euler"
         await _open_image_gen(pilot)
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
         for key in ("default_seed", "default_steps", "default_sampler"):
-            field = panel.query_one(
-                f"#settings-imagegen-field-comfyui-{key}", Input
-            )
+            field = panel.query_one(f"#settings-imagegen-field-comfyui-{key}", Input)
             field.value = ""
         await pilot.pause()
 
@@ -1572,9 +1564,7 @@ default_sampler = "euler"
 
         panel = screen.query_one("#settings-imagegen-panel", ImageGenSettingsPanel)
         for key in ("default_seed", "default_steps", "default_sampler"):
-            field = panel.query_one(
-                f"#settings-imagegen-field-comfyui-{key}", Input
-            )
+            field = panel.query_one(f"#settings-imagegen-field-comfyui-{key}", Input)
             assert field.value == ""
             assert field.placeholder == "Use packaged workflow"
 
@@ -1612,13 +1602,13 @@ async def test_failed_image_gen_persistence_does_not_reset_runtime(
     async with host.run_test(size=(190, 55)) as pilot:
         screen = _active_destination_screen(host)
         await _open_image_gen(pilot)
-        field = screen.query_one(
-            "#settings-imagegen-field-comfyui-base_url", Input
-        )
+        field = screen.query_one("#settings-imagegen-field-comfyui-base_url", Input)
         field.value = "http://127.0.0.1:8288"
         await pilot.pause()
         await pilot.click("#settings-imagegen-save")
-        await _wait_for_settings_text(screen, pilot, "Failed to save Image Gen defaults.")
+        await _wait_for_settings_text(
+            screen, pilot, "Failed to save Image Gen defaults."
+        )
 
     assert resets == []
 
@@ -1699,11 +1689,7 @@ default_seed = 7
     }
     assert atomic_calls == [
         (
-            {
-                "image_generation.comfyui": {
-                    "base_url": "http://127.0.0.1:8288"
-                }
-            },
+            {"image_generation.comfyui": {"base_url": "http://127.0.0.1:8288"}},
             {"image_generation.comfyui": ["default_seed"]},
         )
     ]
@@ -1754,9 +1740,7 @@ base_url = "http://127.0.0.1:8188"
 
     with open(tmp_path / "config.toml", "rb") as stream:
         saved = tomllib.load(stream)
-    assert saved["image_generation"]["comfyui"]["base_url"] == (
-        "http://127.0.0.1:8288"
-    )
+    assert saved["image_generation"]["comfyui"]["base_url"] == ("http://127.0.0.1:8288")
 
 
 @pytest.mark.asyncio
@@ -1777,9 +1761,7 @@ async def test_successful_image_gen_persistence_resets_runtime_exactly_once(
     async with host.run_test(size=(190, 55)) as pilot:
         screen = _active_destination_screen(host)
         await _open_image_gen(pilot)
-        field = screen.query_one(
-            "#settings-imagegen-field-comfyui-base_url", Input
-        )
+        field = screen.query_one("#settings-imagegen-field-comfyui-base_url", Input)
         field.value = "http://127.0.0.1:8288"
         await pilot.pause()
         await pilot.click("#settings-imagegen-save")

@@ -362,15 +362,15 @@ def test_skill_trust_store_paths_are_refused_via_the_actually_used_accessors():
     )
 
     assert is_sensitive_path(store.manifest_path), "skill_trust_manifest.json"
-    assert is_sensitive_path(
-        store.store_dir / _SCRIPT_GRANTS_FILENAME
-    ), "skill_script_grants.json (the plain, unauthenticated script-execution grant file)"
-    assert is_sensitive_path(
-        store.store_dir / MARKER_FILENAME
-    ), "generation_marker.json"
-    assert is_sensitive_path(
-        store.snapshots_dir / "some-snapshot-id.json"
-    ), "a file nested inside snapshots/"
+    assert is_sensitive_path(store.store_dir / _SCRIPT_GRANTS_FILENAME), (
+        "skill_script_grants.json (the plain, unauthenticated script-execution grant file)"
+    )
+    assert is_sensitive_path(store.store_dir / MARKER_FILENAME), (
+        "generation_marker.json"
+    )
+    assert is_sensitive_path(store.snapshots_dir / "some-snapshot-id.json"), (
+        "a file nested inside snapshots/"
+    )
 
 
 def test_skills_directory_itself_stays_reachable_outside_the_trust_carve_out():
@@ -672,7 +672,9 @@ def test_merged_dir_refuses_path_and_children(tmp_path: Path):
 
 def test_merged_file_refuses_exact_path_only(tmp_path: Path):
     excluded = tmp_path / "notes.txt"
-    merged = merge_sensitive_context(resolve_sensitive_context(), extra_files=(excluded,))
+    merged = merge_sensitive_context(
+        resolve_sensitive_context(), extra_files=(excluded,)
+    )
     assert is_sensitive_path(excluded, context=merged)
     assert not is_sensitive_path(tmp_path / "other.txt", context=merged)
 

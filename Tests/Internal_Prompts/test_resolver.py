@@ -17,7 +17,7 @@ def demo_spec():
             title="Greeting",
             description="Test prompt.",
             used_in="tests",
-            default="Hello {name}, JSON stays: {\"k\": 1}",
+            default='Hello {name}, JSON stays: {"k": 1}',
             required_placeholders=("name",),
             legacy_config_path="Prompts.demo_legacy",
         )
@@ -28,6 +28,7 @@ def demo_spec():
 
 # --- safe_substitute -------------------------------------------------------
 
+
 def test_substitute_replaces_declared_tokens_only():
     out = safe_substitute("A {x} B {y} C {z}", x=1, y="two")
     assert out == "A 1 B two C {z}"
@@ -35,7 +36,9 @@ def test_substitute_replaces_declared_tokens_only():
 
 def test_substitute_leaves_json_and_ollama_braces_alone():
     text = 'Return {"score": 0.5} and {{ .Prompt }} end {q}'
-    assert safe_substitute(text, q="Q") == 'Return {"score": 0.5} and {{ .Prompt }} end Q'
+    assert (
+        safe_substitute(text, q="Q") == 'Return {"score": 0.5} and {{ .Prompt }} end Q'
+    )
 
 
 def test_substitute_never_raises_on_stray_braces():
@@ -61,6 +64,7 @@ def test_substitute_handles_overlapping_key_names():
 
 
 # --- precedence ------------------------------------------------------------
+
 
 def test_default_when_no_config(demo_spec, scratch_config):
     assert get_internal_prompt("demo.greeting") == demo_spec.default
@@ -98,6 +102,7 @@ def test_override_beats_legacy(demo_spec, scratch_config):
 
 # --- legacy tier -----------------------------------------------------------
 
+
 def test_customized_legacy_honored(demo_spec, scratch_config):
     scratch_config('[Prompts]\ndemo_legacy = "Legacy {name}"\n')
     assert get_internal_prompt("demo.greeting") == "Legacy {name}"
@@ -124,6 +129,7 @@ def test_invalid_legacy_falls_back(demo_spec, scratch_config):
 
 
 # --- misc ------------------------------------------------------------------
+
 
 def test_unknown_id_raises_keyerror(scratch_config):
     with pytest.raises(KeyError):
@@ -178,9 +184,7 @@ def test_wrong_typed_override_warns_once_never_raises(
 def test_wrong_typed_override_array_also_warns(demo_spec, scratch_config, caplog):
     scratch_config("[internal_prompts.demo]\ngreeting = [1, 2]\n")
     assert get_internal_prompt("demo.greeting") == demo_spec.default
-    assert any(
-        "is not text or a table" in r.getMessage() for r in caplog.records
-    )
+    assert any("is not text or a table" in r.getMessage() for r in caplog.records)
 
 
 def test_valid_and_absent_overrides_produce_no_type_warning(
@@ -191,6 +195,4 @@ def test_valid_and_absent_overrides_produce_no_type_warning(
     get_internal_prompt("demo.greeting")
     scratch_config("")
     get_internal_prompt("demo.greeting")
-    assert not [
-        r for r in caplog.records if "is not text or a table" in r.getMessage()
-    ]
+    assert not [r for r in caplog.records if "is not text or a table" in r.getMessage()]

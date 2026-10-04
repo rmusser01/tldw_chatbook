@@ -85,8 +85,7 @@ def filter_character_options(
     secondary = [
         o
         for o in options
-        if text not in o.name.casefold()
-        and text in (o.description or "").casefold()
+        if text not in o.name.casefold() and text in (o.description or "").casefold()
     ]
     return tuple((primary + secondary)[:limit])
 
@@ -232,9 +231,11 @@ class ConsoleCharacterPickerModal(
         rows = []
         for index, option in enumerate(self._results):
             marker = "> " if index == self._selected_index else "  "
-            current = "  (current)" if option.character_id == (
-                self._current_character_id
-            ) else ""
+            current = (
+                "  (current)"
+                if option.character_id == (self._current_character_id)
+                else ""
+            )
             display_name = sanitize_character_display_label(
                 option.name,
                 max_characters=CHARACTER_PICKER_NAME_MAX_CHARACTERS,
@@ -326,9 +327,11 @@ class ConsoleCharacterPickerModal(
     async def _repaint_markers(self) -> None:
         for index, option in enumerate(self._results):
             marker = "> " if index == self._selected_index else "  "
-            current = "  (current)" if option.character_id == (
-                self._current_character_id
-            ) else ""
+            current = (
+                "  (current)"
+                if option.character_id == (self._current_character_id)
+                else ""
+            )
             display_name = sanitize_character_display_label(
                 option.name,
                 max_characters=CHARACTER_PICKER_NAME_MAX_CHARACTERS,

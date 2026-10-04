@@ -527,9 +527,7 @@ def _bare_screen(
     screen._change_review_projection = SimpleNamespace(
         project=lambda projected_messages: projected_messages
     )
-    screen._library_activity = SimpleNamespace(
-        sync_transcript=lambda _transcript: {}
-    )
+    screen._library_activity = SimpleNamespace(sync_transcript=lambda _transcript: {})
     screen.app_instance = SimpleNamespace(
         citation_trace_repository=repository,
         chachanotes_db=app_db,

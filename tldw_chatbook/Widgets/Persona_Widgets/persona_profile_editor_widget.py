@@ -381,6 +381,7 @@ class PersonaProfileEditorWidget(Container):
         host = self.query_one("#personas-editor-shared-visual-identity-host", Container)
         if content.parent is host:
             await content.remove()
+
     @property
     def persona_id(self) -> str | None:
         """The currently loaded persona's id, if any (Task 11 wiring)."""
@@ -496,7 +497,9 @@ class PersonaProfileEditorWidget(Container):
                 fields, self._loaded_snapshot, strict=True
             ):
                 setattr(
-                    self.query_one(f"#personas-editor-{name}", widget_type), attribute, value
+                    self.query_one(f"#personas-editor-{name}", widget_type),
+                    attribute,
+                    value,
                 )
         finally:
             self._loading = False

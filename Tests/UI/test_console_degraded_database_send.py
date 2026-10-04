@@ -92,9 +92,7 @@ async def test_unopenable_database_refuses_send_visibly_and_keeps_the_draft():
         ), notifications
 
         # 3. A blocked run state, so the control bar is not left reading idle.
-        assert (
-            controller.run_state_for(session_id).status is ConsoleRunStatus.BLOCKED
-        )
+        assert controller.run_state_for(session_id).status is ConsoleRunStatus.BLOCKED
 
         # 4. The draft the user typed is still there.
         assert composer.draft_text() == "hello"
@@ -131,9 +129,7 @@ async def test_unopenable_database_still_sends_a_temporary_conversation():
         await _wait_for_text(console, pilot, "partial")
 
         assert temporary.ephemeral is True
-        roles = [
-            message.role for message in store.messages_for_session(temporary.id)
-        ]
+        roles = [message.role for message in store.messages_for_session(temporary.id)]
         assert ConsoleMessageRole.USER in roles
         assert ConsoleMessageRole.SYSTEM not in roles
         assert not any(

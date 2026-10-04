@@ -105,13 +105,9 @@ def test_two_concurrent_rounds_for_different_sessions_each_get_their_own_decisio
 def test_close_session_denies_only_that_sessions_round(controller):
     """Destructive close releases its exact decisions, never a sibling session."""
     results = {}
-    thread_a = _arm(
-        controller, "https://x/one", controller.session_a, results, "one"
-    )
+    thread_a = _arm(controller, "https://x/one", controller.session_a, results, "one")
     assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 1)
-    thread_b = _arm(
-        controller, "https://x/two", controller.session_b, results, "two"
-    )
+    thread_b = _arm(controller, "https://x/two", controller.session_b, results, "two")
     assert _wait_until(lambda: len(controller.pending_skill_install_ids()) == 2)
     id_b = [
         request_id
@@ -576,7 +572,9 @@ def test_bare_shutdown_flag_alone_denies_a_real_session_round_within_one_poll_in
         "TASK-1052 regression this test guards against"
     )
     assert results["one"] is False  # still fails closed, never auto-approved
-    assert controller.pending_skill_install_ids() == []  # round's own accounting cleaned up
+    assert (
+        controller.pending_skill_install_ids() == []
+    )  # round's own accounting cleaned up
 
 
 def test_shutdown_flag_alone_denies_both_unregistered_sessions_rounds_and_cleans_accounting(

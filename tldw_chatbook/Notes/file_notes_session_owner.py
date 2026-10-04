@@ -146,10 +146,10 @@ def _sanitize_display_path(path: str) -> str:
             display.append(f"\\x{codepoint:02x}")
         elif 0xDC80 <= codepoint <= 0xDCFF:
             display.append(f"\\x{codepoint - 0xDC00:02x}")
-        elif (
-            unicodedata.category(character) in {"Cf", "Cs"}
-            or codepoint in {0x2028, 0x2029}
-        ):
+        elif unicodedata.category(character) in {"Cf", "Cs"} or codepoint in {
+            0x2028,
+            0x2029,
+        }:
             escape_width = 4 if codepoint <= 0xFFFF else 8
             escape_prefix = "u" if escape_width == 4 else "U"
             display.append(f"\\{escape_prefix}{codepoint:0{escape_width}x}")
@@ -707,19 +707,12 @@ class GitStatusAdmission:
         if (self.lease is None) == (self.reason is None):
             raise ValueError("Status admission requires exactly one outcome")
         if self.lease is not None:
-            if (
-                self.invalidation_generation
-                != self.lease.invalidation_generation
-            ):
-                raise ValueError(
-                    "Successful status admission requires its generation"
-                )
+            if self.invalidation_generation != self.lease.invalidation_generation:
+                raise ValueError("Successful status admission requires its generation")
         elif (self.reason == "status_active") != (
             self.invalidation_generation is not None
         ):
-            raise ValueError(
-                "Only active-status refusal carries a generation"
-            )
+            raise ValueError("Only active-status refusal carries a generation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -958,9 +951,7 @@ class FileNotesSessionOwner:
         self._destination_policy_fingerprint: tuple[object, ...] | None = None
         self._destination_policy_generation = 0
         self._destination_authorization: PushAuthorizationHandle | None = None
-        self._destination_authorization_capture: (
-            _DestinationPolicyCapture | None
-        ) = None
+        self._destination_authorization_capture: _DestinationPolicyCapture | None = None
         self._destination_authorization_epoch = 0
         self._push_review: PushReviewHandle | None = None
         self._push_review_capture: _PushReviewCapture | None = None
@@ -1154,9 +1145,7 @@ class FileNotesSessionOwner:
                 changes=tuple(self._changes),
                 trusted_repository=self._trusted_repository,
                 git_status=self._git_status,
-                staging_ownership=MappingProxyType(
-                    dict(self._staging_ownership)
-                ),
+                staging_ownership=MappingProxyType(dict(self._staging_ownership)),
                 git_authority_generation=self._git_authority_generation,
                 commit_recovery=(
                     None
@@ -1171,9 +1160,7 @@ class FileNotesSessionOwner:
                 push_candidate_generation=self._push_candidate_generation,
                 repository_trust_generation=self._repository_trust_generation,
                 destination_policy_generation=self._destination_policy_generation,
-                destination_authorization_epoch=(
-                    self._destination_authorization_epoch
-                ),
+                destination_authorization_epoch=(self._destination_authorization_epoch),
                 push_review_generation=self._push_review_generation,
                 push_recovery=self._push_recovery_projection,
                 push_recovery_candidate=(
@@ -1350,8 +1337,7 @@ class FileNotesSessionOwner:
             ):
                 return False
             changed = (
-                replacement != self._staging_ownership
-                or self._git_status is not None
+                replacement != self._staging_ownership or self._git_status is not None
             )
             self._staging_ownership = replacement
             self._clear_git_status_locked(invalidate_authority=False)
@@ -1375,8 +1361,7 @@ class FileNotesSessionOwner:
                 or repository != self._trusted_repository
                 or self._commit_quarantine is not None
                 or any(
-                    self._staging_ownership.get(group_id)
-                    != expected.get(group_id)
+                    self._staging_ownership.get(group_id) != expected.get(group_id)
                     for group_id in selected
                 )
             ):
@@ -1439,18 +1424,13 @@ class FileNotesSessionOwner:
                 )
             ):
                 return None
-            if any(
-                note.group_id not in sequence_ids
-                for note in notes
-            ):
+            if any(note.group_id not in sequence_ids for note in notes):
                 return None
             try:
                 seed = PushCandidateSeed(
                     binding=binding,
                     repository=repository,
-                    repository_trust_generation=(
-                        self._repository_trust_generation
-                    ),
+                    repository_trust_generation=(self._repository_trust_generation),
                     parent_head=head,
                     subject=subject,
                     included_notes=notes,
@@ -1491,8 +1471,7 @@ class FileNotesSessionOwner:
                 or self._issued_commit_publication_token is not None
                 or not self._lease_is_active_locked(lease)
                 or prior_capture.binding != self._binding
-                or prior_capture.authority_generation
-                != self._git_authority_generation
+                or prior_capture.authority_generation != self._git_authority_generation
                 or prior_capture.repository_trust_generation
                 != self._repository_trust_generation
                 or prior_capture.repository != self._trusted_repository
@@ -1507,9 +1486,7 @@ class FileNotesSessionOwner:
             capture = CommitAuthorityCapture(
                 binding=prior_capture.binding,
                 authority_generation=prior_capture.authority_generation,
-                repository_trust_generation=(
-                    prior_capture.repository_trust_generation
-                ),
+                repository_trust_generation=(prior_capture.repository_trust_generation),
                 repository=prior_capture.repository,
                 head=prior_capture.head,
                 ownership=prior_capture.ownership,
@@ -1583,9 +1560,7 @@ class FileNotesSessionOwner:
             capture = _PushCandidateCapture(
                 binding=candidate.binding,
                 repository=candidate.repository,
-                repository_trust_generation=(
-                    candidate.repository_trust_generation
-                ),
+                repository_trust_generation=(candidate.repository_trust_generation),
                 candidate_generation=candidate.generation,
                 candidate=candidate.candidate,
                 change_types=candidate.change_types,
@@ -1624,8 +1599,7 @@ class FileNotesSessionOwner:
         if (
             len(candidate_tree_oid) not in {40, 64}
             or any(
-                character not in "0123456789abcdef"
-                for character in candidate_tree_oid
+                character not in "0123456789abcdef" for character in candidate_tree_oid
             )
             or not any(character != "0" for character in candidate_tree_oid)
             or type(destination) is not PushDestinationProjection
@@ -1715,8 +1689,7 @@ class FileNotesSessionOwner:
                 self._shutdown
                 or capture is not self._destination_policy_capture
                 or capture.candidate_capture is not self._push_candidate_capture
-                or capture.policy_generation
-                != self._destination_policy_generation
+                or capture.policy_generation != self._destination_policy_generation
                 or capture.repository_trust_generation
                 != self._repository_trust_generation
             ):
@@ -1745,8 +1718,7 @@ class FileNotesSessionOwner:
                 and capture.candidate_capture is self._push_candidate_capture
                 and authorization is self._destination_authorization
                 and self._destination_authorization_capture is capture
-                and capture.policy_generation
-                == self._destination_policy_generation
+                and capture.policy_generation == self._destination_policy_generation
                 and capture.repository_trust_generation
                 == self._repository_trust_generation
             )
@@ -1780,8 +1752,7 @@ class FileNotesSessionOwner:
                 or candidate_capture is not self._push_candidate_capture
                 or authorization is not self._destination_authorization
                 or self._destination_authorization_capture is not policy
-                or policy.policy_generation
-                != self._destination_policy_generation
+                or policy.policy_generation != self._destination_policy_generation
                 or policy.repository_trust_generation
                 != self._repository_trust_generation
                 or parent_oid != candidate_capture.candidate.parent_oid
@@ -1841,8 +1812,7 @@ class FileNotesSessionOwner:
                 and capture.candidate_capture is self._push_candidate_capture
                 and capture.policy_capture is self._destination_policy_capture
                 and capture.authorization is self._destination_authorization
-                and capture.authorization_epoch
-                == self._destination_authorization_epoch
+                and capture.authorization_epoch == self._destination_authorization_epoch
                 and capture.review_generation == self._push_review_generation
                 and capture.policy_capture.policy_generation
                 == self._destination_policy_generation
@@ -1903,9 +1873,7 @@ class FileNotesSessionOwner:
                     candidate_capture.repository_trust_generation
                 ),
                 destination_policy_generation=policy.policy_generation,
-                destination_authorization_epoch=(
-                    review.authorization_epoch
-                ),
+                destination_authorization_epoch=(review.authorization_epoch),
                 generation=self._push_recovery_generation,
             )
             handle = _issue_push_recovery_handle()
@@ -2062,10 +2030,7 @@ class FileNotesSessionOwner:
         """Compare-and-clear only one exact private candidate capability."""
         with self._lock:
             candidate = self._push_candidate
-            if (
-                candidate is None
-                or capture is not self._push_candidate_capture
-            ):
+            if candidate is None or capture is not self._push_candidate_capture:
                 return False
             self._revoke_push_candidate_locked()
             return True
@@ -2219,9 +2184,7 @@ class FileNotesSessionOwner:
                 _candidate_seed=quarantine.capture._candidate_seed,
             )
             self._issued_commit_capture = capture
-            self._issued_commit_identity = (
-                quarantine._guarded_commit_identity
-            )
+            self._issued_commit_identity = quarantine._guarded_commit_identity
             self._issued_commit_publication_token = token
             self._issued_commit_recovery = True
             return CommitRecoveryAdmission(
@@ -2509,15 +2472,11 @@ class FileNotesSessionOwner:
         ownership: Mapping[int, StagingOwnership],
     ) -> dict[int, tuple[int, ...]] | None:
         groups = {
-            group.group_id: group
-            for group in coalesce_session_changes(self._changes)
+            group.group_id: group for group in coalesce_session_changes(self._changes)
         }
         if any(group_id not in groups for group_id in ownership):
             return None
-        return {
-            group_id: groups[group_id].sequence_ids
-            for group_id in ownership
-        }
+        return {group_id: groups[group_id].sequence_ids for group_id in ownership}
 
     def _supplied_ownership_sequences_match_locked(
         self,
@@ -2539,9 +2498,7 @@ class FileNotesSessionOwner:
         ownership: Mapping[int, StagingOwnership],
         group_sequence_ids: Mapping[int, tuple[int, ...]],
     ) -> bool:
-        current_sequence_ids = self._current_ownership_sequences_locked(
-            ownership
-        )
+        current_sequence_ids = self._current_ownership_sequences_locked(ownership)
         return not (
             head.kind != "attached"
             or head.object_id is None
@@ -2580,29 +2537,26 @@ class FileNotesSessionOwner:
             or self._issued_commit_publication_token is not lease._token
             or capture.binding != self._binding
             or capture.authority_generation != self._git_authority_generation
-            or capture.repository_trust_generation
-            != self._repository_trust_generation
+            or capture.repository_trust_generation != self._repository_trust_generation
             or capture.repository != self._trusted_repository
         ):
             return False
 
         quarantine = self._commit_quarantine
         if quarantine is None:
-            return (
-                dict(capture.ownership) == self._staging_ownership
-                and self._commit_capture_facts_match_locked(
-                    capture.repository,
-                    capture.head,
-                    capture.ownership,
-                    capture.group_sequence_ids,
-                )
+            return dict(
+                capture.ownership
+            ) == self._staging_ownership and self._commit_capture_facts_match_locked(
+                capture.repository,
+                capture.head,
+                capture.ownership,
+                capture.group_sequence_ids,
             )
 
         original = quarantine.capture
         return (
             not self._staging_ownership
-            and self._issued_commit_identity
-            is quarantine._guarded_commit_identity
+            and self._issued_commit_identity is quarantine._guarded_commit_identity
             and original.binding == capture.binding
             and original.repository == capture.repository
             and original.head == capture.head
@@ -2715,8 +2669,7 @@ class FileNotesSessionOwner:
             seed is capture._candidate_seed
             and seed.binding == capture.binding
             and seed.repository == capture.repository
-            and seed.repository_trust_generation
-            == capture.repository_trust_generation
+            and seed.repository_trust_generation == capture.repository_trust_generation
             and seed.parent_head == capture.head
             and all(
                 group_id in capture.group_sequence_ids
@@ -2789,13 +2742,10 @@ class FileNotesSessionOwner:
         head = status.head
         if candidate is None or head is None:
             return
-        if (
-            status.repository == candidate.repository
-            and (
-                head.kind != "attached"
-                or head.branch != candidate.candidate.local_branch_ref
-                or head.object_id != candidate.candidate.candidate_oid
-            )
+        if status.repository == candidate.repository and (
+            head.kind != "attached"
+            or head.branch != candidate.candidate.local_branch_ref
+            or head.object_id != candidate.candidate.candidate_oid
         ):
             self._revoke_push_candidate_locked()
 
@@ -2832,8 +2782,7 @@ class FileNotesSessionOwner:
 
     def _revoke_push_review_locked(self) -> None:
         had_review = (
-            self._push_review is not None
-            or self._push_review_capture is not None
+            self._push_review is not None or self._push_review_capture is not None
         )
         if self._push_review is not None and self._push_review_capture is not None:
             self._retired_push_review = _RetiredPushReview(
@@ -2866,10 +2815,7 @@ class FileNotesSessionOwner:
 
     def _invalidate_git_authority_locked(self) -> None:
         self._git_authority_generation += 1
-        if (
-            self._mutation_token is None
-            and self._commit_quarantine is None
-        ):
+        if self._mutation_token is None and self._commit_quarantine is None:
             self._issued_commit_capture = None
             self._issued_commit_identity = None
             self._issued_commit_publication_token = None

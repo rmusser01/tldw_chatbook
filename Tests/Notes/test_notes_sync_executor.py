@@ -4116,9 +4116,7 @@ async def test_concurrent_membership_projections_never_observe_a_torn_set(
                 note_version=1,
             )
         )
-    everything = tuple(
-        ("folder-1", f"note-{index:03d}") for index in range(6)
-    )
+    everything = tuple(("folder-1", f"note-{index:03d}") for index in range(6))
     without_last = everything[:-1]
 
     async def flip() -> None:

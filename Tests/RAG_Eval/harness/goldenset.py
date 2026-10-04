@@ -28,6 +28,7 @@ as strictly as `relevant_slugs`, because a scope defect does not surface as an
 error either — it surfaces as a category of numbers that quietly measures
 something other than scoped retrieval.
 """
+
 from __future__ import annotations
 
 import tomllib
@@ -132,7 +133,11 @@ _CORPUS_KEYS: tuple[str, ...] = ("slug", "source_type", "title", "content")
 #: `_check_unknown_keys` rejects anything not named here, so a loader that
 #: did not know the key would reject every scoped fixture as malformed.
 _GOLDEN_KEYS: tuple[str, ...] = (
-    "id", "query", "category", "relevant_slugs", "scope_slugs",
+    "id",
+    "query",
+    "category",
+    "relevant_slugs",
+    "scope_slugs",
 )
 
 
@@ -245,8 +250,7 @@ def _slug_list_field(
     for position, slug in enumerate(raw_slugs):
         if not isinstance(slug, str) or not slug.strip():
             defects.append(
-                f"{label}: {key}[{position}] must be a non-empty string "
-                f"(got {slug!r})"
+                f"{label}: {key}[{position}] must be a non-empty string (got {slug!r})"
             )
             bad = True
     if bad:
@@ -258,9 +262,7 @@ def _check_unknown_keys(
     entry: dict[str, Any], allowed: tuple[str, ...], label: str, defects: list[str]
 ) -> None:
     for key in sorted(set(entry) - set(allowed)):
-        defects.append(
-            f"{label}: unknown key {key!r} (allowed: {', '.join(allowed)})"
-        )
+        defects.append(f"{label}: unknown key {key!r} (allowed: {', '.join(allowed)})")
 
 
 def _entries(raw: dict[str, Any], array_name: str, path: Path) -> list[dict[str, Any]]:
@@ -302,8 +304,7 @@ def load_corpus(path: Path | str) -> list[CorpusDoc]:
             continue
         _check_unknown_keys(entry, _CORPUS_KEYS, label, defects)
         values = {
-            key: _clean_string_field(entry, key, label, defects)
-            for key in _CORPUS_KEYS
+            key: _clean_string_field(entry, key, label, defects) for key in _CORPUS_KEYS
         }
         if all(values.values()):
             docs.append(CorpusDoc(**values))

@@ -315,7 +315,9 @@ class WatchlistBundleService:
         with self._db.transaction() as conn:
             conn.execute("DELETE FROM watchlists WHERE id = ?", (watchlist_id,))
 
-    def list_watchlists(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    def list_watchlists(
+        self, limit: int = 100, offset: int = 0
+    ) -> list[dict[str, Any]]:
         """All watchlists in display order.
 
         Args:
@@ -343,6 +345,7 @@ class WatchlistBundleService:
         Returns:
             The matching watchlist dict, or ``None`` when no match exists.
         """
+
         def normalize(value: Any) -> str:
             return str(value or "").strip().lower()
 
@@ -350,9 +353,7 @@ class WatchlistBundleService:
             # SQLite LOWER() is ASCII-only. Register the exact Python
             # normalization this lookup used before it moved into SQL, so
             # ADR-043 reuse still treats names such as ÄI/äi as equal.
-            conn.create_function(
-                "watchlist_name_key", 1, normalize, deterministic=True
-            )
+            conn.create_function("watchlist_name_key", 1, normalize, deterministic=True)
             row = conn.execute(
                 "SELECT id, name, description, tags, is_active, sort_order "
                 "FROM watchlists "
@@ -474,7 +475,10 @@ class WatchlistBundleService:
                 """,
                 (watchlist_id,),
             ).fetchall()
-        return [{"id": row[0], "name": row[1], "type": row[2], "url": row[3]} for row in rows]
+        return [
+            {"id": row[0], "name": row[1], "type": row[2], "url": row[3]}
+            for row in rows
+        ]
 
     def list_all_source_rows(self) -> list[dict[str, Any]]:
         """Every source, in the shape the tree and the scoped summary render.
@@ -515,7 +519,10 @@ class WatchlistBundleService:
                 ORDER BY LOWER(s.name), s.id
                 """
             ).fetchall()
-        return [{"id": row[0], "name": row[1], "type": row[2], "url": row[3]} for row in rows]
+        return [
+            {"id": row[0], "name": row[1], "type": row[2], "url": row[3]}
+            for row in rows
+        ]
 
     def get_watchlist_item_counts(self) -> dict[int, dict[str, int]]:
         """Item totals and unread counts for every watchlists tree node.

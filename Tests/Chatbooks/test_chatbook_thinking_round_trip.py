@@ -63,9 +63,7 @@ def _thinking(*, proprietary: bool = False, text: str = "CHATBOOK-THINKING-CANAR
 
 
 def _too_many_exchange_blocks() -> dict[str, object]:
-    block = json.loads(dump_thinking_blocks_json(_thinking()) or "null")[
-        "blocks"
-    ][0]
+    block = json.loads(dump_thinking_blocks_json(_thinking()) or "null")["blocks"][0]
     blocks = []
     for ordinal in range(MAX_THINKING_BLOCKS + 1):
         item = dict(block)
@@ -273,9 +271,7 @@ def test_chatbook_v2_round_trip_preserves_every_graph_owner_policy_and_warning(
         }
         assert assistant_thinking == {
             "Base answer": dump_thinking_blocks_json(_thinking()),
-            "Selected answer": dump_thinking_blocks_json(
-                _thinking(proprietary=True)
-            ),
+            "Selected answer": dump_thinking_blocks_json(_thinking(proprietary=True)),
         }
     finally:
         destination.close_connection()
@@ -404,9 +400,7 @@ def test_chatbook_v2_graph_rejects_thinking_on_deleted_message() -> None:
             "variant_number": 1,
             "is_selected_variant": True,
             "total_variants": 1,
-            "_thinking": json.loads(
-                dump_thinking_blocks_json(_thinking()) or "null"
-            ),
+            "_thinking": json.loads(dump_thinking_blocks_json(_thinking()) or "null"),
         }
     )
 
@@ -431,9 +425,7 @@ def test_chatbook_v2_graph_rejects_aggregate_thinking_utf8_bytes(monkeypatch) ->
 def test_chatbook_v2_rejects_invalid_policy_before_conversation_mutation(
     tmp_path: Path, chachanotes_template_db: Path, policy
 ) -> None:
-    source_paths, conversation_id, _ = _source_graph(
-        tmp_path, chachanotes_template_db
-    )
+    source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
     archive_path, result = _create_export(tmp_path, source_paths, conversation_id)
     assert result[0], result[1]
     broken = _rewrite_export(
@@ -461,9 +453,7 @@ def test_chatbook_v2_rejects_present_null_thinking_before_conversation_mutation(
     chachanotes_template_db: Path,
     message_id: str,
 ) -> None:
-    source_paths, conversation_id, _ = _source_graph(
-        tmp_path, chachanotes_template_db
-    )
+    source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
     archive_path, result = _create_export(tmp_path, source_paths, conversation_id)
     assert result[0], result[1]
 
@@ -617,9 +607,7 @@ def test_soft_deleted_thinking_owner_round_trips_as_an_importable_tombstone(
 def test_chatbook_v2_unknown_policy_falls_back_to_auto_with_content_free_warning(
     tmp_path: Path, chachanotes_template_db: Path
 ) -> None:
-    source_paths, conversation_id, _ = _source_graph(
-        tmp_path, chachanotes_template_db
-    )
+    source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
     archive_path, result = _create_export(tmp_path, source_paths, conversation_id)
     assert result[0], result[1]
     rewritten = _rewrite_export(
@@ -648,9 +636,7 @@ def test_chatbook_v2_unknown_policy_falls_back_to_auto_with_content_free_warning
 def test_chatbook_v2_empty_policy_falls_back_with_unknown_policy_warning(
     tmp_path: Path, chachanotes_template_db: Path
 ) -> None:
-    source_paths, conversation_id, _ = _source_graph(
-        tmp_path, chachanotes_template_db
-    )
+    source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
     archive_path, result = _create_export(tmp_path, source_paths, conversation_id)
     assert result[0], result[1]
     rewritten = _rewrite_export(
@@ -676,17 +662,13 @@ def test_chatbook_v2_empty_policy_falls_back_with_unknown_policy_warning(
 def test_chatbook_v2_invalid_conversation_does_not_block_valid_neighbor(
     tmp_path: Path, chachanotes_template_db: Path
 ) -> None:
-    source_paths, conversation_id, _ = _source_graph(
-        tmp_path, chachanotes_template_db
-    )
+    source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
     archive_path, result = _create_export(tmp_path, source_paths, conversation_id)
     assert result[0], result[1]
     with zipfile.ZipFile(archive_path) as archive:
         files = {name: archive.read(name) for name in archive.namelist()}
     manifest = json.loads(files["manifest.json"])
-    original_path = (
-        "content/conversations/conversation_thinking-conversation.json"
-    )
+    original_path = "content/conversations/conversation_thinking-conversation.json"
     invalid = json.loads(files[original_path])
     valid = copy.deepcopy(invalid)
     invalid["selected_path_message_ids"] = ["missing-message-owner"]

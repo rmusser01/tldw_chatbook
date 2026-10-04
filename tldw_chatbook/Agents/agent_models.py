@@ -86,9 +86,7 @@ CONTROL_CAPTURE_INDEX_BASE = 3_000_000
 # plus two one-time context observations per run. Keep the derived final trace
 # index strictly below the capture band; owner_seq, not these indices, carries
 # observation order.
-MAX_RUN_CONTROL_STEPS = (
-    TRACE_CAPTURE_INDEX_BASE - TRACE_STEP_INDEX_BASE - 3
-) // 5
+MAX_RUN_CONTROL_STEPS = (TRACE_CAPTURE_INDEX_BASE - TRACE_STEP_INDEX_BASE - 3) // 5
 # Lifecycle stays above every runtime/capture band.
 # keeping lifecycle at 10_000_000+ prevents collisions while owner_seq carries
 # the real observation order independently of this storage identity.
@@ -109,9 +107,7 @@ TOOL_OUTCOME_TIMEOUT = "timeout"
 TOOL_OUTCOME_CANCELLED = "cancelled"
 ToolOutcome: TypeAlias = Literal["success", "failed", "blocked", "timeout", "cancelled"]
 
-ToolProjectionAudience: TypeAlias = Literal[
-    "display", "log", "cycle", "continuation"
-]
+ToolProjectionAudience: TypeAlias = Literal["display", "log", "cycle", "continuation"]
 
 # The two steering sources (spec SS6: "two paths, one mechanism"). The label
 # the child sees is derived from the source by `format_steering_message`
@@ -940,6 +936,7 @@ def validate_agent_definition(defn: AgentDefinition) -> list[str]:
                 SLUG_PATTERN,
                 split_custom_endpoint_id,
             )
+
             slug = split_custom_endpoint_id(defn.provider)
             if slug is None or not SLUG_PATTERN.fullmatch(slug):
                 errors.append("provider custom-ep id has an invalid slug")
@@ -948,12 +945,11 @@ def validate_agent_definition(defn: AgentDefinition) -> list[str]:
                 supported_console_provider_readiness_keys,
             )
             from tldw_chatbook.Chat.provider_readiness import provider_config_key
+
             if provider_config_key(defn.provider) not in set(
                 supported_console_provider_readiness_keys()
             ):
-                errors.append(
-                    f"provider '{defn.provider}' is not a known provider id"
-                )
+                errors.append(f"provider '{defn.provider}' is not a known provider id")
     errors.extend(validate_sampling_params(params_to_dict(defn.params)))
     return errors
 

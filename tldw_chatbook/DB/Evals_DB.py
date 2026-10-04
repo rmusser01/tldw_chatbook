@@ -28,7 +28,17 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, TYPE_CHECKING, List, Dict, Optional, Any, Union, Tuple, Sequence
+from typing import (
+    Iterator,
+    TYPE_CHECKING,
+    List,
+    Dict,
+    Optional,
+    Any,
+    Union,
+    Tuple,
+    Sequence,
+)
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -218,7 +228,9 @@ class EvalsDB:
         _core_access(self)
         conn = _core_cached_connection(self, getattr(self._local, "connection", None))
         if conn is None:
-            conn = connect_private_sqlite("db.evals", self.db_path, check_same_thread=False)
+            conn = connect_private_sqlite(
+                "db.evals", self.db_path, check_same_thread=False
+            )
             try:
                 _register_core_connection(self, conn)
                 _core_access(self)
@@ -916,7 +928,9 @@ class EvalsDB:
 
             except sqlite3.IntegrityError as e:
                 if "UNIQUE constraint failed" in str(e):
-                    raise ConflictError("Task name already exists", "eval_tasks", task_id)
+                    raise ConflictError(
+                        "Task name already exists", "eval_tasks", task_id
+                    )
                 raise EvalsDBError(f"Failed to update task: {e}")
 
     def delete_task(self, task_id: str) -> bool:
@@ -943,7 +957,6 @@ class EvalsDB:
                 matching row".
         """
         with self.connection() as conn:
-
             try:
                 with conn:
                     # Resolve the task's run groups BEFORE the soft-delete below.
@@ -1052,7 +1065,9 @@ class EvalsDB:
                     for start in range(
                         0, len(ids), _PROBE_ANNOTATION_CASCADE_BATCH_SIZE
                     ):
-                        batch = ids[start : start + _PROBE_ANNOTATION_CASCADE_BATCH_SIZE]
+                        batch = ids[
+                            start : start + _PROBE_ANNOTATION_CASCADE_BATCH_SIZE
+                        ]
                         placeholders = ",".join("?" for _ in batch)
                         cursor = conn.execute(
                             f"DELETE FROM {table} WHERE run_group_id IN ({placeholders})",
@@ -1074,7 +1089,6 @@ class EvalsDB:
         )
 
         with self.connection() as conn:
-
             query = "SELECT * FROM eval_tasks WHERE id = ?"
             if not include_deleted:
                 query += " AND deleted_at IS NULL"
@@ -1089,11 +1103,19 @@ class EvalsDB:
             log_histogram(
                 "eval_db_operation_duration",
                 duration,
-                labels={"operation": "get_task", "table": "eval_tasks", "status": status},
+                labels={
+                    "operation": "get_task",
+                    "table": "eval_tasks",
+                    "status": status,
+                },
             )
             log_counter(
                 "eval_db_operation_success",
-                labels={"operation": "get_task", "table": "eval_tasks", "status": status},
+                labels={
+                    "operation": "get_task",
+                    "table": "eval_tasks",
+                    "status": status,
+                },
             )
 
             if row:
@@ -1107,7 +1129,6 @@ class EvalsDB:
     ) -> List[Dict[str, Any]]:
         """List evaluation tasks with optional filtering."""
         with self.connection() as conn:
-
             query = "SELECT * FROM eval_tasks WHERE deleted_at IS NULL"
             params = []
 
@@ -1148,7 +1169,6 @@ class EvalsDB:
             # last seam in this family that still had it.
             return []
         with self.connection() as conn:
-
             # Remove null bytes and other control characters
             query = "".join(c for c in query if c.isprintable() and ord(c) != 0)
 
@@ -1246,7 +1266,9 @@ class EvalsDB:
             except sqlite3.IntegrityError as e:
                 if "UNIQUE constraint failed" in str(e):
                     raise ConflictError(
-                        f"Dataset with name '{name}' already exists", "eval_datasets", name
+                        f"Dataset with name '{name}' already exists",
+                        "eval_datasets",
+                        name,
                     )
                 raise EvalsDBError(f"Failed to create dataset: {e}")
 
@@ -1356,7 +1378,9 @@ class EvalsDB:
             except sqlite3.IntegrityError as e:
                 if "UNIQUE constraint failed" in str(e):
                     raise ConflictError(
-                        f"Dataset with name '{name}' already exists", "eval_datasets", name
+                        f"Dataset with name '{name}' already exists",
+                        "eval_datasets",
+                        name,
                     )
                 raise EvalsDBError(f"Failed to update dataset: {e}")
 
@@ -1478,9 +1502,7 @@ class EvalsDB:
         try:
             return json.loads(value)
         except (TypeError, ValueError) as exc:
-            raise EvalsDBError(
-                f"Corrupt JSON in {column}: {exc!r}"
-            ) from exc
+            raise EvalsDBError(f"Corrupt JSON in {column}: {exc!r}") from exc
 
     def get_model(self, model_id: str) -> Optional[Dict[str, Any]]:
         """Get model by ID."""
@@ -1507,7 +1529,6 @@ class EvalsDB:
     ) -> List[Dict[str, Any]]:
         """List evaluation models with optional provider filtering."""
         with self.connection() as conn:
-
             query = "SELECT * FROM eval_models WHERE deleted_at IS NULL"
             params = []
 
@@ -1687,9 +1708,10 @@ class EvalsDB:
                 for field, value in updates.items():
                     if field in allowed_fields:
                         fields_to_update.append(f"{field} = ?")
-                        if field in ["metrics_summary", "config_overrides"] and isinstance(
-                            value, dict
-                        ):
+                        if field in [
+                            "metrics_summary",
+                            "config_overrides",
+                        ] and isinstance(value, dict):
                             values.append(json.dumps(value))
                         else:
                             values.append(value)
@@ -1758,7 +1780,6 @@ class EvalsDB:
             parsed from JSON.
         """
         with self.connection() as conn:
-
             query = """
             SELECT r.*, t.name as task_name, m.name as model_name
             FROM eval_runs r
@@ -2304,7 +2325,9 @@ class EvalsDB:
             except sqlite3.IntegrityError as e:
                 if "UNIQUE constraint failed" in str(e):
                     raise ConflictError(
-                        f"A/B test with ID '{test_id}' already exists", "ab_tests", test_id
+                        f"A/B test with ID '{test_id}' already exists",
+                        "ab_tests",
+                        test_id,
                     )
                 raise EvalsDBError(f"Failed to create A/B test: {e}")
 
@@ -2423,7 +2446,6 @@ class EvalsDB:
     ) -> List[Dict[str, Any]]:
         """List A/B tests with optional filtering."""
         with self.connection() as conn:
-
             query = """
             SELECT a.*, 
                    t.name as task_name,

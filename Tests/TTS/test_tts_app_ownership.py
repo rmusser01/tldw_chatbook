@@ -1495,9 +1495,7 @@ async def test_voice_bundle_service_is_lazy_singleton_and_closes_before_reposito
     # patch, and patching one would not be read by the deferred import.
     import tldw_chatbook.TTS.voice_bundle_service as voice_bundle_module
 
-    monkeypatch.setattr(
-        voice_bundle_module, "TTSVoiceBundlePortabilityService", build
-    )
+    monkeypatch.setattr(voice_bundle_module, "TTSVoiceBundlePortabilityService", build)
     set_app_global(monkeypatch, "get_user_data_dir", lambda: tmp_path)
     owner = SimpleNamespace(
         _tts_voice_bundle_service=None,

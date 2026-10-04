@@ -1101,9 +1101,42 @@ def chat_with_kobold(
         session.mount("http://", adapter)
         session.mount("https://", adapter)
 
+        # TASK-19862: refuse redirects rather than follow them. This POST
+        # carries the API key in the custom ``X-Api-Key`` header, which
+        # ``requests`` does NOT strip across a cross-origin hop (only
+        # ``Authorization``/``Cookie``) -- and the destination URL is
+        # user-configured, so a redirecting endpoint is reachable by
+        # ordinary misconfiguration. Worse, on a 302/303 ``requests``
+        # converts this POST to a GET before re-issuing to whatever host
+        # ``Location`` names. A KoboldAI generation endpoint has no
+        # legitimate redirect, so one is refused loudly below instead.
         response = session.post(
-            current_api_base_url, headers=headers, json=payload, timeout=timeout
+            current_api_base_url,
+            headers=headers,
+            json=payload,
+            timeout=timeout,
+            allow_redirects=False,
         )
+        # Every 3xx, not just ``response.is_redirect`` (which needs a
+        # ``Location`` header and one of 301/302/303/307/308): a 300/304
+        # or a Location-less 3xx would otherwise pass ``raise_for_status``
+        # and have its body parsed as a generation.
+        if 300 <= response.status_code < 400:
+            # Close the refused response so its connection is not leaked,
+            # then fail loudly WITHOUT echoing the attacker-controlled
+            # ``Location`` value (TASK-19321/19552/19557 exception rule).
+            redirect_status = response.status_code
+            response.close()
+            raise ChatProviderError(
+                provider="kobold",
+                message=(
+                    "KoboldAI (Native) endpoint answered the generate "
+                    f"request with a redirect (HTTP {redirect_status}); "
+                    "refusing to follow it because the request carries "
+                    "the API key. Check the configured KoboldAI API URL."
+                ),
+                status_code=redirect_status,
+            )
         response.raise_for_status()
         response_data = response.json()
 

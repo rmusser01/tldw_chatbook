@@ -108,7 +108,9 @@ def _rendered(item_row: dict) -> tuple[str, str]:
     from tldw_chatbook.UI.Watchlists_Modules.content_pane import render_for
 
     item = normalize_watchlist_item("local", item_row)
-    console = Console(width=80, record=True, color_system="standard", force_terminal=True)
+    console = Console(
+        width=80, record=True, color_system="standard", force_terminal=True
+    )
     console.print(render_for(item))
     return console.export_text(clear=False), console.export_text(styles=True)
 
@@ -268,7 +270,9 @@ async def test_the_stored_change_content_is_a_diff_not_the_whole_new_page(monkey
 
 
 @pytest.mark.asyncio
-async def test_the_change_headline_carries_a_diff_summary_and_a_real_percentage(monkeypatch):
+async def test_the_change_headline_carries_a_diff_summary_and_a_real_percentage(
+    monkeypatch,
+):
     """AC#4, plus the scale of `change_percentage`.
 
     `diff_summary` is rendered by `render_change` and had no producer at all.
@@ -482,8 +486,10 @@ async def test_an_oversized_change_is_truncated_and_says_so(monkeypatch):
     # in `render_change`'s headline.
     db, service, source_id = await _site_source(
         monkeypatch,
-        [f"<html><body><p>{before}</p></body></html>",
-         f"<html><body><p>{after}</p></body></html>"],
+        [
+            f"<html><body><p>{before}</p></body></html>",
+            f"<html><body><p>{after}</p></body></html>",
+        ],
     )
     await _check(service, source_id)
     await _check(service, source_id)
@@ -594,8 +600,8 @@ def test_the_diff_generator_is_not_materialised():
 
     real_unified_diff = monitoring_engine.unified_diff
     try:
-        monitoring_engine.unified_diff = (
-            lambda *args, **kwargs: iter(list(real_unified_diff(*args, **kwargs)))
+        monitoring_engine.unified_diff = lambda *args, **kwargs: iter(
+            list(real_unified_diff(*args, **kwargs))
         )
         tracemalloc.start()
         listed_body, listed_summary = monitoring_engine.build_change_diff(before, after)
@@ -839,12 +845,14 @@ def test_the_rule_haystack_is_the_page_when_content_is_a_diff():
         build_rule_haystack,
     )
 
-    haystack = build_rule_haystack({
-        "title": "Change detected: Status",
-        "content": "@@ -1,2 +1,2 @@\n-Opus 4.1 available\n+Opus 4.5 available",
-        RULE_MATCH_TEXT_KEY: "All systems operational. Opus 4.5 available.",
-        "author": None,
-    })
+    haystack = build_rule_haystack(
+        {
+            "title": "Change detected: Status",
+            "content": "@@ -1,2 +1,2 @@\n-Opus 4.1 available\n+Opus 4.5 available",
+            RULE_MATCH_TEXT_KEY: "All systems operational. Opus 4.5 available.",
+            "author": None,
+        }
+    )
 
     assert "all systems operational" in haystack
     assert "change detected: status" in haystack
@@ -937,7 +945,9 @@ def test_pre_segmented_diff_helpers_match_the_self_segmenting_path():
     )
 
 
-async def _direct_check(db: SubscriptionsDB, source_id: int) -> tuple[dict | None, dict]:
+async def _direct_check(
+    db: SubscriptionsDB, source_id: int
+) -> tuple[dict | None, dict]:
     """Call the real `check_url` directly, bypassing persistence.
 
     `_check`/`_stored_items` only ever see what survives `persist_subscription_item`,
@@ -1012,9 +1022,9 @@ def test_feed_and_api_items_carry_neither_key_so_scope_falls_back_safely():
     assert RULE_MATCH_ADDED_TEXT_KEY not in feed_item
     assert RULE_MATCH_REMOVED_TEXT_KEY not in feed_item
 
-    assert "the model is available" in build_rule_haystack(feed_item, scope="appeared"), (
-        "a wholly new item has no diff to narrow against -- it all just appeared"
-    )
+    assert "the model is available" in build_rule_haystack(
+        feed_item, scope="appeared"
+    ), "a wholly new item has no diff to narrow against -- it all just appeared"
     assert build_rule_haystack(feed_item, scope="disappeared") == "", (
         "nothing is known to have disappeared from an item with no previous "
         "version to compare against"
@@ -1197,7 +1207,8 @@ async def test_two_snapshots_in_one_second_compare_against_the_newer(monkeypatch
     latest = "Version 3.0 is current. Everything else on this page is stable."
 
     db, service, source_id = await _site_source(
-        monkeypatch, [f"<html><body><p>{latest}</p></body></html>"],
+        monkeypatch,
+        [f"<html><body><p>{latest}</p></body></html>"],
         change_threshold=0.0,
     )
     subscription = db.get_subscription(source_id)
@@ -1218,8 +1229,14 @@ async def test_two_snapshots_in_one_second_compare_against_the_newer(monkeypatch
                      created_at, extraction_fingerprint)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (source_id, "https://example.com/page", f"hash-{body[:9]}",
-                 body, tied, fingerprint),
+                (
+                    source_id,
+                    "https://example.com/page",
+                    f"hash-{body[:9]}",
+                    body,
+                    tied,
+                    fingerprint,
+                ),
             )
 
     result = await _check(service, source_id)

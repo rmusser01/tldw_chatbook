@@ -54,7 +54,9 @@ def test_overrides_give_tooltip_an_opaque_bordered_surface():
     assert bg_match, "Tooltip rule must declare a background"
     bg_value = bg_match.group(1).strip()
     low = bg_value.lower()
-    assert low.split()[0] != "transparent", f"tooltip background '{bg_value}' is transparent"
+    assert low.split()[0] != "transparent", (
+        f"tooltip background '{bg_value}' is transparent"
+    )
     # Reject every translucency syntax, not just a trailing percent:
     #   Textual token alpha   `$panel 60%`
     assert not re.search(r"\b\d{1,3}%\s*$", bg_value), (

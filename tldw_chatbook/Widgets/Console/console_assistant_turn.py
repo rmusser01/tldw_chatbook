@@ -55,8 +55,7 @@ def raw_cli_status_copy(
     ):
         elapsed = max(
             elapsed,
-            (monotonic() if now is None else now)
-            - presentation.started_at_monotonic,
+            (monotonic() if now is None else now) - presentation.started_at_monotonic,
         )
     copy = f"{labels[presentation.lifecycle_state]} · {elapsed:.1f}s"
     if (
@@ -207,9 +206,7 @@ class ConsoleActivityHeader(Horizontal):
     @property
     def renderable(self) -> Content:
         """Retain the former combined-text inspection seam for callers/tests."""
-        return Content(
-            f"{self._label_content().plain} {self._status_content().plain}"
-        )
+        return Content(f"{self._label_content().plain} {self._status_content().plain}")
 
     def on_mount(self) -> None:
         """Own the elapsed repaint cadence for this command activity row."""

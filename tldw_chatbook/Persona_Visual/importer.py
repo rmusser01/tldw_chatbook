@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from tldw_chatbook.Backup_Recovery import persona_visual_participants as visual_lifetime
 from tldw_chatbook.Backup_Recovery.persona_visual_participants import (
-    native_open as _native_open, native_close as _native_close,
+    native_open as _native_open,
+    native_close as _native_close,
 )
 
 import hashlib
@@ -164,7 +165,12 @@ def _import_errors(function):
         except visual_lifetime.PersonaVisualNativeError:
             raise
         except Exception:
-            raise PersonaVisualImportError("persona_visual_import_invalid" if function.__name__ == "import_persona_visual_pack" else "persona_visual_import_cleanup_denied") from None
+            raise PersonaVisualImportError(
+                "persona_visual_import_invalid"
+                if function.__name__ == "import_persona_visual_pack"
+                else "persona_visual_import_cleanup_denied"
+            ) from None
+
     return mapped
 
 
@@ -194,40 +200,68 @@ def import_persona_visual_pack(
             members, pack, asset_records = _validated_archive(archive, cancelled)
             name = f".import-{uuid4().hex}"
             candidate_path = root / name
-            names = tuple(f"{index:03d}{_FORMAT_BY_MIME[record['mime_type']][1]}" for index, record in enumerate(asset_records))
-            outputs = (candidate_path / _MARKER_NAME, candidate_path / "manifest.json",
-                       *(candidate_path / "assets" / leaf for leaf in names))
+            names = tuple(
+                f"{index:03d}{_FORMAT_BY_MIME[record['mime_type']][1]}"
+                for index, record in enumerate(asset_records)
+            )
+            outputs = (
+                candidate_path / _MARKER_NAME,
+                candidate_path / "manifest.json",
+                *(candidate_path / "assets" / leaf for leaf in names),
+            )
             directories = (root.parent, root, candidate_path, candidate_path / "assets")
-            with visual_lifetime.files(source_binding, (source.path,) + outputs, directories,
-                                       writing=outputs + directories) as native_scope:
+            with visual_lifetime.files(
+                source_binding,
+                (source.path,) + outputs,
+                directories,
+                writing=outputs + directories,
+            ) as native_scope:
                 try:
                     root = _private_staging_root(staging_root)
                     _raise_if_cancelled(cancelled)
                     _preflight_space(root, members)
                     candidate = _create_candidate(root, name=name)
-                    draft_assets = _extract_assets(archive, members, asset_records, candidate, cancelled)
+                    draft_assets = _extract_assets(
+                        archive, members, asset_records, candidate, cancelled
+                    )
                     candidate = _candidate_with_assets(candidate, draft_assets)
                     manifest_json = _canonical_text(pack["visual_manifest"])
-                    _write_private(candidate.root / "manifest.json", manifest_json.encode())
+                    _write_private(
+                        candidate.root / "manifest.json", manifest_json.encode()
+                    )
                     draft = create_persona_visual_import_draft(
-                        persona_id=persona_id, persona_revision=persona_revision,
-                        expected_identity=expected_identity, title=pack["title"],
-                        description=pack.get("description", "Imported Persona Visual pack"), manifest_json=manifest_json,
+                        persona_id=persona_id,
+                        persona_revision=persona_revision,
+                        expected_identity=expected_identity,
+                        title=pack["title"],
+                        description=pack.get(
+                            "description", "Imported Persona Visual pack"
+                        ),
+                        manifest_json=manifest_json,
                         source_context=pack["source_context"],
                         assets=draft_assets,
                     )
                     _raise_if_cancelled(cancelled)
-                    if not _source_identity_current(source.path, source.identity, source.sha256):
+                    if not _source_identity_current(
+                        source.path, source.identity, source.sha256
+                    ):
                         raise PersonaVisualImportError("persona_visual_import_stale")
                     _candidate_current(candidate)
-                    native_scope.result = visual_lifetime.issue(PersonaVisualImportReview(
-                        schema_version=PERSONA_VISUAL_PACK_SCHEMA,
-                        archive_sha256=source.sha256, pack_title=draft.title,
-                        policy_rule_count=pack["policy_rule_count"],
-                        asset_count=len(draft.assets), state_count=len(json.loads(draft.manifest_json)["states"]),
-                        draft=draft, cleanup_candidate=candidate.capability,
-                        _candidate_name=candidate.name, _candidate_identity=candidate.identity,
-                    ), source_binding)
+                    native_scope.result = visual_lifetime.issue(
+                        PersonaVisualImportReview(
+                            schema_version=PERSONA_VISUAL_PACK_SCHEMA,
+                            archive_sha256=source.sha256,
+                            pack_title=draft.title,
+                            policy_rule_count=pack["policy_rule_count"],
+                            asset_count=len(draft.assets),
+                            state_count=len(json.loads(draft.manifest_json)["states"]),
+                            draft=draft,
+                            cleanup_candidate=candidate.capability,
+                            _candidate_name=candidate.name,
+                            _candidate_identity=candidate.identity,
+                        ),
+                        source_binding,
+                    )
                     return native_scope.result
                 except PersonaVisualImportError as exc:
                     cleanup_candidate = _cleanup_failed_candidate(candidate)
@@ -239,7 +273,10 @@ def import_persona_visual_pack(
                     raise
                 except Exception:
                     cleanup_candidate = _cleanup_failed_candidate(candidate)
-                    raise PersonaVisualImportError("persona_visual_import_invalid", cleanup_candidate=cleanup_candidate) from None
+                    raise PersonaVisualImportError(
+                        "persona_visual_import_invalid",
+                        cleanup_candidate=cleanup_candidate,
+                    ) from None
 
 
 @_import_errors
@@ -254,8 +291,14 @@ def persona_visual_import_source_root(
         root = Path(staging_root)
         source = visual_lifetime.candidate_source(review, root.parent.parent)
         candidate_root = root / review._candidate_name
-        outputs = (candidate_root / _MARKER_NAME, candidate_root / "manifest.json",
-                   *(candidate_root / asset.source_storage_key for asset in review.draft.assets))
+        outputs = (
+            candidate_root / _MARKER_NAME,
+            candidate_root / "manifest.json",
+            *(
+                candidate_root / asset.source_storage_key
+                for asset in review.draft.assets
+            ),
+        )
         directories = (root, candidate_root, candidate_root / "assets")
         with visual_lifetime.files(source, outputs, directories, writing=(root,)):
             candidate = _review_candidate(review, staging_root)
@@ -275,10 +318,18 @@ def cleanup_persona_visual_import_review(
         root = Path(staging_root)
         source = visual_lifetime.candidate_source(review, root.parent.parent)
         candidate_root = root / review._candidate_name
-        outputs = (candidate_root / _MARKER_NAME, candidate_root / "manifest.json",
-                   *(candidate_root / asset.source_storage_key for asset in review.draft.assets))
+        outputs = (
+            candidate_root / _MARKER_NAME,
+            candidate_root / "manifest.json",
+            *(
+                candidate_root / asset.source_storage_key
+                for asset in review.draft.assets
+            ),
+        )
         directories = (root, candidate_root, candidate_root / "assets")
-        with visual_lifetime.files(source, outputs, directories, writing=outputs + directories) as native_scope:
+        with visual_lifetime.files(
+            source, outputs, directories, writing=outputs + directories
+        ) as native_scope:
             native_scope.candidate_cleanup = review
             candidate = _review_candidate(review, staging_root)
             if not _delete_candidate(candidate):
@@ -760,7 +811,9 @@ def _extract_assets(
     return tuple(draft_assets)
 
 
-def _inspect_image(path: Path | BytesIO, record: Mapping[str, Any]) -> tuple[int, int | None]:
+def _inspect_image(
+    path: Path | BytesIO, record: Mapping[str, Any]
+) -> tuple[int, int | None]:
     if isinstance(path, BytesIO):
         data = path.getvalue()
     else:

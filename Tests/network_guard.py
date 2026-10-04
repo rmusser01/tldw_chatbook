@@ -318,15 +318,14 @@ def is_loopback_destination(family: Any, address: Any) -> bool:
             and parsed in _IPV4_LOOPBACK_NETWORK
         )
     return (
-        isinstance(parsed, ipaddress.IPv6Address)
-        and parsed == _IPV6_LOOPBACK_ADDRESS
+        isinstance(parsed, ipaddress.IPv6Address) and parsed == _IPV6_LOOPBACK_ADDRESS
     )
 
 
 def _create_connection_is_loopback(address: Any) -> bool:
-    return is_loopback_destination(
-        socket.AF_INET, address
-    ) or is_loopback_destination(socket.AF_INET6, address)
+    return is_loopback_destination(socket.AF_INET, address) or is_loopback_destination(
+        socket.AF_INET6, address
+    )
 
 
 def _should_block(family: Any, address: Any) -> bool:

@@ -82,10 +82,13 @@ class ChatShellContext:
             assistant_id=getattr(session_data, "assistant_id", None),
         )
 
-        title = sanitize_character_display_label(
-            getattr(session_data, "title", None),
-            max_characters=_CHAT_SHELL_LABEL_MAX_CHARACTERS,
-        ) or "New chat"
+        title = (
+            sanitize_character_display_label(
+                getattr(session_data, "title", None),
+                max_characters=_CHAT_SHELL_LABEL_MAX_CHARACTERS,
+            )
+            or "New chat"
+        )
         return cls(backend, scope, assistant, f"Session: {title}")
 
     def prioritized_segments(self, max_width: int) -> list[str]:

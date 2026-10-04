@@ -661,7 +661,9 @@ def _huggingface_hub_is_offline(monkeypatch: pytest.MonkeyPatch) -> Iterator[Non
 
 
 @pytest.fixture(autouse=True)
-def _no_real_audio_device(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+def _no_real_audio_device(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """No test opens real audio hardware unless it explicitly opts in.
 
     Task-4 streaming-pcm-sink review, merge-gate finding: `_generate_tts`
@@ -1184,10 +1186,16 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
         # unit tests but contain real-app mounts (the runtime-ownership
         # suite): mark only the mounting tests.
         or request.node.get_closest_marker("bootstrap_profile") is not None
-        or request.node.path.name in {
-            "test_mcp_workbench.py", "test_mcp_tools_mode.py", "test_mcp_servers_mode.py",
-            "test_hosted_chat.py", "test_qwencloud.py",
+        or request.node.path.name
+        in {
+            "test_mcp_workbench.py",
+            "test_mcp_tools_mode.py",
+            "test_mcp_servers_mode.py",
+            "test_hosted_chat.py",
+            "test_qwencloud.py",
             "test_groq_openrouter_migration_characterization.py",
+
+
             # The sentinel redaction tests drive the real OpenAI adapter into
             # its ConnectionError branch; the adapter's session construction
             # goes through create_default_session -> get_config_value on the
@@ -1195,11 +1203,15 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # test_hosted_chat.py above). They fake load_settings, not the
             # config getters, so they keep the bootstrap profile.
             "test_sensitive_llm_logging.py",
+
+
             # The mocked local-service connection test drives chat_api_call
             # for koboldcpp, whose handler reads settings through the guarded
             # config loader under the per-test redirect (same admission
             # signature as test_hosted_chat.py above).
             "test_chat_unit_mocked_APIs.py",
+
+
             # The catalog client-factory tests build real httpx clients
             # through the TLS-trust factory, whose trust/timeout reads go
             # through the guarded config loader under the per-test redirect
@@ -1208,6 +1220,8 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_server_llm_provider_catalog_service.py",
             "test_summarization_diagnostic_privacy.py",
             "test_summarization_model_capabilities.py",
+
+
             # TASK-32853/32854: the analyze boundary and the local config
             # suites read provider settings through get_cli_setting on their
             # hot paths (same admission signature as the two above).
@@ -1216,12 +1230,16 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kobold_tabby_config.py",
             "test_custom_openai_credential_resolution.py",
             "test_summarization_request_timeouts.py",
+
+
             # TASK-32864: the Console/Library modal dismissal inventories
             # import every modal module under Widgets/Console and
             # UI/Library_Modules (real config participants on their import
             # path); same admission signature as the suites above.
             "test_console_modal_dismissal.py",
             "test_library_modal_dismissal.py",
+
+
             # TASK-32856 follow-up trial: media-generation suites import the
             # real app (config participants on the import path); same
             # admission signature as the suites above.
@@ -1243,23 +1261,31 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_novita_adapter.py",
             "test_config_projection.py",
             "test_comfyui_workflow_distribution.py",
+
+
             # TASK-32873: the runtime-ownership and viewless suites mount
             # real apps end to end; same config-participant admission
             # signature as above. (The few pure-unit tests inside the
             # ownership suite were fixed to be profile-agnostic.)
             "test_console_runtime_ownership.py",
             "test_console_viewless_hooks.py",
+
+
             # TASK-32873: same signature, discovered while re-verifying --
             # install_skill dispatch drives scripted agent runs whose config
             # reads go through the config-participant admission.
             "test_install_skill_runtime_tool.py",
             "test_console_chat_create_integration.py",
+
+
             # ADR-179 Task 4: the engine resolution suite drives
             # resolve_hosted_request without app_config on its preset-rule
             # cases, which reads get_runtime_config_snapshot on the guarded
             # config loader (same admission signature as test_hosted_chat.py
             # above).
             "test_hosted_provider_engine_resolution.py",
+
+
             # ADR-179 Task 11: three pre-existing red suites with the same
             # admission signature -- the Kimi/Z.ai native-tool suite drives
             # the real hosted handlers (owned_json_post session construction
@@ -1271,6 +1297,130 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kimi_zai_native_tools.py",
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
+
+
+            # TASK-592/609 (egress hardening arc): the three SSRF/egress
+            # regression suites -- every guarded_fetch_* helper and
+            # create_default_session reads get_cli_setting through the
+            # guarded config loader (check_url_or_raise -> _config_enabled,
+            # default_session_timeout, and GitHubAPIClient.__init__), so all
+            # three files went red with RecoveryRequired("raw_source_
+            # selection_changed") when TASK-32628's admission landed. None of
+            # them re-selects a config itself (verified: no config.toml
+            # writes, no load_cli_config calls); they pin redirect-credential
+            # and host-classification policy and are not in the PR fast lane,
+            # so the reds had gone unnoticed. The same signature and the same
+            # "no config re-selection" check hold for the four caller suites
+            # below (crawler sitemap, GitHub client, download caps wiring,
+            # settings probe), enrolled for the same reason.
+            "test_egress.py",
+            "test_egress_cross_origin_header_allowlist.py",
+            "test_skill_remote_fetch.py",
+            "test_sitemap_crawl_trusted_origins.py",
+            "test_github_api_client.py",
+            "test_download_caps_wiring.py",
+            "test_settings_probe_egress.py",
+
+
+            # TASK-21233: the subscriptions FTS-backfill collision canary
+            # drives the real SubscriptionsDB from a worker thread; the
+            # thread-local connection created there resolves config through
+            # the guarded loader, and under the per-test env redirect the
+            # bound config selection no longer matches (same admission
+            # signature as test_hosted_chat.py above). The file's other
+            # tests are tmp_path DB-level tests that do not depend on the
+            # redirect.
+            "test_fts_backfill.py",
+
+
+            # TASK-22302: the real-stack citation persistence suite drives the
+            # real Console controller submit path, whose hook-consent admission
+            # (`_hook_admission_reason` -> `read_hooks_config_snapshot`) reads
+            # the guarded config loader. Under the per-test redirect that read
+            # fails closed with RecoveryRequired("raw_source_selection_changed")
+            # and the gate's broad except turns it into a send refusal
+            # ("Hooks unavailable"), so the durable turn never starts and the
+            # six-table assertions never run -- the same admission signature as
+            # the two console continuation suites above, red since the
+            # hook-consent gate landed (aed1b13501).
+            "test_console_terminal_citation_persistence.py",
+
+
+            # TASK-19425: the Console hook-consent send gate (aed1b13501)
+            # reads the saved [hooks] section through the guarded config
+            # loader on EVERY controller submit_draft/queue_prompt. Under
+            # the per-test redirect that read raises RecoveryRequired
+            # ("raw_source_selection_changed"), the gate's fail-closed
+            # except denies the send ("Hooks unavailable; review or
+            # disable hooks before sending."), and this suite's
+            # controlled-gateway tests wait forever for provider events
+            # that never arrive -- 87 reds, 17 of them pinned at the full
+            # --timeout cap per run (the 300s hang class this task
+            # measures). Same admission signature as the continuation
+            # suites above; the suite never re-selects a config itself.
+            "test_console_local_citation_boundary.py",
+
+
+            # TASK-19642.19.2: the reranker system-prompt contract suite
+            # constructs a real PointwiseReranker, whose __init__ resolves
+            # the registry default through get_internal_prompt ->
+            # get_cli_setting on the guarded config loader (same admission
+            # signature as test_hosted_chat.py above). The file's fixture
+            # fakes load_settings, not the config getters, so it keeps the
+            # bootstrap profile.
+            "test_reranker_system_prompt.py",
+
+            # TASK-19642.21.1: the ported v2-chunker suite constructs the real
+            # engine Chunker, whose ChunkerConfig reads chatbook's [Chunking]
+            # TOML through the _shims/config.py guarded config loader under
+            # the per-test redirect (same admission signature as
+            # test_hosted_chat.py above). It never re-selects a config
+            # itself, so it keeps the bootstrap profile.
+            "test_chunker_v2.py",
+
+            # TASK-19642.21.2: the golden-parity suite builds the same real
+            # Chunker per corpus×method node; identical admission signature
+            # and rationale as test_chunker_v2.py above.
+            "test_golden_parity.py",
+
+            # TASK-19642.11: the managed model-artifact transfer suites drive
+            # the real fetch hot path against loopback fixture servers
+            # (stream_fetch -> check_url_or_raise_async -> egress
+            # ._config_enabled -> get_cli_setting on the guarded config
+            # loader); same admission signature as the hosted-chat class
+            # above. They fake the HTTP transport, not the config getters,
+            # so they keep the bootstrap profile.
+            "test_stream_fetch.py",
+            "test_provision_fetch.py",
+            "test_source_map.py",
+            "test_credentials_and_boundaries.py",
+
+            # TASK-19642.12: the preflight/install/crash-recovery suites
+            # drive the same real acquisition hot path (preflight probe and
+            # install/finalize fetches reach egress._config_enabled ->
+            # get_cli_setting on the guarded config loader); same admission
+            # signature as the class above. They fake the HTTP transport,
+            # not the config getters, so they keep the bootstrap profile.
+            "test_preflight.py",
+            "test_provision_install.py",
+            "test_provision_crash_recovery.py",
+            # TASK-32171: the Library media-reader traversal suite mounts
+            # real production-CSS apps through _flow_app -> _build_test_app ->
+            # load_settings on the guarded config loader, so the per-test env
+            # redirect fails the config-participant admission closed with the
+            # same RecoveryRequired signature as the suites above (observed
+            # masking the whole file standalone at dev tip 2612fc56b2). None of
+            # its cases re-selects a config itself and none writes durable
+            # reader preferences, so the shared bootstrap profile is safe.
+            # (The adaptive-reader closeout suite hits the same admission but
+            # DOES write durable per-destination reader preferences its later
+            # cases must not see; it uses @private_profile_test instead.)
+            "test_library_media_reader_traversal_t22207.py",
+            # TASK-21234: the fleet teardown notice suite builds real apps
+            # through _build_test_app for its direct-seam staging and its
+            # full-app superseded-navigation case; same admission signature
+            # and same class as the console integration suites above.
+            "test_fleet_teardown_notice.py",
         }
     )
     test_data_dir = (
@@ -1624,9 +1774,7 @@ def _fleet_chat_scripts_fully_consumed():
     # milliseconds, while a genuinely mis-keyed one costs this bounded
     # wait once, on a test that is failing anyway.
     deadline = time.monotonic() + 3.0
-    while time.monotonic() < deadline and any(
-        chat.unconsumed() for chat in instances
-    ):
+    while time.monotonic() < deadline and any(chat.unconsumed() for chat in instances):
         time.sleep(0.02)
     problems = []
     for chat in instances:

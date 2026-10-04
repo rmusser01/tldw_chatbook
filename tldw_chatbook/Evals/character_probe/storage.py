@@ -93,8 +93,7 @@ def _samples_to_probe_set(samples: Any, dataset_id: str) -> ProbeSet:
     for index, sample in enumerate(samples):
         if not isinstance(sample, Mapping):
             raise ValueError(
-                f"Probe set {dataset_id!r} sample {index} is not a mapping: "
-                f"{sample!r}"
+                f"Probe set {dataset_id!r} sample {index} is not a mapping: {sample!r}"
             )
         turns = sample.get("turns")
         if isinstance(turns, str):
@@ -106,8 +105,7 @@ def _samples_to_probe_set(samples: Any, dataset_id: str) -> ProbeSet:
             )
         if not turns or not isinstance(turns, Sequence):
             raise ValueError(
-                f"Probe set {dataset_id!r} sample {index} has no turns: "
-                f"{turns!r}"
+                f"Probe set {dataset_id!r} sample {index} has no turns: {turns!r}"
             )
         for turn in turns:
             if not isinstance(turn, str):
@@ -323,8 +321,7 @@ def save_character_bench(
         )
         if not updated:
             raise ValueError(
-                f"Bench {task_id!r} could not be updated; it may have been "
-                "deleted."
+                f"Bench {task_id!r} could not be updated; it may have been deleted."
             )
         return task_id
     return db.create_task(
@@ -388,9 +385,7 @@ def _stored_int_field(
     if value is None:
         return default
     if not isinstance(value, int) or isinstance(value, bool):
-        raise ValueError(
-            f"Bench {task_id!r} has a non-integer {key!r}: {value!r}"
-        )
+        raise ValueError(f"Bench {task_id!r} has a non-integer {key!r}: {value!r}")
     if value < 0:
         raise ValueError(f"Bench {task_id!r} has a negative {key!r}: {value!r}")
     return value
@@ -459,9 +454,7 @@ def _stored_temperature(data: Mapping[str, Any], task_id: str, default: float) -
             f"Bench {task_id!r} has a non-numeric 'temperature': {value!r}"
         )
     if value < 0:
-        raise ValueError(
-            f"Bench {task_id!r} has a negative 'temperature': {value!r}"
-        )
+        raise ValueError(f"Bench {task_id!r} has a negative 'temperature': {value!r}")
     return float(value)
 
 
@@ -737,9 +730,7 @@ def run_group_vocabulary(db: EvalsDB, run_group_id: str) -> tuple[Tag, ...]:
             corrupt -- naming the run group as the owner.
     """
     snapshot = load_probe_run_snapshot(db, run_group_id)
-    return resolve_vocabulary(
-        _tags_from_json(snapshot.get("extra_tags"), run_group_id)
-    )
+    return resolve_vocabulary(_tags_from_json(snapshot.get("extra_tags"), run_group_id))
 
 
 def save_conversations(
@@ -799,9 +790,7 @@ def save_conversations(
             mode ``save_probe_set``/``save_character_bench`` above already
             guard against for ``update_dataset``/``update_task``.
     """
-    unknown = sorted(
-        {c.target_id for c in conversations if c.target_id not in run_ids}
-    )
+    unknown = sorted({c.target_id for c in conversations if c.target_id not in run_ids})
     if unknown:
         raise ValueError(
             f"No run id supplied for target(s) {unknown!r} in run group "
@@ -821,7 +810,9 @@ def save_conversations(
         db.store_result(
             run_id=run_ids[conversation.target_id],
             sample_id=conversation_sample_id(
-                conversation.card_id, conversation.probe_index, conversation.sample_index
+                conversation.card_id,
+                conversation.probe_index,
+                conversation.sample_index,
             ),
             input_data={
                 "card_id": conversation.card_id,
@@ -899,8 +890,7 @@ def _conversation_from_row(row: Mapping[str, Any], target_id: str) -> Conversati
         card_id, probe_index, sample_index = (int(part) for part in parts)
     except ValueError:
         raise ValueError(
-            f"eval_results row {row_id!r} has a non-integer sample_id "
-            f"{sample_id!r}."
+            f"eval_results row {row_id!r} has a non-integer sample_id {sample_id!r}."
         ) from None
 
     metadata = row.get("metadata")
@@ -912,15 +902,13 @@ def _conversation_from_row(row: Mapping[str, Any], target_id: str) -> Conversati
     turns_payload = metadata.get("turns")
     if not isinstance(turns_payload, list):
         raise ValueError(
-            f"eval_results row {row_id!r} is missing its turns list in "
-            "metadata."
+            f"eval_results row {row_id!r} is missing its turns list in metadata."
         )
     turns = []
     for turn in turns_payload:
         if not isinstance(turn, Mapping):
             raise ValueError(
-                f"eval_results row {row_id!r} has a non-mapping turn entry: "
-                f"{turn!r}"
+                f"eval_results row {row_id!r} has a non-mapping turn entry: {turn!r}"
             )
         turns.append(
             ConversationTurn(
@@ -933,8 +921,7 @@ def _conversation_from_row(row: Mapping[str, Any], target_id: str) -> Conversati
     error = metadata.get("error", "")
     if not isinstance(error, str):
         raise ValueError(
-            f"eval_results row {row_id!r} has a non-string metadata error: "
-            f"{error!r}"
+            f"eval_results row {row_id!r} has a non-string metadata error: {error!r}"
         )
 
     return Conversation(

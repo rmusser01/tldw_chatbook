@@ -285,11 +285,15 @@ def _owner_for_candidate(
     assert owner.record_change(binding, SessionChange("modified", "note.md"))
     assert owner.publish_trust(binding, repository)
     parent_blob = _git(source, "rev-parse", f"{parent_oid}:note.md").decode().strip()
-    candidate_blob = _git(
-        source,
-        "rev-parse",
-        f"{candidate_oid}:note.md",
-    ).decode().strip()
+    candidate_blob = (
+        _git(
+            source,
+            "rev-parse",
+            f"{candidate_oid}:note.md",
+        )
+        .decode()
+        .strip()
+    )
     old_head = HeadIdentity.attached(BRANCH_REF, parent_oid)
     ownership = StagingOwnership(
         repository=repository,
@@ -298,13 +302,9 @@ def _owner_for_candidate(
         approved_move_edges=(),
         approved_current_path="note.md",
         original_baselines={
-            "note.md": IndexBaseline(
-                IndexEntry("note.md", "100644", parent_blob)
-            )
+            "note.md": IndexBaseline(IndexEntry("note.md", "100644", parent_blob))
         },
-        post_stage_entries={
-            "note.md": IndexEntry("note.md", "100644", candidate_blob)
-        },
+        post_stage_entries={"note.md": IndexEntry("note.md", "100644", candidate_blob)},
     )
     assert owner.publish_ownership(binding, {1: ownership})
     lease = owner.try_acquire_mutation(binding)
@@ -378,9 +378,7 @@ class _TransportRunner(AsyncGitProcessRunner):
         is_network = "ls-remote" in command or "push" in command
         child_environment = environment
         if is_network:
-            self.network_commands.append(
-                "push" if "push" in command else "ls-remote"
-            )
+            self.network_commands.append("push" if "push" in command else "ls-remote")
             self.network_environment_safe.append(
                 all(PROVIDER_CANARY not in value for value in environment.values())
             )
@@ -430,9 +428,7 @@ class _TransportRunner(AsyncGitProcessRunner):
                     ),
                     stderr=result.stderr + RAW_STDERR_CANARY.encode() + b"\n",
                 )
-                self.raw_canary_hits.update(
-                    {RAW_STDOUT_CANARY, RAW_STDERR_CANARY}
-                )
+                self.raw_canary_hits.update({RAW_STDOUT_CANARY, RAW_STDERR_CANARY})
         interesting = next(
             (
                 name
@@ -482,9 +478,7 @@ def _service(
             git_exec_path=(
                 _git_exec_path() if git_exec_path is None else git_exec_path
             ),
-            ssh_executable=(
-                None if ssh_executable is None else str(ssh_executable)
-            ),
+            ssh_executable=(None if ssh_executable is None else str(ssh_executable)),
             allow_ssh_agent=allow_ssh_agent,
         ),
         push_query_timeout=5,
@@ -570,9 +564,9 @@ def _start_ssh_agent(
     ssh_add: Path,
     identity: Path | None,
 ) -> _OpenSSHAgent:
-    root = Path(
-        tempfile.mkdtemp(prefix="chatbook-ssh-agent-", dir="/tmp")
-    ).resolve(strict=True)
+    root = Path(tempfile.mkdtemp(prefix="chatbook-ssh-agent-", dir="/tmp")).resolve(
+        strict=True
+    )
     root.chmod(0o700)
     socket_path = root / "agent.sock"
     try:
@@ -614,9 +608,7 @@ def _start_ssh_agent(
             diagnostic = process.stderr.read(4096)
         agent.close()
         if _agent_diagnostic_is_permission_denial(diagnostic):
-            raise PermissionError(
-                "ssh-agent socket creation is not permitted"
-            )
+            raise PermissionError("ssh-agent socket creation is not permitted")
         raise RuntimeError("ssh-agent did not create its isolated socket")
     environment = {
         "HOME": str(root),
@@ -653,20 +645,14 @@ def _start_ssh_agent(
         raise
     except (OSError, subprocess.TimeoutExpired):
         agent.close()
-        raise RuntimeError(
-            "ssh-add could not probe the isolated agent"
-        ) from None
+        raise RuntimeError("ssh-add could not probe the isolated agent") from None
     listing_is_expected = (
         listed.returncode == 1
         and listed.stdout.strip() == b"The agent has no identities."
         if identity is None
-        else listed.returncode == 0
-        and len(listed.stdout.splitlines()) == 1
+        else listed.returncode == 0 and len(listed.stdout.splitlines()) == 1
     )
-    if (
-        (loaded is not None and loaded.returncode != 0)
-        or not listing_is_expected
-    ):
+    if (loaded is not None and loaded.returncode != 0) or not listing_is_expected:
         agent.close()
         raise RuntimeError(
             "ssh-add reported an unexpected disposable fixture key count"
@@ -729,10 +715,7 @@ class _OpenSSHServer:
     connection_baseline: int = 0
 
     def endpoint(self, remote: Path) -> str:
-        return (
-            f"ssh://{getpass.getuser()}@127.0.0.1:{self.port}"
-            f"{remote.resolve()}"
-        )
+        return f"ssh://{getpass.getuser()}@127.0.0.1:{self.port}{remote.resolve()}"
 
     def reset_counts(self) -> None:
         self.connections_log.write_bytes(b"")
@@ -748,8 +731,9 @@ class _OpenSSHServer:
     def wait_for_connections(self, expected: int) -> bool:
         with self.stderr_condition:
             return self.stderr_condition.wait_for(
-                lambda: self._total_connections()
-                >= self.connection_baseline + expected,
+                lambda: (
+                    self._total_connections() >= self.connection_baseline + expected
+                ),
                 timeout=2,
             )
 
@@ -821,10 +805,7 @@ class _OpenSSHServer:
             ),
         )
         (home / ".gitconfig").write_text(
-            (
-                "[credential]\n"
-                f"\thelper = !{shlex.quote(str(helper))}\n"
-            ),
+            (f"[credential]\n\thelper = !{shlex.quote(str(helper))}\n"),
             encoding="utf-8",
         )
         (ssh_directory / "config").write_text(
@@ -1137,8 +1118,7 @@ async def test_openssh_authorization_and_confirm_bound_the_only_push(
             for argument in invocation.argv
         )
         assert all(
-            str(client.known_hosts) not in argument
-            for argument in invocation.argv
+            str(client.known_hosts) not in argument for argument in invocation.argv
         )
         result = await service.start_push(candidate.binding, reviewed.handle)
 
@@ -1320,10 +1300,7 @@ class _HTTPSFixture:
             hook.parent.mkdir(mode=0o700, exist_ok=True)
             _append_only_script(
                 hook,
-                (
-                    "import sys\n"
-                    f"print({SERVER_OUTPUT_CANARY!r}, file=sys.stderr)\n"
-                ),
+                (f"import sys\nprint({SERVER_OUTPUT_CANARY!r}, file=sys.stderr)\n"),
             )
         with self.lock:
             self.modes[remote.name] = mode
@@ -1414,12 +1391,9 @@ class _HTTPSFixture:
             handler.end_headers()
             return
 
-        is_receive = (
-            handler.command == "POST" and path.endswith("/git-receive-pack")
-        )
-        is_upload = (
-            "service=git-upload-pack" in query
-            or path.endswith("/git-upload-pack")
+        is_receive = handler.command == "POST" and path.endswith("/git-receive-pack")
+        is_upload = "service=git-upload-pack" in query or path.endswith(
+            "/git-upload-pack"
         )
         with self.lock:
             counts = self.counters[repository_name]
@@ -1816,9 +1790,7 @@ async def test_https_verified_tls_helper_and_exact_push_are_noninteractive(
         assert all(record["git_askpass"] is False for record in helper_records)
         assert all(record["ssh_askpass"] is False for record in helper_records)
         assert not prompt_marker.exists()
-        credential_was_not_echoed = CREDENTIAL_CANARY not in (
-            runner.raw_canary_hits
-        )
+        credential_was_not_echoed = CREDENTIAL_CANARY not in (runner.raw_canary_hits)
         assert credential_was_not_echoed
     finally:
         await service.shutdown()
@@ -1874,9 +1846,10 @@ async def test_https_rejected_helper_credentials_block_without_prompting(
             requests=2,
             auth_challenges=2,
         )
-        assert [
-            record["operation"] for record in https_server.helper_records()
-        ] == ["get", "erase"]
+        assert [record["operation"] for record in https_server.helper_records()] == [
+            "get",
+            "erase",
+        ]
         assert not prompt_marker.exists()
         assert _git_dir(remote, "rev-parse", BRANCH_REF).decode().strip() == (
             candidate.parent_oid
@@ -1913,9 +1886,7 @@ async def test_https_certificate_failures_block_without_prompting(
     https_server.configure_remote(remote)
     environment, prompt_marker = https_server.client_environment(case)
     runner = _TransportRunner(
-        ca_certificate=(
-            https_server.ca_certificate if trust_fixture_ca else None
-        ),
+        ca_certificate=(https_server.ca_certificate if trust_fixture_ca else None),
         git_exec_path=https_server.git_exec_path,
     )
     service = _service(
@@ -2070,9 +2041,7 @@ async def test_https_transport_redacts_all_raw_boundary_canaries(
             RAW_STDOUT_CANARY,
             RAW_STDERR_CANARY,
         } <= runner.raw_canary_hits
-        credential_was_not_echoed = CREDENTIAL_CANARY not in (
-            runner.raw_canary_hits
-        )
+        credential_was_not_echoed = CREDENTIAL_CANARY not in (runner.raw_canary_hits)
         assert expected_inputs_were_observed
         assert credential_was_not_echoed
         assert all(runner.network_environment_safe)
@@ -2202,9 +2171,7 @@ async def test_https_drop_after_acceptance_recovers_by_query_without_retry(
         git_exec_path=https_server.git_exec_path,
     )
     try:
-        assert (await service.start_push_review(candidate.binding)).state == (
-            "ready"
-        )
+        assert (await service.start_push_review(candidate.binding)).state == ("ready")
         operation = service.retained_push_operation(candidate.binding)
         assert operation is not None
         reviewed = await service.authorize_and_check_push(
@@ -2270,9 +2237,7 @@ async def test_https_drop_before_acceptance_stays_uncertain_across_queries(
         git_exec_path=https_server.git_exec_path,
     )
     try:
-        assert (await service.start_push_review(candidate.binding)).state == (
-            "ready"
-        )
+        assert (await service.start_push_review(candidate.binding)).state == ("ready")
         operation = service.retained_push_operation(candidate.binding)
         assert operation is not None
         reviewed = await service.authorize_and_check_push(

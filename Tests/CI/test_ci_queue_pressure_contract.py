@@ -67,9 +67,7 @@ def _named_step(job: dict, name: str) -> dict:
 def _pytest_targets(run: str) -> tuple[str, ...]:
     tokens = shlex.split(run.replace("\\\n", " "))
     return tuple(
-        token
-        for token in tokens[1:]
-        if token == "Tests" or token.startswith("Tests/")
+        token for token in tokens[1:] if token == "Tests" or token.startswith("Tests/")
     )
 
 
@@ -157,9 +155,7 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
     resolver = workflow["jobs"]["resolve-dev-sha"]
     assert resolver["outputs"] == {"sha": "${{ steps.resolve.outputs.sha }}"}
     resolver_checkout = next(
-        step
-        for step in resolver["steps"]
-        if step.get("uses") == "actions/checkout@v4"
+        step for step in resolver["steps"] if step.get("uses") == "actions/checkout@v4"
     )
     assert resolver_checkout["with"] == {"ref": "dev"}
     resolve = _named_step(resolver, "Resolve one dev commit for every matrix leg")
@@ -176,9 +172,7 @@ def test_dedicated_nightly_owns_exact_schedule_and_full_tree_matrix() -> None:
         {"os": "windows-latest", "python-version": "3.12", "io-encoding": "cp1252"},
     ]
     checkout = next(
-        step
-        for step in nightly["steps"]
-        if step.get("uses") == "actions/checkout@v4"
+        step for step in nightly["steps"] if step.get("uses") == "actions/checkout@v4"
     )
     assert checkout["with"] == {
         "ref": "${{ needs.resolve-dev-sha.outputs.sha }}",
@@ -211,9 +205,7 @@ def test_fast_lane_is_one_serial_minimal_python_312_job() -> None:
     assert len(fast["steps"]) == 5
 
     setup = next(
-        step
-        for step in fast["steps"]
-        if step.get("uses") == "actions/setup-python@v5"
+        step for step in fast["steps"] if step.get("uses") == "actions/setup-python@v5"
     )
     assert setup["with"]["python-version"] == "3.12"
 
@@ -324,7 +316,12 @@ def test_required_aggregation_contract_rejects_continue_on_error(
 
 @pytest.mark.parametrize(
     "flag",
-    ["--collect-only", "-k smoke", "--ignore=Tests/CI", "--deselect=Tests/test_smoke.py"],
+    [
+        "--collect-only",
+        "-k smoke",
+        "--ignore=Tests/CI",
+        "--deselect=Tests/test_smoke.py",
+    ],
 )
 def test_fast_lane_contract_rejects_selection_suppressing_flags(flag: str) -> None:
     """Reject pytest flags that can turn the exact lane into a subset.
@@ -371,7 +368,10 @@ def test_bundle_and_backlog_checks_run_on_push_events() -> None:
     workflow = _workflow("derived-artifacts.yml")
     assert {"dev", "main"} <= set(_triggers(workflow)["push"]["branches"])
     steps = workflow["jobs"]["derived-artifacts"]["steps"]
-    for script in ("tldw_chatbook/css/check_bundle_sync.py", "scripts/check_backlog_task_ids.py"):
+    for script in (
+        "tldw_chatbook/css/check_bundle_sync.py",
+        "scripts/check_backlog_task_ids.py",
+    ):
         matching = [step for step in steps if script in str(step.get("run", ""))]
         assert matching, f"{script} is not run by the required job"
         for step in matching:

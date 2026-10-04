@@ -70,7 +70,6 @@ def _field(status: Any, name: str) -> Any:
     return getattr(status, name, None)
 
 
-
 def _remote_media_id(status: Any) -> str | None:
     """Read the id of the media row the server created, if it reported one.
 
@@ -166,7 +165,9 @@ def reconcile_remote_ingest_jobs(
         elif target is IngestJobState.FAILED:
             updated = registry.mark_failed(
                 job.job_id,
-                error=str(_field(status, "error_message") or "The server reported a failure."),
+                error=str(
+                    _field(status, "error_message") or "The server reported a failure."
+                ),
             )
         elif target is IngestJobState.CANCELLED:
             updated = registry.mark_cancelled(

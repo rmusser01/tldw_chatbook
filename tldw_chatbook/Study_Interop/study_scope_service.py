@@ -1107,11 +1107,6 @@ class StudyScopeService:
         )
         return normalize_study_flashcard_record(normalized_mode.value, record)
 
-
-
-
-
-
     async def list_review_sessions(
         self,
         *,
@@ -1220,8 +1215,6 @@ class StudyScopeService:
             backend=normalized_mode, payload=result
         )
 
-
-
     async def create_flashcards_bulk(
         self,
         *,
@@ -1238,8 +1231,6 @@ class StudyScopeService:
         return self._normalize_bulk_create_payload(
             backend=normalized_mode, payload=result
         )
-
-
 
     async def import_flashcards(
         self,
@@ -1298,13 +1289,6 @@ class StudyScopeService:
             payload=result,
             import_kind="json",
         )
-
-
-
-
-
-
-
 
     async def move_flashcard(
         self,

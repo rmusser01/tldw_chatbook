@@ -36,7 +36,10 @@ def _no_directory_templates(monkeypatch, tmp_path):
     a shared user-data dir.
     """
     monkeypatch.setattr(
-        gt, "_user_templates_dir", lambda: tmp_path / "unused_templates_dir", raising=False
+        gt,
+        "_user_templates_dir",
+        lambda: tmp_path / "unused_templates_dir",
+        raising=False,
     )
     monkeypatch.setattr(gt, "_read_style_config_section", lambda: {}, raising=False)
 
@@ -94,7 +97,12 @@ def test_config_section_template_full_field_shape(monkeypatch):
                 "description": "Soft dreamy glow",
                 "base_prompt": "{{subject}}, soft glow lighting",
                 "negative_prompt": "harsh lighting",
-                "default_params": {"width": 768, "height": 768, "steps": 28, "cfg_scale": 7.5},
+                "default_params": {
+                    "width": 768,
+                    "height": 768,
+                    "steps": 28,
+                    "cfg_scale": 7.5,
+                },
                 "context_mappings": {"subject": "last_message"},
                 "tags": ["custom", "glow"],
             }
@@ -103,7 +111,12 @@ def test_config_section_template_full_field_shape(monkeypatch):
     )
     template = gt.get_all_templates(reload=True)["my_glow"]
     assert template.description == "Soft dreamy glow"
-    assert template.default_params == {"width": 768, "height": 768, "steps": 28, "cfg_scale": 7.5}
+    assert template.default_params == {
+        "width": 768,
+        "height": 768,
+        "steps": 28,
+        "cfg_scale": 7.5,
+    }
     assert template.context_mappings == {"subject": "last_message"}
     assert template.tags == ["custom", "glow"]
 
@@ -156,7 +169,9 @@ def test_directory_template_extends_the_set(monkeypatch, tmp_path):
     assert template.name == "My Glow"
 
 
-def test_directory_template_id_is_filename_stem_not_internal_field(monkeypatch, tmp_path):
+def test_directory_template_id_is_filename_stem_not_internal_field(
+    monkeypatch, tmp_path
+):
     """An `id` field inside the file (if present) is ignored -- the filename
     stem is authoritative, so a file can never spoof a different template's
     id."""
@@ -209,7 +224,9 @@ def test_user_template_overrides_builtin_by_id(monkeypatch):
     assert merged["style_anime"].name == "Custom Anime"
 
 
-def test_directory_template_overrides_config_section_on_id_collision(monkeypatch, tmp_path):
+def test_directory_template_overrides_config_section_on_id_collision(
+    monkeypatch, tmp_path
+):
     """Both sources define 'dup_style' -- the directory template wins."""
     monkeypatch.setattr(
         gt,
@@ -271,14 +288,18 @@ def test_malformed_config_section_template_logs_warning(monkeypatch):
         gt, "_read_style_config_section", lambda: {"broken": {}}, raising=False
     )
     warnings: list[str] = []
-    monkeypatch.setattr(gt.logger, "warning", lambda msg: warnings.append(str(msg)), raising=False)
+    monkeypatch.setattr(
+        gt.logger, "warning", lambda msg: warnings.append(str(msg)), raising=False
+    )
     gt.get_all_templates(reload=True)
     assert any("broken" in w for w in warnings)
 
 
 def test_malformed_directory_template_file_is_skipped(monkeypatch, tmp_path):
     templates_dir = tmp_path / "image_generation_styles"
-    _write_template_file(templates_dir, "broken", "name = \"Only Name\"\n")  # missing required fields
+    _write_template_file(
+        templates_dir, "broken", 'name = "Only Name"\n'
+    )  # missing required fields
     monkeypatch.setattr(gt, "_user_templates_dir", lambda: templates_dir, raising=False)
 
     merged = gt.get_all_templates(reload=True)

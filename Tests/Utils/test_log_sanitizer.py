@@ -711,7 +711,8 @@ class TestSinkRedaction:
             _synthetic("AKI", "ADONOTUSEEXAMPLE1"),
             _synthetic("xox", "b-1234567890-DONOTUSEEXAMPLEONLY"),
             _synthetic(
-                "eyJ", "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+                "eyJ",
+                "hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0",
                 ".DONOTUSEEXAMPLE1",
             ),
         ],

@@ -39,6 +39,7 @@ def _reset_default_profile_manager_cache():
     mock to the opposite value.
     """
     from tldw_chatbook.RAG_Search.config_profiles import reset_profile_manager_cache
+
     reset_profile_manager_cache()
     yield
     reset_profile_manager_cache()

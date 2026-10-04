@@ -46,7 +46,9 @@ from tldw_chatbook.Scheduling.services.briefing_projection import BriefingProjec
 from tldw_chatbook.Scheduling.scheduler.handlers.briefing_handler import (
     BriefingJobHandler,
 )
-from tldw_chatbook.Skills_Interop.skill_package_inspection import inspect_skill_directory
+from tldw_chatbook.Skills_Interop.skill_package_inspection import (
+    inspect_skill_directory,
+)
 from tldw_chatbook.Subscriptions import (
     watchlists_operation_coordinator as coordinator_module,
 )
@@ -101,9 +103,7 @@ _SHARED_TOOLS = {
 
 def _tool_fence(name: str, arguments: dict) -> str:
     return (
-        "```tool_call\n"
-        + json.dumps({"name": name, "arguments": arguments})
-        + "\n```"
+        "```tool_call\n" + json.dumps({"name": name, "arguments": arguments}) + "\n```"
     )
 
 
@@ -371,7 +371,9 @@ async def _run_console_round_trip(tmp_path: Path, monkeypatch):
         briefing_schedules_enabled=lambda: True,
         scheduler_running=lambda: True,
         request_scheduler_reload=lambda: reload_token,
-        wait_scheduler_reload=lambda token, timeout: token is reload_token and timeout == 1.0,
+        wait_scheduler_reload=lambda token, timeout: (
+            token is reload_token and timeout == 1.0
+        ),
         default_briefing_defaults=lambda: (
             "scripted-existing-provider",
             "scripted-existing-model",
@@ -406,9 +408,7 @@ async def _run_console_round_trip(tmp_path: Path, monkeypatch):
     def receipt_ready(kind: str) -> bool:
         if kind == "checks":
             runs = database.list_operations_for_agent(limit=10)["source_runs"]
-            return len(runs) == 3 and all(
-                row["status"] == "completed" for row in runs
-            )
+            return len(runs) == 3 and all(row["status"] == "completed" for row in runs)
         rows = database.list_briefings(1)
         return bool(rows and rows[0]["status"] == "complete")
 
@@ -499,9 +499,7 @@ async def _run_console_round_trip(tmp_path: Path, monkeypatch):
     }
     permission_payload = permission_store.load()
     explicit = set(
-        permission_payload["profiles"]["default"]["servers"]["local:__local__"][
-            "tools"
-        ]
+        permission_payload["profiles"]["default"]["servers"]["local:__local__"]["tools"]
     )
     return {
         "source_ids": [source["id"] for source in sources],
@@ -587,9 +585,7 @@ def _database_file_snapshot(path: Path) -> dict[str, str]:
 async def _run_external_mcp_boundary(tmp_path: Path, monkeypatch):
     database_path = tmp_path / "profile" / "subscriptions.sqlite"
     await _seed_boundary_database(database_path)
-    permission_store = MCPPermissionStore(
-        tmp_path / "profile" / "mcp-permissions.json"
-    )
+    permission_store = MCPPermissionStore(tmp_path / "profile" / "mcp-permissions.json")
     monkeypatch.setattr(
         local_server_tools, "get_subscriptions_db_path", lambda: database_path
     )
@@ -701,15 +697,15 @@ async def _run_skill_classification_regression(tmp_path: Path, _monkeypatch):
     )
     assert coordinator.open_draft()
     assert coordinator.claim(str(root))
-    owner = asyncio.create_task(
-        coordinator.run(str(root), runtime_app=runtime_app)
-    )
+    owner = asyncio.create_task(coordinator.run(str(root), runtime_app=runtime_app))
     try:
         assert await asyncio.to_thread(started.wait, 2)
     except TimeoutError:
         release.set()
         await owner
-        pytest.fail(f"skill import never reached trust review: {coordinator.snapshot!r}")
+        pytest.fail(
+            f"skill import never reached trust review: {coordinator.snapshot!r}"
+        )
     second_submit_refused = coordinator.claim(str(framework)) is False
     release.set()
     await owner
@@ -823,7 +819,7 @@ async def test_no_preset_briefings_use_first_run_persisted_defaults_everywhere(
 
     database = SubscriptionsDB(tmp_path / "profile" / "subscriptions.sqlite", "uat")
     bundles = WatchlistBundleService(database)
-    watchlist_id = bundles.create("Persisted defaults")['id']
+    watchlist_id = bundles.create("Persisted defaults")["id"]
     source_id = database.add_subscription(
         name="Fixture feed", type="rss", source="https://public.example/feed"
     )

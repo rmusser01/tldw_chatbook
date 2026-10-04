@@ -9,19 +9,60 @@ reading the query does not distinguish.
 
 Emits the PER-QUERY answer AC#1 requires, for all 60.
 """
+
 import re
 from Tests.RAG_Eval.harness.goldenset import load_fixtures
 
-STOP = {"a","an","the","of","for","to","in","on","and","or","is","are","was",
-        "were","be","been","with","at","by","from","how","what","when","which",
-        "do","does","did","can","should","would","my","our","that","this","it"}
+STOP = {
+    "a",
+    "an",
+    "the",
+    "of",
+    "for",
+    "to",
+    "in",
+    "on",
+    "and",
+    "or",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "with",
+    "at",
+    "by",
+    "from",
+    "how",
+    "what",
+    "when",
+    "which",
+    "do",
+    "does",
+    "did",
+    "can",
+    "should",
+    "would",
+    "my",
+    "our",
+    "that",
+    "this",
+    "it",
+}
 
 corpus, golden = load_fixtures()
-docs = {d.slug: f"{getattr(d,'title','')}\n{getattr(d,'content','')}".lower()
-        for d in corpus}
+docs = {
+    d.slug: f"{getattr(d, 'title', '')}\n{getattr(d, 'content', '')}".lower()
+    for d in corpus
+}
+
 
 def content_words(q):
-    return [w for w in re.findall(r"[a-z0-9\-]+", q.lower()) if w not in STOP and len(w) > 2]
+    return [
+        w for w in re.findall(r"[a-z0-9\-]+", q.lower()) if w not in STOP and len(w) > 2
+    ]
+
 
 rows, qualifying = [], []
 for g in golden:
@@ -35,10 +76,17 @@ for g in golden:
         qualifying.append(g)
     rows.append((g.query, g.category, len(rel), len(matching), len(alt), qual))
 
-print("PROBE PROOF: docs with non-empty text:", sum(1 for v in docs.values() if len(v)>50), "of", len(docs))
+print(
+    "PROBE PROOF: docs with non-empty text:",
+    sum(1 for v in docs.values() if len(v) > 50),
+    "of",
+    len(docs),
+)
 print(f"{'query':46s} {'category':20s} rel match alt  gate?")
 for q, c, r, m, a, ql in sorted(rows, key=lambda x: (not x[5], x[1])):
     print(f"{q[:45]:46s} {c:20s} {r:3d} {m:5d} {a:4d}  {'YES' if ql else '-'}")
-print(f"\nQUALIFYING (corpus holds an unlabelled alternative reading): {len(qualifying)} of {len(golden)}")
+print(
+    f"\nQUALIFYING (corpus holds an unlabelled alternative reading): {len(qualifying)} of {len(golden)}"
+)
 for g in qualifying:
     print(f"   {g.query!r} [{g.category}]")

@@ -463,7 +463,9 @@ async def test_agent_fleet_section_lives_in_the_right_rail():
         node = section
         while node is not None and node is not body:
             node = node.parent
-        assert node is body, "fleet section must be a descendant of the Inspect rail body"
+        assert node is body, (
+            "fleet section must be a descendant of the Inspect rail body"
+        )
 
 
 @pytest.mark.asyncio
@@ -708,13 +710,18 @@ async def test_real_inspector_producer_variants_are_strictly_owned(monkeypatch):
             ]
         }
         monkeypatch.setattr(
-            screen, "_console_provider_blocker_copy",
-            lambda *, settings_readiness=None: "Provider setup needed"
+            screen,
+            "_console_provider_blocker_copy",
+            lambda *, settings_readiness=None: "Provider setup needed",
         )
         monkeypatch.setattr(
             screen,
             "_console_provider_recovery_action",
-            lambda *, settings_readiness=None: ("Open Settings", "settings", "Open provider settings"),
+            lambda *, settings_readiness=None: (
+                "Open Settings",
+                "settings",
+                "Open provider settings",
+            ),
         )
 
         state = screen._build_console_inspector_state(None)
@@ -766,7 +773,9 @@ async def test_active_run_alone_never_produces_a_setup_recovery_row(monkeypatch)
         )
         readiness = build_console_settings_readiness(
             settings,
-            app_config={"api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}},
+            app_config={
+                "api_settings": {"ollama": {"api_url": "http://127.0.0.1:11434"}}
+            },
             environ={},
             active_run=True,
         )

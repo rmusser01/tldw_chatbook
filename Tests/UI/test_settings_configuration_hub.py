@@ -187,9 +187,7 @@ async def test_console_capture_settings_reports_structured_mutation_outcomes(
                 enabled=True, detail=CaptureDetail.SAFE, generation=8
             ),
         )
-        button = screen.query_one(
-            "#settings-console-exchange-capture-apply", Button
-        )
+        button = screen.query_one("#settings-console-exchange-capture-apply", Button)
         screen.handle_console_exchange_capture_apply(
             SimpleNamespace(stop=lambda: None, button=button)
         )
@@ -241,9 +239,7 @@ async def test_console_trace_viewer_full_uses_explicit_confirmation(
                 viewer_profile="safe",
             ),
         )
-        button = screen.query_one(
-            "#settings-console-exchange-capture-apply", Button
-        )
+        button = screen.query_one("#settings-console-exchange-capture-apply", Button)
         screen.handle_console_exchange_capture_apply(
             SimpleNamespace(stop=lambda: None, button=button)
         )
@@ -314,9 +310,7 @@ async def test_console_capture_settings_ignores_retired_detail_for_disclosure(
                 enabled=True, detail=CaptureDetail.SAFE, generation=9
             ),
         )
-        button = screen.query_one(
-            "#settings-console-exchange-capture-apply", Button
-        )
+        button = screen.query_one("#settings-console-exchange-capture-apply", Button)
 
         screen.handle_console_exchange_capture_apply(
             SimpleNamespace(stop=lambda: None, button=button)
@@ -598,7 +592,9 @@ async def test_theme_category_opens_without_crashing():
         # Poll rather than a fixed settle: selecting a category triggers a
         # recompose whose mount lands at a load-dependent moment.
         await _wait_for_selector(screen, pilot, "#settings-theme-picker", timeout=8.0)
-        assert screen.query_one("#settings-theme-pane").current == "settings-theme-picker"
+        assert (
+            screen.query_one("#settings-theme-pane").current == "settings-theme-picker"
+        )
 
 
 @pytest.mark.asyncio
@@ -1159,7 +1155,11 @@ async def test_settings_defaults_to_overview_category(request):
         assert "Where changes happen" in text
 
 
+@pytest.mark.bootstrap_profile
 def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
+    # TASK-15512: real-app mount + guarded config loader under the per-test
+    # sandbox trips the config-participant admission; keep the
+    # collection-time profile (same enrollment as the four tests above).
     app = _build_test_app()
     screen = SettingsScreen(app)
 
@@ -1187,6 +1187,12 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         # the screen writes it at `_save_provider_category` -- but left this
         # exhaustive tuple behind. Stale contract, not a product change.
         "model_capabilities.models.<model>.context_window",
+        # task-15512 re-triage: added by 2bb226428b (manual prompt-cache
+        # snapshots in Models and Settings) -- the screen writes both at
+        # `_save_provider_category` -- with the tuple left behind again.
+        # Same stale-contract class, not a product change.
+        "llamacpp_snapshots.enabled",
+        "llamacpp_snapshots.keep_count",
     )
     assert records_by_category[
         SettingsCategoryId.CONSOLE_BEHAVIOR
@@ -1332,9 +1338,7 @@ def test_settings_domain_category_contracts_are_explicit_about_mutation_scope():
 
     schedules_contract = contracts[SettingsCategoryId.SCHEDULES]
     assert schedules_contract.owner_destination == "Settings"
-    assert "briefing_schedules_enabled" in " ".join(
-        schedules_contract.source_of_truth
-    )
+    assert "briefing_schedules_enabled" in " ".join(schedules_contract.source_of_truth)
 
 
 def _painted_settings_widget(screen, widget) -> str:
@@ -1415,9 +1419,7 @@ async def test_settings_schedules_gate_is_painted_and_persists_recovery_action(
         assert app.scheduler_loop.queue.briefing_projection is None
 
     assert (
-        config_module.get_cli_setting(
-            "scheduling", "briefing_schedules_enabled", True
-        )
+        config_module.get_cli_setting("scheduling", "briefing_schedules_enabled", True)
         is False
     )
 
@@ -1434,9 +1436,7 @@ async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
     )
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
     assert (
-        config_module.get_cli_setting(
-            "scheduling", "briefing_schedules_enabled", True
-        )
+        config_module.get_cli_setting("scheduling", "briefing_schedules_enabled", True)
         is False
     )
 
@@ -1444,9 +1444,7 @@ async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
     app.apply_briefing_schedules_enabled(False)
     assert app.scheduler_loop.queue.briefing_projection is None
     apply_live_gate = Mock(wraps=app.apply_briefing_schedules_enabled)
-    monkeypatch.setattr(
-        app, "apply_briefing_schedules_enabled", apply_live_gate
-    )
+    monkeypatch.setattr(app, "apply_briefing_schedules_enabled", apply_live_gate)
     failure_detail = f"private cache failure at {config_path}"
 
     def fail_runtime_config_publish(*_args, **_kwargs):
@@ -1467,12 +1465,8 @@ async def test_settings_schedules_gate_reports_durable_cache_publish_failure(
             SettingsCategoryId.SCHEDULES,
             selector="#settings-briefing-schedules-toggle",
         )
-        status = screen.query_one(
-            "#settings-briefing-schedules-status", Static
-        )
-        button = screen.query_one(
-            "#settings-briefing-schedules-toggle", Button
-        )
+        status = screen.query_one("#settings-briefing-schedules-status", Static)
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
 
         assert await pilot.click(button)
         await host.workers.wait_for_complete()
@@ -1513,9 +1507,7 @@ async def test_settings_schedules_gate_disables_retry_after_live_apply_failure(
     assert app.scheduler_loop.queue.briefing_projection is None
     failure_detail = f"private live apply failure at {config_path}"
     apply_live_gate = Mock(side_effect=RuntimeError(failure_detail))
-    monkeypatch.setattr(
-        app, "apply_briefing_schedules_enabled", apply_live_gate
-    )
+    monkeypatch.setattr(app, "apply_briefing_schedules_enabled", apply_live_gate)
 
     host = StyledSettingsDestinationHarness(app, "settings")
     async with host.run_test(size=(100, 30)) as pilot:
@@ -1526,12 +1518,8 @@ async def test_settings_schedules_gate_disables_retry_after_live_apply_failure(
             SettingsCategoryId.SCHEDULES,
             selector="#settings-briefing-schedules-toggle",
         )
-        status = screen.query_one(
-            "#settings-briefing-schedules-status", Static
-        )
-        button = screen.query_one(
-            "#settings-briefing-schedules-toggle", Button
-        )
+        status = screen.query_one("#settings-briefing-schedules-status", Static)
+        button = screen.query_one("#settings-briefing-schedules-toggle", Button)
         button.active_effect_duration = 0
         real_atomic_write = config_module.atomic_private_write_text
         writes = []
@@ -2502,7 +2490,9 @@ async def test_settings_appearance_revert_restores_loaded_values():
 
 
 @pytest.mark.asyncio
-async def test_settings_appearance_preview_checks_draft_without_theme_or_save(monkeypatch):
+async def test_settings_appearance_preview_checks_draft_without_theme_or_save(
+    monkeypatch,
+):
     """TASK-32948: Preview no longer sets app.theme (the picker's Try does)."""
     app = _build_test_app()
     app.app_config["general"] = {"default_theme": "textual-dark"}
@@ -2676,7 +2666,9 @@ def test_settings_storage_defaults_load_validate_and_build_save_payload(tmp_path
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_storage_renders_guided_defaults_and_validates(request, tmp_path):
+async def test_settings_storage_renders_guided_defaults_and_validates(
+    request, tmp_path
+):
     app = _build_test_app()
     db_dir = tmp_path / "db"
     db_dir.mkdir()
@@ -2729,7 +2721,9 @@ async def test_settings_storage_renders_guided_defaults_and_validates(request, t
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_storage_surfaces_check_action_before_long_path_editor(request, tmp_path):
+async def test_settings_storage_surfaces_check_action_before_long_path_editor(
+    request, tmp_path
+):
     app = _build_test_app()
     db_dir = tmp_path / "db"
     db_dir.mkdir()
@@ -2763,7 +2757,9 @@ async def test_settings_storage_surfaces_check_action_before_long_path_editor(re
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_storage_save_and_revert_defaults(request, monkeypatch, tmp_path):
+async def test_settings_storage_save_and_revert_defaults(
+    request, monkeypatch, tmp_path
+):
     app = _build_test_app()
     db_dir = tmp_path / "db"
     db_dir.mkdir()
@@ -4803,9 +4799,7 @@ async def test_settings_provider_test_does_not_treat_missing_models_route_as_cha
 ):
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "Ollama", "model": "llama3"}
-    app.app_config["api_settings"] = {
-        "ollama": {"api_url": "http://127.0.0.1:11434"}
-    }
+    app.app_config["api_settings"] = {"ollama": {"api_url": "http://127.0.0.1:11434"}}
 
     async def fake_probe(base_url, **kwargs):
         return SettingsEndpointProbeOutcome(
@@ -5355,7 +5349,11 @@ def _rendered_cell(screen, x: int, y: int):
     position = 0
     for segment in screen._compositor.render_strips()[y]:
         if position + len(segment.text) > x:
-            return segment.text[x - position], segment.style.color, segment.style.bgcolor
+            return (
+                segment.text[x - position],
+                segment.style.color,
+                segment.style.bgcolor,
+            )
         position += len(segment.text)
     raise AssertionError(f"({x}, {y}) is off screen")
 
@@ -5365,9 +5363,7 @@ def _wcag_ratio(first, second) -> float:
 
     from tldw_chatbook.css.Themes.themes import _contrast_ratio
 
-    return _contrast_ratio(
-        Color.from_rich_color(first), Color.from_rich_color(second)
-    )
+    return _contrast_ratio(Color.from_rich_color(first), Color.from_rich_color(second))
 
 
 @pytest.mark.asyncio
@@ -5395,9 +5391,9 @@ async def test_settings_rail_focus_draws_a_readable_edge_on_every_row(request):
             for row in (active, inactive):
                 host.set_focus(None)
                 await pilot.pause()
-                label_at = str(screen._compositor.render_strips()[row.region.y].text).find(
-                    str(row.label).strip()
-                )
+                label_at = str(
+                    screen._compositor.render_strips()[row.region.y].text
+                ).find(str(row.label).strip())
                 glyph, _fg, rest_bg = _rendered_cell(screen, row.region.x, row.region.y)
                 assert glyph == " ", (theme, row.id, glyph)
                 row.focus()
@@ -5407,9 +5403,12 @@ async def test_settings_rail_focus_draws_a_readable_edge_on_every_row(request):
                 assert glyph == "█", (theme, row.id, glyph)
                 assert _wcag_ratio(edge, rest_bg) >= 3.0, (theme, row.id)
                 assert _wcag_ratio(edge, focus_bg) >= 3.0, (theme, row.id)
-                assert str(screen._compositor.render_strips()[row.region.y].text).find(
-                    str(row.label).strip()
-                ) == label_at, (theme, row.id)
+                assert (
+                    str(screen._compositor.render_strips()[row.region.y].text).find(
+                        str(row.label).strip()
+                    )
+                    == label_at
+                ), (theme, row.id)
 
 
 @pytest.mark.asyncio
@@ -7366,7 +7365,11 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_settings_console_behavior_saves_display_name_exactly(monkeypatch):
+    # TASK-15512: real-app mount + guarded config loader under the per-test
+    # sandbox trips the config-participant admission; keep the
+    # collection-time profile (TASK-32873 per-node enrollment).
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"user_display_name": "Rowan"}
     saved = []
@@ -8236,9 +8239,10 @@ async def test_provider_navigation_conflict_requires_review_discard_or_return():
         assert screen.query_one("#settings-provider-conflict-review", Button).label == (
             "Review existing changes"
         )
-        assert str(
-            screen.query_one("#settings-provider-conflict-discard", Button).label
-        ) == "Discard changes and configure Anthropic"
+        assert (
+            str(screen.query_one("#settings-provider-conflict-discard", Button).label)
+            == "Discard changes and configure Anthropic"
+        )
         assert screen.query_one("#settings-provider-conflict-return", Button).label == (
             "Return to Conversation settings"
         )
@@ -8298,7 +8302,9 @@ async def test_provider_navigation_conflict_discard_explicitly_applies_staged_ta
         assert SettingsCategoryId.PROVIDERS_MODELS not in screen._settings_drafts
         assert screen.query_one("#settings-provider-value", Select).value == "anthropic"
         assert screen.query_one("#settings-provider-api-key", Input).has_focus
-        assert screen.query_one("#settings-provider-navigation-conflict").display is False
+        assert (
+            screen.query_one("#settings-provider-navigation-conflict").display is False
+        )
 
 
 @pytest.mark.asyncio
@@ -8625,9 +8631,9 @@ async def test_conversation_settings_return_is_single_flight_and_retries_after_f
         screen = _active_destination_screen(host)
         screen.apply_navigation_context(target.to_context())
         await pilot.pause()
-        screen.query_one("#settings-provider-api-key", Input).value = (
-            "DUMMY-SINGLE-FLIGHT-KEY"
-        )
+        screen.query_one(
+            "#settings-provider-api-key", Input
+        ).value = "DUMMY-SINGLE-FLIGHT-KEY"
         await pilot.pause()
         screen.action_settings_save_category(allow_text_entry_focus=True)
         await pilot.pause()
@@ -8649,7 +8655,9 @@ async def test_conversation_settings_return_is_single_flight_and_retries_after_f
 
         assert screen._provider_return_navigation_in_progress is False
         assert return_button.disabled is False
-        assert screen.query_one("#settings-provider-return-continuation").display is True
+        assert (
+            screen.query_one("#settings-provider-return-continuation").display is True
+        )
 
         return_button.press()
         for _ in range(20):
@@ -8679,9 +8687,9 @@ async def test_conversation_settings_return_continuation_survives_fresh_settings
         screen = _active_destination_screen(host)
         screen.apply_navigation_context(target.to_context())
         await pilot.pause()
-        screen.query_one("#settings-provider-api-key", Input).value = (
-            "DUMMY-STATE-ONLY-SECRET"
-        )
+        screen.query_one(
+            "#settings-provider-api-key", Input
+        ).value = "DUMMY-STATE-ONLY-SECRET"
         await pilot.pause()
         screen.action_settings_save_category(allow_text_entry_focus=True)
         await pilot.pause()
@@ -8731,9 +8739,9 @@ async def test_conversation_settings_save_focuses_primary_return_above_compact_f
         screen = _active_destination_screen(host)
         screen.apply_navigation_context(target.to_context())
         await pilot.pause()
-        screen.query_one("#settings-provider-api-key", Input).value = (
-            "DUMMY-COMPACT-RETURN-KEY"
-        )
+        screen.query_one(
+            "#settings-provider-api-key", Input
+        ).value = "DUMMY-COMPACT-RETURN-KEY"
         await pilot.pause()
 
         screen.action_settings_save_category(allow_text_entry_focus=True)
@@ -8778,19 +8786,19 @@ async def test_conversation_settings_return_save_failure_retains_draft_and_hando
         screen = _active_destination_screen(host)
         screen.apply_navigation_context(target.to_context())
         await pilot.pause()
-        screen.query_one("#settings-provider-api-key", Input).value = (
-            "DUMMY-OPENAI-FAILED-RETURN-KEY"
-        )
+        screen.query_one(
+            "#settings-provider-api-key", Input
+        ).value = "DUMMY-OPENAI-FAILED-RETURN-KEY"
         await pilot.pause()
 
         screen.action_settings_save_category(allow_text_entry_focus=True)
         await pilot.pause()
 
-        assert screen.query_one("#settings-provider-return-continuation").display is False
-        assert SettingsCategoryId.PROVIDERS_MODELS in screen._settings_drafts
-        claim = app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
+        assert (
+            screen.query_one("#settings-provider-return-continuation").display is False
         )
+        assert SettingsCategoryId.PROVIDERS_MODELS in screen._settings_drafts
+        claim = app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
         assert claim is not None
         assert claim.revision == target.return_revision
         app.pending_handoffs.release(claim)
@@ -8809,9 +8817,9 @@ async def test_conversation_settings_return_without_saving_is_single_flight_on_c
         screen = _active_destination_screen(host)
         screen.apply_navigation_context(target.to_context())
         await pilot.pause()
-        screen.query_one("#settings-provider-api-key", Input).value = (
-            "DUMMY-UNSAVED-RETURN-KEY"
-        )
+        screen.query_one(
+            "#settings-provider-api-key", Input
+        ).value = "DUMMY-UNSAVED-RETURN-KEY"
         await pilot.pause()
         return_without_save = screen.query_one(
             "#settings-provider-return-without-save", Button
@@ -8827,10 +8835,13 @@ async def test_conversation_settings_return_without_saving_is_single_flight_on_c
             Button.Pressed(return_without_save)
         )
         await pilot.pause()
-        assert sum(
-            isinstance(candidate, ConfirmationDialog)
-            for candidate in host.screen_stack
-        ) == 1
+        assert (
+            sum(
+                isinstance(candidate, ConfirmationDialog)
+                for candidate in host.screen_stack
+            )
+            == 1
+        )
         assert screen._provider_return_confirmation_open is True
         assert screen._provider_return_navigation_in_progress is False
         assert all(
@@ -8871,9 +8882,9 @@ async def test_conversation_settings_return_without_saving_cancel_allows_retry()
         screen = _active_destination_screen(host)
         screen.apply_navigation_context(target.to_context())
         await pilot.pause()
-        screen.query_one("#settings-provider-api-key", Input).value = (
-            "DUMMY-CANCELLED-RETURN-KEY"
-        )
+        screen.query_one(
+            "#settings-provider-api-key", Input
+        ).value = "DUMMY-CANCELLED-RETURN-KEY"
         await pilot.pause()
         return_without_save = screen.query_one(
             "#settings-provider-return-without-save", Button
@@ -8903,10 +8914,13 @@ async def test_conversation_settings_return_without_saving_cancel_allows_retry()
         assert isinstance(host.screen_stack[-1], ConfirmationDialog)
         assert screen._provider_return_confirmation_open is True
         assert screen._provider_return_navigation_in_progress is False
-        assert sum(
-            isinstance(candidate, ConfirmationDialog)
-            for candidate in host.screen_stack
-        ) == 1
+        assert (
+            sum(
+                isinstance(candidate, ConfirmationDialog)
+                for candidate in host.screen_stack
+            )
+            == 1
+        )
 
 
 @pytest.mark.asyncio
@@ -8923,9 +8937,9 @@ async def test_conversation_settings_return_stay_settles_exact_handoff(monkeypat
         screen = _active_destination_screen(host)
         screen.apply_navigation_context(target.to_context())
         await pilot.pause()
-        screen.query_one("#settings-provider-api-key", Input).value = (
-            "DUMMY-OPENAI-STAY-KEY"
-        )
+        screen.query_one(
+            "#settings-provider-api-key", Input
+        ).value = "DUMMY-OPENAI-STAY-KEY"
         await pilot.pause()
         screen.action_settings_save_category(allow_text_entry_focus=True)
         await pilot.pause()
@@ -8934,7 +8948,9 @@ async def test_conversation_settings_return_stay_settles_exact_handoff(monkeypat
         await pilot.pause()
 
         assert host.navigation_messages == []
-        assert screen.query_one("#settings-provider-return-continuation").display is False
+        assert (
+            screen.query_one("#settings-provider-return-continuation").display is False
+        )
         replacement = ConversationSettingsReturnIntent(
             "replacement-session",
             0,
@@ -8945,9 +8961,7 @@ async def test_conversation_settings_return_stay_settles_exact_handoff(monkeypat
             HandoffChannel.CONVERSATION_SETTINGS_RETURN,
             replacement,
         )
-        claim = app.pending_handoffs.claim(
-            HandoffChannel.CONVERSATION_SETTINGS_RETURN
-        )
+        claim = app.pending_handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
         assert claim is not None
         assert claim.value == replacement
         app.pending_handoffs.release(claim)
@@ -9246,9 +9260,13 @@ async def test_settings_provider_test_redacts_secrets(request, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_settings_provider_category_saves_provider_defaults_without_sampling(
     monkeypatch,
 ):
+    # TASK-15512: real-app mount + guarded config loader under the per-test
+    # sandbox trips the config-participant admission; keep the
+    # collection-time profile (TASK-32873 per-node enrollment).
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -10736,7 +10754,11 @@ async def test_settings_user_emptied_context_window_still_refuses_the_save(monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch):
+    # TASK-15512: real-app mount + guarded config loader under the per-test
+    # sandbox trips the config-participant admission; keep the
+    # collection-time profile (TASK-32873 per-node enrollment).
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -10852,9 +10874,10 @@ async def test_settings_keyless_provider_save_keeps_template_env_name_out(
         # TASK-33002.3: the result line and the toast name the save's scope:
         # new chats and unused open chats; chats with work keep theirs.
         assert screen._provider_save_result == _PROVIDER_SAVED_WITH_SCOPE
-        assert _static_text(
-            screen.query_one("#settings-provider-save-result", Static)
-        ) == _PROVIDER_SAVED_WITH_SCOPE
+        assert (
+            _static_text(screen.query_one("#settings-provider-save-result", Static))
+            == _PROVIDER_SAVED_WITH_SCOPE
+        )
         assert toasts == [
             (
                 "Provider and model settings saved: new chats and open chats "
@@ -10892,9 +10915,10 @@ async def test_settings_keyless_provider_save_keeps_template_env_name_out(
         tomllib.loads(config_path.read_text(encoding="utf-8")),
     ):
         section = config["api_settings"]["llama_cpp"]
-        assert resolve_provider_credential(
-            "llama_cpp", section, environ=os.environ
-        )[0] == expected
+        assert (
+            resolve_provider_credential("llama_cpp", section, environ=os.environ)[0]
+            == expected
+        )
 
 
 @pytest.mark.asyncio
@@ -11493,7 +11517,9 @@ def test_settings_provider_catalog_entries_do_not_import_chat_functions(monkeypa
 )
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_first_slice_categories_have_real_content(request, button_id, expected):
+async def test_settings_first_slice_categories_have_real_content(
+    request, button_id, expected
+):
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -12051,7 +12077,9 @@ def test_settings_privacy_secret_count_ignores_non_secret_numeric_token_limits()
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_storage_test_shortcut_runs_safety_check(request, monkeypatch, tmp_path):
+async def test_settings_storage_test_shortcut_runs_safety_check(
+    request, monkeypatch, tmp_path
+):
     from tldw_chatbook import config
 
     config_path = Path(config.get_cli_config_path())
@@ -12454,8 +12482,6 @@ async def test_settings_advanced_config_load_backup_reports_decode_failure(
         assert editor.text == current_text
         assert "encoding" in screen._raw_config_model().result
         assert screen.query_one("#settings-advanced-save-config").disabled
-
-
 
 
 @pytest.mark.asyncio
@@ -14048,7 +14074,9 @@ async def test_settings_advanced_config_backup_load_never_clobbers_unsaved_typin
         monkeypatch.setattr(model.adapter, "read_backup_serialized", gated_read)
         try:
             await pilot.click("#settings-advanced-load-backup")
-            assert await asyncio.to_thread(started.wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS)
+            assert await asyncio.to_thread(
+                started.wait, _BACKUP_LOAD_EVENT_WAIT_SECONDS
+            )
             editor.focus()
             editor.move_cursor(editor.document.end)
             await pilot.press("z")
@@ -14106,7 +14134,9 @@ async def test_theme_leave_with_unsaved_edits_stay_keeps_category_and_edit(reque
         assert screen.active_category == SettingsCategoryId.THEME.value
         assert screen.theme_editor_modified is True
         assert editor.is_mounted
-        assert editor.query_one("#settings-theme-color-primary", Input).value == "#123456"
+        assert (
+            editor.query_one("#settings-theme-color-primary", Input).value == "#123456"
+        )
 
 
 @pytest.mark.asyncio
@@ -14165,5 +14195,9 @@ def test_display_path_abbreviates_home_and_leaves_other_paths_alone(tmp_path):
     from tldw_chatbook.UI.Screens.settings_screen import _display_path
 
     inside = Path.home() / ".config" / "tldw_cli" / "themes"
-    assert _display_path(inside) == "~" + os.sep + os.sep.join((".config", "tldw_cli", "themes"))
-    assert _display_path(tmp_path) == str(tmp_path) or _display_path(tmp_path).startswith("~")
+    assert _display_path(inside) == "~" + os.sep + os.sep.join(
+        (".config", "tldw_cli", "themes")
+    )
+    assert _display_path(tmp_path) == str(tmp_path) or _display_path(
+        tmp_path
+    ).startswith("~")

@@ -1461,11 +1461,15 @@ async def test_mounted_audio_cpp_consent_provision_recompose_and_detached_return
     )
     from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
 
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("mounted-request", 9)
@@ -1593,11 +1597,15 @@ async def test_real_worker_cancel_on_screen_unmount_drains_before_request_releas
     )
     from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("cancel-request", 3)
     app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
@@ -1686,11 +1694,15 @@ async def test_mounted_already_installed_audio_cpp_returns_exact_leased_root(
         "_ollama_api_available",
         lambda _self: asyncio.sleep(0, result=False),
     )
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("installed-request", 11)
     app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
@@ -1734,11 +1746,15 @@ async def test_real_app_shutdown_drains_audio_cpp_owner_executor(
     from Tests.UI.app_factory import _build_test_app
     from tldw_chatbook.config import get_cli_setting as real_get_cli_setting
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     started = threading.Event()
     finished = threading.Event()
@@ -1779,11 +1795,15 @@ async def test_mounted_unmount_during_blocked_audio_preflight_drains_once(
         "_ollama_api_available",
         lambda _self: asyncio.sleep(0, result=False),
     )
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("preflight-cancel", 12)
     app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
@@ -1879,11 +1899,15 @@ async def test_mounted_unmount_with_audio_consent_pending_invalidates_generation
         "_ollama_api_available",
         lambda _self: asyncio.sleep(0, result=False),
     )
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if section == "splash_screen" and key == "enabled"
             else real_get_cli_setting(section, key, default)
-        ))
+        ),
+    )
     app = _build_test_app()
     request = AudioCppModelLibraryRequest("consent-cancel", 13)
     app.pending_handoffs.stage(HandoffChannel.AUDIO_CPP_MODEL_LIBRARY_REQUEST, request)
@@ -2058,11 +2082,13 @@ async def test_audio_cpp_presentation_reveals_slow_load_once_and_keeps_error_ret
     from tldw_chatbook.UI.Screens.llm_screen import LLMScreen
     from tldw_chatbook.UI.Screens.model_curated_view import CuratedView
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
-            False
-            if section == "splash_screen" and key == "enabled"
-            else default
-        ))
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
+            False if section == "splash_screen" and key == "enabled" else default
+        ),
+    )
 
     monkeypatch.setattr(
         LLMManagementWindow,

@@ -22,9 +22,7 @@ _SKILL_RECORD_LISTS = ("available_skills", "blocked_skills")
 def _is_valid_library_source_snapshot(snapshot: object) -> bool:
     if not isinstance(snapshot, tuple) or len(snapshot) != 6:
         return False
-    records, counts, total_known, lookup_error, _recovery_state, study_counts = (
-        snapshot
-    )
+    records, counts, total_known, lookup_error, _recovery_state, study_counts = snapshot
     if not all(
         isinstance(value, Mapping)
         for value in (records, counts, total_known, study_counts)
@@ -40,13 +38,10 @@ def _is_valid_library_source_snapshot(snapshot: object) -> bool:
         return False
     if any(not isinstance(counts.get(source), int) for source in _RECORD_SOURCES):
         return False
-    if any(
-        not isinstance(total_known.get(source), bool) for source in _RECORD_SOURCES
-    ):
+    if any(not isinstance(total_known.get(source), bool) for source in _RECORD_SOURCES):
         return False
     if any(
-        study_counts.get(key) is not None
-        and not isinstance(study_counts.get(key), int)
+        study_counts.get(key) is not None and not isinstance(study_counts.get(key), int)
         for key in ("study_decks", "flashcards_due", "quizzes")
     ):
         return False
@@ -54,12 +49,16 @@ def _is_valid_library_source_snapshot(snapshot: object) -> bool:
         return False
     prompts = records.get("prompts")
     skills = records.get("skills")
-    if not isinstance(prompts, tuple) or len(prompts) != 2 or not isinstance(
-        prompts[1], tuple
+    if (
+        not isinstance(prompts, tuple)
+        or len(prompts) != 2
+        or not isinstance(prompts[1], tuple)
     ):
         return False
-    if not isinstance(skills, tuple) or len(skills) != 2 or not isinstance(
-        skills[1], Mapping
+    if (
+        not isinstance(skills, tuple)
+        or len(skills) != 2
+        or not isinstance(skills[1], Mapping)
     ):
         return False
     if prompts[0] is not None and not isinstance(prompts[0], int):

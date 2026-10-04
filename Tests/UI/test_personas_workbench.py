@@ -845,9 +845,7 @@ class TestWorkbenchShell:
             screen = await _mounted(pilot)
             lore_chip = screen.query_one("#personas-mode-lore", Button)
             # F-038: chip tooltips carry their single-letter mode key.
-            assert (
-                lore_chip.tooltip == "Lore — world facts injected on keywords. (l)"
-            )
+            assert lore_chip.tooltip == "Lore — world facts injected on keywords. (l)"
             assert "soon" not in str(lore_chip.label).lower()
             char_chip = screen.query_one("#personas-mode-characters", Button)
             assert "soon" not in str(char_chip.label).lower()
@@ -3476,9 +3474,7 @@ class TestImportExport:
             persist_character,
         )
         mock_app_instance.chat_dictionary_scope_service = SimpleNamespace(
-            list_character_dictionaries=AsyncMock(
-                return_value={"dictionaries": []}
-            )
+            list_character_dictionaries=AsyncMock(return_value={"dictionaries": []})
         )
         app = PersonasTestApp(mock_app_instance)
         notifications = self._capture_notifications(app)
@@ -3957,7 +3953,9 @@ async def test_app_escape_cancels_while_global_activation_lane_is_held() -> None
     assert host.pushes == 0
 
 
-async def test_app_owner_cancellation_while_waiting_for_lane_leaves_it_reusable() -> None:
+async def test_app_owner_cancellation_while_waiting_for_lane_leaves_it_reusable() -> (
+    None
+):
     """Cancelling the activation task cannot orphan a later lock acquisition."""
 
     lane = asyncio.Lock()
@@ -4262,7 +4260,9 @@ async def test_app_promotion_fault_restores_exact_roleplay_runtime_and_lane() ->
         lane.release()
 
 
-async def test_named_post_commit_cancellation_restores_exact_screen_and_runtime() -> None:
+async def test_named_post_commit_cancellation_restores_exact_screen_and_runtime() -> (
+    None
+):
     """Cancelling app-owned commit work settles exact UI and store rollback."""
 
     roleplay_unmounted = asyncio.Event()
@@ -4586,9 +4586,7 @@ async def test_app_serializes_two_targets_before_touching_screen_stack() -> None
             return None, None, object
 
         def _create_navigation_screen(self, _target, _screen_class):
-            return SimpleNamespace(
-                _workspace=_Workspace(self.pending_ids.pop(0))
-            )
+            return SimpleNamespace(_workspace=_Workspace(self.pending_ids.pop(0)))
 
         async def push_screen(self, screen):
             self.stack.append(screen)
@@ -4705,7 +4703,9 @@ async def test_mounted_aggregate_discard_and_stay(
         editor.load_character({"id": 1, "name": "Ada", "image": b"old"})
         editor.set_avatar_image(b"new")
         editor.query_one("#personas-char-editor-name", Input).value = "Discarded name"
-        editor.query_one("#personas-char-editor-description", TextArea).text = "Discarded description"
+        editor.query_one(
+            "#personas-char-editor-description", TextArea
+        ).text = "Discarded description"
         screen.state.has_unsaved_changes = True
 
         decision = screen.run_worker(
@@ -4720,8 +4720,12 @@ async def test_mounted_aggregate_discard_and_stay(
         # Reusing the same screen/editor must not resurrect a discarded form,
         # including when a later Save reads its values.
         assert screen.query_one(PersonasCharacterEditorWidget) is editor
-        assert editor.get_character_data()["name"] == ("Ada" if expected else "Discarded name")
-        assert editor.get_character_data()["description"] == ("" if expected else "Discarded description")
+        assert editor.get_character_data()["name"] == (
+            "Ada" if expected else "Discarded name"
+        )
+        assert editor.get_character_data()["description"] == (
+            "" if expected else "Discarded description"
+        )
         assert screen.state.has_unsaved_changes is (not expected)
 
 
@@ -4739,7 +4743,11 @@ async def test_discard_restores_form_baseline_across_cached_screen_return(
         screen = await _mounted(pilot)
         await app.workers.wait_for_complete()
         await screen._ensure_center_view(f"{kind}-editor")
-        record = {"id": 1, "name": "Saved name", "description": "Saved description"} if saved else {}
+        record = (
+            {"id": 1, "name": "Saved name", "description": "Saved description"}
+            if saved
+            else {}
+        )
         if kind == "character":
             editor = screen.query_one(PersonasCharacterEditorWidget)
             editor.load_character(record)
@@ -4753,7 +4761,9 @@ async def test_discard_restores_form_baseline_across_cached_screen_return(
             values = editor.collect
         before = values()
         editor.query_one(f"#{prefix}-name", Input).value = "Unwanted name"
-        editor.query_one(f"#{prefix}-description", TextArea).text = "Unwanted description"
+        editor.query_one(
+            f"#{prefix}-description", TextArea
+        ).text = "Unwanted description"
         await pilot.pause()
         screen.state.has_unsaved_changes = True
         decision = screen.run_worker(screen.confirm_navigation())
@@ -4862,7 +4872,9 @@ async def test_mounted_aggregate_save_waits_real_persona_owner(
         )
         await pilot.pause()
         domains = str(
-            app.screen.query_one("#roleplay-draft-navigation-domains", Static).renderable
+            app.screen.query_one(
+                "#roleplay-draft-navigation-domains", Static
+            ).renderable
         )
         assert "Persona form" in domains
         await pilot.click("#roleplay-draft-save-continue")
@@ -5003,9 +5015,7 @@ class TestConversationsPanel:
             await pilot.app.workers.wait_for_complete()
             await pilot.pause()
             assert screen.conversations._open_conversation_id == "conv-1"
-            assert screen.query_one(
-                "#personas-conversation-transcript-view"
-            ).display
+            assert screen.query_one("#personas-conversation-transcript-view").display
 
             oldest = screen.query_one("#personas-conversation-row-conv-22")
             conversation_list.index = list(conversation_list.children).index(oldest)
@@ -5014,22 +5024,30 @@ class TestConversationsPanel:
             await pilot.pause()
 
             assert screen.conversations._open_conversation_id == "conv-22"
-            assert str(
-                screen.query_one("#personas-transcript-title", Static).renderable
-            ) == "Case 22"
-            assert str(
-                screen.query_one("#personas-conversation-resume", Button).label
-            ) == "Resume chat"
-            assert str(
-                screen.query_one(
-                    "#personas-conversation-continue-console", Button
-                ).label
-            ) == "Send transcript to Console draft"
-            assert str(
-                screen.query_one(
-                    "#personas-conversation-open-library", Button
-                ).label
-            ) == "Open in Library"
+            assert (
+                str(screen.query_one("#personas-transcript-title", Static).renderable)
+                == "Case 22"
+            )
+            assert (
+                str(screen.query_one("#personas-conversation-resume", Button).label)
+                == "Resume chat"
+            )
+            assert (
+                str(
+                    screen.query_one(
+                        "#personas-conversation-continue-console", Button
+                    ).label
+                )
+                == "Send transcript to Console draft"
+            )
+            assert (
+                str(
+                    screen.query_one(
+                        "#personas-conversation-open-library", Button
+                    ).label
+                )
+                == "Open in Library"
+            )
 
             await pilot.click("#personas-conversation-resume")
             await pilot.click("#personas-conversation-continue-console")
@@ -5134,9 +5152,9 @@ class TestConversationsPanel:
             await pilot.pause()
 
             assert stub_conversations.calls[-1] == (2, 21, 0, {})
-            assert [_row_text(row) for row in screen.query(".personas-conversation-row")] == [
-                "Case 90"
-            ]
+            assert [
+                _row_text(row) for row in screen.query(".personas-conversation-row")
+            ] == ["Case 90"]
 
     async def test_append_loading_render_exception_preserves_boundary_for_retry(
         self,
@@ -5291,8 +5309,9 @@ class TestConversationsPanel:
         retry_records = []
         sink_id = loguru_logger.add(
             lambda message: retry_records.append(message.record),
-            filter=lambda record: record["message"]
-            == "Could not render the conversations retry state.",
+            filter=lambda record: (
+                record["message"] == "Could not render the conversations retry state."
+            ),
         )
 
         def gated_failure(character_id, limit=50, offset=0, **cursor):
@@ -5346,9 +5365,10 @@ class TestConversationsPanel:
                     (1, 21, 0, {}),
                     (1, 21, 0, {}),
                 ]
-                assert _row_text(
-                    screen.query_one("#personas-conversation-row-conv-91")
-                ) == "Retry succeeded"
+                assert (
+                    _row_text(screen.query_one("#personas-conversation-row-conv-91"))
+                    == "Retry succeeded"
+                )
         finally:
             release_read.set()
             loguru_logger.remove(sink_id)
@@ -5454,9 +5474,9 @@ class TestConversationsPanel:
             assert [
                 _row_text(row) for row in screen.query(".personas-conversation-row")
             ] == expected_rows
-            assert _row_text(
-                screen.query_one(".personas-conversations-tail")
-            ) == tail_copy
+            assert (
+                _row_text(screen.query_one(".personas-conversations-tail")) == tail_copy
+            )
 
     async def test_duplicate_shadow_page_auto_advances_to_unseen_rows(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -5479,9 +5499,7 @@ class TestConversationsPanel:
             app.call_from_thread(continued_read_started.set)
             return continued_page
 
-        stub_conversations.replace_pages(
-            first_page, duplicate_shadow, continued_read
-        )
+        stub_conversations.replace_pages(first_page, duplicate_shadow, continued_read)
 
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await _mounted(pilot)
@@ -5516,9 +5534,7 @@ class TestConversationsPanel:
                     21,
                     0,
                     {
-                        "before_last_modified": raw_shadow_boundary[
-                            "last_modified"
-                        ],
+                        "before_last_modified": raw_shadow_boundary["last_modified"],
                         "before_id": raw_shadow_boundary["id"],
                     },
                 ),
@@ -5528,9 +5544,10 @@ class TestConversationsPanel:
                 f"Case {index}" for index in range(1, 41)
             ]
             assert len({row.id for row in rows}) == 40
-            assert _row_text(
-                screen.query_one(".personas-conversations-tail")
-            ) == "Load 20 older conversations"
+            assert (
+                _row_text(screen.query_one(".personas-conversations-tail"))
+                == "Load 20 older conversations"
+            )
 
     async def test_duplicate_shadow_auto_traversal_yields_at_hop_budget(
         self, mock_app_instance, stub_characters, stub_conversations
@@ -5551,14 +5568,11 @@ class TestConversationsPanel:
             for index in range(1, 21):
                 duplicate = _conversation_record(index)
                 duplicate["last_modified"] = (
-                    retained_cursor_time
-                    - timedelta(hours=read_number, seconds=index)
+                    retained_cursor_time - timedelta(hours=read_number, seconds=index)
                 ).isoformat()
                 page.append(duplicate)
             page.append(_conversation_record(1))
-            generated_boundaries.append(
-                (page[19]["last_modified"], page[19]["id"])
-            )
+            generated_boundaries.append((page[19]["last_modified"], page[19]["id"]))
             return page
 
         def moving_duplicates(character_id, limit=50, offset=0, **cursor):
@@ -5611,21 +5625,19 @@ class TestConversationsPanel:
                 )
                 assert screen.conversations._conversation_list_attempt is None
                 assert screen.conversations._conversation_list_phase == "ready"
-                assert _row_text(
-                    screen.query_one(".personas-conversations-tail")
-                ) == "Load 20 older conversations"
+                assert (
+                    _row_text(screen.query_one(".personas-conversations-tail"))
+                    == "Load 20 older conversations"
+                )
                 assert len(list(screen.query(".personas-conversation-row"))) == 20
 
                 next_duplicate_page = duplicate_page(duplicate_reads + 1)
                 next_boundary = generated_boundaries[-1]
                 progress_row = _conversation_record(21)
                 progress_row["last_modified"] = (
-                    datetime.fromisoformat(next_boundary[0])
-                    - timedelta(seconds=1)
+                    datetime.fromisoformat(next_boundary[0]) - timedelta(seconds=1)
                 ).isoformat()
-                stub_conversations.replace_pages(
-                    next_duplicate_page, [progress_row]
-                )
+                stub_conversations.replace_pages(next_duplicate_page, [progress_row])
                 calls_before_new_attempt = len(stub_conversations.calls)
 
                 conversation_list.index = len(conversation_list.children) - 1
@@ -5643,9 +5655,10 @@ class TestConversationsPanel:
                     "before_id": next_boundary[1],
                 }
                 assert list(screen.query("#personas-conversation-row-conv-21"))
-                assert _row_text(
-                    screen.query_one(".personas-conversations-tail")
-                ) == "All conversations shown."
+                assert (
+                    _row_text(screen.query_one(".personas-conversations-tail"))
+                    == "All conversations shown."
+                )
         finally:
             abort_unbounded_read.set()
 
@@ -5726,9 +5739,10 @@ class TestConversationsPanel:
             rows = list(screen.query(".personas-conversation-row"))
             assert len(rows) == 20
             assert len({row.id for row in rows}) == 20
-            assert _row_text(
-                screen.query_one(".personas-conversations-tail")
-            ) == "All conversations shown."
+            assert (
+                _row_text(screen.query_one(".personas-conversations-tail"))
+                == "All conversations shown."
+            )
             await pilot.press("enter")
             await pilot.pause()
             assert len(stub_conversations.calls) == 2
@@ -5783,8 +5797,7 @@ class TestConversationsPanel:
                 await pilot.pause()
 
                 visible = [
-                    _row_text(row)
-                    for row in screen.query(".personas-conversation-row")
+                    _row_text(row) for row in screen.query(".personas-conversation-row")
                 ]
                 assert "Stale older row" not in visible
                 if stale_action == "mode-switch":
@@ -6038,14 +6051,11 @@ class TestConversationsPanel:
 
                 assert screen.query_one("#ccp-character-card-view").display is True
                 assert (
-                    screen.query_one(
-                        "#personas-conversation-transcript-view"
-                    ).display
+                    screen.query_one("#personas-conversation-transcript-view").display
                     is False
                 )
                 assert (
-                    screen.query_one("#personas-conversation-actions").display
-                    is False
+                    screen.query_one("#personas-conversation-actions").display is False
                 )
                 assert screen.query_one("#personas-inspector-actions").display is True
                 assert pilot.app.focused.id == "personas-conversations-list"
@@ -6094,14 +6104,11 @@ class TestConversationsPanel:
 
                 assert screen.query_one("#ccp-character-card-view").display is True
                 assert (
-                    screen.query_one(
-                        "#personas-conversation-transcript-view"
-                    ).display
+                    screen.query_one("#personas-conversation-transcript-view").display
                     is False
                 )
                 assert (
-                    screen.query_one("#personas-conversation-actions").display
-                    is False
+                    screen.query_one("#personas-conversation-actions").display is False
                 )
                 assert screen.query_one("#personas-inspector-actions").display is True
                 assert pilot.app.focused.id == "personas-conversations-list"
@@ -6115,9 +6122,7 @@ class TestConversationsPanel:
         first_release = threading.Event()
         calls = 0
 
-        def gated_first_load(
-            db, conversation_id, character_name, user_name, **kwargs
-        ):
+        def gated_first_load(db, conversation_id, character_name, user_name, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 1:
@@ -6170,9 +6175,7 @@ class TestConversationsPanel:
                 assert "Current preview" in text
                 assert "Stale completion" not in text
                 assert (
-                    screen.query_one(
-                        "#personas-conversation-transcript-view"
-                    ).display
+                    screen.query_one("#personas-conversation-transcript-view").display
                     is True
                 )
                 assert screen.query_one("#ccp-character-card-view").display is False
@@ -6308,12 +6311,14 @@ class TestConversationsPanel:
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(160, 50)) as pilot:
             screen = await self._open_conversation(pilot)
-            assert str(
-                screen.query_one("#personas-transcript-empty", Static).renderable
-            ) == "No messages to display."
-            assert screen.query_one(
-                "#personas-conversation-resume", Button
-            ).disabled is False
+            assert (
+                str(screen.query_one("#personas-transcript-empty", Static).renderable)
+                == "No messages to display."
+            )
+            assert (
+                screen.query_one("#personas-conversation-resume", Button).disabled
+                is False
+            )
 
     async def test_conversation_load_failure_is_distinct_and_does_not_stage(
         self, mock_app_instance, stub_characters, stub_conversations, monkeypatch
@@ -6336,9 +6341,10 @@ class TestConversationsPanel:
             )
             assert screen.conversations._loaded_conversation_id is None
             assert screen.conversations._failed_conversation_id == "conv-1"
-            assert screen.query_one(
-                "#personas-conversation-resume", Button
-            ).disabled is False
+            assert (
+                screen.query_one("#personas-conversation-resume", Button).disabled
+                is False
+            )
             await pilot.click("#personas-conversation-continue-console")
             await pilot.pause()
         app.open_chat_with_handoff.assert_not_called()
@@ -6436,13 +6442,9 @@ class TestConversationsPanel:
                 "personas-conversation-open-library",
             ]
             resume = screen.query_one("#personas-conversation-resume", Button)
-            send = screen.query_one(
-                "#personas-conversation-continue-console", Button
-            )
+            send = screen.query_one("#personas-conversation-continue-console", Button)
             back = screen.query_one("#personas-conversation-back", Button)
-            library = screen.query_one(
-                "#personas-conversation-open-library", Button
-            )
+            library = screen.query_one("#personas-conversation-open-library", Button)
             assert resume.has_class("console-action-primary")
             assert send.has_class("console-action-secondary")
             assert back.has_class("console-action-subdued")
@@ -6492,8 +6494,13 @@ class TestConversationsPanel:
 
     @pytest.mark.parametrize("mutation", ("stale", "deleted", "moved"))
     async def test_exact_deep_link_rejects_changed_snapshot_before_selection(
-        self, mock_app_instance, stub_characters, stub_conversations,
-        monkeypatch, late_link_database, mutation,
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+        late_link_database,
+        mutation,
     ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(120, 50)) as pilot:
@@ -6511,14 +6518,23 @@ class TestConversationsPanel:
             else:
                 with db.transaction() as connection:
                     if mutation == "deleted":
-                        connection.execute("UPDATE conversations SET deleted = 1 WHERE id = ?", ("conv-1",))
+                        connection.execute(
+                            "UPDATE conversations SET deleted = 1 WHERE id = ?",
+                            ("conv-1",),
+                        )
                     else:
-                        connection.execute("UPDATE conversations SET assistant_authority_id = ? WHERE id = ?", ("other-authority", "conv-1"))
+                        connection.execute(
+                            "UPDATE conversations SET assistant_authority_id = ? WHERE id = ?",
+                            ("other-authority", "conv-1"),
+                        )
             before = replace(screen.state)
             rows = dict(screen.conversations._conversation_rows)
             screen._pending_character_conversation_link = link
             screen.conversations.request_conversation_focus("conv-1")
-            assert await screen._apply_pending_character_conversation_link() is CharacterConversationLinkOutcome.REJECTED
+            assert (
+                await screen._apply_pending_character_conversation_link()
+                is CharacterConversationLinkOutcome.REJECTED
+            )
             assert screen.state == before
             assert screen.conversations._conversation_rows == rows
             assert screen.conversations._requested_conversation_id is None
@@ -6532,15 +6548,24 @@ class TestConversationsPanel:
                 assert screen._pending_character_conversation_link is None
                 assert "conv-1" in screen.conversations._conversation_rows
             else:
-                assert screen._pending_character_conversation_link.conversation_id == "conv-1"
+                assert (
+                    screen._pending_character_conversation_link.conversation_id
+                    == "conv-1"
+                )
                 assert screen.conversations._requested_conversation_id is None
                 assert screen.query_one("#personas-character-link-recovery").display
 
     @pytest.mark.parametrize("size", ((52, 20), (120, 50)))
     @pytest.mark.parametrize("missing_from_query", (False, True))
     async def test_exact_deep_link_keeps_ownership_until_later_page_or_missing_recovery(
-        self, mock_app_instance, stub_characters, stub_conversations,
-        monkeypatch, late_link_database, missing_from_query, size,
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+        late_link_database,
+        missing_from_query,
+        size,
     ):
         app = _StyledNavCaptureApp(mock_app_instance)
         async with app.run_test(size=size) as pilot:
@@ -6549,20 +6574,35 @@ class TestConversationsPanel:
             db, character_id = late_link_database
             authority = db.get_local_authority_id()
             for index in range(21):
-                db.add_conversation({
-                    "id": f"newer-{index}", "title": f"Newer {index}",
-                    "character_id": character_id, "assistant_kind": "character",
-                    "assistant_id": str(character_id), "assistant_authority_id": authority,
-                })
+                db.add_conversation(
+                    {
+                        "id": f"newer-{index}",
+                        "title": f"Newer {index}",
+                        "character_id": character_id,
+                        "assistant_kind": "character",
+                        "assistant_id": str(character_id),
+                        "assistant_authority_id": authority,
+                    }
+                )
             monkeypatch.setattr(screen, "_character_db", lambda: db)
             pending_pages = []
             controller = screen.conversations
+
             def schedule(*, initial, attempt):
-                pending_pages.append((str(character_id), controller._next_conversation_cursor, initial, attempt))
+                pending_pages.append(
+                    (
+                        str(character_id),
+                        controller._next_conversation_cursor,
+                        initial,
+                        attempt,
+                    )
+                )
+
             monkeypatch.setattr(controller, "_schedule_conversation_page", schedule)
             link = RoleplayCharacterConversationLink(
                 ResolvedLocalCharacterKey(authority, character_id),
-                conversation_id="conv-1", query="nonexistentneedle" if missing_from_query else "",
+                conversation_id="conv-1",
+                query="nonexistentneedle" if missing_from_query else "",
                 data_revision=db.get_character_conversation_search_revision(),
             )
             screen._pending_character_conversation_link = link
@@ -6571,7 +6611,9 @@ class TestConversationsPanel:
             assert pending_pages
             pages = 0
             while pending_pages:
-                await asyncio.to_thread(controller._load_conversations_sync, *pending_pages.pop(0))
+                await asyncio.to_thread(
+                    controller._load_conversations_sync, *pending_pages.pop(0)
+                )
                 pages += 1
                 assert pages <= 3
             await pilot.pause()
@@ -6579,9 +6621,15 @@ class TestConversationsPanel:
             if missing_from_query:
                 assert screen._pending_character_conversation_link is link
                 assert screen.query_one("#personas-character-link-recovery").display
-                copy = str(screen.query_one("#personas-character-link-recovery-copy", Static).renderable)
+                copy = str(
+                    screen.query_one(
+                        "#personas-character-link-recovery-copy", Static
+                    ).renderable
+                )
                 assert "not in" in copy.lower()
-                painted = "\n".join(strip.text for strip in screen._compositor.render_strips())
+                painted = "\n".join(
+                    strip.text for strip in screen._compositor.render_strips()
+                )
                 assert "not in" in painted, painted
                 retry = screen.query_one("#personas-character-link-retry", Button)
                 assert screen.get_widget_at(*retry.region.center)[0] is retry
@@ -6589,20 +6637,33 @@ class TestConversationsPanel:
                 assert screen._pending_character_conversation_link is None
                 assert controller._requested_conversation_id is None
                 while pending_pages:
-                    await asyncio.to_thread(controller._load_conversations_sync, *pending_pages.pop(0))
+                    await asyncio.to_thread(
+                        controller._load_conversations_sync, *pending_pages.pop(0)
+                    )
                 assert len(controller._conversation_rows) == 20
             else:
                 assert pages == 2
                 assert screen._pending_character_conversation_link is None
-                assert await screen._apply_pending_character_conversation_link() is CharacterConversationLinkOutcome.ABSENT
+                assert (
+                    await screen._apply_pending_character_conversation_link()
+                    is CharacterConversationLinkOutcome.ABSENT
+                )
                 listing = screen.query_one("#personas-conversations-list", ListView)
                 inspector = screen.query_one(PersonasInspectorPane)
-                assert inspector._conversation_lookup[listing.highlighted_child.id] == "conv-1"
+                assert (
+                    inspector._conversation_lookup[listing.highlighted_child.id]
+                    == "conv-1"
+                )
 
     @pytest.mark.parametrize("mutation", ("deleted", "revision"))
     async def test_exact_link_refences_after_owned_page_render(
-        self, mock_app_instance, stub_characters, stub_conversations,
-        monkeypatch, late_link_database, mutation,
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+        late_link_database,
+        mutation,
     ):
         app = PersonasTestApp(mock_app_instance)
         async with app.run_test(size=(120, 50)) as pilot:
@@ -6612,14 +6673,19 @@ class TestConversationsPanel:
             monkeypatch.setattr(screen, "_character_db", lambda: db)
             inspector = screen.query_one(PersonasInspectorPane)
             original = inspector.show_conversations
+
             async def change_after_render(*args, **kwargs):
                 rendered = await original(*args, **kwargs)
                 if mutation == "deleted":
                     with db.transaction() as connection:
-                        connection.execute("UPDATE conversations SET deleted = 1 WHERE id = ?", ("conv-1",))
+                        connection.execute(
+                            "UPDATE conversations SET deleted = 1 WHERE id = ?",
+                            ("conv-1",),
+                        )
                 else:
                     db.add_character_card({"name": "Concurrent mutation"})
                 return rendered
+
             monkeypatch.setattr(inspector, "show_conversations", change_after_render)
             link = RoleplayCharacterConversationLink(
                 ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id),
@@ -6635,8 +6701,12 @@ class TestConversationsPanel:
             assert screen.query_one("#personas-character-link-recovery").display
 
     async def test_fast_exact_link_completion_keeps_compact_focused_list_visible(
-        self, mock_app_instance, stub_characters, stub_conversations,
-        monkeypatch, late_link_database,
+        self,
+        mock_app_instance,
+        stub_characters,
+        stub_conversations,
+        monkeypatch,
+        late_link_database,
     ):
         app = _StyledNavCaptureApp(mock_app_instance)
         async with app.run_test(size=(52, 20)) as pilot:
@@ -6645,13 +6715,22 @@ class TestConversationsPanel:
             db, character_id = late_link_database
             monkeypatch.setattr(screen, "_character_db", lambda: db)
             original = screen._select_character
+
             async def finish_page_before_selection_returns(*args):
                 await original(*args)
                 await app.workers.wait_for_complete()
-            monkeypatch.setattr(screen, "_select_character", finish_page_before_selection_returns)
-            screen._pending_character_conversation_link = RoleplayCharacterConversationLink(
-                ResolvedLocalCharacterKey(db.get_local_authority_id(), character_id),
-                conversation_id="conv-1", data_revision=db.get_character_conversation_search_revision(),
+
+            monkeypatch.setattr(
+                screen, "_select_character", finish_page_before_selection_returns
+            )
+            screen._pending_character_conversation_link = (
+                RoleplayCharacterConversationLink(
+                    ResolvedLocalCharacterKey(
+                        db.get_local_authority_id(), character_id
+                    ),
+                    conversation_id="conv-1",
+                    data_revision=db.get_character_conversation_search_revision(),
+                )
             )
             await screen._apply_pending_character_conversation_link()
             await pilot.pause()
@@ -6660,8 +6739,13 @@ class TestConversationsPanel:
             listing = screen.query_one("#personas-conversations-list", ListView)
             assert listing.has_focus
             row = listing.highlighted_child
-            painted = "\n".join(strip.text for strip in screen._compositor.render_strips())
-            assert screen.get_widget_at(*row.region.center)[0] in (row, *row.walk_children()), painted
+            painted = "\n".join(
+                strip.text for strip in screen._compositor.render_strips()
+            )
+            assert screen.get_widget_at(*row.region.center)[0] in (
+                row,
+                *row.walk_children(),
+            ), painted
 
     @pytest.mark.parametrize("input_kind", ("pointer", "keyboard"))
     async def test_late_compact_deep_link_allocates_back_to_console(
@@ -6823,20 +6907,29 @@ class TestConversationsPanel:
             assert "Send transcript to Console draft" in painted, painted
             assert "Open in Library" in painted, painted
             if size[0] <= 60:
-                send = screen.query_one("#personas-conversation-continue-console", Button)
+                send = screen.query_one(
+                    "#personas-conversation-continue-console", Button
+                )
                 send_line = painted.splitlines()[send.content_region.y]
                 fragment_x = send_line.find(" In")
                 if fragment_x >= 0:
-                    owner, _ = screen.get_widget_at(fragment_x + 1, send.content_region.y)
-                    pytest.fail(f"Orphaned compact paint: {owner!r}; ancestors={list(owner.ancestors)!r}; line={send_line!r}")
-                assert sum(
-                    screen.query_one(selector).display
-                    for selector in (
-                        "#personas-library-pane",
-                        "#personas-work-area",
-                        "#personas-inspector-pane",
+                    owner, _ = screen.get_widget_at(
+                        fragment_x + 1, send.content_region.y
                     )
-                ) == 1
+                    pytest.fail(
+                        f"Orphaned compact paint: {owner!r}; ancestors={list(owner.ancestors)!r}; line={send_line!r}"
+                    )
+                assert (
+                    sum(
+                        screen.query_one(selector).display
+                        for selector in (
+                            "#personas-library-pane",
+                            "#personas-work-area",
+                            "#personas-inspector-pane",
+                        )
+                    )
+                    == 1
+                )
             back = screen.query_one("#personas-conversation-back", Button)
             assert back.content_region.width >= len(str(back.label))
             hit, _ = screen.get_widget_at(*back.content_region.center)
@@ -6881,16 +6974,10 @@ class TestConversationsPanel:
             assert screen.query_one("#personas-transcript-scroll").region.height > 0
 
             resume = screen.query_one("#personas-conversation-resume", Button)
-            send = screen.query_one(
-                "#personas-conversation-continue-console", Button
-            )
-            navigation = screen.query_one(
-                "#personas-conversation-navigation-actions"
-            )
+            send = screen.query_one("#personas-conversation-continue-console", Button)
+            navigation = screen.query_one("#personas-conversation-navigation-actions")
             back = screen.query_one("#personas-conversation-back", Button)
-            library = screen.query_one(
-                "#personas-conversation-open-library", Button
-            )
+            library = screen.query_one("#personas-conversation-open-library", Button)
             assert [
                 resume.region.height,
                 send.region.height,
@@ -6965,7 +7052,10 @@ class TestConversationsPanel:
             screen.conversations.synchronize_deep_link_query("case file")
             await pilot.pause()
 
-            assert screen.query_one("#personas-conversations-search", Input).value == "case file"
+            assert (
+                screen.query_one("#personas-conversations-search", Input).value
+                == "case file"
+            )
             searched.assert_not_awaited()
 
     @pytest.mark.parametrize("size", ((52, 20), (120, 50)))
@@ -7064,9 +7154,7 @@ class TestConversationsPanel:
             target = LocalCharacterConversationTarget(
                 ResolvedLocalCharacterKey("authority", 1), "conv-1"
             )
-            request = CharacterConversationActivationRequest(
-                target, "authority", 4
-            )
+            request = CharacterConversationActivationRequest(target, "authority", 4)
             screen.conversations._conversation_activation_requests["conv-1"] = request
 
             await pilot.click("#personas-conversation-resume")
@@ -7816,9 +7904,7 @@ class TestConsoleActions:
             await screen._after_character_save("1", "Detective Sam")
             await pilot.pause()
 
-            assert not screen.query_one(
-                "#personas-attach-to-console", Button
-            ).disabled
+            assert not screen.query_one("#personas-attach-to-console", Button).disabled
             load_character.assert_not_awaited()
 
     async def test_profile_save_pushes_console_gate_before_row_render(
@@ -15203,16 +15289,6 @@ async def test_stale_personas_screen_reconcile_skips_screen_local_buddy_hook(
         hook.assert_not_called()
 
 
-
-
-
-
-
-
-
-
-
-
 async def test_disabled_deleted_missing_persona_hides_but_preserves_enabled_selection(
     mock_app_instance,
     stub_characters,
@@ -15311,10 +15387,6 @@ async def test_restore_reresolves_same_selection(
         ]
 
 
-
-
-
-
 async def test_local_save_and_delete_refresh_only_the_same_buddy_selection(
     monkeypatch,
     mock_app_instance,
@@ -15374,10 +15446,6 @@ async def test_server_profile_durable_changes_never_refresh_local_buddy(
         await screen._delete_entity("persona", "p-1", 3)
 
         refresh.assert_not_awaited()
-
-
-
-
 
 
 async def test_persona_json_export_excludes_buddy_preferences(

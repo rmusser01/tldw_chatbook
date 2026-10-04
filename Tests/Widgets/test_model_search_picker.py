@@ -17,7 +17,9 @@ from textual.widgets import Button, Input, OptionList, Select
 from textual.widgets._input import Selection
 
 from tldw_chatbook.LLM_Provider_Catalog.model_catalog_settings import SELECTOR_MERGE_CAP
-from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import MergedModelEntry
+from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+    MergedModelEntry,
+)
 from tldw_chatbook.UI.Screens.provider_model_resolution import (
     ConsoleModelProvenance,
     ResolvedProviderModelOption,
@@ -792,7 +794,9 @@ async def test_superseded_catalog_refresh_does_not_leak_unawaited_coroutine():
             assert picker._provider == "OpenAI"
             assert picker.value == "current-model"
         gc.collect()
-    assert not [warning for warning in recorded if "was never awaited" in str(warning.message)]
+    assert not [
+        warning for warning in recorded if "was never awaited" in str(warning.message)
+    ]
 
 
 def _status_text(app) -> str:
@@ -836,7 +840,9 @@ async def test_truncated_results_say_how_many_matched_and_that_typing_narrows():
         assert _status_text(app) == f"{cap + 5} models available. Type to filter."
 
 
-_OVER_CAP_IDS = [f"vendor/m{index:02d}" for index in range(ModelSearchPicker.MAX_RESULTS + 5)]
+_OVER_CAP_IDS = [
+    f"vendor/m{index:02d}" for index in range(ModelSearchPicker.MAX_RESULTS + 5)
+]
 
 
 @pytest.mark.asyncio

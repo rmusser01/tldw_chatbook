@@ -87,6 +87,7 @@ def change_review_enabled_globally() -> bool:
     """
     return read_change_review_capability().state is ChangeReviewState.ENABLED
 
+
 #: Directory names the scan prunes — mirrors the shadow repo's
 #: ``FORCED_EXCLUDES`` (change_tracking.py): untracked trees must not count.
 _SKIP_DIR_NAMES = frozenset(
@@ -194,9 +195,7 @@ def scan_root(
             "max_total_bytes", DEFAULT_MAX_TOTAL_BYTES
         )
     if max_file_bytes is None:
-        max_file_bytes = change_review_setting(
-            "max_file_bytes", DEFAULT_MAX_FILE_BYTES
-        )
+        max_file_bytes = change_review_setting("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
     root = Path(root)
     files = 0
     total = 0

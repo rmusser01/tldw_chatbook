@@ -173,8 +173,12 @@ def test_experiment_naive_grouping_orphans_a_fence_tool_result():
     """
     payload = _build_fence_rounds(4)
     naive = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=50, count_fn=_wordcount,  # tiny budget: several groups must drop
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=50,
+        count_fn=_wordcount,  # tiny budget: several groups must drop
     )
     assert naive.dropped_turns > 0, "test is only meaningful if something dropped"
     assert not _fence_pairs_intact(naive.messages), (
@@ -190,8 +194,12 @@ def test_fixed_round_boundary_never_orphans_a_fence_tool_result():
     payload = _build_fence_rounds(4)
     for window in (30, 50, 80, 120, 400):
         bound = bound_messages_to_window(
-            payload, model="m", provider="p", response_reservation=0,
-            window=window, count_fn=_wordcount,
+            payload,
+            model="m",
+            provider="p",
+            response_reservation=0,
+            window=window,
+            count_fn=_wordcount,
             is_turn_boundary=_make_round_boundary(native=False),
         )
         assert _fence_pairs_intact(bound.messages), (
@@ -212,8 +220,12 @@ def test_experiment_naive_grouping_never_trims_a_native_run_at_all():
     """
     payload = _build_native_rounds(6)
     naive = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=30, count_fn=_wordcount,  # budget far too small for 6 rounds
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=30,
+        count_fn=_wordcount,  # budget far too small for 6 rounds
     )
     assert naive.dropped_turns == 0, (
         "expected naive grouping to find nothing droppable for a native "
@@ -225,8 +237,12 @@ def test_experiment_naive_grouping_never_trims_a_native_run_at_all():
 def test_fixed_round_boundary_trims_a_native_run_without_orphaning():
     payload = _build_native_rounds(6)
     bound = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=30, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=30,
+        count_fn=_wordcount,
         is_turn_boundary=_make_round_boundary(native=True),
     )
     assert bound.dropped_turns > 0, "expected the tiny window to force some drops"
@@ -254,8 +270,12 @@ _TASK_TEXT = "start the task"
 def test_pin_first_user_survives_fence_even_when_everything_else_drops():
     payload = _build_fence_rounds(6)
     starved = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=10, count_fn=_wordcount,  # far too small to keep anything else
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=10,
+        count_fn=_wordcount,  # far too small to keep anything else
         is_turn_boundary=_make_round_boundary(native=False),
         pin_first_user=True,
     )
@@ -273,8 +293,12 @@ def test_without_the_pin_the_same_budget_drops_the_task_instruction():
     the round-boundary fix alone."""
     payload = _build_fence_rounds(6)
     unpinned = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=10, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=10,
+        count_fn=_wordcount,
         is_turn_boundary=_make_round_boundary(native=False),
         pin_first_user=False,
     )
@@ -291,8 +315,12 @@ def test_without_the_pin_the_same_budget_drops_the_task_instruction():
 def test_pin_first_user_survives_native_even_when_everything_else_drops():
     payload = _build_native_rounds(6)
     starved = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=10, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=10,
+        count_fn=_wordcount,
         is_turn_boundary=_make_round_boundary(native=True),
         pin_first_user=True,
     )
@@ -306,8 +334,12 @@ def test_pin_first_user_survives_native_even_when_everything_else_drops():
 def test_without_the_pin_the_same_budget_drops_the_task_instruction_native():
     payload = _build_native_rounds(6)
     unpinned = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=10, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=10,
+        count_fn=_wordcount,
         is_turn_boundary=_make_round_boundary(native=True),
         pin_first_user=False,
     )
@@ -322,13 +354,21 @@ def test_pin_does_not_change_console_default_behaviour():
     site (which never passes it) is completely unaffected."""
     payload = _build_fence_rounds(6)
     default = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=10, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=10,
+        count_fn=_wordcount,
         is_turn_boundary=_make_round_boundary(native=False),
     )
     explicit_false = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=10, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=10,
+        count_fn=_wordcount,
         is_turn_boundary=_make_round_boundary(native=False),
         pin_first_user=False,
     )
@@ -350,8 +390,12 @@ def test_pin_does_not_change_console_default_behaviour():
 def test_min_recent_turns_floor_keeps_the_last_N_rounds_under_a_starving_window():
     payload = _build_fence_rounds(8)
     bound = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=10, count_fn=_wordcount,  # would keep ONLY the current round without a floor
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=10,
+        count_fn=_wordcount,  # would keep ONLY the current round without a floor
         is_turn_boundary=_make_round_boundary(native=False),
         pin_first_user=True,
         min_recent_turns=4,
@@ -363,9 +407,9 @@ def test_min_recent_turns_floor_keeps_the_last_N_rounds_under_a_starving_window(
     # always-kept current turn -- 4 rounds total.
     assert bound.dropped_turns == 4
     for i in (5, 6, 7, 8):
-        assert any(
-            f"MARK{i}" in str(m.get("content", "")) for m in bound.messages
-        ), f"round {i} should be within the floor"
+        assert any(f"MARK{i}" in str(m.get("content", "")) for m in bound.messages), (
+            f"round {i} should be within the floor"
+        )
     for i in (1, 2, 3, 4):
         assert not any(
             f"MARK{i} " in str(m.get("content", "")) for m in bound.messages
@@ -379,8 +423,12 @@ def test_without_a_floor_the_same_budget_keeps_only_the_current_round():
     fixes alone."""
     payload = _build_fence_rounds(8)
     unfloored = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=10, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=10,
+        count_fn=_wordcount,
         is_turn_boundary=_make_round_boundary(native=False),
         pin_first_user=True,
     )
@@ -392,9 +440,9 @@ def test_without_a_floor_the_same_budget_keeps_only_the_current_round():
             f"now passes, the pin/round-boundary fixes alone became "
             f"sufficient and this regression test needs revisiting"
         )
-    assert any(
-        "MARK8" in str(m.get("content", "")) for m in unfloored.messages
-    ), "the current round must still survive regardless"
+    assert any("MARK8" in str(m.get("content", "")) for m in unfloored.messages), (
+        "the current round must still survive regardless"
+    )
 
 
 def test_floor_degenerate_case_sends_over_budget_rather_than_shrinking_below_it():
@@ -406,8 +454,12 @@ def test_floor_degenerate_case_sends_over_budget_rather_than_shrinking_below_it(
     # window=1 is smaller than even the system row alone can fit under any
     # positive margin -- the ultimate "nothing fits" case.
     bound = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=1, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=1,
+        count_fn=_wordcount,
         is_turn_boundary=_make_round_boundary(native=False),
         pin_first_user=True,
         min_recent_turns=4,
@@ -428,7 +480,11 @@ def test_floor_degenerate_case_sends_over_budget_rather_than_shrinking_below_it(
 def test_disabled_returns_the_exact_same_object():
     payload = _build_fence_rounds(20)  # huge -- would definitely need trimming
     result = bound_history_for_send(
-        payload, model="m", provider="p", native=False, enabled=False,
+        payload,
+        model="m",
+        provider="p",
+        native=False,
+        enabled=False,
     )
     assert result is payload, "enabled=False must be a true no-op, not a copy"
 
@@ -436,27 +492,43 @@ def test_disabled_returns_the_exact_same_object():
 def test_enabled_but_fits_under_budget_leaves_payload_unchanged():
     payload = _build_fence_rounds(1)
     result = bound_history_for_send(
-        payload, model="m", provider="p", native=False, enabled=True,
-        window=100_000, response_reservation=0, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        native=False,
+        enabled=True,
+        window=100_000,
+        response_reservation=0,
+        count_fn=_wordcount,
     )
     assert result == payload
-    assert not any(
-        "Context note" in str(m.get("content", "")) for m in result
-    )
+    assert not any("Context note" in str(m.get("content", "")) for m in result)
 
 
 def test_note_appears_only_when_something_was_actually_dropped():
     small = _build_fence_rounds(1)
     fits = bound_history_for_send(
-        small, model="m", provider="p", native=False, enabled=True,
-        window=100_000, response_reservation=0, count_fn=_wordcount,
+        small,
+        model="m",
+        provider="p",
+        native=False,
+        enabled=True,
+        window=100_000,
+        response_reservation=0,
+        count_fn=_wordcount,
     )
     assert not any("Context note" in str(m.get("content", "")) for m in fits)
 
     big = _build_fence_rounds(10)
     trimmed = bound_history_for_send(
-        big, model="m", provider="p", native=False, enabled=True,
-        window=30, response_reservation=0, count_fn=_wordcount,
+        big,
+        model="m",
+        provider="p",
+        native=False,
+        enabled=True,
+        window=30,
+        response_reservation=0,
+        count_fn=_wordcount,
     )
     assert any("Context note" in str(m.get("content", "")) for m in trimmed)
     assert any(SEARCH_RUN_LOG_TOOL_NAME in str(m.get("content", "")) for m in trimmed)
@@ -472,13 +544,18 @@ def test_system_prefix_and_current_round_are_always_preserved():
         payload.append(_msg("assistant", fence_call("echo", {"i": i})))
         payload.append(_fence_result_row("echo", f"MARK{i}", padding_words=15))
     result = bound_history_for_send(
-        payload, model="m", provider="p", native=False, enabled=True,
-        window=20, response_reservation=0, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        native=False,
+        enabled=True,
+        window=20,
+        response_reservation=0,
+        count_fn=_wordcount,
     )
     assert result[0] == payload[0] and result[1] == payload[1]
     assert any(
-        m.get("role") == "user" and "MARK8" in str(m.get("content", ""))
-        for m in result
+        m.get("role") == "user" and "MARK8" in str(m.get("content", "")) for m in result
     ), "the most recent round must survive even under a starved budget"
 
 
@@ -491,7 +568,11 @@ def test_eviction_never_raises_and_degrades_to_full_history(monkeypatch):
     )
     payload = _build_fence_rounds(5)
     result = bound_history_for_send(
-        payload, model="m", provider="p", native=False, enabled=True,
+        payload,
+        model="m",
+        provider="p",
+        native=False,
+        enabled=True,
     )
     assert result is payload
 
@@ -522,7 +603,12 @@ class _EchoProvider:
         ]
 
     def load_schema(self, tool_id):
-        return ToolSchema(id="test:echo", name="echo", description="echo", parameters={"type": "object"})
+        return ToolSchema(
+            id="test:echo",
+            name="echo",
+            description="echo",
+            parameters={"type": "object"},
+        )
 
     def invoke(self, tool_id, args):
         content = self._contents[self._calls % len(self._contents)]
@@ -536,7 +622,9 @@ def _round_marker(i: int) -> str:
 
 def _make_registry(n_rounds: int) -> ToolCatalogRegistry:
     registry = ToolCatalogRegistry()
-    registry.register_provider(_EchoProvider([_round_marker(i) for i in range(1, n_rounds + 1)]))
+    registry.register_provider(
+        _EchoProvider([_round_marker(i) for i in range(1, n_rounds + 1)])
+    )
     return registry
 
 
@@ -599,16 +687,16 @@ def test_flag_off_sends_full_history_regardless_of_window(db, tmp_path, monkeypa
         api_endpoint="llama_cpp",
     )
     last_payload = chat.calls[-1]["messages_payload"]
-    assert not any(
-        "Context note" in str(m.get("content", "")) for m in last_payload
-    )
+    assert not any("Context note" in str(m.get("content", "")) for m in last_payload)
     assert any("MARK1_" in str(m.get("content", "")) for m in last_payload), (
         "the very first round's content must still be present -- nothing "
         "evicted with the flag off"
     )
 
 
-def test_flag_on_and_log_unavailable_still_sends_full_history(db, tmp_path, monkeypatch):
+def test_flag_on_and_log_unavailable_still_sends_full_history(
+    db, tmp_path, monkeypatch
+):
     """Requirement #1, the hard gate: the flag alone is not enough. With
     no run log available (`resolve_log_root` -> None -> `log_active`
     False), eviction must never fire even under a starving window.
@@ -684,18 +772,14 @@ def test_writer_append_failure_disables_log_features_on_next_request(
         RUN_LOG_STATS_TOOL_NAME,
         RUN_LOG_SLICE_TOOL_NAME,
     }
-    first_tools = {
-        tool["function"]["name"] for tool in chat.calls[0].get("tools", ())
-    }
+    first_tools = {tool["function"]["name"] for tool in chat.calls[0].get("tools", ())}
     assert RUN_LOG_PROMPT_SECTION in str(chat.calls[0]["messages_payload"])
     assert log_tool_names <= first_tools
     assert writer.log_dir is not None
     assert not writer.is_active
 
     second = chat.calls[1]
-    second_tools = {
-        tool["function"]["name"] for tool in second.get("tools", ())
-    }
+    second_tools = {tool["function"]["name"] for tool in second.get("tools", ())}
     assert RUN_LOG_PROMPT_SECTION not in str(second["messages_payload"])
     assert log_tool_names.isdisjoint(second_tools)
     assert all(message in second["messages_payload"] for message in history)
@@ -789,8 +873,7 @@ def test_flag_on_fence_protocol_task_instruction_survives_a_starving_window(
     for call in chat.calls:
         payload = call["messages_payload"]
         assert any(
-            m.get("role") == "user" and m.get("content") == _TASK_TEXT
-            for m in payload
+            m.get("role") == "user" and m.get("content") == _TASK_TEXT for m in payload
         ), "task instruction missing from a payload actually sent"
 
 
@@ -815,8 +898,7 @@ def test_flag_on_native_protocol_task_instruction_survives_a_starving_window(
     for call in chat.calls:
         payload = call["messages_payload"]
         assert any(
-            m.get("role") == "user" and m.get("content") == _TASK_TEXT
-            for m in payload
+            m.get("role") == "user" and m.get("content") == _TASK_TEXT for m in payload
         ), "task instruction missing from a payload actually sent"
 
 
@@ -928,9 +1010,9 @@ def test_default_floor_keeps_distinct_recent_rounds_visible_together(
     )
     last_payload = chat.calls[-1]["messages_payload"]
     for i in range(n - DEFAULT_MIN_RECENT_ROUNDS + 1, n + 1):
-        assert any(
-            f"MARK{i}_" in str(m.get("content", "")) for m in last_payload
-        ), f"round {i} should be within the default floor of {DEFAULT_MIN_RECENT_ROUNDS}"
+        assert any(f"MARK{i}_" in str(m.get("content", "")) for m in last_payload), (
+            f"round {i} should be within the default floor of {DEFAULT_MIN_RECENT_ROUNDS}"
+        )
 
 
 def test_min_recent_rounds_config_key_is_honored(db, tmp_path, monkeypatch):
@@ -1022,8 +1104,12 @@ def test_pin_first_user_would_protect_the_wrong_row_when_history_precedes_the_ta
     instruction be evicted under a tight window."""
     payload = _payload_with_older_turn_before_the_task(8)
     old_behavior = bound_messages_to_window(
-        payload, model="m", provider="p", response_reservation=0,
-        window=10, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        response_reservation=0,
+        window=10,
+        count_fn=_wordcount,
         is_turn_boundary=_make_round_boundary(native=False),
         pin_first_user=True,
     )
@@ -1045,12 +1131,17 @@ def test_bound_history_for_send_protects_the_actual_task_not_the_first_user_row(
     of it."""
     payload = _payload_with_older_turn_before_the_task(8)
     result = bound_history_for_send(
-        payload, model="m", provider="p", native=False, enabled=True,
-        window=10, response_reservation=0, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        native=False,
+        enabled=True,
+        window=10,
+        response_reservation=0,
+        count_fn=_wordcount,
     )
     assert any(
-        m.get("role") == "user" and m.get("content") == _TASK_TEXT
-        for m in result
+        m.get("role") == "user" and m.get("content") == _TASK_TEXT for m in result
     ), "the actual task instruction must survive, not just some earlier user row"
 
 
@@ -1069,8 +1160,14 @@ def test_no_identifiable_task_row_declines_eviction_entirely():
         payload.append(_msg("assistant", fence_call("echo", {"i": i})))
         payload.append(_fence_result_row("echo", f"MARK{i}"))
     result = bound_history_for_send(
-        payload, model="m", provider="p", native=False, enabled=True,
-        window=5, response_reservation=0, count_fn=_wordcount,
+        payload,
+        model="m",
+        provider="p",
+        native=False,
+        enabled=True,
+        window=5,
+        response_reservation=0,
+        count_fn=_wordcount,
     )
     assert result is payload
 
@@ -1154,8 +1251,17 @@ def test_native_payload_with_substantial_tool_calls_is_bounded_correctly():
             },
             {"role": "tool", "tool_call_id": call_id, "content": f"MARK{i}"},
         ]
-    payload = [_msg("system", "sys"), _msg("user", _TASK_TEXT), *heavy_round, *light_rounds]
-    without_heavy_round = [_msg("system", "sys"), _msg("user", _TASK_TEXT), *light_rounds]
+    payload = [
+        _msg("system", "sys"),
+        _msg("user", _TASK_TEXT),
+        *heavy_round,
+        *light_rounds,
+    ]
+    without_heavy_round = [
+        _msg("system", "sys"),
+        _msg("user", _TASK_TEXT),
+        *light_rounds,
+    ]
 
     # Calibrate against the REAL default counter this function actually
     # uses in production (no count_fn override): a window that comfortably
@@ -1165,7 +1271,9 @@ def test_native_payload_with_substantial_tool_calls_is_bounded_correctly():
     # under the primitive's win/50 margin threshold (25_600), so the
     # margin contribution is the constant 512 floor on both sides of this
     # calibration.
-    light_tokens = budget_module.count_console_messages_tokens(without_heavy_round, "gpt-4")
+    light_tokens = budget_module.count_console_messages_tokens(
+        without_heavy_round, "gpt-4"
+    )
     full_tokens = budget_module.count_console_messages_tokens(payload, "gpt-4")
     assert full_tokens > light_tokens + 500, (
         "test setup needs the heavy round's tool_calls to dominate the "
@@ -1174,8 +1282,14 @@ def test_native_payload_with_substantial_tool_calls_is_bounded_correctly():
     window = light_tokens + 700
 
     result = bound_history_for_send(
-        payload, model="gpt-4", provider="openai", native=True, enabled=True,
-        window=window, response_reservation=0, min_recent_rounds=1,
+        payload,
+        model="gpt-4",
+        provider="openai",
+        native=True,
+        enabled=True,
+        window=window,
+        response_reservation=0,
+        min_recent_rounds=1,
     )
 
     def _has_call(messages, call_id):
@@ -1327,8 +1441,9 @@ def test_run_log_eviction_keeps_or_evicts_message_and_continuation_together() ->
     )
 
 
-def test_run_log_eviction_fails_closed_without_logging_private_counter_failures(
-) -> None:
+def test_run_log_eviction_fails_closed_without_logging_private_counter_failures() -> (
+    None
+):
     payload = [
         {"role": "system", "content": "sys"},
         {"role": "user", "content": "task"},

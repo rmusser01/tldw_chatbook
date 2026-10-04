@@ -19,8 +19,13 @@ from ...Evals.word_bench.models import PreflightResult
 from ...Evals.word_bench.storage import BENCH_TYPE, load_run_preflight
 
 SelectionKind = Literal[
-    "none", "bench", "classic", "character_bench", "skill_eval_bench",
-    "dataset", "run_group"
+    "none",
+    "bench",
+    "classic",
+    "character_bench",
+    "skill_eval_bench",
+    "dataset",
+    "run_group",
 ]
 
 #: EvalsDB.list_tasks/list_datasets/list_runs all page; the Evals workbench
@@ -118,6 +123,7 @@ class EvalsViewModel:
     def skill_eval_benches(self) -> list[dict[str, Any]]:
         """Skill-eval benches: eval_tasks rows tagged bench_type == "skill_eval"."""
         from ...Evals.skill_eval.storage import is_skill_eval_bench
+
         return [task for task in self._all_tasks() if is_skill_eval_bench(task)]
 
     def skill_eval_bench_by_id(self, bench_id: str) -> Optional[dict[str, Any]]:
@@ -125,6 +131,7 @@ class EvalsViewModel:
             return None
         row = self._db.get_task(bench_id)
         from ...Evals.skill_eval.storage import is_skill_eval_bench
+
         return row if is_skill_eval_bench(row) else None
 
     def skill_eval_targets(self) -> list[dict[str, Any]]:
@@ -150,7 +157,8 @@ class EvalsViewModel:
         from ...Chat.Chat_Functions import API_CALL_HANDLERS
 
         return [
-            row for row in self._db.list_models(limit=200)
+            row
+            for row in self._db.list_models(limit=200)
             if str(row.get("provider") or "").lower() in API_CALL_HANDLERS
         ]
 
@@ -350,7 +358,9 @@ class EvalsViewModel:
             else:
                 group["status"] = "completed"
                 total_cells, errored_cells = failure_counts.get(group_id, (0, 0))
-                group["all_cells_failed"] = total_cells > 0 and errored_cells == total_cells
+                group["all_cells_failed"] = (
+                    total_cells > 0 and errored_cells == total_cells
+                )
             results.append(group)
         return results
 

@@ -122,9 +122,8 @@ def test_install_staging_directory_creation_is_atomic_with_lease_acquisition(
 
     def probing_mkdir(path, mode=0o777, *args, **kwargs):
         path_obj = Path(path)
-        if (
-            path_obj.parent == Path(service.staging_path)
-            and path_obj.name.startswith("install-")
+        if path_obj.parent == Path(service.staging_path) and path_obj.name.startswith(
+            "install-"
         ):
             probe_lease = ArtifactOperationLease(
                 service.locks_path,
@@ -184,10 +183,20 @@ def test_managed_entry_without_sidecar_is_removed(service):
 def test_managed_entry_with_valid_sidecar_survives(service):
     d = _managed_dir(service)
     (d / "model.onnx").write_bytes(b"partial")
-    _sidecar_path(d).write_text(json.dumps({
-        "files": {"model.onnx": {"etag": "\"abc\"", "last_modified": None,
-                                   "bytes_done": 7, "complete": False}}
-    }))
+    _sidecar_path(d).write_text(
+        json.dumps(
+            {
+                "files": {
+                    "model.onnx": {
+                        "etag": '"abc"',
+                        "last_modified": None,
+                        "bytes_done": 7,
+                        "complete": False,
+                    }
+                }
+            }
+        )
+    )
     report = service.reconcile()
     assert d.exists()
     assert (d / "model.onnx").exists()
@@ -205,10 +214,20 @@ def test_managed_entry_with_sidecar_inside_payload_dir_is_ignored_and_removed(se
     """
     d = _managed_dir(service)
     (d / "model.onnx").write_bytes(b"partial")
-    (d / "fetch-state.json").write_text(json.dumps({
-        "files": {"model.onnx": {"etag": "\"abc\"", "last_modified": None,
-                                   "bytes_done": 7, "complete": False}}
-    }))
+    (d / "fetch-state.json").write_text(
+        json.dumps(
+            {
+                "files": {
+                    "model.onnx": {
+                        "etag": '"abc"',
+                        "last_modified": None,
+                        "bytes_done": 7,
+                        "complete": False,
+                    }
+                }
+            }
+        )
+    )
     report = service.reconcile()
     assert not d.exists()
     assert report.staging_removed
@@ -253,10 +272,20 @@ def test_managed_entry_sidecar_without_payload_dir_is_removed(service):
     managed_root = Path(service.staging_path) / "managed" / "m1" / "r1"
     managed_root.mkdir(parents=True)
     orphan_sidecar = managed_root / "int8.fetch-state.json"
-    orphan_sidecar.write_text(json.dumps({
-        "files": {"model.onnx": {"etag": None, "last_modified": None,
-                                   "bytes_done": 7, "complete": False}}
-    }))
+    orphan_sidecar.write_text(
+        json.dumps(
+            {
+                "files": {
+                    "model.onnx": {
+                        "etag": None,
+                        "last_modified": None,
+                        "bytes_done": 7,
+                        "complete": False,
+                    }
+                }
+            }
+        )
+    )
     report = service.reconcile()
     assert not orphan_sidecar.exists()
     assert any("int8.fetch-state.json" in item for item in report.staging_removed)
@@ -434,4 +463,6 @@ def test_download_stage_creation_failure_after_marker_leaves_no_orphan_temp_dir(
         service._download_stage_for(item, create=True)
 
     remaining = list(Path(service.staging_path).iterdir())
-    assert remaining == [], f"orphaned temp download-stage dir(s) left behind: {remaining}"
+    assert remaining == [], (
+        f"orphaned temp download-stage dir(s) left behind: {remaining}"
+    )

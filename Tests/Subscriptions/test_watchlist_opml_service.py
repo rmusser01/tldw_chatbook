@@ -3,7 +3,7 @@ from tldw_chatbook.Subscriptions.watchlist_opml_service import WatchlistOpmlServ
 
 
 def test_parse_opml():
-    xml = '''<?xml version="1.0"?><opml version="2.0"><body><outline text="Tech" title="Tech"><outline text="AI" title="AI" type="rss" xmlUrl="http://example.com/ai"/></outline></body></opml>'''
+    xml = """<?xml version="1.0"?><opml version="2.0"><body><outline text="Tech" title="Tech"><outline text="AI" title="AI" type="rss" xmlUrl="http://example.com/ai"/></outline></body></opml>"""
     svc = WatchlistOpmlService()
     items = svc.parse(xml)
     assert len(items) == 1
@@ -90,7 +90,7 @@ def test_parse_groups_feeds_under_their_folder():
         '<outline text="Tech">'
         '<outline text="AI" type="rss" xmlUrl="http://example.com/ai"/>'
         '<outline text="ML" type="rss" xmlUrl="http://example.com/ml"/>'
-        '</outline>'
+        "</outline>"
         '<outline text="Loose" type="rss" xmlUrl="http://example.com/loose"/>'
         "</body></opml>"
     )
@@ -124,16 +124,15 @@ def test_parse_a_feed_with_children_is_a_feed_and_children_inherit_its_context()
         '<outline text="Tech">'
         '<outline text="ParentFeed" type="rss" xmlUrl="http://example.com/parent">'
         '<outline text="ChildFeed" type="rss" xmlUrl="http://example.com/child"/>'
-        '</outline>'
-        '</outline>'
+        "</outline>"
+        "</outline>"
         "</body></opml>"
     )
     items = WatchlistOpmlService().parse(xml)
     by_url = {item["url"]: item for item in items}
     assert by_url["http://example.com/parent"]["folder"] == "Tech"
     assert by_url["http://example.com/child"]["folder"] == "Tech", (
-        "the child inherits the folder context -- ParentFeed is a feed, "
-        "not a folder"
+        "the child inherits the folder context -- ParentFeed is a feed, not a folder"
     )
 
 
@@ -191,7 +190,7 @@ async def test_import_assigns_membership_and_reimport_is_a_structural_noop(tmp_p
         '<outline text="Tech">'
         '<outline text="AI" type="rss" xmlUrl="http://example.com/ai"/>'
         '<outline text="ML" type="rss" xmlUrl="http://example.com/ml"/>'
-        '</outline>'
+        "</outline>"
         '<outline text="Loose" type="rss" xmlUrl="http://example.com/loose"/>'
         "</body></opml>"
     )
@@ -381,14 +380,22 @@ def test_export_nests_watchlists_as_folders_with_unassigned_top_level():
             {
                 "name": "Tech",
                 "sources": [
-                    {"name": "Shared", "url": "http://x.com/shared", "source_type": "rss"},
+                    {
+                        "name": "Shared",
+                        "url": "http://x.com/shared",
+                        "source_type": "rss",
+                    },
                     {"name": "AI", "url": "http://x.com/ai", "source_type": "rss"},
                 ],
             },
             {
                 "name": "News",
                 "sources": [
-                    {"name": "Shared", "url": "http://x.com/shared", "source_type": "rss"},
+                    {
+                        "name": "Shared",
+                        "url": "http://x.com/shared",
+                        "source_type": "rss",
+                    },
                 ],
             },
         ],
@@ -418,16 +425,19 @@ def test_export_escapes_hostile_watchlist_names():
     svc = WatchlistOpmlService()
     hostile = '<script>alert("x")</script>'
     xml = svc.export(
-        [{"name": hostile, "sources": [
-            {"name": "F", "url": "http://x.com/f", "source_type": "rss"},
-        ]}],
+        [
+            {
+                "name": hostile,
+                "sources": [
+                    {"name": "F", "url": "http://x.com/f", "source_type": "rss"},
+                ],
+            }
+        ],
         [],
     )
     assert "<script>" not in xml, "the serializer must not emit raw markup"
     items = svc.parse(xml)
-    assert items[0]["folder"] == hostile, (
-        "the name round-trips as the literal string"
-    )
+    assert items[0]["folder"] == hostile, "the name round-trips as the literal string"
 
 
 def test_export_with_no_watchlists_is_flat():
@@ -534,7 +544,9 @@ async def test_export_then_import_round_trips_the_structure(tmp_path):
     tech = bundle_a.create("Tech")
     news = bundle_a.create("News")
     ai = db_a.add_subscription(name="AI", type="rss", source="http://x.com/ai")
-    shared = db_a.add_subscription(name="Shared", type="rss", source="http://x.com/shared")
+    shared = db_a.add_subscription(
+        name="Shared", type="rss", source="http://x.com/shared"
+    )
     db_a.add_subscription(name="Loose", type="rss", source="http://x.com/loose")
     bundle_a.add_source(tech["id"], ai)
     bundle_a.add_source(tech["id"], shared)
@@ -560,8 +572,12 @@ async def test_export_then_import_round_trips_the_structure(tmp_path):
         }
 
     bundle_b = WatchlistBundleService(db_b)
-    assert structure(bundle_b) == structure(bundle_a) == {
-        "News": ["Shared"],
-        "Tech": ["AI", "Shared"],
-    }
+    assert (
+        structure(bundle_b)
+        == structure(bundle_a)
+        == {
+            "News": ["Shared"],
+            "Tech": ["AI", "Shared"],
+        }
+    )
     assert {r["name"] for r in bundle_b.list_unassigned_source_rows()} == {"Loose"}

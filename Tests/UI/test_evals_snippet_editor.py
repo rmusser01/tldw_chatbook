@@ -353,7 +353,10 @@ async def test_snippet_editor_mounts_with_summary_and_labelled_char_column(
     dataset_id = _make_dataset(
         evals_db,
         "nouns-12",
-        [_snip("The protestors were", group="neutral"), _snip("The rioters were", group="loaded")],
+        [
+            _snip("The protestors were", group="neutral"),
+            _snip("The rioters were", group="loaded"),
+        ],
     )
     async with evals_app.run_test() as pilot:
         await pilot.pause()
@@ -465,7 +468,9 @@ async def test_normal_snippet_renders_no_whitespace_marker(evals_app, evals_db):
 
 
 @pytest.mark.asyncio
-async def test_trailing_whitespace_snippet_renders_a_visible_marker(evals_app, evals_db):
+async def test_trailing_whitespace_snippet_renders_a_visible_marker(
+    evals_app, evals_db
+):
     dirty = _snip("The government said ")
     dataset_id = _make_dataset(evals_db, "dirty-set", [dirty])
     async with evals_app.run_test() as pilot:
@@ -512,7 +517,9 @@ async def test_leading_and_interior_whitespace_are_both_detected_on_screen(
 
 
 @pytest.mark.asyncio
-async def test_minimal_pair_snippets_render_with_no_duplicate_warning(evals_app, evals_db):
+async def test_minimal_pair_snippets_render_with_no_duplicate_warning(
+    evals_app, evals_db
+):
     """Full-screen counterpart to the pure test above: a genuine minimal
     pair (one loaded noun swapped) must pass with zero warnings end to
     end, not just at the pure-function layer."""
@@ -615,9 +622,7 @@ async def test_snippet_table_scrolls_to_reveal_rows_and_import_button_stays_pinn
         await pilot.pause()
 
         assert table.scroll_offset.y > 0, "the table did not actually scroll"
-        last_row_text_after = screen.query_one(
-            f"#evals-snippet-text-{last_row_index}"
-        )
+        last_row_text_after = screen.query_one(f"#evals-snippet-text-{last_row_index}")
         assert pane.region.contains_region(last_row_text_after.region), (
             "the last row is still unreachable after scrolling to the end"
         )
@@ -829,7 +834,9 @@ async def test_json_import_with_illegal_id_does_not_crash_and_dataset_stays_open
         # import -- must not crash the detail pane a second time.
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
-        editor_again = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
+        editor_again = evals_app.screen.query_one(
+            "#evals-snippet-editor", SnippetEditor
+        )
         assert editor_again.region.width > 0
         assert editor_again.region.height > 0
 
@@ -870,7 +877,9 @@ async def test_json_import_of_the_same_export_twice_does_not_crash(
         # every later selection broken too, not just the import itself.
         evals_app.screen.select(kind="dataset", id=dataset_id)
         await pilot.pause()
-        editor_again = evals_app.screen.query_one("#evals-snippet-editor", SnippetEditor)
+        editor_again = evals_app.screen.query_one(
+            "#evals-snippet-editor", SnippetEditor
+        )
         assert editor_again.region.width > 0
         assert editor_again.region.height > 0
 
@@ -878,7 +887,9 @@ async def test_json_import_of_the_same_export_twice_does_not_crash(
     samples = stored["metadata"][RESERVED_LOCAL_DATASET_SAMPLES_KEY]
     ids = [s["id"] for s in samples]
     assert len(samples) == 2
-    assert len(set(ids)) == 2, "duplicate snippet ids after re-importing the same export"
+    assert len(set(ids)) == 2, (
+        "duplicate snippet ids after re-importing the same export"
+    )
 
 
 @pytest.mark.asyncio
@@ -897,7 +908,8 @@ async def test_csv_import_without_text_column_notifies_error_and_does_not_persis
         await _drive_import(editor, pilot, csv_path)
 
     assert any(
-        severity == "error" for _message, severity in evals_app.app_instance.notifications
+        severity == "error"
+        for _message, severity in evals_app.app_instance.notifications
     )
     stored = evals_db.get_dataset(dataset_id)
     assert stored["metadata"].get("sample_count", 0) == 0
@@ -1014,7 +1026,8 @@ async def test_non_utf8_import_file_notifies_error_instead_of_crashing(
         assert editor_still_here.region.width > 0
 
     assert any(
-        severity == "error" for _message, severity in evals_app.app_instance.notifications
+        severity == "error"
+        for _message, severity in evals_app.app_instance.notifications
     )
     stored = evals_db.get_dataset(dataset_id)
     assert stored["metadata"].get("sample_count", 0) == 0
@@ -1048,7 +1061,8 @@ async def test_nonexistent_import_path_notifies_error_instead_of_crashing(
         assert editor_still_here.region.width > 0
 
     assert any(
-        severity == "error" for _message, severity in evals_app.app_instance.notifications
+        severity == "error"
+        for _message, severity in evals_app.app_instance.notifications
     )
     stored = evals_db.get_dataset(dataset_id)
     assert stored["metadata"].get("sample_count", 0) == 0
@@ -1071,7 +1085,9 @@ async def test_snippet_editor_never_imports_the_runner_or_capture_client():
 
 
 @pytest.mark.asyncio
-async def test_evals_screen_dataset_selection_mounts_snippet_editor(evals_app, evals_db):
+async def test_evals_screen_dataset_selection_mounts_snippet_editor(
+    evals_app, evals_db
+):
     dataset_id = _make_dataset(evals_db, "seam-set", [_snip("hello world")])
     async with evals_app.run_test() as pilot:
         await pilot.pause()

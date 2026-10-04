@@ -80,7 +80,7 @@ def parse_video_marker(content: str) -> str | None:
     """
     if not content.startswith(VIDEO_MARKER_PREFIX):
         return None
-    rest = content[len(VIDEO_MARKER_PREFIX):].strip()
+    rest = content[len(VIDEO_MARKER_PREFIX) :].strip()
     if not rest:
         return None
     return rest.split(None, 1)[0]
@@ -179,7 +179,14 @@ class VideoStore:
             defaults to the live config at call time.
     """
 
-    def __init__(self, root: Path | None = None, *, config=None, recovered_root=None, recovered_profile=None) -> None:
+    def __init__(
+        self,
+        root: Path | None = None,
+        *,
+        config=None,
+        recovered_root=None,
+        recovered_profile=None,
+    ) -> None:
         self._root = (root or (get_user_data_dir() / "generated_videos")).expanduser()
         self._config = config
         self._recovered_root = recovered_root or self._root.parent / "recovered_media"
@@ -279,9 +286,7 @@ class VideoStore:
             resolved_root = self._root.resolve()
             resolved = candidate.resolve()
         except (OSError, RuntimeError) as exc:
-            raise VideoStoreSaveError(
-                "managed video path resolution failed"
-            ) from exc
+            raise VideoStoreSaveError("managed video path resolution failed") from exc
         if resolved != resolved_root and resolved_root not in resolved.parents:
             raise ValueError(f"path escapes store root: {candidate}")
         return candidate
@@ -323,9 +328,7 @@ class VideoStore:
     def _ensure_slug_absent(self, message_id: str, slug: str) -> None:
         """Require that no canonical container already owns this message slug."""
         for _container, _mime, extension in SUPPORTED_VIDEO_FORMATS:
-            self._ensure_target_absent(
-                self._video_path(message_id, slug, extension)
-            )
+            self._ensure_target_absent(self._video_path(message_id, slug, extension))
 
     # -- write/resolve ----------------------------------------------------
 
@@ -390,7 +393,9 @@ class VideoStore:
                     # nothing to re-run it. Enforce first, report after.
                     unconfirmed = exc
                 except (OSError, VideoStoreSaveError) as exc:
-                    raise VideoStoreSaveError("managed video publication failed") from exc
+                    raise VideoStoreSaveError(
+                        "managed video publication failed"
+                    ) from exc
 
                 try:
                     self._enforce_save_capacity(path)
@@ -513,16 +518,24 @@ class VideoStore:
                 store = RecoveredMedia(self._recovered_root)
                 status, path = store.resolve_reference(
                     profile=self._recovered_profile or current_profile_id(),
-                    message=message_id, slug=slug, media_type="video/" + extension,
+                    message=message_id,
+                    slug=slug,
+                    media_type="video/" + extension,
                 )
                 if status != "unknown":
-                    return ("ready" if status == "ready" else "recovered_" + status), path
+                    return (
+                        "ready" if status == "ready" else "recovered_" + status
+                    ), path
             try:
                 path = self._video_path(message_id, slug, extension)
             except (ValueError, VideoStoreSaveError):
                 return "expired", None
             with participant.operation((self._root,)):
-                return ("ready", path) if self._is_safe_regular_file(path) else ("expired", None)
+                return (
+                    ("ready", path)
+                    if self._is_safe_regular_file(path)
+                    else ("expired", None)
+                )
 
     def iter_stored(self) -> Iterator[StoredVideo]:
         """Return an iterator over one completed non-following snapshot."""
@@ -771,9 +784,7 @@ class VideoStore:
             else:
                 with publication_gate.claim_publication() as active:
                     if not active:
-                        raise VideoStoreSaveError(
-                            "managed video publication cancelled"
-                        )
+                        raise VideoStoreSaveError("managed video publication cancelled")
                     self._commit_sibling(sibling, target)
             # Cleared first: the sibling name is consumed by the rename, so
             # the finally below must not treat it as an unpublished leftover
@@ -803,7 +814,9 @@ class VideoStore:
     def _sorted_oldest(
         videos: tuple[StoredVideo, ...] | list[StoredVideo],
     ) -> list[StoredVideo]:
-        return sorted(videos, key=lambda item: (item.mtime, item.message_id, item.path.name))
+        return sorted(
+            videos, key=lambda item: (item.mtime, item.message_id, item.path.name)
+        )
 
     def _checked_unlink(self, video: StoredVideo) -> None:
         """Repeat non-following containment checks immediately before unlink."""
@@ -880,7 +893,9 @@ class VideoStore:
                 stored = self._snapshot()
                 survivors: list[StoredVideo] = []
                 for video in stored:
-                    expired = retention == "session" or (now - video.mtime) > ttl_seconds
+                    expired = (
+                        retention == "session" or (now - video.mtime) > ttl_seconds
+                    )
                     if expired:
                         removed = self._remove_startup(video)
                         if removed:

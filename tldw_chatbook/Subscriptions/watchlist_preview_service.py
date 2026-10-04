@@ -69,11 +69,7 @@ class WatchlistPreviewService:
     def _build_subscription(source_config: Mapping[str, Any]) -> dict[str, Any]:
         """Normalize a source config into a subscription-shaped dict."""
         source_type = str(source_config.get("source_type") or "rss").strip()
-        source = str(
-            source_config.get("url")
-            or source_config.get("source")
-            or ""
-        )
+        source = str(source_config.get("url") or source_config.get("source") or "")
         subscription: dict[str, Any] = {
             # Placeholder -- preview() overwrites this with a real row id
             # seeded into the throwaway in-memory DB before executing, so

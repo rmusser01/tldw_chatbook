@@ -61,9 +61,7 @@ def _stub_registry():
             workspace_id="ws-beta", name="Workspace Beta", active=False
         ),
     }
-    return SimpleNamespace(
-        get_workspace=lambda ws_id: records.get(ws_id)
-    )
+    return SimpleNamespace(get_workspace=lambda ws_id: records.get(ws_id))
 
 
 def _request_menu(console, *, kind: str, **kwargs) -> None:
@@ -149,9 +147,7 @@ async def test_tree_rows_paint_distinct_right_edge_affordances() -> None:
         start, end = conversation_zone
         # The affordance press is recognized inside the zone and not outside.
         tree._pressed_x = start
-        assert tree._pressed_menu_affordance(
-            tree.conversation_nodes["conv-a0"].data
-        )
+        assert tree._pressed_menu_affordance(tree.conversation_nodes["conv-a0"].data)
         tree._pressed_x = end
         assert not tree._pressed_menu_affordance(
             tree.conversation_nodes["conv-a0"].data
@@ -297,9 +293,7 @@ async def test_escape_focus_restore_keeps_two_row_workspace_tree_visible() -> No
         focused_cursor = tree.get_component_styles("tree--cursor").background
         # task-31264: $ds-focus-bg is the polarity-aware generated focus tint
         # (block-cursor-blurred-background), no longer the #51677e literal.
-        expected = Color.parse(
-            host.theme_variables["block-cursor-blurred-background"]
-        )
+        expected = Color.parse(host.theme_variables["block-cursor-blurred-background"])
         assert focused_cursor == expected
         rendered = "\n".join(
             tree.render_line(row).text for row in range(tree.region.height)
@@ -338,9 +332,7 @@ async def test_workspace_menu_opens_with_the_six_approved_entries(
         ]
         # The stub registry reports ws-beta inactive, so Activate is live and
         # RAG scope states its precondition instead of being silently dead.
-        actions = {
-            getattr(b, "workspace_action_id", ""): b for b in menu.query(Button)
-        }
+        actions = {getattr(b, "workspace_action_id", ""): b for b in menu.query(Button)}
         assert actions["activate"].disabled is False
         assert actions["rag-scope"].disabled is True
         assert actions["rag-scope"].tooltip
@@ -366,9 +358,10 @@ async def test_workspace_menu_pages_and_escapes_like_the_conversation_menu(
         await pilot.pause(0.5)
         menu = console.query_one(ConsoleWorkspaceActionMenu)
         assert menu.page == "more"
-        assert [
-            getattr(b, "workspace_action_id", "") for b in menu.query(Button)
-        ] == ["page:root", "archive"]
+        assert [getattr(b, "workspace_action_id", "") for b in menu.query(Button)] == [
+            "page:root",
+            "archive",
+        ]
 
         await pilot.press("escape")
         await pilot.pause(0.5)
@@ -498,9 +491,7 @@ async def test_new_chat_does_not_create_when_activation_cannot_land(
         assert calls == [], "created a chat for a vanished workspace"
 
         # Workspace exists but the switch cannot land (still inactive): no create.
-        record = SimpleNamespace(
-            workspace_id="ws-beta", name="Beta", active=False
-        )
+        record = SimpleNamespace(workspace_id="ws-beta", name="Beta", active=False)
         console.app_instance.workspace_registry_service = SimpleNamespace(
             get_workspace=lambda ws_id: record
         )
@@ -531,9 +522,7 @@ async def test_tree_chat_row_opens_the_shared_conversation_menu() -> None:
     async with make_console_pilot(size=(160, 44), production_styles=True) as pilot:
         console = pilot.app.screen
 
-        _request_menu(
-            console, kind="conversation", conversation_id="conv-a0"
-        )
+        _request_menu(console, kind="conversation", conversation_id="conv-a0")
         await pilot.pause(_MENU_SETTLE_SECONDS)
 
         menu = console.query_one(ConsoleConversationActionMenu)
@@ -693,9 +682,7 @@ async def test_workspace_actions_route_through_the_existing_seams(
             ACTION_RAG_SCOPE,
             ACTION_ARCHIVE,
         ):
-            console.on_workspace_action_chosen(
-                WorkspaceActionChosen(action, target)
-            )
+            console.on_workspace_action_chosen(WorkspaceActionChosen(action, target))
         await pilot.pause(0.8)
 
         routed = {name for name, _ in calls}

@@ -478,7 +478,9 @@ async def test_deselecting_every_card_renders_the_construction_error(
 
 
 @pytest.mark.asyncio
-async def test_the_probe_listing_shows_whitespace_markers(character_app, saved_bench_id):
+async def test_the_probe_listing_shows_whitespace_markers(
+    character_app, saved_bench_id
+):
     """Probe turns are byte-exact prompts; leading spaces must be visible."""
     async with character_app.run_test(size=_REALISTIC_SIZE) as pilot:
         await select_bench(pilot, saved_bench_id)
@@ -659,7 +661,9 @@ async def test_revert_asks_the_screen_to_reselect_this_bench(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [_REALISTIC_SIZE, _WIDE_SIZE])
-async def test_save_stays_hit_testable_at_realistic_sizes(character_app, saved_bench_id, size):
+async def test_save_stays_hit_testable_at_realistic_sizes(
+    character_app, saved_bench_id, size
+):
     """This pane has pushed a control out of reach three times (task-1764,
     in the sibling word-bench editor) -- proven here, not merely assumed,
     for this new bench type's own editor."""
