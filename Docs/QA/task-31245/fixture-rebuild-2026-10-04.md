@@ -379,3 +379,60 @@ database retirement required and no pytest warnings. All eleven artifact guards
 pass, including the newly gated regression file. Logs:
 `/tmp/task31966-recovery-final.log` and `/tmp/task31966-recovery-preflight.log`.
 Fresh frozen performance remains to run.
+
+### Frozen post-correction evidence — `0ab325187e`
+
+All following runs were serial at clean source
+`0ab325187e5b5ca838cd795d2545b738e0a8415c`. No forced collection, GC threshold
+change, renderer/activation replacement, real-profile access or concurrent test
+run was used. Ordinary desktop background load remained; this is not an idle
+machine claim. Every finished receipt confirms exact clean source and unchanged
+input corpus.
+
+The identical small-fixture diagnostic script (`fd2983eb86ffd69909ebc2b85bb1919401e86a9e411b802aecfbfdcfe753ebeb`)
+retained all observations, with no app exception. Five steady control refreshes
+took 20.086125, 11.763209, 12.282041, 12.643750 and 12.616000 ms. Recovery-height
+spans took 0.095375, 0.104125, 0.074250, 0.052791 and 0.048250 ms, versus
+94.219 ms summed across five baseline calls. This proves the measured local
+improvement, not a universal speed bound or complete activation qualification.
+Root: `/tmp/task31245-freeze-5uPHpo/control-steps-v3-0ab`.
+
+The fresh full corpus has 10,000 conversations, 250,000 eligible messages and
+four excluded canaries; integrity is OK and index status ready. Digest:
+`e08867648fca24cd9aa1280a620410948b465f32112fcd2d2ad7c390786614c9`.
+The 300-query Keyword run passed with exact results, warm P95 **240.415500 ms**
+against 300 ms, maximum scheduling interval **25.307375 ms** against 50 ms,
+zero registered handles and no owned database descriptors after cleanup.
+Roots: `scale-0ab` and `keyword-0ab` in the retained container.
+
+The ordinary full-owner matrix still **failed**. All 60 searches and eight exact
+`opened` activations completed without an app exception. The 52×20 and 120×50
+geometry cases retained 50 fetched results with four and eleven visible rows.
+Maximum search interval was 48.518959 ms and busy paint 37.289709 ms. Activation
+intervals were, in order: **88.615792, 51.870000, 69.553792, 57.377209 ms** at
+52×20 and **68.284458, 78.751333, 93.816959, 86.245042 ms** at 120×50. All eight
+exceed the unchanged 50 ms limit; narrow preparation also failed at 52.510417 ms.
+Paint-observer maximum was 44.539375 ms, so observation overhead cannot be
+ignored or confused with exclusive production cost. The app remained retained
+after `run_test` unmount with 15 registered handles: this is not terminal
+application-owner retirement evidence. Root: `ui-0ab`, raw receipt
+`ui-evidence/ui-latency-evidence.json`.
+
+A single current-head GC diagnostic also failed the matrix. It retained 60
+main-thread generation-2 callback events (30 matched pairs), zero drops or
+unmatched events; callback maximum was 0.011125 ms. Wide activation windows
+contained collections of roughly 62–88 ms wall time (61–86 ms CPU); none
+reported uncollectable objects. But the first narrow scheduling interval was
+450.808333 ms while its two contained collections were only 14.737 and
+29.745 ms. GC contributes; these observations do not explain every stall or
+identify collected-object owners. Do not relabel diagnostic timings as pure
+production latency. Root: `ui-gc-diagnostic-0ab`, with both the ordinary matrix
+receipt and `gc-timing-diagnostic.json` retained. No policy change was made.
+
+Logs: `/tmp/task31966-control-steps-0ab.log`, `/tmp/task31966-scale-0ab.log`,
+`/tmp/task31966-keyword-0ab.log`, `/tmp/task31966-ui-0ab.log` and
+`/tmp/task31966-ui-gc-0ab.log`. Raw temporary artifacts must be preserved before
+cleanup; paths alone are not portable evidence. TASK-31966 remains In Progress;
+native macOS/Windows, unfamiliar-participant, remaining stall attribution and
+terminal application-owner qualification remain unwaived. TASK-31246 remains
+dependent on TASK-31245 qualification; no final combined PR was created.

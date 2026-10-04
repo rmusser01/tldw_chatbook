@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-04 23:30'
+updated_date: '2026-10-04 23:45'
 labels:
   - console
   - performance
@@ -85,5 +85,5 @@ global policy change or claim qualification completion.
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the approved local recovery-height correction: atomic owned height-class replacement avoids unchanged subtree restyles while preserving recovery controls, unrelated classes and inline geometry repair. Mounted RED/GREEN recorded; six new tests passed, broader targeted run had 117 passes and four inherited config-admission failures reproduced with the fix removed. Existing ADR120/150/161/198 apply; no global GC or cache policy change. Fresh frozen latency/resource qualification remains pending, so status and acceptance criteria stay open. See Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
+Implemented and committed bounded recovery-height idempotence at 0ab325187e: mounted RED/GREEN, six final regressions pass with strict DB retirement, eleven artifact guards pass. Broader targeted run: 117 pass, four inherited config-admission failures reproduced without the fix. Same real-owner diagnostic measured five height updates at 0.375 ms summed versus 94.219 ms baseline. Fresh 10k/250k Keyword check passes: 300 exact queries, P95 240.416 ms, zero owned DB descriptors after cleanup. Full narrow/wide UI matrix still fails all eight 50 ms activation intervals (max 93.817 ms); a current-head GC trace proves collections contribute but do not explain every stall. Native/Windows/participant and terminal app-owner retirement gaps remain unwaived; all AC remain open. Existing ADR120/150/161/198 apply; no global GC/cache policy change. See Docs/QA/task-31245/fixture-rebuild-2026-10-04.md for source IDs, raw timings, failed runs and remaining work.
 <!-- SECTION:NOTES:END -->

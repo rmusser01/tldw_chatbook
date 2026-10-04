@@ -24,3 +24,16 @@ setup blocking, first-send false, and no modal push. The navigation fixture now
 explicitly sets `[console.onboarding] first_send_completed=true`; it still has
 no credentials, no send readiness and no permitted network. That represents
 existing-chat navigation only, never application/provider onboarding evidence.
+
+## Removing and re-adding the same class is real rendering work
+
+**TASK-31966, 2026-10-04.** Stable Console speech refreshes removed `h-1` and
+re-added `h-1` on every call. Each mutation synchronously restyled the real
+control-bar subtree. Mounted RED tests observed ten restyles for five unchanged
+refreshes; atomic replacement of the actual owned height-class set reduced
+that to zero, while real recovery transitions and inline-height repair stayed
+correct. The same bounded observer measured height updates dropping from
+94.219 ms summed across five calls to 0.375 ms on frozen post-fix source
+`0ab325187e`. The full activation matrix still failed. Use Textual's idempotent
+class replacement instead of remove/re-add churn, but measure the whole workflow
+before claiming a local improvement resolved its broader GC/scheduling stalls.
