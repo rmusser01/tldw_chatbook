@@ -168,3 +168,5 @@ cron entry on `dev`.
   `config.py` or `css/**` does not exercise the GGUF screens on any PR.
 - **Strict.** Restored on 2026-09-27 (see the note under the 2026-08-30 amendment).
 - Spec: `Docs/superpowers/specs/2026-09-27-ci-conflicts-and-waste-design.md`.
+
+2026-10-03: the required check is now also started by the merge queue's `workflow_dispatch` (input `pr`); see ADR-218.

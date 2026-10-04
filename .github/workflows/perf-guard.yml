@@ -38,6 +38,8 @@ on:
       - 'Tests/Utils/test_ui_responsiveness_stall_persist.py'
       - 'pyproject.toml'
       - '.github/workflows/perf-guard.yml'
+  # Merge queue re-runs this on the rebased head (spec 2026-10-03, section 5.4).
+  workflow_dispatch:
 
 # One run per workflow per ref (obsolete runs must not queue up competing
 # for scarce runners).
