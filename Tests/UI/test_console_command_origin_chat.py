@@ -335,6 +335,9 @@ async def test_a_command_answers_in_the_chat_it_was_sent_from(
             other_rows = _system_rows(store, other)
             gate.released.set()
             assert await _until(lambda: _commands_idle(console), 10)
+            # The answer is posted after the worker returns; wait for the row
+            # itself rather than a fixed settle (flaked under load).
+            await _until(lambda: len(_system_rows(store, origin)) > origin_rows, 10)
             await asyncio.sleep(0.3)
             assert _system_rows(store, other) == other_rows, (
                 f"{draft} answered in the chat switched to: "
