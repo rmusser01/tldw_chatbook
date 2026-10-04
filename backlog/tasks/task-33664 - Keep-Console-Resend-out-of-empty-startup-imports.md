@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 17:37'
+updated_date: '2026-10-04 18:21'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -459,6 +459,17 @@ Reason: classify existing durable message locators in the existing fail-closed v
 2. Before production mutation, add only focused real-SQLite residue tests to the existing voice persistence module. Cover both derived voice message IDs referenced by either hook column or the progress queue; refuse reconciliation of an already-complete pair, and refuse fresh promotion when a schema-valid preexisting locator owns the proposed ID. Parent hook references require an existing message, so test that case only with a complete pair. Include unrelated-row controls proving ordinary commit and idempotent reconciliation still work. Assert messages, revisions, marks, active leaf and seeded sidecar rows remain unchanged on refusal. Keep every old test/assertion, original fixture, source guard and runtime boundary intact. Record the actual RED result without running completed full selections again.
 3. Add only the three missing table/column pairs to _VOICE_PROMOTION_FORBIDDEN_MESSAGE_LOCATORS. Do not change exemptions, SQL/migrations, reconciliation control flow or writer behavior. Run the new residue cases, the existing failed census and bounded voice commit/reconcile controls once on the repaired source, with exact REPO_ROOT/PYTHONPATH/full outer private profile/default pytest temp depth. Inspect all raw/XML/warnings and preserve RED alongside GREEN. Verify original production function ASTs and old test ASTs are exact; static-check only the changed two Python files and authenticate the resulting immutable source/full tree. Completed MCP/quit/artifact checks carry only by exact relevant source identity; no new behavior or physical voice certificate is inferred.
 4. Record this incident as an append-only testing lesson after qualification, preserving every previous byte and all historical positive/NON-GREEN/baseline/interrupted/unexecuted/metadata/style/size/FD/optional/physical/wider limitations and separate task states. Existing independent reviewer assesses the real locator ownership and final immutable source/functional/artifact evidence. Ready/no findings and ALL activity settled precede the newly composed source's original unchanged FIVE guards ONCE; supplemental approval precedes AC3Done/AC4checked and four-owned-doc closure. No old test/budget/script replay, pin/ceiling/work/time/warmup change, full suite, live providers/keys/physical keys/relaunch/voice provision, admin bypass or foreign cleanup. One exact observed0f lease publication and fresh-head Qodo/ALL FOUR conceptual gates including BOTH UI shards remain mandatory before later concurrency action/protected match-head merge.
+
+## Current-head UI gate timeout repair — October 4
+
+ADR required: no
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; existing TASK34353 CI partition contract.
+Reason: apply the shipped instruction to add a shard when one nears the cap; no runtime, security, ownership, schema, dependency, gate, census or time-limit change.
+1. Preserve exact published c5, original UI2 log/annotation proving the 20-minute timeout at 92% without a completed verdict, and original Perf Guard failure. The separately approved ONE Perf job rerun was dispatched once (HTTP201, attempt2); never dispatch again. Its current Linux cause remains unqualified.
+2. Before this CI source edit, reopen AC3/In Progress with AC4 checked and commit this plan. Change ONLY derived-artifacts.yml UI matrix [1,2] to [1,2,3], preserving every census file (138, floor136), in-shard census order, minimal dependencies, serial pytest, fail-fast=false, 20-minute cap, checker and required aggregator.
+3. Run a new targeted existing Tests/CI selection once against the new workflow, including actual three-way shard commands, empty/invalid rejection and failure propagation controls. Authenticate all 3,795 records and full tree outside the workflow/owned docs; every runtime/test/CSS/original guard/MAX/source input remains exact approved5fb/c5. Carry original5fb five-budget source/raw/XML approval with explicit independent approval; do not repeat local budgets or claim hosted UI durations.
+4. Obtain immutable independent source/CI/artifact and carried-budget approval. Preserve TASK34353 In Progress/AC3 unchecked and all historical positive/NON-GREEN/baseline/interrupted/unexecuted/warnings/limits. Only after Ready close AC3 via CLI and append four owned canonical Markdown records, preserving approved source/deletion.
+5. This is a fix for current-head failed CI, not later-dev integration. Publish once with the EXACT observed c5 lease after fresh Qodo/threads/refs/live protection and verify actual remote/GitHub/body without a second push. Fresh new-head Qodo/no actionable feedback and all FOUR gates requiring ALL THREE UI shards precede later-dev source inspection/fetch/rebase and normal protected head-matched merge. No later-dev concurrency qualification has occurred.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
