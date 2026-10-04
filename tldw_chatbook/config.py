@@ -6329,7 +6329,7 @@ expose_prompts = true  # Expose prompt templates
 require_auth = false  # Require authentication (not implemented yet)
 rate_limit = 100  # Max requests per minute per client
 max_concurrent_requests = 10  # Max concurrent requests
-# approval_timeout_seconds = 0  # Console approval-card auto-deny ceiling: 0 (default) waits indefinitely; e.g. 120 auto-denies undecided calls after 120s
+# approval_timeout_seconds = 0  # Human approval ceiling for Console cards and live MCP confirmations: 0 (default) waits indefinitely; e.g. 120 auto-denies undecided calls after 120s
 
 # expose_local_tools = false   # expose workspace, web, and Watchlists agent tools (fs_*/git_*/web_*/watchlists_*) to external MCP clients; each tool remains permission-gated
 # expose_character_tools = false   # expose character_search and character_get to external MCP clients (independent of expose_local_tools and [tools] character_tools_enabled); each tool remains permission-gated

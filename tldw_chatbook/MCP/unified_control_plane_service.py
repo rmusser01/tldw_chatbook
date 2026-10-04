@@ -5044,18 +5044,18 @@ class UnifiedMCPControlPlaneService:
             return 60.0
 
     def approval_timeout_seconds(self) -> float:
-        """Resolve how long the chat bridge waits for a human approval.
+        """Resolve the human-approval ceiling; nonpositive values have no deadline.
 
         Mirrors :meth:`_lifecycle_timeout`'s config-read/fallback guard.
 
         Returns:
             The configured ``[mcp] approval_timeout_seconds`` value in
-            seconds, falling back to ``120.0`` when unset or unparsable.
+            seconds, falling back to ``0.0`` when unset or unparsable.
         """
         try:
-            return float(get_cli_setting("mcp", "approval_timeout_seconds", 120.0))
+            return float(get_cli_setting("mcp", "approval_timeout_seconds", 0.0))
         except (TypeError, ValueError):
-            return 120.0
+            return 0.0
 
     def approve_for_session(
         self,

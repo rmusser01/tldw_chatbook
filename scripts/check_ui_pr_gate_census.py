@@ -91,7 +91,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # (~35 s serial together). The PR's two real-app quit files
 # (test_app_quit_in_flight_modals.py ~2.7 min, test_console_video_picker_cancel.py
 # ~1 min locally) stay out until the lane has a shard with room for them.
-MINIMUM_FILES = 135
+# TASK-33003.20 adds the production approval batch geometry guard.
+MINIMUM_FILES = 136
 
 
 def read_census(path: Path) -> list[str]:

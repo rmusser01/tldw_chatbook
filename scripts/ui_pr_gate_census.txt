@@ -135,3 +135,6 @@ Tests/UI/test_speech_result_delivery.py
 Tests/UI/test_speech_settings_completeness.py
 Tests/UI/test_speech_settings_model.py
 Tests/UI/test_speech_settings_save_equivalence.py
+
+# TASK-33003.20: production batch geometry, isolated profile and shipping CSS.
+Tests/UI/test_approval_batch_geometry.py

@@ -107,6 +107,7 @@ def _log_records(store: LocalMCPStore) -> list[dict]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_execute_hub_tool_records_given_initiator_and_decision(tmp_path):
     service, fake, client, store = _service(tmp_path)
 
@@ -126,6 +127,7 @@ async def test_execute_hub_tool_records_given_initiator_and_decision(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_execute_hub_tool_default_initiator_and_decision(tmp_path):
     service, fake, client, store = _service(tmp_path)
 
@@ -137,6 +139,7 @@ async def test_execute_hub_tool_default_initiator_and_decision(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_execute_hub_tool_records_initiator_decision_on_failure(tmp_path):
     service, fake, client, store = _service(tmp_path)
     client.call_tool_error = "boom"
@@ -216,6 +219,7 @@ async def test_execute_hub_tool_explicit_timeout_seconds_overrides_config(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_hub_tool_delegates_to_execute_hub_tool_with_test_semantics(
     tmp_path, monkeypatch
 ):
@@ -263,6 +267,7 @@ async def test_hub_tool_still_uses_lifecycle_timeout_not_tool_call_timeout(
 # ---- timeout config knobs -------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_tool_call_timeout_default(tmp_path):
     service, fake, client, store = _service(tmp_path)
     assert service._tool_call_timeout() == 60.0
@@ -292,9 +297,10 @@ def test_tool_call_timeout_falls_back_on_garbage_config(tmp_path, monkeypatch):
     assert service._tool_call_timeout() == 60.0
 
 
+@pytest.mark.bootstrap_profile
 def test_approval_timeout_seconds_default(tmp_path):
     service, fake, client, store = _service(tmp_path)
-    assert service.approval_timeout_seconds() == 120.0
+    assert service.approval_timeout_seconds() == 0.0
 
 
 def test_approval_timeout_seconds_reads_config(tmp_path, monkeypatch):
@@ -318,7 +324,7 @@ def test_approval_timeout_seconds_falls_back_on_garbage_config(tmp_path, monkeyp
         ),
     )
     service, fake, client, store = _service(tmp_path)
-    assert service.approval_timeout_seconds() == 120.0
+    assert service.approval_timeout_seconds() == 0.0
 
 
 # ---- session approvals -----------------------------------------------------

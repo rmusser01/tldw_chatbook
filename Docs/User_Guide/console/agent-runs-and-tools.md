@@ -1520,6 +1520,9 @@ app. If you have set a positive `[mcp] approval_timeout_seconds`, it
 still expires the request on schedule — being away does not buy the
 request extra time. The shipped default is `0`, which means no deadline:
 the request waits for you.
+The same setting governs live MCP confirmation requests: unset, invalid, zero,
+or negative values have no deadline; a positive value sets the approval ceiling.
+Stopping a wait still clears it, and does not grant permission to execute a tool.
 
 **The card is rendered and answerable the first time you open Console —
 no session switch needed.** (Fixed as task-17500, 2026-08-17.) As first
