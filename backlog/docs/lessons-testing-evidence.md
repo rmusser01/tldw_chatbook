@@ -54,6 +54,31 @@ dev closes the receipt *before* it restores, so the two numbers timed
 different things. Time both arms to the same user-visible end state (rows
 back and the receipt gone), n>=3 each, and report ranges for both.
 
+## "Paint, then call_after_refresh" does not put a new widget on screen before blocking work (TASK-33620.5, 2026-10-04)
+
+**Incident.** Enter had to paint a "Sending…" row before ~0.5 s of synchronous
+admission blocked the loop. Pushing the state and handing the send to
+`call_after_refresh` looked right, and the header and Send label did change
+first. But the mounted row and a newly shown Run chip were missing from that
+frame. They post their own Layout requests from their own pumps, so the
+refresh that ran the callback still used the old arrangement. Re-hopping with
+`call_after_refresh` until the row had a region did not help: with nothing
+dirty, the screen ran six hops in 0.3 ms without the loop ever yielding,
+because `asyncio.Queue.get` returns at once when items are waiting. Frame-length
+`set_timer` hops, checking `widget.region.area` before dispatching, put both on
+screen (live: 47-97 ms after Enter).
+
+**Why tests nearly missed it.** `pilot.pause()` cannot run while the app pump
+awaits the held send (`WaitForScreenTimeout`). Reading
+`screen._compositor.render_strips()` at the moment the admission gate is
+entered is the frame the user sees for the whole block. It showed the gap; a
+DOM query would not have.
+
+**What to do.** Before blocking work you want to be preceded by a frame, wait
+for the specific widgets to have a laid-out region. Yield the loop between
+checks and bound the wait. Then assert on painted strips, read while the
+blocking step is held.
+
 ## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
 
 **TASK-14876 audit, 2026-09-30.** Checking whether the 2026-08-09 xdist
