@@ -65,6 +65,7 @@ as an ``AttributeError`` inside whichever moved body reaches for it first,
 under the wrong prefix. One shared home closes that gap for good instead
 of adding a third copy.
 """
+
 from __future__ import annotations
 
 import asyncio

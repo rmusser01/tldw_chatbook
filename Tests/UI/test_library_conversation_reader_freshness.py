@@ -372,7 +372,9 @@ async def test_recheck_superseded_by_another_selection_never_reloads_it() -> Non
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("beta_versioned", [True, False], ids=["versioned", "bootstrap"])
+@pytest.mark.parametrize(
+    "beta_versioned", [True, False], ids=["versioned", "bootstrap"]
+)
 async def test_load_pending_across_a_list_read_is_rechecked_once_it_settles(
     monkeypatch: pytest.MonkeyPatch, beta_versioned: bool
 ) -> None:
@@ -404,7 +406,9 @@ async def test_load_pending_across_a_list_read_is_rechecked_once_it_settles(
                 )
 
         monkeypatch.setattr(
-            controller, "_ensure_library_conversation_reader_selection", _recording_ensure
+            controller,
+            "_ensure_library_conversation_reader_selection",
+            _recording_ensure,
         )
         service.page_gate = threading.Event()
         try:

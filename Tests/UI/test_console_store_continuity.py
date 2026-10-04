@@ -727,6 +727,8 @@ async def test_session_identity_survives_a_navigation_for_an_unsaved_chat(
         assert app.screen_stack == [app.screen_stack[0], chat]
         assert app.screen is chat
         assert chat._console_runtime().view is chat
+        assert store.active_session_id == first.id
+        assert chat._console_visible_draft_session_id == first.id
         assert chat.query_one("#console-native-composer").draft_text() == "half"
         before_ids = [session.id for session in store.sessions()]
         assert first.persisted_conversation_id in (None, ""), (

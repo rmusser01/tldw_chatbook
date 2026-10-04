@@ -339,6 +339,7 @@ from ``library_skills_state`` -- the dataclass's own module, task 1's
 single authoritative home for the three-way prefix mapping -- rather than
 redefined as a second, independently-drifting literal copy.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -522,9 +523,7 @@ class LibrarySkillsController:
         self._sanitize_note_content_fn = sanitize_note_content
         self._refresh_local_source_snapshot_fn = refresh_local_source_snapshot
         self._library_entry_route_key_fn = library_entry_route_key
-        self._library_entry_reconcile_is_current_fn = (
-            library_entry_reconcile_is_current
-        )
+        self._library_entry_reconcile_is_current_fn = library_entry_reconcile_is_current
         self._capture_library_entry_focus_fn = capture_library_entry_focus
         self._restore_library_entry_focus_fn = restore_library_entry_focus
         self._arm_library_list_entry_focus_fn = arm_library_list_entry_focus
@@ -1129,8 +1128,10 @@ class LibrarySkillsController:
         def restore_focus() -> None:
             current = self.focused
             if (
-                current is not None and current is not focused
-                and current.parent is not None and current.id != focus_identity
+                current is not None
+                and current is not focused
+                and current.parent is not None
+                and current.id != focus_identity
             ):
                 return
             if not focus_identity:
@@ -1160,7 +1161,9 @@ class LibrarySkillsController:
         if self._library_skills_view == "editor":
             # Refresh retained Items independently: Work may hold a newer draft.
             try:
-                canvas = self.query_one("#library-skills-canvas", LibrarySkillsListCanvas)
+                canvas = self.query_one(
+                    "#library-skills-canvas", LibrarySkillsListCanvas
+                )
             except (NoMatches, QueryError):
                 return LibraryEntryReconcileResult.FAILED
             if focus_identity:
@@ -1766,7 +1769,6 @@ class LibrarySkillsController:
         if panes:
             pane = panes.first()
             pane.call_after_refresh(pane.restore_workflow_focus)
-
 
     @on(Input.Changed, "#library-skill-name")
     def handle_library_skill_name_changed(self, event: Input.Changed) -> None:
@@ -2682,28 +2684,16 @@ class LibrarySkillsController:
             return
         self._library_skill_script_grant = bool(granted)
 
-        # task-8 (skills-script-execution) fix: NOT a direct call. This
-        # coroutine's own ``asyncio.to_thread`` round trip can resolve
-        # before ``_apply_library_skill_detail``'s own ``refresh(recompose=
-        # True)`` (posted moments earlier, on this same screen's message
-        # queue) has actually remounted the editor -- a real trust service
-        # doing real disk I/O usually loses that race, but there is no
-        # guarantee, and a fast trust service (or a slow recompose under
-        # load) can win it. A direct call here would then query widgets
-        # that do not exist YET, silently no-op through this method's own
-        # ``except (NoMatches, QueryError): pass`` guards, and never retry
-        # -- leaving the panel stuck showing "not granted"/disabled forever
-        # even though ``_library_skill_script_grant`` is correctly True in
-        # memory. ``call_after_refresh`` was the original answer, and
-        # task-15457 quietly invalidated it: the editor recompose it was
-        # ordering against became CANVAS-scoped (`_sync_library_canvas`,
-        # driven by the canvas's own message pump), which a SCREEN-level
-        # ``call_after_refresh`` has no ordering against -- the render fired
-        # before the canvas's children existed, swallowed ``NoMatches``, and
-        # never retried (task-15790, measured: grant stored True, render ran,
-        # button absent). Ride the same canvas post-recompose hook the
-        # caller's arming follow-up already rides; it runs `then` only once
-        # the canvas's new children are actually mounted.
+        # task-8: the off-thread grant lookup may finish before editor remount.
+        # Rendering early swallows NoMatches/QueryError and never retries,
+        # leaving "not granted" visible despite a true in-memory grant.
+        # Screen call_after_refresh originally ordered that render, but
+        # task-15457 moved recomposition to the canvas's own message pump.
+        # A screen callback cannot order work after that canvas recompose.
+        # task-15790 measured the resulting race: grant stored True, render
+        # ran before the button existed, and no retry repaired the panel.
+        # Use the caller's canvas post-recompose hook so `then` runs only
+        # after the new children mount, before rendering and arming them.
         def _render_then_arm() -> None:
             self._render_library_skill_trust_panel()
             if not self._library_skill_editor_armed:
@@ -3142,9 +3132,7 @@ for _lsc_field in dataclasses.fields(LibrarySkillsState):
         LibrarySkillsController,
         skill_state_shim_attr(_lsc_field.name),
         property(
-            lambda self, _n=_lsc_field.name: getattr(
-                self._skills_state_accessor(), _n
-            ),
+            lambda self, _n=_lsc_field.name: getattr(self._skills_state_accessor(), _n),
             lambda self, value, _n=_lsc_field.name: setattr(
                 self._skills_state_accessor(), _n, value
             ),
