@@ -206,6 +206,74 @@ class ConsoleDispatchRepository:
                     receipt.initiator,
                 ),
             )
+        machine = acceptance.machine_followup_receipt
+        if machine is not None:
+            from tldw_chatbook.Chat.response_rules.corrections import (
+                MachineFollowupReceipt,
+            )
+
+            if type(machine) is not MachineFollowupReceipt:
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid machine receipt."
+                )
+            machine.__post_init__()
+            parent = cursor.execute(
+                "SELECT sender,version FROM messages WHERE id=? AND conversation_id=? AND deleted=0",
+                (machine.parent_assistant_message_id, acceptance.conversation_id),
+            ).fetchone()
+            if (
+                acceptance.origin != "queued"
+                or not acceptance.queue_entry_id
+                or machine.parent_assistant_message_id != acceptance.parent_message_id
+                or parent is None
+                or parent[0] != "assistant"
+                or (
+                    machine.source_message_version is not None
+                    and machine.source_message_version != parent[1]
+                )
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid machine parent."
+                )
+            if "hook" in machine.contributors and receipt is None:
+                raise ConsoleDispatchCheckpointValidationError("Missing genuine hook receipt.")
+            if receipt is not None and (
+                "hook" not in machine.contributors
+                or receipt.parent_turn_id != machine.parent_turn_id
+                or receipt.admitted_turns != machine.admitted_turns
+                or receipt.chain_id != machine.chain_id
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Mismatched machine lineage."
+                )
+            previous = cursor.execute(
+                "SELECT admitted_turns,native_turns FROM console_machine_followup_receipts WHERE chain_id=? AND conversation_id=? ORDER BY admitted_turns DESC LIMIT 1",
+                (machine.chain_id, acceptance.conversation_id),
+            ).fetchone()
+            shared, native_count = (previous[0], previous[1]) if previous else (0, 0)
+            if (
+                machine.admitted_turns != shared + 1
+                or machine.native_turns
+                != native_count + int("native" in machine.contributors)
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid machine counters."
+                )
+            cursor.execute(
+                "INSERT INTO console_machine_followup_receipts VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    machine.operation_id,
+                    machine.parent_turn_id,
+                    machine.settlement_id,
+                    acceptance.conversation_id,
+                    machine.parent_assistant_message_id,
+                    acceptance.assistant_message_id,
+                    machine.chain_id,
+                    machine.admitted_turns,
+                    machine.native_turns,
+                    json.dumps(machine.contributors, separators=(",", ":")),
+                ),
+            )
         attachments = self._validated_attachments(acceptance)
         first_attachment = next(
             (row for row in attachments if row[0] == 0),
@@ -244,9 +312,11 @@ class ConsoleDispatchRepository:
                         }
                     )
                     if receipt
-                    else MessageMetadata(root_fork=True).to_json()
-                    if acceptance.user_root_fork
-                    else None
+                    else (
+                        MessageMetadata(root_fork=True).to_json()
+                        if acceptance.user_root_fork
+                        else None
+                    )
                 ),
             ),
         )

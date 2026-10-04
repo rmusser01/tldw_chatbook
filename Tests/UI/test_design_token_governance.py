@@ -175,7 +175,7 @@ def test_hex_literals_are_ratcheted_outside_token_definitions(request) -> None:
     CI nor free up allowance for a real hardcoded color.
     """
     for module in _source_modules():
-        relative = str(module.relative_to(CSS_ROOT))
+        relative = module.relative_to(CSS_ROOT).as_posix()
         if module == TOKENS_FILE:
             continue
         text = _strip_comments(module.read_text(encoding="utf-8"))
@@ -199,7 +199,7 @@ def test_hex_ratchet_ignores_comments(request) -> None:
 def test_new_sheets_must_use_spacing_tokens(request) -> None:
     """Modules added after ADR-150 may not hardcode numeric padding/margin."""
     for module in _source_modules():
-        relative = str(module.relative_to(CSS_ROOT))
+        relative = module.relative_to(CSS_ROOT).as_posix()
         if relative in _LEGACY_SHEETS:
             continue
         matches = _RAW_SPACING_RE.findall(
@@ -234,7 +234,9 @@ async def test_section_header_preserves_global_and_stats_computed_geometry(reque
     from textual.containers import Vertical
     from textual.widgets import Label
 
-    source = "\n".join((CSS_ROOT / name).read_text() for name in CSS_MODULES)
+    source = "\n".join(
+        (CSS_ROOT / name).read_text(encoding="utf-8") for name in CSS_MODULES
+    )
 
     class HeaderProbe(App):
         CSS = source

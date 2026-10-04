@@ -192,6 +192,8 @@ EXPECTED_CHACHANOTES_TRIGGERS: dict[str, TriggerPin] = {
         "3c5b3eb6ee8ba131cd9586c1d5024a21debca5b0d60085f81d68d7b8abcbe95a"),
     "chat_dictionaries_update_timestamp": TriggerPin("chat_dictionaries", "AFTER", "UPDATE",
         "e4fffab4bfb37a7f8f9a7263c7a14b0f7a6da6dcae82c99e5318c545999d81d4"),
+    "console_response_rules_conversation_cleanup": TriggerPin("conversations", "AFTER", "DELETE",
+        "3acc2fd35ba62245eb3baff75075a663cd7068c032924aa2d9f9eebc32858d24"),
     "console_trace_artifacts_no_delete": TriggerPin("console_trace_artifacts", "BEFORE", "DELETE",
         "c665c10ceabc477ebeee23c21b919075d37952378750015e20d3b5a497f804af"),
     "console_trace_artifacts_no_update": TriggerPin("console_trace_artifacts", "BEFORE", "UPDATE",

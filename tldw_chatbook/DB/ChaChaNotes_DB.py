@@ -745,7 +745,9 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 76  # notes_au FTS undelete guard ships as a migration
+    _CURRENT_SCHEMA_VERSION = (
+        77  # Device-local structured response rules after notes FTS repair.
+    )
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2734,17 +2736,6 @@ UPDATE db_schema_version
    AND version = 15;
 """
 
-
-
-
-
-
-
-
-
-
-
-
     # task-19565: this runner SQL is the SINGLE source of this migration (the
     # step's Python owns shape validation and the guarded version bump for
     # half-applied-database recovery, which a bare .sql file cannot express;
@@ -2834,8 +2825,6 @@ DELETE FROM keywords
         + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL
         + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL
     )
-
-
 
     def __init__(
         self,
@@ -7952,6 +7941,32 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v76_to_v77(self, conn: sqlite3.Connection) -> None:
+        """Install native local rules without adding sync or metadata payloads."""
+        self._require_migration_entry_version(conn, 76, "V76→V77")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v76_to_v77_response_rules.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V76→V77"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 77 WHERE schema_name = ? AND version = 76",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("V76→V77 version update failed")
+            if self._get_db_version(conn) != 77:
+                raise SchemaError("V76→V77 version check failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration V76→V77 failed: {type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -8206,6 +8221,7 @@ DELETE FROM keywords
                     73: self._migrate_from_v73_to_v74,
                     74: self._migrate_from_v74_to_v75,
                     75: self._migrate_from_v75_to_v76,
+                    76: self._migrate_from_v76_to_v77,
                 }
 
                 if current_db_version == 0:

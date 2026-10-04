@@ -321,6 +321,18 @@ def default_console_registry() -> ConsoleCommandRegistry:
     )
     registry.register(
         ConsoleCommand(
+            name="omfg", argument_hint="<problem>", handler_id="learn-response-rule"
+        )
+    )
+    registry.register(
+        ConsoleCommand(
+            name="rules",
+            argument_hint="[chat|workspace|global]",
+            handler_id="manage-response-rules",
+        )
+    )
+    registry.register(
+        ConsoleCommand(
             name=REDIRECT_COMMAND_NAME,
             argument_hint=REDIRECT_COMMAND_ARGUMENT_HINT,
             handler_id=REDIRECT_COMMAND_HANDLER_ID,

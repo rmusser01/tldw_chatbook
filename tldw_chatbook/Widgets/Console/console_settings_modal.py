@@ -1101,10 +1101,10 @@ class ConsoleSettingsModal(
         providers_models: Mapping[str, list[str]],
         context_estimate: ConsoleSettingsContextEstimate,
         context_state: ConsoleContextControlState | None = None,
-        context_window_resolver: Callable[
-            [ConsoleSessionSettings], Awaitable[ContextWindowResolution]
-        ]
-        | None = None,
+        context_window_resolver: (
+            Callable[[ConsoleSessionSettings], Awaitable[ContextWindowResolution]]
+            | None
+        ) = None,
         can_save: bool,
         active_run: bool = False,
         focus_model: bool = False,
@@ -1123,10 +1123,12 @@ class ConsoleSettingsModal(
         default_recovery_handler: DefaultRecoveryHandler | None = None,
         suspended_draft: ConsoleSettingsDraftSnapshot | None = None,
         expected_settings_revision: int = 0,
+        open_response_rules: Callable[[], Awaitable[None]] | None = None,
         model_picker: ModelPicker | None = None,
         chat_title: str = "",
     ) -> None:
         super().__init__()
+        self._open_response_rules = open_response_rules
         self._model_picker, self._chat_title = model_picker, chat_title
         self._unsaved_committed = (settings, context_state, user_display_name_override)
         if transfer is not None:
@@ -1534,6 +1536,12 @@ class ConsoleSettingsModal(
         values = ", ".join(_PROVIDER_CHOICE_VALUES[control_id])
         return f"Saved value is unavailable. Choose one of: {values}."
 
+    @on(Button.Pressed, "#console-settings-response-rules")
+    async def _response_rules_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if self._open_response_rules is not None:
+            await self._open_response_rules()
+
     def compose(self) -> ComposeResult:
         base_url = self._base_url_for_provider(self._active_provider)
         uses_base_url = self._provider_uses_base_url(self._active_provider)
@@ -1616,6 +1624,11 @@ class ConsoleSettingsModal(
             # is focused, so the container stays out of the focus chain.
             body.can_focus = False
             with body:
+                yield Button(
+                    "Response rules",
+                    id="console-settings-response-rules",
+                    disabled=self._open_response_rules is None,
+                )
                 with Vertical(
                     id="console-settings-provider-model-section",
                     classes="console-settings-model-view",

@@ -427,6 +427,8 @@ def test_raw_cli_undo_redo_and_history_shaped_replacements_never_mint_trust() ->
     assert trusted._raw_cli_prefix_typed is False
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_raw_cli_visible_send_consumes_same_trusted_stash_as_enter() -> None:
     app = _build_test_app()
@@ -521,12 +523,23 @@ async def test_escaped_chat_stash_keeps_segment_payload_and_restore_consistent()
 
     dispatched: list[tuple[str, ConsoleDraftStash | None]] = []
 
-    async def dispatch(draft: str, *, stash: ConsoleDraftStash | None = None) -> bool:
+    async def dispatch(
+        draft: str, *, stash: ConsoleDraftStash | None = None, session_id=None
+    ) -> bool:
         dispatched.append((draft, stash))
         return True
 
+    captured_token = object()
     screen = SimpleNamespace(
+        _send_console_message_from_visible_action_observed=lambda **kwargs: ChatScreen._send_console_message_from_visible_action_observed(
+            screen, **kwargs
+        ),
+        _ui_responsiveness_monitor=lambda: None,
         _console_pending_send_stash=stash,
+        _console_pending_send=SimpleNamespace(
+            token=captured_token, session_id="captured-chat", stash=stash
+        ),
+        _console_visible_draft_session_id="captured-chat",
         _raw_cli=SimpleNamespace(start_user_command=Mock()),
         _console_composer_or_none=lambda: composer,
         query_one=lambda *_args, **_kwargs: composer,
@@ -542,7 +555,12 @@ async def test_escaped_chat_stash_keeps_segment_payload_and_restore_consistent()
         _answer_pending_question_with_draft=lambda draft: False,
     )
 
-    assert await ChatScreen._send_console_message_from_visible_action(screen) is True
+    assert (
+        await ChatScreen._send_console_message_from_visible_action(
+            screen, pending_send_token=captured_token
+        )
+        is True
+    )
     assert len(dispatched) == 1
     dispatched_text, escaped = dispatched[0]
     assert escaped is not None
@@ -860,6 +878,8 @@ async def test_system_command_rejects_recipe_before_session_or_draft_mutation() 
     )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_unknown_command_first_enter_renders_hint_and_does_not_send():
     app = _build_test_app()
@@ -881,51 +901,40 @@ async def test_console_unknown_command_first_enter_renders_hint_and_does_not_sen
         assert console._console_unknown_send_armed == "/nope x"
 
 
-@pytest.mark.asyncio
-# TASK-27018, two re-decisions against the current send contract:
-# (1) the mounted factory app reloads real config through the guarded
-#     loader, which under the per-test sandbox redirect fails closed with
-#     RecoveryRequired("raw_source_selection_changed") -- keep the
-#     collection-time profile (per-node marker, TASK-32873 pattern);
-# (2) since the Library-gated send seam (a26cdafd80, 2026-08-22) the
-#     runtime calls submit_draft with custody kwargs (origin,
-#     configuration, staged-evidence, custody hooks), so the exact
-#     signature pin now asserts the load-bearing call parts instead.
 @pytest.mark.bootstrap_profile
-async def test_console_unknown_command_second_unmodified_enter_sends_as_text():
-    gateway = CapturingGateway()
-    app = _build_console_send_test_app()
-    _configure_native_ready_console(app)
-    app.console_provider_gateway_factory = lambda: gateway
-    host = ConsoleHarness(app)
+@pytest.mark.requires_cleanup
+@pytest.mark.asyncio
+async def test_console_unknown_command_second_unmodified_enter_sends_as_text(tmp_path):
+    from Tests.UI.response_rules_fixtures import mounted_rules_console
 
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+    async with mounted_rules_console(tmp_path, (160, 48)) as case:
+        console, pilot, composer = case.console, case.pilot, case.composer
         composer.load_draft("/nope x")
+        await pilot.pause()
         submit_spy = await _spy_submit_draft(console)
         send_button = console.query_one("#console-send-message", Button)
-
         send_button.press()
         await _wait_for_text(console, pilot, UNKNOWN_NOPE_HINT)
+        await pilot.pause()
         submit_spy.assert_not_called()
-
+        assert console._console_unknown_send_armed == "/nope x"
         send_button.press()
-        await _wait_for_text(console, pilot, "accepted")
-
-        assert submit_spy.await_count == 1
-        submit_call = submit_spy.await_args
-        assert submit_call.args == ("/nope x",)
-        assert (
-            submit_call.kwargs["session_id"]
-            == console._ensure_console_chat_store().active_session_id
-        )
-        await _wait_for_gateway_row(pilot, gateway, "/nope x")
-        assert gateway.sent_messages[-1][-1]["content"] == "/nope x"
+        async with asyncio.timeout(30):
+            while not case.requests or case.controller._submit_tasks_for_session(
+                case.session_id
+            ):
+                await asyncio.sleep(0.02)
+        submit_spy.assert_awaited_once()
+        args, kwargs = submit_spy.await_args
+        assert args == ("/nope x",)
+        assert kwargs["session_id"] == case.session_id
+        assert kwargs["configuration"].session_id == case.session_id
+        assert case.requests[-1][-1]["content"] == "/nope x"
         assert console._console_unknown_send_armed is None
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_unknown_command_edit_between_enters_re_hints_and_does_not_send():
     app = _build_test_app()
@@ -960,6 +969,8 @@ async def test_console_unknown_command_edit_between_enters_re_hints_and_does_not
         assert contents.count(UNKNOWN_NADA_HINT) == 1
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_unknown_command_roundtrip_edit_back_to_armed_text_requires_fresh_arm():
     """Editing away and back to the armed text still disarms (Task 10 hardening).
@@ -998,6 +1009,8 @@ async def test_console_unknown_command_roundtrip_edit_back_to_armed_text_require
         assert console._console_unknown_send_armed == "/nope x"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_collapse_disarms_unknown_command_literal_send():
     app = _build_test_app()
@@ -1025,45 +1038,37 @@ async def test_console_collapse_disarms_unknown_command_literal_send():
         assert console._console_unknown_send_armed == "/nope x"
 
 
-@pytest.mark.asyncio
-# TASK-27018: same two re-decisions as the second-Enter test above -- the
-# mounted send app needs the collection-time profile past the guarded config
-# loader (per-node marker, TASK-32873 pattern), and the Library-gated send
-# seam (a26cdafd80) calls submit_draft with custody kwargs, so the pin
-# asserts the load-bearing call parts instead of the exact signature.
 @pytest.mark.bootstrap_profile
-async def test_console_collapsed_paste_starting_with_slash_sends_normally():
-    gateway = CapturingGateway()
-    app = _build_console_send_test_app()
-    _configure_native_ready_console(app)
-    app.console_provider_gateway_factory = lambda: gateway
-    host = ConsoleHarness(app)
-    pasted_text = "/nope " + ("x" * 80)
+@pytest.mark.requires_cleanup
+@pytest.mark.asyncio
+async def test_console_collapsed_paste_starting_with_slash_sends_normally(tmp_path):
+    from Tests.UI.response_rules_fixtures import mounted_rules_console
 
-    async with host.run_test(size=(160, 48)) as pilot:
-        console = host.screen_stack[-1]
-        await _wait_for_selector(console, pilot, "#console-native-composer")
-        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+    async with mounted_rules_console(tmp_path, (160, 48)) as case:
+        console, pilot, composer = case.console, case.pilot, case.composer
+        pasted_text = "/nope " + ("x" * 80)
         composer.insert_pasted_text(pasted_text)
+        await pilot.pause()
         assert composer.has_paste_segments()
         submit_spy = await _spy_submit_draft(console)
-
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
-
-        assert submit_spy.await_count == 1
-        submit_call = submit_spy.await_args
-        assert submit_call.args == (pasted_text,)
-        assert (
-            submit_call.kwargs["session_id"]
-            == console._ensure_console_chat_store().active_session_id
-        )
-        await _wait_for_gateway_row(pilot, gateway, pasted_text)
-        assert gateway.sent_messages[-1][-1]["content"] == pasted_text
+        async with asyncio.timeout(30):
+            while not case.requests or case.controller._submit_tasks_for_session(
+                case.session_id
+            ):
+                await asyncio.sleep(0.02)
+        submit_spy.assert_awaited_once()
+        args, kwargs = submit_spy.await_args
+        assert args == (pasted_text,)
+        assert kwargs["session_id"] == case.session_id
+        assert kwargs["configuration"].session_id == case.session_id
+        assert case.requests[-1][-1]["content"] == pasted_text
         assert console._console_unknown_send_armed is None
         assert composer.draft_text() == ""
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_command_dispatches_insert_prompt_stub():
     app = _build_test_app()
@@ -1089,6 +1094,8 @@ async def test_console_prompt_command_dispatches_insert_prompt_stub():
         assert composer.draft_text() == "/prompt"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_system_command_dispatches_apply_system_stub():
     app = _build_test_app()
@@ -1120,6 +1127,8 @@ async def test_console_system_command_dispatches_apply_system_stub():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_command_unique_exact_name_replaces_draft(tmp_path):
     """A unique exact (case-insensitive) name match REPLACES the draft with
@@ -1156,6 +1165,8 @@ async def test_console_prompt_command_unique_exact_name_replaces_draft(tmp_path)
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_replacement_resyncs_stale_command_popup(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -1189,6 +1200,8 @@ async def test_console_prompt_replacement_resyncs_stale_command_popup(tmp_path):
         assert popup.is_open is False
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_command_captures_before_resolution_and_refuses_stale_draft():
     app = _build_test_app()
@@ -1223,6 +1236,8 @@ async def test_console_prompt_command_captures_before_resolution_and_refuses_sta
         assert "resolved body" not in str(notify.call_args)
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_slash_fallback_threads_dispatch_snapshot_to_picker():
     app = _build_test_app()
@@ -1252,6 +1267,8 @@ async def test_console_prompt_slash_fallback_threads_dispatch_snapshot_to_picker
         assert composer.draft_text() == "/prompt ambiguous changed"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_command_uses_shared_dialog_and_shared_value(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -1290,6 +1307,8 @@ async def test_console_prompt_command_uses_shared_dialog_and_shared_value(tmp_pa
         assert store.session_settings(session_id).system_prompt == original_system
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_command_use_original_keeps_placeholders(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -1321,6 +1340,8 @@ async def test_console_prompt_command_use_original_keeps_placeholders(tmp_path):
         assert composer.draft_text() == "Hello {customer}"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_prompt_replacement_exposes_generic_undo_and_restores_exact_snapshot(
     tmp_path,
@@ -1371,6 +1392,8 @@ async def test_prompt_replacement_exposes_generic_undo_and_restores_exact_snapsh
         assert store.session_draft(store.active_session_id) == composer.draft_text()
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_dialog_applies_shared_value_to_authorized_system(
     tmp_path,
@@ -1412,6 +1435,8 @@ async def test_console_prompt_dialog_applies_shared_value_to_authorized_system(
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_system_only_requires_opt_in_and_clears_snapshot(tmp_path):
     db, service = _real_prompt_scope_service(tmp_path)
@@ -1457,6 +1482,8 @@ async def test_console_prompt_system_only_requires_opt_in_and_clears_snapshot(tm
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_dialog_cancel_preserves_exact_snapshot_and_refocuses(
     tmp_path,
@@ -1492,6 +1519,8 @@ async def test_console_prompt_dialog_cancel_preserves_exact_snapshot_and_refocus
         assert composer.has_focus_within is True
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_command_large_user_prompt_collapses_to_paste_token(
     tmp_path,
@@ -1529,6 +1558,8 @@ async def test_console_prompt_command_large_user_prompt_collapses_to_paste_token
         assert large_body not in composer._display_draft_text()
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_command_unique_prefix_match_resolves(tmp_path):
     """No exact match, but a unique case-insensitive name PREFIX match,
@@ -1569,6 +1600,8 @@ async def test_console_prompt_command_unique_prefix_match_resolves(tmp_path):
         assert len(host.screen_stack) == baseline_depth
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_command_exact_match_wins_over_ambiguous_prefix(tmp_path):
     """Resolution order: an exact name match resolves immediately even when
@@ -1609,6 +1642,8 @@ async def test_console_prompt_command_exact_match_wins_over_ambiguous_prefix(tmp
         assert len(host.screen_stack) == baseline_depth
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_command_ambiguous_exact_match_opens_picker(tmp_path):
     """Two prompts differing only by name CASE (the DB's UNIQUE constraint on
@@ -1658,6 +1693,8 @@ async def test_console_prompt_command_ambiguous_exact_match_opens_picker(tmp_pat
         assert composer.draft_text() == "/prompt Foo"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_command_no_args_opens_picker_with_empty_query(tmp_path):
     """`/prompt` with no args at all skips resolution entirely and opens the
@@ -1692,6 +1729,8 @@ async def test_console_prompt_command_no_args_opens_picker_with_empty_query(tmp_
         assert filter_input.value == ""
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_command_picker_uses_real_bound_search_and_selection_replaces_draft(
     tmp_path,
@@ -1749,6 +1788,8 @@ async def test_console_prompt_command_picker_uses_real_bound_search_and_selectio
         assert composer.draft_text() == "Summarize body."
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prompt_command_picker_escape_leaves_draft_untouched(tmp_path):
     """Escaping the picker dismisses with ``None`` and never touches the
@@ -1796,6 +1837,8 @@ async def test_console_prompt_command_picker_escape_leaves_draft_untouched(tmp_p
 # -- Library "Use in Console" consumption (ChatScreen-side gating/insertion) --
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_pending_prompt_insert_is_consumed_automatically_on_mount():
     """The staged handoff is consumed by the real ``on_mount`` wiring itself
@@ -1821,6 +1864,8 @@ async def test_console_pending_prompt_insert_is_consumed_automatically_on_mount(
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_pending_prompt_insert_is_consumed_automatically_on_resume():
     """Same as the ``on_mount`` variant above, but exercises the real
@@ -1854,6 +1899,8 @@ async def test_console_pending_prompt_insert_is_consumed_automatically_on_resume
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_resume_triggered_prompt_insert_survives_stale_session_switch():
     """Regression for the resume wipe-race: if a session switch races ahead
@@ -1916,6 +1963,8 @@ async def test_console_resume_triggered_prompt_insert_survives_stale_session_swi
         assert console._console_visible_draft_session_id == second_session.id
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_consumes_pending_prompt_insert_empty_draft_is_clean_insert():
     """An empty composer draft gets a clean insert -- no separator noise."""
@@ -1942,6 +1991,8 @@ async def test_console_consumes_pending_prompt_insert_empty_draft_is_clean_inser
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_consumes_pending_prompt_insert_appends_to_existing_draft():
     """Library's insert-in-console NEVER clobbers an in-progress draft --
@@ -1972,6 +2023,8 @@ async def test_console_consumes_pending_prompt_insert_appends_to_existing_draft(
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_consumes_pending_prompt_insert_large_body_appends_as_collapsed_token():
     """An oversized appended body still collapses to a display token, exactly
@@ -2002,11 +2055,17 @@ async def test_console_consumes_pending_prompt_insert_large_body_appends_as_coll
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_consumes_pending_prompt_insert_blocked_shows_exact_toast():
     """First-run setup blocked (no provider/model configured): the insert
     shows the exact toast copy, leaves the draft completely untouched, and
     still acknowledges the handoff (no stale re-fire on a later mount)."""
+    from tldw_chatbook.config import save_setting_to_cli_config
+
+    assert save_setting_to_cli_config("chat_defaults", "provider", "")
+    assert save_setting_to_cli_config("chat_defaults", "model", "")
     app = _build_test_app()  # deliberately NOT _configure_native_ready_console
     host = ConsoleHarness(app)
 
@@ -2034,6 +2093,8 @@ async def test_console_consumes_pending_prompt_insert_blocked_shows_exact_toast(
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_consumes_pending_prompt_insert_noop_when_nothing_pending():
     """Nothing pending: no-op, no notify, draft untouched."""
@@ -2062,6 +2123,8 @@ async def test_console_consumes_pending_prompt_insert_noop_when_nothing_pending(
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_rejects_empty_user_only_append_as_noop():
     app = _build_test_app()
@@ -2089,6 +2152,8 @@ async def test_console_rejects_empty_user_only_append_as_noop():
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_library_append_targets_draft_at_consumption_and_preserves_attachment():
     app = _build_test_app()
@@ -2112,6 +2177,8 @@ async def test_console_library_append_targets_draft_at_consumption_and_preserves
         assert composer._pending_attachment_label == "evidence.txt"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_library_append_expired_claim_warns_once_and_discards():
     app = _build_test_app()
@@ -2144,6 +2211,8 @@ async def test_console_library_append_expired_claim_warns_once_and_discards():
         assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_library_append_latest_wins_and_wrong_session_is_discarded():
     app = _build_test_app()
@@ -2178,6 +2247,8 @@ async def test_console_library_append_latest_wins_and_wrong_session_is_discarded
         assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_library_append_stale_system_discards_before_draft_mutation():
     app = _build_test_app()
@@ -2210,6 +2281,8 @@ async def test_console_library_append_stale_system_discards_before_draft_mutatio
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_library_append_missing_composer_releases_for_retry():
     app = _build_test_app()
@@ -2233,6 +2306,8 @@ async def test_console_library_append_missing_composer_releases_for_retry():
         assert composer.draft_text() == "retry me"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.parametrize("transient", ["sync", "composer"])
 @pytest.mark.asyncio
 async def test_console_library_append_expiry_during_transient_release_warns_once(
@@ -2282,6 +2357,8 @@ async def test_console_library_append_expiry_during_transient_release_warns_once
         assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_library_append_expiry_during_cancelled_sync_warns_once():
     now = [129.9]
@@ -2319,6 +2396,8 @@ async def test_console_library_append_expiry_during_cancelled_sync_warns_once():
         assert app.pending_handoffs.claim(HandoffChannel.CONSOLE_PROMPT_INSERT) is None
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_library_system_only_leaves_draft_and_warns_on_persistence_failure(
     monkeypatch,
@@ -2366,6 +2445,8 @@ async def test_console_library_system_only_leaves_draft_and_warns_on_persistence
         )
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_library_append_rolls_back_draft_when_system_mutation_raises(
     monkeypatch,
@@ -2432,6 +2513,8 @@ async def test_console_library_append_rolls_back_draft_when_system_mutation_rais
         assert restored.selection == prompt_undo.selection
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_library_append_rolls_back_when_paste_mutates_then_raises(
     monkeypatch,
@@ -2468,6 +2551,8 @@ async def test_console_library_append_rolls_back_when_paste_mutates_then_raises(
         assert store.session_draft(store.active_session_id) == "before"
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_library_system_only_replaces_stale_prompt_undo(
     monkeypatch,
@@ -2525,6 +2610,8 @@ async def test_console_library_system_only_replaces_stale_prompt_undo(
         assert composer.improvement_undo_available is True
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prefill_command_arms_one_shot_and_confirms():
     app = _build_test_app()
@@ -2546,6 +2633,8 @@ async def test_console_prefill_command_arms_one_shot_and_confirms():
         assert composer.draft_text() == ""  # handled command clears its draft
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prefill_pin_and_clear_round_trip():
     app = _build_test_app()
@@ -2573,6 +2662,8 @@ async def test_console_prefill_pin_and_clear_round_trip():
         assert composer.draft_text() == ""
 
 
+@pytest.mark.bootstrap_profile
+@pytest.mark.requires_cleanup
 @pytest.mark.asyncio
 async def test_console_prefill_pin_seeds_settings_on_settings_less_session():
     """PR #729 Qodo finding 3: a session created without settings (e.g. by a

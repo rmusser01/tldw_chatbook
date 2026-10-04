@@ -269,6 +269,7 @@ CSS_MODULES = [
     # screen_agentic_{library,settings}.tcss sheets.
     "features/_console.tcss",
     "features/_console_panels.tcss",
+    "features/_console_response_rules.tcss",
     "features/_library.tcss",
     "features/_library_panels.tcss",
     "features/_library_artifacts.tcss",

@@ -15,6 +15,8 @@ import re
 import sys
 from pathlib import Path
 
+# Isolated profile subprocesses deliberately omit the script directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from python_style_inventory import inventory_styles
 
 # This script has NO argument parser ON PURPOSE: any invocation re-pins the
@@ -52,9 +54,9 @@ def sheets() -> list[Path]:
 # must never silently bless a regression. core/_variables.tcss is exempt:
 # raw values are legal ONLY in token definitions (ADR-150).
 dim_offenders = [
-    f"{s.relative_to(CSS)}: {len(_DIM.findall(_COMMENT.sub('', s.read_text(encoding='utf-8'))))}"
+    f"{s.relative_to(CSS).as_posix()}: {len(_DIM.findall(_COMMENT.sub('', s.read_text(encoding='utf-8'))))}"
     for s in sheets()
-    if str(s.relative_to(CSS)) != "core/_variables.tcss"
+    if s.relative_to(CSS).as_posix() != "core/_variables.tcss"
     and _DIM.findall(_COMMENT.sub("", s.read_text(encoding="utf-8")))
 ]
 if dim_offenders:

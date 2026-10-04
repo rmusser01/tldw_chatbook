@@ -22754,9 +22754,21 @@ class SettingsScreen(BaseAppScreen):
         else:
             self._refresh_category_button_label(category)
 
+    @on(Button.Pressed, "#settings-response-rules")
+    async def _open_response_rules(self, event: Button.Pressed) -> None:
+        from ..Console_Modules.response_rules import open_profile_rules
+
+        event.stop()
+        await open_profile_rules(self)
+
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.HOOKS:
+            yield Button(
+                "Response rules · this profile",
+                id="settings-response-rules",
+                classes="settings-action",
+            )
             yield _hooks_settings_panel_class()(
                 self._settings_drafts.setdefault(category, SettingsDraft(category)),
                 self._hooks_snapshot,

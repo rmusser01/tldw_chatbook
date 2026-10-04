@@ -38,6 +38,8 @@ UNSPECIFIED_ASSISTANT = object()
 _HYDRATION_NOT_PREPARED = object()
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.response_rules.models import RuleEvidence
+    from tldw_chatbook.Chat.response_rules.store import ResponseRuleStore
     from tldw_chatbook.Agents.fleet_messages import MessageStore
     from tldw_chatbook.Canvas.staging import (
         CanvasPromotionContribution,
@@ -1668,6 +1670,7 @@ class ConsoleChatStore:
         ]
         | None = None,
         on_assistant_default_notice: Callable[[str], None] | None = None,
+        response_rule_store: "ResponseRuleStore | None" = None,
     ) -> None:
         """Initialize the Console chat store.
 
@@ -1711,6 +1714,9 @@ class ConsoleChatStore:
                 a native session activation or active-branch transition.
         """
         self.persistence = persistence
+        self.response_rule_store: ResponseRuleStore | None = None
+        if response_rule_store is not None:
+            self.bind_response_rule_store(response_rule_store)
         self._assistant_defaults_provider = assistant_defaults_provider
         self._on_assistant_default_notice = on_assistant_default_notice
         self.canvas_promotion_participant = canvas_promotion_participant
@@ -2045,6 +2051,11 @@ class ConsoleChatStore:
         # Ephemeral fence for issued speech snapshots. It deliberately lives
         # outside ConsoleChatMessage so it is neither persisted nor restored.
         self._message_speech_revisions: dict[str, int] = {}
+        self._response_rule_evidence_lock = threading.RLock()
+        self._response_rule_results: dict[str, dict[str, RuleEvidence]] = {}
+        self._response_rule_task_roots: dict[str, str] = {}
+        self._response_rule_invalidations: list[Callable[[str, str], None]] = []
+        self._response_rule_completion_holds: dict[str, tuple[int, int] | None] = {}
         # Content-free fence that advances only for live successful
         # completions. It distinguishes duplicate callback delivery from a
         # later regeneration of the same message without retaining text.
@@ -2152,7 +2163,56 @@ class ConsoleChatStore:
             self._message_completion_epoch
         )
         self._settle_message_library_destination(session_id, message_id)
-        self._publish_message_completed(session_id, message_id)
+        if message_id in self._response_rule_completion_holds:
+            self._response_rule_completion_holds[message_id] = (
+                self.message_completion_generation(message_id),
+                self.response_rule_source_version(message_id),
+            )
+        else:
+            self._publish_message_completed(session_id, message_id)
+
+    def subscribe_response_rule_invalidation(
+        self, callback: Callable[[str, str], None]
+    ) -> Callable[[], None]:
+        """Fence native rule sources before user-owned source mutations."""
+        self._response_rule_invalidations.append(callback)
+
+        def unsubscribe() -> None:
+            if callback in self._response_rule_invalidations:
+                self._response_rule_invalidations.remove(callback)
+
+        return unsubscribe
+
+    def invalidate_response_rule_source(self, session_id: str, reason: str) -> None:
+        for callback in tuple(self._response_rule_invalidations):
+            callback(session_id, reason)
+
+    def hold_response_rule_completion(self, message_id: str) -> None:
+        self._message_or_raise(message_id)
+        if message_id in self._response_rule_completion_holds:
+            raise RuntimeError("response_rule_completion_already_held")
+        self._response_rule_completion_holds[message_id] = None
+
+    def release_response_rule_completion(self, message_id: str) -> None:
+        """Publish only the unchanged successful answer's once-owned signal."""
+        pending = self._response_rule_completion_holds.pop(message_id, None)
+        if pending is None:
+            return
+        try:
+            message = self._message_or_raise(message_id)
+            session_id = self.session_id_for_message(message_id)
+            if (
+                message.status == "complete"
+                and self.active_leaf(session_id) == message_id
+                and pending
+                == (
+                    self.message_completion_generation(message_id),
+                    self.response_rule_source_version(message_id),
+                )
+            ):
+                self._publish_message_completed(session_id, message_id)
+        except KeyError:
+            return
 
     def message_completion_generation(self, message_id: str) -> int:
         """Return the process-local generation of a live successful completion."""
@@ -2312,6 +2372,8 @@ class ConsoleChatStore:
         )
         if ephemeral and self.canvas_promotion_participant is not None:
             self.canvas_promotion_participant.activate_session(session.id)
+        if ephemeral and self.response_rule_store is not None:
+            self.response_rule_store.register_temporary(session.id)
         if (
             ephemeral
             and self.canvas_turn_controller is not None
@@ -4905,6 +4967,7 @@ class ConsoleChatStore:
             The session activated after closing, or ``None`` when no sessions remain.
         """
         with self._first_persistence_lock:
+            self.invalidate_response_rule_source(session_id, "closed")
             return self._close_session_locked(session_id)
 
     def _close_session_locked(self, session_id: str) -> ConsoleChatSession | None:
@@ -4967,6 +5030,8 @@ class ConsoleChatStore:
     def _purge_session_runtime_state(self, session_id: str) -> None:
         """Delete one session's exact process-local ownership without DB writes."""
         self._session_or_raise(session_id)
+        if self.response_rule_store is not None:
+            self.response_rule_store.discard_temporary(session_id)
 
         if self.canvas_promotion_participant is not None:
             self.canvas_promotion_participant.discard_session(session_id)
@@ -5015,6 +5080,9 @@ class ConsoleChatStore:
             self._variant_restored_message_ids.discard(message_id)
             self._failed_retry_message_ids.discard(message_id)
             self._message_speech_revisions.pop(message_id, None)
+            with self._response_rule_evidence_lock:
+                self._response_rule_results.pop(message_id, None)
+                self._response_rule_task_roots.pop(message_id, None)
             self._message_completion_generations.pop(message_id, None)
             self._native_parent_by_message.pop(message_id, None)
             self._restored_tree_message_ids.discard(message_id)
@@ -5842,6 +5910,9 @@ class ConsoleChatStore:
             ).hexdigest(),
             "continuation_receipt": cls._canonical_fingerprint_value(
                 acceptance.continuation_receipt
+            ),
+            "machine_followup_receipt": cls._canonical_fingerprint_value(
+                acceptance.machine_followup_receipt
             ),
             "parent_message_id": acceptance.parent_message_id,
             "attachments": cls._canonical_fingerprint_value(acceptance.attachments),
@@ -9505,6 +9576,8 @@ class ConsoleChatStore:
             session.settings != settings
             or session.ephemeral_endpoint_policy is not None
         )
+        if changed:
+            self.invalidate_response_rule_source(session_id, "settings_changed")
         if mark_user_work and changed:
             session.has_user_work = True
         elif not mark_user_work:
@@ -10440,6 +10513,9 @@ class ConsoleChatStore:
 
     def set_workspace_context(self, workspace_context: ConsoleWorkspaceContext) -> None:
         """Replace the active workspace context."""
+        if workspace_context != self.workspace_context:
+            for session_id in tuple(self._sessions):
+                self.invalidate_response_rule_source(session_id, "workspace_changed")
         self.workspace_context = workspace_context
 
     def set_session_project_instruction_state(
@@ -10507,6 +10583,8 @@ class ConsoleChatStore:
         """Replace state only while no voice capability can observe it."""
 
         with self._voice_promotion_state_replacement_scope():
+            for session_id in tuple(self._sessions):
+                self.invalidate_response_rule_source(session_id, "restored")
             self._restore_state_unfenced(
                 sessions=sessions,
                 messages_by_session=messages_by_session,
@@ -10654,6 +10732,9 @@ class ConsoleChatStore:
         self._variant_restored_message_ids.clear()
         self._failed_retry_message_ids.clear()
         self._message_speech_revisions.clear()
+        with self._response_rule_evidence_lock:
+            self._response_rule_results.clear()
+            self._response_rule_task_roots.clear()
         self._message_completion_generations.clear()
         # M2: both keyed by message id, same as the caches immediately
         # above -- previously left uncleared here, so a restore (session
@@ -11934,6 +12015,103 @@ class ConsoleChatStore:
         self._materialize_stream_buffer(message)
         return self._snapshot(message)
 
+    def response_rule_source_version(self, message_id: str) -> int:
+        """Read an exact durable version or native semantic-content fence."""
+        message = self._message_or_raise(message_id)
+        if message.persisted_message_id is not None:
+            try:
+                version = self._persisted_message_version_or_reject(message)
+            except Exception:
+                raise ValueError("rule_source_version_unavailable") from None
+            if version is None:
+                raise ValueError("rule_source_version_unavailable")
+            return version
+        return self._message_speech_revisions[message_id] + 1
+
+    def bind_response_rule_task_root(self, message_id: str, user_message_id: str) -> None:
+        """Pin a host-admitted correction to its original task on this branch."""
+        session_id = self._message_session_index[message_id]
+        path = self.active_path_message_ids(session_id)
+        if user_message_id not in path or self._message_or_raise(user_message_id).role is not ConsoleMessageRole.USER:
+            raise ValueError("rule_source_task_unavailable")
+        with self._response_rule_evidence_lock:
+            self._response_rule_task_roots[message_id] = user_message_id
+
+    def response_rule_task_root(self, message_id: str) -> str | None:
+        """Resolve live or inert durable host ancestry on the actual active branch."""
+
+        with self._response_rule_evidence_lock:
+            root = self._response_rule_task_roots.get(message_id)
+        if root is not None:
+            return root
+        session_id = self._message_session_index[message_id]
+        session = self._session_or_raise(session_id)
+        if (
+            self.response_rule_store is None
+            or session.persisted_conversation_id is None
+        ):
+            return None
+        path = self.active_path_message_ids(session_id)
+        if message_id not in path:
+            return None
+        prefix = path[: path.index(message_id) + 1]
+        nodes = {node_id: self._message_or_raise(node_id) for node_id in prefix}
+        persisted = {
+            m.persisted_message_id: m.id
+            for m in nodes.values()
+            if m.persisted_message_id
+        }
+        current = message_id
+        visited = set()
+        while current not in visited:
+            visited.add(current)
+            message = nodes[current]
+            parent = (
+                self.response_rule_store.repository.historical_machine_parent(
+                    session.persisted_conversation_id, message.persisted_message_id
+                )
+                if message.persisted_message_id
+                else None
+            )
+            if parent is None:
+                return next(
+                    (
+                        node_id
+                        for node_id in reversed(prefix[: prefix.index(current)])
+                        if nodes[node_id].role is ConsoleMessageRole.USER
+                    ),
+                    None,
+                )
+            parent_native = persisted.get(parent)
+            if (
+                parent_native is None
+                or prefix.index(parent_native) >= prefix.index(current)
+                or nodes[parent_native].role is not ConsoleMessageRole.ASSISTANT
+            ):
+                raise ValueError("rule_source_task_unavailable")
+            current = parent_native
+        raise ValueError("rule_source_task_unavailable")
+
+    def record_response_rule_tool_result(self, message_id: str, call_id: str, *, state: str, outcome: str, tool_name: str) -> None:
+        """Retain body-free facts from the real definitive tool callback."""
+        from .response_rules.models import RuleEvidence
+
+        if state not in {"settled", "not_started", "uncertain"} or outcome not in {"succeeded", "failed", "blocked"}:
+            raise ValueError("invalid_rule_dispatch_fact")
+        self._message_or_raise(message_id)
+        ref = f"{message_id}:{call_id}"
+        fact = RuleEvidence(ref, state, outcome, None, f"{tool_name[:128]}: {outcome}")
+        with self._response_rule_evidence_lock:
+            previous = self._response_rule_results.setdefault(message_id, {}).get(ref)
+            if previous is not None and previous != fact:
+                fact = replace(fact, state="uncertain", outcome="unknown")
+            self._response_rule_results[message_id][ref] = fact
+
+    def response_rule_tool_results(self, message_id: str) -> tuple[RuleEvidence, ...]:
+        """Read frozen dispatch facts for one exact native response owner."""
+        with self._response_rule_evidence_lock:
+            return tuple(self._response_rule_results.get(message_id, {}).values())
+
     def projected_trace_calls(
         self,
         persisted_message_id: str,
@@ -12401,6 +12579,8 @@ class ConsoleChatStore:
             raise ValueError("Wait for response to finish before editing this message.")
         session_id = self._message_session_index[message.id]
         previous_content = message.content
+        if content != previous_content:
+            self.invalidate_response_rule_source(session_id, "source_edited")
         if (
             message.role is ConsoleMessageRole.ASSISTANT
             and content != previous_content
@@ -13809,6 +13989,7 @@ class ConsoleChatStore:
         if session_id is None:
             return self._delete_message(message_id)
         with self._fork_source_transition(session_id):
+            self.invalidate_response_rule_source(session_id, "source_deleted")
             return self._delete_message(message_id)
 
     def _delete_message(self, message_id: str) -> ConsoleChatMessage:
@@ -13844,6 +14025,13 @@ class ConsoleChatStore:
         self._project_sync_v2_message_deletes(tombstones)
         for node_id in subtree_ids:
             self._invalidate_generation_attempt(node_id)
+        if (
+            message.persisted_message_id is None
+            and self.response_rule_store is not None
+        ):
+            self.response_rule_store.remove_temporary_sources(
+                session_id, set(subtree_ids)
+            )
         children_map = self._children_by_parent.get(session_id, {})
         # Detach the deleted node from its parent's ordered child list.
         siblings = children_map.get(parent_native_id)
@@ -14139,6 +14327,8 @@ class ConsoleChatStore:
         nodes = self._nodes_by_session.get(session_id, {})
         if message_id is not None and message_id not in nodes:
             raise KeyError(f"Unknown Console message: {message_id}")
+        if message_id != self._active_leaf_by_session.get(session_id):
+            self.invalidate_response_rule_source(session_id, "branch_changed")
         if not self._persist_active_leaf(session_id, message_id):
             raise RuntimeError("Conversation cursor change was refused.")
         previous_leaf = self._active_leaf_by_session.get(session_id)
@@ -18373,6 +18563,7 @@ class ConsoleChatStore:
             raise ValueError("selected_index must reference an existing variant")
         target = message.variants.variants[selected_index]
         session_id = self._message_session_index[message.id]
+        self.invalidate_response_rule_source(session_id, "variant_changed")
         previous_content = message.content
         previous_generation = self._generation_variant(message)
         previous_index = message.variants.selected_index
@@ -18480,6 +18671,8 @@ class ConsoleChatStore:
             return session.persisted_conversation_id
         if self.persistence is None:
             return None
+
+        self.invalidate_response_rule_source(session_id, "saved")
         if type(session.runtime_backend) is not str or session.runtime_backend not in {
             "local",
             "server",
@@ -18877,6 +19070,7 @@ class ConsoleChatStore:
         if not session.ephemeral:
             self.retry_pending_workspace_projection(session_id)
             return None
+        self.invalidate_response_rule_source(session_id, "saved")
         if self.persistence is None:
             return None
         if (
@@ -19166,6 +19360,7 @@ class ConsoleChatStore:
             context_policy_overrides=session.context_policy_overrides,
             contributions=contributions,
             trace_boundary=session.fork_trace_boundary,
+            **({"rule_adoption_session_id": session_id} if self.response_rule_store is not None else {}),
         )
 
         # The transaction has returned and SQLite can no longer roll it back.
@@ -21534,6 +21729,25 @@ class ConsoleChatStore:
         payload_hash = envelope.get("payload_hash")
         if isinstance(payload_hash, str) and payload_hash:
             self._sync_v2_message_versions[stable_key] = payload_hash
+
+    def bind_response_rule_store(self, rules: "ResponseRuleStore") -> None:
+        """Bind one app-owned rules service sharing the exact persistence DB."""
+        from .response_rules.store import ResponseRuleStore
+
+        binder = getattr(self.persistence, "bind_response_rule_store", None)
+        if (
+            not isinstance(rules, ResponseRuleStore)
+            or rules.repository.db is not getattr(self.persistence, "db", None)
+            or not callable(binder)
+        ):
+            raise ValueError("response_rules_persistence_owner_mismatch")
+        if self.response_rule_store is not None and self.response_rule_store is not rules:
+            raise ValueError("response_rules_owner_already_bound")
+        binder(rules)
+        self.response_rule_store = rules
+        for session in getattr(self, "_sessions", {}).values():
+            if session.ephemeral:
+                rules.register_temporary(session.id)
 
     def _session_or_raise(self, session_id: str) -> ConsoleChatSession:
         try:

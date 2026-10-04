@@ -798,6 +798,18 @@ def stage_restore(
                     )
                 if issues:
                     raise ValueError(issues[0])
+                if (
+                    role == "sqlite"
+                    and payload.owner_id == "db.chachanotes.primary"
+                    and plan.local_snapshot is None
+                ):
+                    # This loop contains selected archive payloads only. Retained
+                    # local owners and exact rollback snapshots bypass this route.
+                    from tldw_chatbook.Chat.response_rules.recovery import (
+                        prepare_imported_candidate,
+                    )
+
+                    prepare_imported_candidate(candidate, cancel)
                 if payload.owner_id == "config" and plan.local_snapshot is None:
                     import tomllib
 

@@ -80,6 +80,7 @@ _PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook"
 _RUNTIME_MODULE = "tldw_chatbook/Chat/console_runtime.py"
 
 _VIEW_HOOK_OWNERSHIP = {
+    "response_rules_changed": "view-projection",
     "_chat_dictionary_applier": "app-owned-domain",
     "_world_info_applier": "app-owned-domain",
     "_rag_capture_provider": "runtime-custody",
@@ -608,6 +609,7 @@ def test_view_hook_inventory_contains_only_disposable_projections():
     }
 
     assert set(_VIEW_HOOK_OWNERSHIP) == {
+        "response_rules_changed",
         "_chat_dictionary_applier",
         "_world_info_applier",
         "_rag_capture_provider",
