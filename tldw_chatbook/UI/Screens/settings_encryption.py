@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from loguru import logger
 from textual import on
@@ -155,7 +156,21 @@ def _enable_refused_message(config) -> str:
 
 
 def run_enable(password: str) -> EncryptionActionOutcome:
-    """Encrypt the saved keys (refused when encryption is already on)."""
+    """Encrypt the saved keys (refused when encryption is already on).
+
+    Runs scrypt; call it off the UI thread.
+
+    Args:
+        password: The new master password the user typed (already confirmed
+            and length-checked by the setup dialog).
+
+    Returns:
+        The outcome to show: ``succeeded`` is True when the keys are now
+        encrypted (or already were with this password); ``message`` explains
+        a refusal -- encryption already on, a value still encrypted under an
+        earlier password, or a failed rollback; ``enabled`` and ``unlocked``
+        are re-read from the file and the session afterwards.
+    """
     config = _config()
     was_enabled = config.config_encryption_enabled_on_disk()
     succeeded = bool(config.enable_config_encryption(password))
@@ -173,7 +188,22 @@ def run_enable(password: str) -> EncryptionActionOutcome:
 
 
 def run_change(change: PasswordChange) -> EncryptionActionOutcome:
-    """Re-encrypt the saved keys under a new master password."""
+    """Re-encrypt the saved keys under a new master password.
+
+    Runs scrypt; call it off the UI thread.
+
+    Args:
+        change: The current and new master passwords from the change
+            dialog. The current one is checked against the saved verifier
+            before anything is written.
+
+    Returns:
+        The outcome to show: ``succeeded`` is True when the file now answers
+        to ``change.new``; ``message`` says whether the current password was
+        wrong, the change was refused with nothing written, or a failed
+        rollback may have left the new document; ``enabled`` and
+        ``unlocked`` are re-read afterwards.
+    """
     config = _config()
     if not config.verify_config_encryption_password(change.current):
         enabled, unlocked = _current_state(assumed_enabled=True)
@@ -193,7 +223,21 @@ def run_change(change: PasswordChange) -> EncryptionActionOutcome:
 
 
 def run_disable(password: str) -> EncryptionActionOutcome:
-    """Decrypt the saved keys and turn encryption off."""
+    """Decrypt the saved keys and turn encryption off.
+
+    Runs scrypt; call it off the UI thread.
+
+    Args:
+        password: The master password, checked against the saved verifier
+            before anything is written.
+
+    Returns:
+        The outcome to show: ``succeeded`` is True when the file is now
+        plain text with ``[encryption]`` removed; ``message`` says whether
+        the password was wrong, the change was refused with nothing
+        written, or a failed rollback left the file decrypted; ``enabled``
+        and ``unlocked`` are re-read afterwards.
+    """
     config = _config()
     if not config.verify_config_encryption_password(password):
         enabled, unlocked = _current_state(assumed_enabled=True)
@@ -213,7 +257,7 @@ def run_disable(password: str) -> EncryptionActionOutcome:
 class EncryptionSettingsCard(Vertical):
     """State line, three password-gated actions and an inline result."""
 
-    def __init__(self, *, enabled: bool, unlocked: bool, **kwargs) -> None:
+    def __init__(self, *, enabled: bool, unlocked: bool, **kwargs: Any) -> None:
         """Build the card from the state known at compose time.
 
         Args:
