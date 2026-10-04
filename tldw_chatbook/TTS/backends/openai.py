@@ -7,6 +7,8 @@ import httpx
 from loguru import logger
 
 # Local imports
+from tldw_chatbook.TTS.adapter_types import TTSOperationError
+from tldw_chatbook.TTS.audio_limits import check_buffered_audio_size
 from tldw_chatbook.TTS.audio_schemas import OpenAISpeechRequest
 from tldw_chatbook.TTS.base_backends import (
     APITTSBackend,
@@ -252,7 +254,10 @@ class OpenAITTSBackend(APITTSBackend):
                 async for chunk in response.aiter_bytes(chunk_size=chunk_size):
                     if self.pocket_tts_native:
                         # The streamed header's sizes are placeholders; hold
-                        # the (small) body so they can be repaired below.
+                        # the body so they can be repaired below -- within
+                        # the shared buffered-audio limit (review round 1,
+                        # F14: a long reply is minutes of 24 kHz WAV).
+                        check_buffered_audio_size(len(native_body) + len(chunk))
                         native_body.extend(chunk)
                     else:
                         yield chunk
@@ -288,6 +293,9 @@ class OpenAITTSBackend(APITTSBackend):
                 )
 
             logger.info("OpenAITTSBackend: Successfully completed TTS generation")
+
+        except TTSOperationError:
+            raise
 
         except httpx.HTTPStatusError as error:
             status_code = error.response.status_code

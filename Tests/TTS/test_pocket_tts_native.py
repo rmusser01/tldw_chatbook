@@ -207,3 +207,23 @@ async def test_the_openai_route_on_a_pocket_tts_server_is_still_a_404(
 
     with pytest.raises(ValueError, match="404"):
         await _speak(backend)
+
+
+@pytest.mark.asyncio
+async def test_the_held_pocket_tts_body_is_bounded(
+    pocket_tts_server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review round 1 (F14): the native path holds the whole streamed WAV to
+    repair its header, and a long Console reply is minutes of audio. It now
+    stops at the shared buffered-audio limit with the backends' own error."""
+    from tldw_chatbook.TTS import audio_limits
+    from tldw_chatbook.TTS.adapter_types import TTSOperationError
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(audio_limits, "MAX_BUFFERED_AUDIO_BYTES", 1024)
+    backend = OpenAITTSBackend(
+        {"OPENAI_BASE_URL": f"{pocket_tts_server}/tts", "OPENAI_AUTH_MODE": "none"}
+    )
+
+    with pytest.raises(TTSOperationError, match="too long to buffer"):
+        await _speak(backend)
