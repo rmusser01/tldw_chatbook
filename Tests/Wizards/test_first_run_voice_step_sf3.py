@@ -681,3 +681,52 @@ async def test_voice_copy_controls_and_auto_tick(monkeypatch) -> None:
         )
         assert default.value is True  # ticked itself; counts as acting
         assert step._tested_this_run is True
+
+
+# -- review round 1, F9: a placeholder key is not a key --------------------------
+
+
+@pytest.mark.parametrize(
+    "stored",
+    ("<API_KEY_HERE>", "   ", "enc:v1:not-decrypted"),
+    ids=("placeholder", "blank", "ciphertext"),
+)
+@pytest.mark.asyncio
+async def test_an_unusable_saved_openai_key_is_not_found(monkeypatch, stored) -> None:
+    """The step read saved keys without CLAUDE.md's validity check, so the
+    shipped placeholder read as "key found" and went out as a Bearer token."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    raw = {"api_settings": {"openai": {"api_key": stored}}}
+    step = _step({"COMPREHENSIVE_CONFIG_RAW": raw, "OPENAI_API_KEY": stored})
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step._select_preset_button("setup-voice-preset-official")
+        await pilot.pause()
+
+        assert step.query_one("#setup-voice-key-row").display is True
+        assert step.query_one("#setup-voice-test", Button).disabled is True
+        assert "no OpenAI API key found" in str(
+            step.query_one("#setup-voice-service-status", Static).render()
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_padded_saved_openai_key_is_sent_trimmed(monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    seen: list[object] = []
+
+    async def sample(draft, *, credential=None, **_kwargs):
+        seen.append(credential)
+        return voice_state.VoiceSampleResult(b"valid", "audio/mpeg", "mp3", True)
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", sample)
+    raw = {"api_settings": {"openai": {"api_key": "  sk-test-padded  "}}}
+    step = _step({"COMPREHENSIVE_CONFIG_RAW": raw})
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step._select_preset_button("setup-voice-preset-official")
+        await pilot.pause()
+        step.query_one("#setup-voice-test", Button).press()
+        await pilot.pause(0.2)
+
+    assert seen == ["sk-test-padded"]

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import os
 import tempfile
 from pathlib import Path
 from typing import (
@@ -52,6 +51,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupRadioSet,
 )
 from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker, wizard_work
+from tldw_chatbook.UI.Wizards.first_run_voice_credentials import find_openai_credential
 from tldw_chatbook.UI.Wizards.first_run_voice_omnivoice import OmniVoiceStepBase
 from tldw_chatbook.UI.Wizards.first_run_voice_pickers import (
     VoiceOptionPicker,
@@ -652,58 +652,15 @@ class VoiceSetupStep(OmniVoiceStepBase):
         )
 
     def _find_openai_credential(self) -> tuple[str, bool] | None:
-        """The OpenAI key a test or save would use, and whether Next writes it.
-
-        Order: a key pasted here; then the saved and environment locations
-        Settings reads; then the key the Provider step staged for OpenAI but
-        has not written (Model was skipped). The first and last are written
-        by this step's save.
-        """
-        if self._staged_key is not None:
-            return wizard_state._credential_value_for_boundary(self._staged_key), True
-        app_config = getattr(self.wizard.app_instance, "app_config", {}) or {}
-        if isinstance(app_config, Mapping):
-            persisted = app_config.get("COMPREHENSIVE_CONFIG_RAW")
-            source = persisted if isinstance(persisted, Mapping) else app_config
-            locations = (
-                ("api_settings", "openai", "api_key"),
-                ("openai_api", "api_key"),
-                ("API", "openai_api_key"),
-            )
-            for location in locations:
-                current: object = source
-                for part in location:
-                    if not isinstance(current, Mapping):
-                        current = None
-                        break
-                    current = current.get(part)
-                if isinstance(current, str) and current:
-                    return current, False
-            api_settings = source.get("api_settings")
-            if isinstance(api_settings, Mapping):
-                openai = api_settings.get("openai")
-                if isinstance(openai, Mapping):
-                    environment_name = openai.get("api_key_env_var")
-                    if isinstance(environment_name, str) and environment_name:
-                        environment_value = os.environ.get(environment_name)
-                        if environment_value:
-                            return environment_value, False
-            projected = app_config.get("OPENAI_API_KEY")
-            if isinstance(projected, str) and projected:
-                return projected, False
-        value = os.environ.get("OPENAI_API_KEY")
-        if value:
-            return value, False
-        staged = getattr(self.wizard, "staged_provider_draft", None)
-        if (
-            isinstance(staged, wizard_state.FirstRunProviderDraft)
-            and staged.provider == "openai"
-            and staged.credential.source == "draft"
-            and not getattr(self.wizard, "provider_setup_committed", False)
-        ):
-            value = wizard_state._credential_value_for_boundary(staged.credential)
-            return (value, True) if value else None
-        return None
+        """The OpenAI key a test or save would use, and whether Next writes it."""
+        return find_openai_credential(
+            getattr(self.wizard.app_instance, "app_config", {}) or {},
+            staged_key=self._staged_key,
+            staged_provider_draft=getattr(self.wizard, "staged_provider_draft", None),
+            provider_setup_committed=bool(
+                getattr(self.wizard, "provider_setup_committed", False)
+            ),
+        )
 
     def _existing_openai_credential(self) -> str | None:
         if self._selected_authentication() != "api_key":
