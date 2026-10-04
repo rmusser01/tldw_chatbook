@@ -1,11 +1,11 @@
 ---
 id: TASK-32108
 title: Qualify merged Buddy v1 setup and navigation in Chatbook
-status: In Progress
+status: Done
 assignee:
 - '@codex'
 created_date: 2026-09-09 04:32
-updated_date: 2026-10-04 07:01
+updated_date: 2026-10-04 14:39
 labels: []
 dependencies: []
 priority: high
@@ -19,8 +19,8 @@ Verify the merged independent Buddy and Persona journeys using disposable fresh 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Fresh and upgraded disposable profiles exercise Buddy selection without a Persona, conversation and workspace attachment, Persona defaults, and Static/Dynamic presentation.
-- [ ] #2 Cold entry and cross-screen replies preserve exact conversation identity, drafts, running work, and workspace inbox semantics.
+- [x] #1 Fresh and upgraded disposable profiles exercise Buddy selection without a Persona, conversation and workspace attachment, Persona defaults, and Static/Dynamic presentation.
+- [x] #2 Cold entry and cross-screen replies preserve exact conversation identity, drafts, running work, and workspace inbox semantics.
 - [x] #3 Source-bound rendered evidence, profile isolation, targeted checks, and any remaining native or human-voice verification gaps are recorded without overstating coverage.
 - [x] #4 Any reproduced defect has a focused regression and scoped static verification before a completion claim.
 <!-- AC:END -->
@@ -36,6 +36,7 @@ PR2536 Qodo follow-up: verify all six issue/inline findings against the harness.
 
 2026-09-30 PR2910 Qodo coverage follow-up: ADR required: no. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md (existing profile-lifetime decision). Reason: repair coverage accounting in the existing test-only child helper without changing profile selection or production behavior. Reproduce a child-only line missing from a real parent pytest-cov XML report; when parent coverage is active, reuse pytest-cov and coverage data merging in Tests/private_profile.py. Retain standalone and --no-cov behavior and exact-node/result/timeout guards. Verify a real serial and xdist parent report includes child-only execution, then rerun only fresh/upgrade Buddy journeys and relevant guards with source-bound sanitized receipts. Keep native and physical voice acceptance open.
 Current-dev Chatbook continuation (2026-10-03): verify source 01a2020981c6197e5cd9945e5287567ad977edfe in the attached clean worktree. Reproduce the ordered management/mount failures and config-admission boundary. Repair only the affected test profile ownership: use the existing private-profile child for the full-app management journey, and bootstrap-profile opt-ins for harness cases that read real config. Rerun the 198 selected Buddy render, interaction, listening and speech checks with confined captures. Exercise the supported Chatbook textual-serve UI with a separate disposable profile, including selection, navigation, draft retention and mouse placement; retain explicit native-terminal and human-audio limits. ADR required: no. ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md. Reason: qualify existing behavior and correct test process ownership without changing product storage or runtime contracts.
+2026-10-04 scope reconciliation: reuse the recorded native geometry and post-fix local human voice acceptance instead of repeating already accepted UAT. Close TASK-32108 against its fresh/upgraded profile, exact ownership, presentation, navigation, draft/running-work, inbox and evidence outcomes, all recorded in the October qualification report. Retain TASK-31585 AC9's separate full OpenAI human realtime and exact native revision coverage limits. ADR required: no. ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md. Reason: correct acceptance accounting for existing behavior; no product contract or runtime change.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -81,4 +82,11 @@ Keep In Progress per the native-integration plan. Native Terminal, physical micr
 2026-10-03 realtime qualification continuation: TASK-32108.6 completed the admitted-profile, numeric-loopback and storage teardown repairs. The final 181 targeted cases passed in 340.89 seconds without warnings; descriptor growth fell from 697 to 3. All 338 existing assertions and all 74 original wiring test bodies are unchanged. Scoped static checks found zero introduced Ruff diagnostics, and independent review found no actionable issue.
 
 The new checks and the previous 153 have no duplicate test identities: 334 unique targeted checks pass on the same six product hashes. The isolated supported Chatbook preview was restored with Buddy visible and saved A history confirmed. Normal config metadata and its byte fingerprint were read only; its bytes stayed unchanged. OpenAI settings and the selected/common environment variable provide no key. Native Terminal, human microphone/playback and application-configured live OpenAI acceptance remain open. Updated the report and realtime supplement under Docs/Reviews/artifacts/buddy-uat-20261003/.
+2026-10-04 acceptance reconciliation: earlier continuation notes omitted the post-fix human voice acceptance in qa/buddy-uat-2026-09-05/merged-live-uat/README.md. Run microphone-20260905-587d0a8874 records Buddy listening, successful local transcription, DeepSeek reply and Kokoro playback; the user confirmed Yes, clearly. Native move, resize and geometry restoration are also recorded in native-followup with their original Git/exit provenance limits. The user confirmed these checks were already tested and requested that they not be repeated. The OpenAI key is now present in the isolated UAT profile; only presence was checked and no credential was printed, copied or saved by the agent. No app, provider, microphone, playback or test run was started for reconciliation. All six repair tasks remain Done; existing 334 unique targeted checks retain matching current product/realtime test hashes. Full application-configured OpenAI human realtime and exact native revision limits remain only in TASK-31585 AC9. Report and receipt: Docs/Reviews/2026-10-03-chatbook-buddy-uat.md and acceptance-reconciliation-20261004.json.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Existing qualification and six repair tasks satisfy all four criteria. Recorded 334 unique targeted checks remain source-matched; prior native geometry and post-fix local human voice acceptance are reused. No repeat UAT or new credential operation. Separate TASK-31585 AC9 retains its original narrower coverage limits.
+<!-- SECTION:FINAL_SUMMARY:END -->

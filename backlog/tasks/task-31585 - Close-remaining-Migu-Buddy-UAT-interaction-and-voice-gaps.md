@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-09-05 03:32
-updated_date: 2026-10-04 07:01
+updated_date: 2026-10-04 14:38
 labels: []
 dependencies: []
 priority: high
@@ -93,4 +93,5 @@ Human microphone UAT 2026-09-05: after explicit authorization for 20-second loca
 2026-10-03 realtime qualification continuation: TASK-32108.6 completed the admitted-profile, numeric-loopback and storage teardown repairs. The final 181 targeted cases passed in 340.89 seconds without warnings; descriptor growth fell from 697 to 3. All 338 existing assertions and all 74 original wiring test bodies are unchanged. Scoped static checks found zero introduced Ruff diagnostics, and independent review found no actionable issue.
 
 The new checks and the previous 153 have no duplicate test identities: 334 unique targeted checks pass on the same six product hashes. The isolated supported Chatbook preview was restored with Buddy visible and saved A history confirmed. Normal config metadata and its byte fingerprint were read only; its bytes stayed unchanged. OpenAI settings and the selected/common environment variable provide no key. Native Terminal, human microphone/playback and application-configured live OpenAI acceptance remain open. Updated the report and realtime supplement under Docs/Reviews/artifacts/buddy-uat-20261003/.
+2026-10-04 acceptance reconciliation: earlier continuation notes omitted the post-fix human voice acceptance in qa/buddy-uat-2026-09-05/merged-live-uat/README.md. Run microphone-20260905-587d0a8874 records Buddy listening, successful local transcription, DeepSeek reply and Kokoro playback; the user confirmed Yes, clearly. Native move, resize and geometry restoration are also recorded in native-followup with their original Git/exit provenance limits. The user confirmed these checks were already tested and requested that they not be repeated. The OpenAI key is now present in the isolated UAT profile; only presence was checked and no credential was printed, copied or saved by the agent. No app, provider, microphone, playback or test run was started for reconciliation. All six repair tasks remain Done; existing 334 unique targeted checks retain matching current product/realtime test hashes. Full application-configured OpenAI human realtime and exact native revision limits remain only in TASK-31585 AC9. Report and receipt: Docs/Reviews/2026-10-03-chatbook-buddy-uat.md and acceptance-reconciliation-20261004.json.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

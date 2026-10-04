@@ -18373,3 +18373,17 @@ its four stores on their creating UI thread made the four-case census stable and
 left no SQLite file records. The final 181-case run passed without warnings and
 with total session growth of three descriptors. Keep the owner's close routes and
 leak sentinel; GC cannot retire these retained native handles.
+
+## TASK-32108: read the recorded human acceptance before reopening UAT
+
+On October 4, the Buddy continuation requested another microphone/playback and
+native check and made an OpenAI key a prerequisite. The concise task notes had
+carried these checks forward as pending, while the merged-live UAT README already
+contained post-fix run `microphone-20260905-587d0a8874`, Buddy listening, successful
+reply playback and the user's “Yes, clearly” confirmation. The native follow-up
+also recorded move, resize and restored geometry. The user objected to repeating
+accepted checks. Reconciliation preserved those results and their original source
+limits, closed the qualification task against its actual criteria, and kept the
+full OpenAI human realtime coverage item separate. Read linked acceptance evidence
+before asking for another UAT run; a newer branch or an omitted summary entry does
+not by itself establish a new defect or invalidate human acceptance.

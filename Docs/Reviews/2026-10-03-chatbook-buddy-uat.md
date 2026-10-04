@@ -69,9 +69,9 @@ The initial 109 checks passed 68 and failed 41: seven config-source mismatches a
 
 The three test modules compile and pass formatting checks. Ruff reports the same 20 legacy diagnostics as their prior source and zero introduced diagnostics. Whitespace checks pass. Independent review found no actionable issue and verified the final executed hashes. Product source is unchanged from the four repairs.
 
-These 181 test identities are disjoint from the previous 153: **334 unique passing targeted checks** now qualify the final product sources, aggregated across recorded runs. This is scoped automated qualification. Human microphone/playback and native Terminal acceptance remain open.
+These 181 test identities are disjoint from the previous 153: **334 unique passing targeted checks** now qualify the final product sources, aggregated across recorded runs. This October run is scoped automated qualification. It contains no new human microphone/playback or native Terminal run. Prior acceptance is reconciled below.
 
-Credential preflight read only field presence and the byte fingerprint of the normal config. Its fingerprint stayed unchanged. There is no OpenAI key in modern/legacy settings or the selected/common environment variable. The preview and tests continue to use isolated profiles; no credentials were copied or saved.
+Credential preflight read only field presence and the byte fingerprint of the normal config. Its fingerprint stayed unchanged. At the October 3 preflight, there was no OpenAI key in modern/legacy settings or the selected/common environment variable. The preview and tests continue to use isolated profiles; no credentials were copied or saved.
 
 The prior preview process and tab had closed. A fresh supported Chatbook runtime on port 18770 restored Buddy's saved artwork and placement. Opening Buddy selected saved A and showed its original history; closing it returned to Home with Buddy visible. Its six production hashes match the verified sources. The preview is retained for the next UAT step.
 
@@ -79,9 +79,24 @@ The prior preview process and tab had closed. A fresh supported Chatbook runtime
 
 [Realtime tests, descriptor census, credential preflight and capture receipts](artifacts/buddy-uat-20261003/realtime-audio-verification.json) retain the failed attempts separately from the final pass. Raw protocol/audio logs and credential values are excluded.
 
+## Acceptance reconciliation — 2026-10-04
+
+The continuation summary incorrectly carried already accepted native geometry and local human voice checks forward as pending. The user confirmed that these checks had already been tested and objected to repeating them. This correction reuses existing evidence and changes no production code.
+
+- [Native move, resize and restored geometry](../../qa/buddy-uat-2026-09-05/native-followup/README.md) were recorded on September 5. Their original limits on exact Git revision and native exit attribution remain intact.
+- [Post-fix human voice acceptance](../../qa/buddy-uat-2026-09-05/merged-live-uat/README.md#post-fix-human-voice-acceptance) records run `microphone-20260905-587d0a8874`: Buddy listened, local transcription recognized the phrase, DeepSeek returned a reply, Kokoro played it, and the user confirmed “Yes, clearly.” The original source attribution is preserved.
+- The [production OpenAI session probe](../../qa/buddy-uat-2026-09-05/merged-live-uat/codex-oauth-realtime-provider.json) already completed its synthetic reply and returned 105600 output PCM bytes. Its scope excludes microphone input and physical playback.
+- The October repairs retain their recorded 334 unique targeted passes. Current product and realtime test hashes match the existing receipts. No test, provider request, microphone capture or playback was repeated for this reconciliation.
+
+The user has now saved an OpenAI key in the isolated UAT profile. Only its presence was checked; no credential value was printed, copied or saved by the agent. Credential availability does not trigger another UAT run.
+
+TASK-32108's fresh/upgraded profile, binding, presentation, navigation, draft, running-work and inbox outcomes are covered by its recorded qualification and repair evidence. Its four acceptance criteria are complete. TASK-31585 AC9 retains its narrower exact-native-revision and full OpenAI human realtime coverage limits as a separate item. Repeating already accepted Buddy checks requires a new failure, a relevant product change or a user request.
+
+[Reconciliation receipt](artifacts/buddy-uat-20261003/acceptance-reconciliation-20261004.json) records the reused evidence hashes and scope. Earlier receipts are unchanged.
+
 ## Coverage limits and retained attempts
 
-- TASK-32108 remains In Progress: native Terminal interaction, physical microphone/playback and application-configured OpenAI realtime acceptance remain open under TASK-31585. Server React Buddy success contributes no Chatbook acceptance evidence.
+- TASK-32108 is closed against its four recorded qualification outcomes. TASK-31585 AC9 retains the separate exact-native-revision and full application-configured OpenAI human realtime coverage limits. Earlier Chatbook native and local human voice acceptance is preserved; server React evidence remains separate.
 - Draft preservation covers navigation and modal closure. No unsent draft durability across process exit is claimed.
 - Two older worker-group guards failed in the scoped lifecycle run; unchanged base source reproduces both failures (an existing ungrouped worker and a moved summarize dispatch). The other 11 checks passed, with one existing expected failure. Those unrelated checks are not claimed green.
 - Older cold-resume expectations reproduced seven failures with the original base method. Their exploratory edits were removed. The full suite was not run.
