@@ -59,8 +59,8 @@ from tldw_chatbook.Utils.input_validation import (
 )
 
 if TYPE_CHECKING:
-    from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
     from tldw_chatbook.Chat.console_trace_repository import TraceForkBoundary
+    from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 
 CONSOLE_FORK_FINGERPRINT_JSON_MAX_BYTES = 64 * 1024
