@@ -630,6 +630,14 @@ def normalize_models_response(
         if model_id in seen_model_ids:
             continue
         seen_model_ids.add(model_id)
+        try:
+            metadata = _safe_model_metadata(item)
+        except ValueError:
+            # One model's oversized details must not cost the user the whole
+            # list: Vercel's tiered pricing (270 items) listed none of its 407
+            # models (TASK-34363). Metadata only feeds the inferred-vision hint,
+            # so this model shows capability "unknown" instead.
+            metadata = {}
         models.append(
             DiscoveredModel(
                 provider=provider,
@@ -639,7 +647,7 @@ def normalize_models_response(
                 source="runtime_discovered",
                 endpoint_fingerprint=endpoint_fingerprint,
                 discovered_at=now_iso,
-                metadata_raw_safe=_safe_model_metadata(item),
+                metadata_raw_safe=metadata,
             )
         )
 
