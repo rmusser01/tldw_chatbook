@@ -1,5 +1,7 @@
 """Authenticated later snapshots preserve current independently owned YAML."""
 
+import errno
+import os
 import zipfile
 from dataclasses import replace
 from pathlib import Path
@@ -97,7 +99,15 @@ def test_later_snapshot_preserves_current_eval_with_new_inventory_id(
 
 
 @pytest.mark.parametrize(
-    "change", ["removed", "ambiguous", "owner", "dependency", "missing", "alias"]
+    "change",
+    [
+        "removed",
+        "ambiguous",
+        "owner",
+        "dependency",
+        "missing",
+        "hardlink" if os.name == "nt" else "alias",
+    ],
 )
 def test_later_snapshot_requires_exact_current_preserved_owner(
     rolled_back_eval, change
@@ -130,11 +140,16 @@ def test_later_snapshot_requires_exact_current_preserved_owner(
     else:
         actual = selected.with_suffix(".actual")
         selected.rename(actual)
-        selected.symlink_to(actual)
+        if change == "hardlink":
+            os.link(actual, selected)
+        else:
+            selected.symlink_to(actual)
     with pytest.raises(
-        (ValueError, FileNotFoundError),
-        match="local_snapshot_preservation_unverified|No such file|destination_alias",
-    ):
+        FileNotFoundError if change == "missing" else ValueError,
+        match=None
+        if change == "missing"
+        else "local_snapshot_preservation_unverified|destination_alias",
+    ) as caught:
         preview_rollback(
             journal.operation_id,
             control_root=journal.root.parent,
@@ -143,10 +158,12 @@ def test_later_snapshot_requires_exact_current_preserved_owner(
             cancel=Event(),
             acknowledged_credential_issues=("credential_format_unreadable",),
         )
+    if change == "missing":
+        assert caught.value.errno == errno.ENOENT
 
 
 @pytest.mark.parametrize("proof", ["ordinary", "changed", "restore_preserved"])
-def test_partial_group_requires_authenticated_preserved_source(
+def test_partial_restore_respects_preserved_source_authority(
     rolled_back_eval, tmp_path, proof
 ):
     from tldw_chatbook.Backup_Recovery import archive_reader, recovery_copies
@@ -174,7 +191,30 @@ def test_partial_group_requires_authenticated_preserved_source(
     snapshot = approved.local_snapshot
     destinations = {**dict(approved.destinations), **dict(approved.selectors)}
     if proof == "ordinary":
-        snapshot = None
+        before = selected.read_bytes()
+        ordinary = plan_restore(
+            archive,
+            mode="replace",
+            destinations=destinations,
+            target=target,
+            safety_scope=approved.safety_scope,
+            profile_names=dict(approved.profile_names),
+            acknowledged_credential_issues=approved.acknowledged_credential_issues,
+        )
+        doc = archive_reader.verify_sealed(archive)
+        eval_row = next(row for row in doc.files if row.owner_id == "eval.definitions")
+        # Eval depends on config; restoring config does not select its dependents.
+        assert ordinary.local_snapshot is None
+        assert eval_row.root_id not in dict(ordinary.destinations)
+        assert (eval_row.logical_id, selected) in ordinary.preserve
+        assert selected not in dict(ordinary.restore).values()
+        assert selected not in dict(ordinary.retire).values()
+        assert set(dict(ordinary.restore)) & {row.logical_id for row in doc.files} == {
+            "profile:profile:config",
+            "profile:profile:research.local",
+        }
+        assert selected.read_bytes() == before
+        return
     elif proof == "changed":
         snapshot = replace(snapshot, rollback_digest="0" * 64)
     else:
