@@ -4,11 +4,17 @@ The live first send after setup read: 'This request cannot fit the selected
 model. Response reservation and safety margin leave no model input capacity.
 Summarizing older turns cannot make enough room. Repair the model limit,
 reduce mandatory context or the response maximum, or allow older turns to be
-omitted.' -- internal terms, no model named, no way to fix it, and every
-Retry appended a second copy of the same row. The refusal now names the model
-and the real limiting reason in plain words, says the context size isn't known
-only when it isn't, names Switch model and Set context size, and a Retry that
-is refused again appends nothing new.
+omitted.' -- internal terms, no model named, no way to fix it, under a
+'Response accepted; waiting for dispatch' panel whose Retry could only be
+refused again.
+
+TASK-34350 (merged to dev first, owner ruling 2026-10-03) now owns the copy
+and refuses a composer send before it is committed: the alert names the
+model, what fills the window and the setting that changes it, and says when
+the window is an estimate and where to set the real one. These tests pin that
+outcome for AC#3, and pin AC#3's own half for a turn the context preflight
+refuses AFTER it was accepted (a send that skips the pre-commit check): the
+card reads 'Not sent', and Retry is refused for every caller.
 
 Real controller, real store and real ChaChaNotes persistence; only the
 network is faked (the harness of ``test_console_compaction_live_session``).
@@ -31,6 +37,13 @@ from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverri
 pytestmark = pytest.mark.bootstrap_profile
 
 _UNKNOWN_MODEL = "brand-new-model-x"
+#: The context policy's internal reasons, which must never reach the user.
+_POLICY_JARGON = (
+    "Response reservation and safety margin leave no model input capacity",
+    "Mandatory request material",
+    "Repair the model limit",
+    "cannot fit the selected model",
+)
 
 
 class _UnknownWindowGateway(_LiveProviderGateway):
@@ -59,25 +72,26 @@ async def test_unknown_window_refusal_names_the_model_and_the_fix(
         overrides=ConsoleContextPolicyOverrides(),
     )
 
-    await controller.submit_draft("hello there", session_id="session-1")
+    result = await controller.submit_draft("hello there", session_id="session-1")
 
     assert gateway.stream_calls == 0, "the refusal must happen before dispatch"
+    assert result.accepted is False and result.should_clear_draft is False
     rows = [row for row in _system_rows(store) if _UNKNOWN_MODEL in row]
     assert len(rows) == 1, _system_rows(store)
     copy = rows[0]
-    assert "context size isn't known" in copy
-    assert "Switch model" in copy and "Alt+M" in copy
-    assert "Set context size" in copy
-    for jargon in (
-        "Response reservation",
-        "safety margin",
-        "mandatory context",
-        "Repair the model limit",
-    ):
+    assert copy.startswith("Your message was not sent:")
+    # The cause and its setting, and the window flagged as a guess with
+    # where to set the real one -- only because it is one.
+    assert "Max tokens" in copy
+    assert "(an estimate)" in copy
+    assert "F4 Settings > Providers & Models" in copy
+    for jargon in _POLICY_JARGON:
         assert jargon not in copy
-
-    # A Retry that is refused again for the same reason adds no second row.
-    await controller.retry_dispatch_recovery("session-1")
+    # Refused before commit: no 'Response accepted' recovery panel, and no
+    # Retry that could append a second copy of the row.
+    assert store.dispatch_recovery_for_session("session-1") is None
+    retry = await controller.retry_dispatch_recovery("session-1")
+    assert retry.accepted is False
     assert [row for row in _system_rows(store) if _UNKNOWN_MODEL in row] == [copy]
 
 
@@ -103,8 +117,11 @@ async def test_a_known_window_refusal_never_claims_the_size_is_unknown(
     assert gateway.stream_calls == 0
     rows = [row for row in _system_rows(store) if "gpt-test-live" in row]
     assert len(rows) == 1, _system_rows(store)
+    assert "estimate" not in rows[0]
     assert "isn't known" not in rows[0]
-    assert "Switch model" in rows[0]
+    assert "1,000-token context window" in rows[0]
+    for jargon in _POLICY_JARGON:
+        assert jargon not in rows[0]
 
 
 @pytest.mark.asyncio
@@ -130,7 +147,12 @@ async def test_a_refused_send_reads_not_sent_and_names_the_working_path(
         overrides=ConsoleContextPolicyOverrides(),
     )
 
-    await controller.submit_draft("hello there", session_id="session-1")
+    # A send that skips TASK-34350's pre-commit check (here one that keeps the
+    # composer, as a buddy-conversation send does) is refused by the context
+    # preflight after it was accepted, so it has a recovery owner.
+    await controller.submit_draft(
+        "hello there", session_id="session-1", preserve_composer=True
+    )
 
     def shown_actions():
         # The card's own projection: what the user sees and can press.
@@ -184,7 +206,9 @@ async def test_the_controller_itself_refuses_retry_for_a_refused_send(
         gateway=_UnknownWindowGateway(),
         overrides=ConsoleContextPolicyOverrides(),
     )
-    await controller.submit_draft("hello there", session_id="session-1")
+    await controller.submit_draft(
+        "hello there", session_id="session-1", preserve_composer=True
+    )
     rows_before = list(_system_rows(store))
 
     result = await controller.retry_dispatch_recovery("session-1")
@@ -220,3 +244,21 @@ def test_the_store_carries_no_predispatch_side_table() -> None:
     store = ConsoleChatStore()
     assert not hasattr(store, "_predispatch_blocks")
     assert not hasattr(ConsoleChatStore, "note_predispatch_block")
+
+
+def test_a_repeated_preflight_refusal_row_is_recognised() -> None:
+    """A retried turn the preflight refuses again for the same reason must
+    not append a second copy of the row the session already ends with."""
+    from tldw_chatbook.Chat.console_capacity_refusal import is_repeat_of_last_row
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    store = ConsoleChatStore()
+    store.create_session(session_id="s", title="Chat 1")
+    store.append_message("s", role=ConsoleMessageRole.SYSTEM, content="Refused.")
+
+    assert is_repeat_of_last_row(store, "s", "Refused.")
+    assert not is_repeat_of_last_row(store, "s", "Refused for another reason.")
+    store.append_message("s", role=ConsoleMessageRole.USER, content="again")
+    assert not is_repeat_of_last_row(store, "s", "Refused.")
+    assert not is_repeat_of_last_row(store, "no-such-session", "Refused.")

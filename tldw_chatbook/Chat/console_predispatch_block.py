@@ -10,6 +10,10 @@ can only meet the same refusal: live, Retry after switching model with Alt+M
 failed again under the old model. This module presents such an owner as not
 sent, with Retry disabled and the working path named instead: change the
 setting, Discard, then Resend the message (Resend uses current settings).
+Since TASK-34350 a composer send that cannot fit is refused before it is
+committed, so this owner arises only for a send that skips that check (a
+queued prompt, or one that keeps the composer as a buddy-conversation send
+does).
 
 Which turns were refused before dispatch is recorded here, by assistant
 message id, not in the store (review round 1, F8: the store is over its size
@@ -103,10 +107,31 @@ def claim_offered_action(
     session_id: str,
     recovery: ConsoleDispatchRecoveryState,
     action_id: ConsoleDispatchRecoveryActionId,
-) -> ConsoleDispatchRecoveryState | None:
-    """Claim ``action_id`` only when the presented owner offers it enabled."""
+) -> tuple[ConsoleDispatchRecoveryState | None, str]:
+    """Claim ``action_id`` only when the presented owner offers it enabled.
+
+    The controller's Retry goes through here, so a turn refused before
+    dispatch is refused for every caller, not only on its card (F13).
+
+    Args:
+        store: The Console chat store that owns the recovery.
+        session_id: The owner's session.
+        recovery: The raw dispatch owner.
+        action_id: The recovery action to claim.
+
+    Returns:
+        ``(claimed owner, "")``, or ``(None, why)`` where ``why`` is the
+        presented action's disabled reason, else a generic refusal.
+    """
     shown = presented_owner(recovery) or recovery
     action = next((a for a in shown.actions if a.action_id is action_id), None)
-    if action is None or not action.enabled:
-        return None
-    return store.claim_dispatch_recovery_action(session_id, action_id)
+    claimed = (
+        store.claim_dispatch_recovery_action(session_id, action_id)
+        if action is not None and action.enabled
+        else None
+    )
+    if claimed is not None:
+        return claimed, ""
+    if action is not None and action.disabled_reason:
+        return None, action.disabled_reason
+    return None, "That response recovery action is unavailable."

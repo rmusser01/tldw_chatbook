@@ -13573,23 +13573,12 @@ class ConsoleChatController:
             }
             else ConsoleDispatchRecoveryActionId.RETRY_RESPONSE
         )
-        from tldw_chatbook.Chat import console_predispatch_block as predispatch
+        from tldw_chatbook.Chat.console_predispatch_block import claim_offered_action
 
         # TASK-34100.5 review (F13): claim only what the presented card offers.
-        shown = predispatch.presented_owner(recovery)
-        claimed = predispatch.claim_offered_action(self.store, session_id, shown, action_id)
+        claimed, refusal = claim_offered_action(self.store, session_id, recovery, action_id)
         if claimed is None:
-            action = next(
-                (item for item in shown.actions if item.action_id is action_id),
-                None,
-            )
-            return ConsoleSubmitResult(
-                False,
-                False,
-                action.disabled_reason
-                if action is not None and action.disabled_reason
-                else "That response recovery action is unavailable.",
-            )
+            return ConsoleSubmitResult(False, False, refusal)
         retry_attempt_id: str | None = None
         generation_token: int | None = None
         try:

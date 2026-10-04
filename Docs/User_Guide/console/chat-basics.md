@@ -93,24 +93,28 @@ again without forking, including after you reopen the conversation — see
 
 ### When a message doesn't fit the model
 
-If a message can't fit the selected model, Console refuses it before
-anything is sent and says why in one system line that names the model, for
-example "brand-new-model-x's context size isn't known, so chatbook assumed
-4,096 tokens and reserved 4,096 of them for the reply, and this message can't
-fit. Switch model (Alt+M) to one with a larger, known window, or Set context
-size: add a context_window for brand-new-model-x under
-model_capabilities.models in config.toml." It says the size "isn't known"
-only when it really isn't; a known window that the reply limit fills asks
-you to lower the reply limit (max tokens) instead.
+If compacting older turns cannot make a message fit the selected model,
+Console refuses it before anything is sent or saved, and the message stays in
+the composer. One system line names the model, what fills its window and the
+setting that changes it, for example "Your message was not sent:
+brand-new-model-x's 4,096-token context window (an estimate) is used up by the
+response reservation, Max tokens (4,096), and the safety margin, so compacting
+older turns cannot make room. Lower Max tokens in Conversation settings >
+Model and generation. This model's context window is an estimate; if it is
+larger, set the real value in F4 Settings > Providers & Models." It mentions
+an estimate only when the window really is one. Switching to a model with a
+larger window (Alt+M) also works. [When a chat reaches its context
+limit](context-and-rag.md#when-a-chat-reaches-its-context-limit) lists each
+cause and its fix.
 
-The recovery card above the composer then reads "Not sent — this message
-doesn't fit the selected model. Change a setting above, then Discard and
-Resend the message." **Retry response** stays disabled: it would replay the
-message exactly as it was accepted, with the same model and reply limit, so
-it could only be refused again. Change the model (Alt+M) or the limit, press
-**Discard**, then select your message and press **r** (Resend), which sends
-it with the current settings. A refused message never adds a second copy of
-the same line.
+A message that was already accepted when it was refused (a queued prompt, for
+example) gets a recovery card above the composer instead: "Not sent — this
+message doesn't fit the selected model. Change a setting above, then Discard
+and Resend the message." **Retry response** stays disabled: it would replay
+the message exactly as it was accepted, with the same model and reply limit,
+so it could only be refused again. Change the model (Alt+M) or the limit,
+press **Discard**, then select your message and press **r** (Resend), which
+sends it with the current settings.
 
 ### When a reply fails
 
