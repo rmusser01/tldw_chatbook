@@ -60,7 +60,15 @@ class SetupBusyStatus(Static):
         self.display = False
 
     def start(self, label: str) -> None:
-        """Time a Next doing ``label`` (from ``busy_label_for``)."""
+        """Start timing a Next; the line shows only if it runs past 400 ms.
+
+        Any earlier timing is stopped first, so a new Next restarts the clock.
+
+        Args:
+            label: The work the Next waits for, as ``busy_label_for`` names
+                it (a short present-tense line ending in an ellipsis). It is
+                shown as given, with the elapsed seconds appended from 2 s.
+        """
         self.stop()
         self._label = label
         self._started_at = time.monotonic()
