@@ -68,15 +68,21 @@ def _persist_setup(model: str = "model-a") -> None:
     )
 
 
-def _handoff_settled(app) -> bool:
-    store = app.pending_handoffs
-    if store.has_pending(HandoffChannel.CONSOLE_FIRST_CHAT):
-        return False
-    claim = store.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
-    if claim is None:
-        return True
-    store.release(claim)
-    return False
+def _staged_revision(app) -> int:
+    """The staged handoff's exact revision (a claim+release requeues it)."""
+    claim = app.pending_handoffs.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
+    assert claim is not None
+    assert app.pending_handoffs.release(claim)
+    return claim.revision
+
+
+def _handoff_status(app, revision: int) -> str:
+    """Review round 1 (F12): ask for the exact revision's state. A claim that
+    leaked in flight reads 'in_flight' here; ``claim() is None`` could not
+    tell it from a settled one."""
+    return app.pending_handoffs.exact_revision_status(
+        HandoffChannel.CONSOLE_FIRST_CHAT, revision
+    )
 
 
 def _first_mount_app(monkeypatch, notices: list[tuple[str, str]]):
@@ -107,6 +113,7 @@ async def test_start_chatting_through_consoles_first_mount_warns_nothing(
             assert not any(isinstance(s, ChatScreen) for s in app.screen_stack)
             staged_at = get_runtime_config_snapshot().generation
             assert SetupWizardContainer(app)._stage_console_first_chat_handoff()
+            revision = _staged_revision(app)
 
             app.handle_first_run_wizard_result(
                 {"completed": True, "exit_route": TAB_CHAT}
@@ -123,7 +130,12 @@ async def test_start_chatting_through_consoles_first_mount_warns_nothing(
             assert get_runtime_config_snapshot().generation > staged_at
             assert [text for text, severity in notices if severity == "warning"] == []
             assert not any("Provider settings changed" in text for text, _ in notices)
-            await _wait_until(pilot, lambda: _handoff_settled(app))
+            await _wait_until(pilot, lambda: _handoff_status(app, revision) == "settled")
+            # Review round 1 (C-F8): re-check after the settle wait (a late
+            # warning would have been missed above), and count: the first-run
+            # handoff raises at most one notice (AC#11).
+            assert [text for text, severity in notices if severity == "warning"] == []
+            assert len(notices) <= 1, notices
             shown = console._session._ensure_active_console_session_settings()
             assert (provider_config_key(shown.provider), shown.model) == (
                 "custom",
@@ -167,7 +179,11 @@ async def test_a_default_changed_after_start_chatting_names_the_model_in_use(
                 lambda: isinstance(app.screen, ChatScreen) and app.screen.is_mounted,
             )
             console = app.screen
-            await _wait_until(pilot, lambda: _handoff_settled(app))
+            await _wait_until(
+                pilot,
+                lambda: _handoff_status(app, claim.revision)
+                not in {"pending", "in_flight"},
+            )
             await pilot.pause(0.3)
 
             store = console._session._ensure_console_chat_store()
