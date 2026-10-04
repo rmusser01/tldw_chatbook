@@ -291,6 +291,9 @@ def chat_with_deepseek(
             payload=data,
             streaming=current_streaming,
             finish_policy=_FINISH_POLICY,
+            # DeepSeek emits this documented choice field even when disabled.
+            # Keep the allowance provider-scoped for both bodies and SSE.
+            allowed_choice_keys=frozenset({"logprobs"}),
         )
     except HostedChatProtocolError:
         duration = time.time() - start_time

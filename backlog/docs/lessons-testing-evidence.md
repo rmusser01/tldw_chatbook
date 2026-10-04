@@ -18399,3 +18399,23 @@ The same test hook assumed every native UI sync had a current Worker. Real attac
 ## A matching filename baseline can still embed shifted source locations (PR3011, 2026-10-04)
 
 **Incident.** The Console-command integration on tested `37340608a7233c74b7e6bb94751fcfaa7052851b` had286 Ruff findings on both it and dev `8c4dfe59a243ce0cec8e131aff3935646c64b298`, using the same real module filenames and repository configuration. A comparison of complete messages still reported one introduced F811 because its existing duplicate `on_button_pressed` warning embeds the earlier definition's line number, shifted by the retained Buddy edits. The paired warning kept the same code, function and occurrence count. Normalizing only that F811 reference-location field gave zero introduced findings; the raw location difference is retained in `pr3011-command-dev-20261004.json`. Compare diagnostic identity and multiplicity under matching filename context, and preserve explicitly checked location differences in the receipt.
+## Captured model retries need the real controller and the actual provider parser
+
+**TASK-34367 / TASK-34368, 2026-10-04.** Live DeepSeek setup received HTTP 200,
+but the strict parser rejected the documented choice-level `logprobs: null`.
+The adapter wrapped that as a retryable provider failure. The agent bridge
+classified the next attempt as TOOL_LOOP while the first trace remained
+DISPATCH_STARTED: the store deferred its ERROR handoff until the one assistant
+owning both attempts became terminal. The next call therefore refused with
+`trace_tool_chain_unavailable`. Isolated ownership fixes and gateway tests did
+not exercise this ordering.
+
+Use a real controller, gateway, store and SQLite trace ledger for a typed
+429/500 -> successful retry, both before and after a real tool response. Also
+feed documented complete/SSE envelopes through the actual provider adapter;
+mocking parsed reply strings misses the trigger. Assert ordered durable call
+states and the mounted recovery/composer surfaces. Fault sealing, cancel its
+await and later save a real assistant owner to test custody and settlement
+fingerprints. Retry negatives must include changed system content in both
+single-preamble and distinct-role formats, because unchanged message rows alone
+do not prove unchanged provider input.
