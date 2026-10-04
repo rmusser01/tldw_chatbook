@@ -899,6 +899,8 @@ gains "Console: …" entries for these same actions. Slash commands
 (`/prompt`, `/system`, `/skills`, `/prefill`, `/generate-image`, `/steer`,
 `/redirect`, `/stop`, `/emergency-stop`, `/rewind`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
 
+**Learning a response rule.** After a completed answer, `/omfg <what was wrong>` drafts and tests a structured check for this Chat, then attempts to repair the answer while retaining completed work. `/rules` opens its manager; Workspace and current-profile promotion are explicit. See [Response rules](../../backlog/docs/console-response-rules.md) for testing, limits and local recovery behavior.
+
 **Steering a running turn.** `/steer <guidance>` delivers text into the
 *currently running* agent turn — it is read before the next model call, after
 the in-flight tool batch finishes, so it never interrupts a tool mid-write.

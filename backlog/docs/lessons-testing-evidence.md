@@ -17753,3 +17753,8 @@ pytest temp dir (36); the Linux runner's shorter path gives 26. The 73 was the
 billed window, about one run in ten; the census now holds that probe still for
 the phase. Pin `os_opens` at the depth the gate actually runs at (the default
 temp dir, or CI's), and trace callers before calling an upward step "jitter".
+
+
+## Keep the gateway when qualifying Console dispatch
+
+**Console response rules / TASK-34362, 2026-10-04.** An integrated composer test initially replaced the gateway's streaming and auxiliary methods. Text arrived, but the gateway's physical request handoff and completion signals never ran; the durable dispatch checkpoint remained active and correctly refused the subsequent native repair. Scripting only HTTP transport retained the actual gateway, provider readiness, private helper leases and trace settlement. That real route then exposed an empty-origin plugin-context attribution defect, which the method-level double had hidden. Test doubles must sit below the owner whose lifecycle is being qualified; a visible assistant answer alone does not establish physical or durable settlement.

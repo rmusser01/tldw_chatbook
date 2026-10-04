@@ -772,3 +772,5 @@ For project questions and feature requests, open a
 [GitHub issue](https://github.com/rmusser01/tldw_chatbook/issues). For security
 issues, do not publish sensitive details in a public issue; contact the
 maintainer privately at [contact@rmusser.net](mailto:contact@rmusser.net).
+
+Console: [learned response rules](backlog/docs/console-response-rules.md) with `/omfg` and `/rules`.
