@@ -200,11 +200,15 @@ class DefaultModelPicker(ModelSearchPicker):
     def on_mount(self) -> None:
         """Give the field the one-row Connect edge (task-1586).
 
-        The base ``on_mount`` still runs after this one (MRO dispatch).
+        Every card compose builds a fresh picker, so the screen's current
+        discovery listing is laid over it again here: a pane rebuild or a
+        category round trip keeps the Served now rows the listing still
+        shows. The base ``on_mount`` still runs after this one (MRO dispatch).
         """
         self.query_one("#model-search-picker-input", Input).add_class(
             "settings-compact-input"
         )
+        self.screen._refresh_model_picker_discovered()
 
     def _current_provider(self) -> str | None:
         # A manual provider key leaves the provider Select on its manual
@@ -224,7 +228,9 @@ class DefaultModelPicker(ModelSearchPicker):
             ).highlighted = self._committed_index
 
     def _cancel_edit(self, event: Message) -> None:
-        if not self.custom_mode:
+        if self._holds_invalid_custom_id():
+            self._roll_back_invalid_custom_id()
+        elif not self.custom_mode:
             # An unfinished filter is dropped and the list closes.
             super()._cancel_edit(event)
         # task-1560: one Esc also leaves the field, so the footer's "Esc, s"
@@ -232,6 +238,40 @@ class DefaultModelPicker(ModelSearchPicker):
         # after any refocus the cancel itself queued.
         event.stop()
         self.app.call_later(self.screen.set_focus, None)
+
+    def _restore_committed_display_after_blur(self) -> None:
+        focused = self.app.focused
+        left = focused is None or self not in focused.ancestors_with_self
+        if left and self._holds_invalid_custom_id():
+            self._roll_back_invalid_custom_id()
+            return
+        super()._restore_committed_display_after_blur()
+
+    def _holds_invalid_custom_id(self) -> bool:
+        """Whether the field holds typed text that is not a usable model id.
+
+        Returns:
+            True in Custom ID mode when the text is not blank and is not
+            bounded single-line text (AC#5); a blank field clears the model.
+        """
+        if not self.custom_mode or not self.is_mounted:
+            return False
+        typed = self.query_one("#model-search-picker-input", Input).value
+        return bool(typed.strip()) and self.value is None
+
+    def _roll_back_invalid_custom_id(self) -> None:
+        """Put back the model held before Custom ID when an invalid id is left.
+
+        The invalid text is only ever explained by the status line, which is
+        hidden once the picker loses focus, so it never stays in the row.
+        """
+        previous = self._model_before_custom
+        self.set_model_value(previous)
+        self.post_message(self.ModelValueChanged(previous, custom=False))
+        self.app.notify(
+            f"Invalid model ID not kept; the model is still {previous or 'unset'}.",
+            severity="warning",
+        )
 
 
 def open_provider_list(screen: SettingsScreen) -> None:

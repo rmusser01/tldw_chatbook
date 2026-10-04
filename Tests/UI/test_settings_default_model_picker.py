@@ -37,7 +37,7 @@ from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
     MergedModelEntry,
     ModelDiscoveryResult,
 )
-from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId
+from tldw_chatbook.UI.Screens.settings_screen import SettingsCategoryId, SettingsScreen
 from tldw_chatbook.Widgets.model_search_picker import CURRENT_MARK, ModelSearchPicker
 
 _SIZE = (211, 44)
@@ -344,6 +344,85 @@ async def test_an_unlisted_model_id_is_entered_through_custom_id_and_validated(
         assert adapter.value == ""
         assert "Invalid model ID" in str(status.renderable)
         assert not screen._provider_setting_values_mapping().get("model")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("leave", ["escape", "focus-moves-away"])
+async def test_an_invalid_custom_id_is_rolled_back_when_the_field_is_left(
+    request, monkeypatch, leave
+):
+    """AC#5 (review round 1, I2): an invalid Custom ID never outlives the
+    field. Leaving it puts back the model held before Custom ID, so the
+    footer's "Esc, s" saves that model; it neither stages an empty model nor
+    drops the earlier choice behind the invalid text."""
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    app = _app("openai", "gpt-4o", catalog=("gpt-4o", "gpt-4.1"))
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        picker, field, _results, adapter = _widgets(screen)
+        field.focus()
+        await pilot.pause()
+        await pilot.press(*"gpt-4.1", "enter", "tab", "enter")
+        await pilot.pause()
+        assert picker.custom_mode and host.focused is field
+        field.value = "m" * 257
+        await pilot.pause()
+        assert adapter.value == ""
+
+        if leave == "escape":
+            await pilot.press("escape")
+        else:
+            screen.set_focus(None)
+        await pilot.pause(0.2)
+
+        assert host.focused is None
+        assert not picker.custom_mode
+        assert adapter.value == field.value == picker.value == "gpt-4.1"
+        assert screen._provider_setting_values_mapping()["model"] == "gpt-4.1"
+        await pilot.press("s")
+        await _settle(host, pilot)
+
+        saved_models = [
+            values["chat_defaults"]["model"]
+            for values, _deleted in mutations
+            if "model" in values.get("chat_defaults", {})
+        ]
+        assert saved_models == ["gpt-4.1"], mutations
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("rebuild", ["pane", "category-round-trip"])
+async def test_discovered_models_stay_in_the_picker_after_the_card_rebuilds(
+    request, rebuild
+):
+    """AC#1 (review round 1, I1): the discovery listing survives a rebuild of
+    the card, and the rebuilt picker still offers it as Served now rows."""
+    app = _app("llama_cpp", "current-b", saved=("current-b",), served=("served-c",))
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        await _settle(host, pilot)
+        await screen._discover_provider_models()
+        await _settle(host, pilot)
+
+        if rebuild == "pane":
+            screen.mutate_reactive(SettingsScreen.active_category)
+        else:
+            await _click_settings_category(pilot, "appearance")
+            await _click_settings_category(pilot, "providers-models")
+        await _settle(host, pilot)
+        assert [m.model_id for m in screen._model_discovery_models] == ["served-c"]
+
+        _picker, field, results, _adapter = _widgets(screen)
+        field.focus()
+        await _settle(host, pilot)
+        assert {"Served now", "served-c"} <= set(_rows(results)), _rows(results)
 
 
 @pytest.mark.asyncio
