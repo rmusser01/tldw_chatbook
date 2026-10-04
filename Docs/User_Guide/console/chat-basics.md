@@ -482,6 +482,9 @@ of the next prompt, and **Manage** plus a state-specific action such as
   them still settles that response, but the prompts waiting behind it stop
   at the same review. **Use current** then sends the next waiting prompt; it
   does not re-run the failed or stopped turn.
+- A message Console refused to send stays on the shelf with the reason, for
+  example `Not sent: Last send is blocked; resolve it first`. **Restore**
+  puts it back in the composer; **Discard** drops it.
 
 Queue text is process-memory-only until its turn is accepted. It is not saved
 to conversation history, prompt history, screen snapshots, or the database.

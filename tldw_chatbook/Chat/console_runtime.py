@@ -387,6 +387,8 @@ class _ConsoleTurnCustodyRecord:
     inputs: _ConsoleTurnCustodyInputs = field(default_factory=_ConsoleTurnCustodyInputs, repr=False)
     task: asyncio.Task[Any] | None = field(default=None, repr=False)
     archive_conversation_id: str | None = None
+    #: The controller's code-owned copy for a refusal before acceptance.
+    refusal: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,6 +400,9 @@ class ConsoleTurnRecoveryEntry:
     draft: str = field(repr=False)
     attachments: tuple[Any, ...] = field(repr=False)
     insertion_order: int
+    #: TASK-33621.2: why the controller refused this turn, so the unsent-turn
+    #: strip can say so; empty when the turn ended for another reason.
+    reason: str = field(default="", repr=False)
 
 
 @dataclass(slots=True)
@@ -2525,6 +2530,7 @@ class ConsoleRuntime:
                 is not None
             )
         ):
+            record.refusal = str(getattr(result, "visible_copy", "") or "")
             raise RuntimeError("Console turn was refused before durable acceptance.")
         run_state_for = getattr(controller, "run_state_for", None)
         run_state = (
@@ -2671,6 +2677,7 @@ class ConsoleRuntime:
             draft=request.draft,
             attachments=record.inputs.attachments,
             insertion_order=self._recovery_order,
+            reason=record.refusal,
         )
         self._turn_recoveries[entry.turn_id] = entry
         self._recovery_turns_by_session.setdefault(entry.session_id, []).append(

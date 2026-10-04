@@ -2730,36 +2730,6 @@ PROVIDER_CONTINUATION_RECOVERY_REQUIRED = (
 NATIVE_MESSAGE_ID_KEY = "_native_message_id"
 
 
-def _unsaved_trace_artifact_source(
-    row: Mapping[str, Any], *, is_last: bool
-) -> TraceProvenanceSource:
-    """Label one provider row that has no saved revision, by its role.
-
-    TASK-33940.3: the durable first-send builder used to label every unsaved
-    row ACTIVE_REQUEST. The request's ``system`` category accepts only
-    RENDERED_SYSTEM, so any Capture-On chat with a system prompt (a workspace
-    persona, a character) failed provenance and was silently blocked. This is
-    the voice-capture builder's mapping, now shared by both builders.
-
-    Args:
-        row: The provider-visible row.
-        is_last: Whether the row is the request's final (active) row.
-
-    Returns:
-        The artifact source its request category accepts.
-    """
-    role = row.get("role")
-    if is_last:
-        return TraceProvenanceSource.ACTIVE_REQUEST
-    if role == ConsoleMessageRole.SYSTEM.value:
-        return TraceProvenanceSource.RENDERED_SYSTEM
-    if role == ConsoleMessageRole.TOOL.value:
-        return TraceProvenanceSource.TOOL_RESULT
-    if role == ConsoleMessageRole.ASSISTANT.value and row.get("tool_calls"):
-        return TraceProvenanceSource.TOOL_CALL
-    return TraceProvenanceSource.ACTIVE_REQUEST
-
-
 def _build_speculative_voice_capture_request(
     *,
     messages: Sequence[Mapping[str, Any]],
@@ -2768,8 +2738,9 @@ def _build_speculative_voice_capture_request(
     saved_by_owner: Mapping[str, SavedRevisionTraceProvenance],
 ) -> PreparedConsoleRequest:
     """Build one durable provisional request with complete capture provenance."""
+    from .console_trace_row_sources import unsaved_trace_artifact_source
 
-    rows = tuple(dict(row) for row in messages)
+    rows =tuple(dict(row) for row in messages)
     if not rows or rows[-1].get("role") != ConsoleMessageRole.USER.value:
         raise TraceProvenancePersistenceError()
     descriptors: list[TraceProvenance] = []
@@ -2783,7 +2754,7 @@ def _build_speculative_voice_capture_request(
                 raise TraceProvenancePersistenceError()
             descriptors.append(saved)
             continue
-        source = _unsaved_trace_artifact_source(row, is_last=index == len(rows) - 1)
+        source = unsaved_trace_artifact_source(row, is_last=index == len(rows) - 1)
         descriptors.append(ProviderArtifactTraceProvenance(source, capture_policy))
 
     from tldw_chatbook.Chat.console_prepared_request import build_console_request
@@ -10826,7 +10797,9 @@ class ConsoleChatController:
             return ConsoleSubmitResult(
                 False,
                 False,
-                "Another send is still preparing for this conversation.",
+                "Last send is blocked; resolve it first."  # TASK-33621.2
+                if existing_preparation.state is ConsoleTurnPreparationState.PAUSED
+                else "Another send is still preparing for this conversation.",
             )
         pre_send_title = (
             resumed_preparation.pre_send_title
@@ -12383,6 +12356,7 @@ class ConsoleChatController:
         repository = getattr(persistence, "console_trace_repository", None)
         if database is None or coordinator is None or repository is None:
             raise TraceProvenancePersistenceError()
+        from .console_trace_row_sources import saved_message_id, unsaved_row_sources
 
         def provider_row(row: Mapping[str, Any]) -> dict[str, Any]:
             # History annotations identify saved owners, but are not provider
@@ -12426,8 +12400,8 @@ class ConsoleChatController:
             if owner_id == echoed_user_id:
                 persisted_id = committed_user_id
             else:
-                try:
-                    persisted_id = self.store.get_message(owner_id).persisted_message_id
+                try:  # TASK-33621.2: a row that omits saved media is not that revision
+                    persisted_id = saved_message_id(self.store.get_message(owner_id), visible)
                 except KeyError:
                     persisted_id = None
             if type(persisted_id) is str and persisted_id:
@@ -12619,15 +12593,10 @@ class ConsoleChatController:
                     TraceProvenanceSource.ACTIVE_REQUEST, policy
                 ),
             )
+        sources = unsaved_row_sources(visible_messages)  # TASK-33621.2: system rows
         descriptors = tuple(
             saved_by_position.get(index)
-            or ProviderArtifactTraceProvenance(
-                _unsaved_trace_artifact_source(
-                    visible_messages[index],
-                    is_last=index == len(visible_messages) - 1,
-                ),
-                policy,
-            )
+            or ProviderArtifactTraceProvenance(sources[index], policy)
             for index in range(len(visible_messages))
         )
         return build_console_request_for_preparation(
@@ -12709,12 +12678,15 @@ class ConsoleChatController:
                 without a trace; only its type is logged, never its text, which
                 can quote request content.
         """
+        from .console_send_diagnostics import record_send_stage
 
         if error is not None:
             logger.warning(
                 "Console trace provenance could not be saved; exception_type={}",
                 type(error).__name__,
             )
+            # TASK-33621.2: the send-stage line, keyed by attempt_id.
+            record_send_stage("trace_provenance", "failed", error=error)
         visible_copy = (
             "Trace provenance could not be saved. Retry, Send without capture, "
             "or Cancel."

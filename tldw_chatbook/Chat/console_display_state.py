@@ -1419,6 +1419,9 @@ class ConsoleInspectorState:
     #: transcript that said the run had failed.
     run_failed: bool = False
     run_failure_reason: str = ""
+    #: TASK-33621.2: why the viewed chat's accepted turn is stuck unsent
+    #: (paused for trace recovery); empty when no turn is blocked.
+    run_blocked_reason: str = ""
     staged_source_count: int = 0
     pending_approval_count: int = 0
     scope_item_count: int | None = None
@@ -1451,6 +1454,7 @@ class ConsoleInspectorState:
         # in flight. Defaults preserve every existing caller.
         run_failed: bool = False,
         run_failure_reason: str = "",
+        run_blocked_reason: str = "",
         ephemeral: bool = False,
         change_review_available: bool = False,
         staged_source_count: int = 0,
@@ -1501,6 +1505,8 @@ class ConsoleInspectorState:
                 (TASK-24602).
             run_failure_reason: Visible copy for that failure, surfaced on
                 the pinned authority line.
+            run_blocked_reason: Why an accepted turn is stuck unsent, or ""
+                (TASK-33621.2).
             ephemeral: Whether this is a temporary conversation, which
                 blocks the Save Chatbook action.
             change_review_available: Whether change tracking has anything to
@@ -1643,6 +1649,7 @@ class ConsoleInspectorState:
             run_active=run_active,
             run_failed=run_failed,
             run_failure_reason=_clean(run_failure_reason, ""),
+            run_blocked_reason=_clean(run_blocked_reason, ""),
             staged_source_count=coerce_non_negative_int(staged_source_count),
             pending_approval_count=normalized_approval_count,
             scope_item_count=scope_item_count,

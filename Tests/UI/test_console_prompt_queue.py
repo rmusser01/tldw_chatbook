@@ -392,6 +392,24 @@ def _every_shelf_presentation(derive=derive_prompt_queue_presentation):
             turn_recovery_id="turn-a",
         ),
     )
+    # TASK-33621.2: a refused send states the controller's reason. The
+    # second is fitted to the budget left behind a full queue's prefix.
+    for count, refusal in (
+        (0, "Last send is blocked; resolve it first."),
+        (
+            MAX_CONSOLE_QUEUE_ENTRIES,
+            "Another send is still preparing for this conversation.",
+        ),
+    ):
+        yield (
+            f"unsent-turn-refused-queue-{count}",
+            derive(
+                _shelf_snapshot(PromptQueueMode.DRAINING, count=count),
+                _activity(count=count),
+                turn_recovery_id="turn-a",
+                turn_recovery_reason=refusal,
+            ),
+        )
 
 
 @pytest.mark.asyncio

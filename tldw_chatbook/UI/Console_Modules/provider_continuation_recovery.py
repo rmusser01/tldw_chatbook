@@ -14,7 +14,10 @@ from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
-from ...Chat.console_chat_models import ConsoleChatMessage
+from ...Chat.console_chat_models import (
+    FEEDBACK_ACTIVE_RUN_STATUSES,
+    ConsoleChatMessage,
+)
 from ...Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ContextCompactionHold,
@@ -34,6 +37,9 @@ class TraceCallRecoveryState:
     #: TASK-34350: set when the send is held at the compaction threshold;
     #: content-free token counts for the card's copy.
     context_hold: ContextCompactionHold | None = None
+    #: TASK-33621.2: the request's trace record failed before any call was
+    #: reserved (``TRACE_PROVENANCE``), rather than the call's capture.
+    provenance: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +96,47 @@ def trace_call_recovery_state(
         temporary_capture=(
             preparation.pause_kind is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
         ),
+        provenance=(
+            preparation.pause_kind is ConsolePreparationPauseKind.TRACE_PROVENANCE
+        ),
     )
+
+
+#: TASK-33621.2: why a turn is stuck, short enough that the run chip's
+#: ``Run: Blocked — <reason>`` stays whole inside its 30-cell label cap.
+_BLOCKED_TURN_REASONS = {
+    ConsolePreparationPauseKind.TRACE_PROVENANCE: "trace not saved",
+    ConsolePreparationPauseKind.TRACE_CALL: "capture failed",
+    ConsolePreparationPauseKind.TEMPORARY_CAPTURE: "save chat first",
+}
+
+
+def blocked_turn_reason(controller: Any) -> str:
+    """Return why the viewed chat's accepted turn is stuck unsent, or "".
+
+    TASK-33621.2: a send paused for trace recovery left the header badge, the
+    run chip and the Inspect Run line all reading "Ready". Only a pause the
+    transcript callout can act on counts as a stuck turn; an ordinary refusal
+    keeps its draft in the composer and says why there. The paused
+    preparation, not the run status, is the truth: a later send refused
+    behind it re-stamps the status ("Preparation ended."), and the turn is
+    still stuck.
+
+    Args:
+        controller: The Console chat controller, or None before it exists.
+
+    Returns:
+        A short reason for the paused turn, or "" when no turn is stuck.
+    """
+
+    run_state = getattr(controller, "run_state", None)
+    if getattr(run_state, "status", None) in FEEDBACK_ACTIVE_RUN_STATUSES:
+        return ""  # Retry or Send without capture is running the turn now.
+    preparation = getattr(controller, "trace_call_recovery_preparation", None)
+    paused = preparation() if callable(preparation) else None
+    if trace_call_recovery_state(paused) is None:
+        return ""
+    return _BLOCKED_TURN_REASONS.get(paused.pause_kind, "trace capture blocked")
 
 
 TraceCallAction = Callable[[str, str], object | Awaitable[object]]
@@ -277,6 +323,8 @@ class TraceCallRecoveryCallout(Vertical):
                     (
                         "Problem: Temporary chats cannot store durable captures."
                         if temporary
+                        else "Problem: This send's trace record could not be saved."
+                        if state is not None and state.provenance
                         else "Problem: Trace capture could not be saved."
                     )
                 )
