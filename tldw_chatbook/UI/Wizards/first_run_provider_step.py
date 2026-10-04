@@ -751,10 +751,7 @@ class ProviderStep(SetupStep):
         """Fence Provider-owned discovery once Model no longer consumes it."""
 
         self._obsolete_provider_generation("setup-provider-discovery")
-        self._selected_provider_models.clear()
-        self._selected_provider_outcomes.clear()
-        self.wizard._first_run_selected_provider_models = {}
-        self.wizard._first_run_selected_provider_outcomes = {}
+        model_discovery.drop_unreusable_handoff(self)
 
     def _cancel_worker_groups(self, *groups: str) -> None:
         try:

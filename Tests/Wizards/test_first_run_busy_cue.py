@@ -445,6 +445,69 @@ async def test_back_and_forward_reuse_the_providers_model_list():
         assert scope_service.discover_models.await_count == 1
 
 
+@pytest.mark.asyncio
+async def test_a_quick_back_before_the_list_renders_keeps_it(monkeypatch):
+    """Qodo (PR #3001): Back before Model draws the list does not lose it.
+
+    Provider's discovery has completed, so Next hands its list to Model. The
+    user presses Back while Model is still on its loading row, then Next. The
+    list is still the one that arrived, so Model shows it without asking the
+    server again.
+
+    RED on the round-3 code: Model's hide dropped the handed-over list while
+    the discovery still counted as reusable, so nobody asked again and Model
+    fell back to the curated list ("cached-model never rendered").
+    """
+    wizard = _wizard()
+    wizard.app_instance.app_config = {
+        "api_settings": {"custom": {"api_url": "https://cache.example.test/v1"}}
+    }
+    scope_service = MagicMock()
+    scope_service.discover_models = AsyncMock(
+        return_value=_typed_result("custom", "cached-model")
+    )
+    wizard.app_instance.llm_provider_catalog_scope_service = scope_service
+    app = _Host(wizard)
+    # Park Model's first visit on its loading row, where a quick Back lands.
+    loading_row_reached = asyncio.Event()
+    release_loading_row = asyncio.Event()
+    real_render = ModelStep._render_models
+
+    async def held_render(self, models, **kwargs):
+        if kwargs.get("discovery_state") == "loading":
+            loading_row_reached.set()
+            await release_loading_row.wait()
+        await real_render(self, models, **kwargs)
+
+    monkeypatch.setattr(ModelStep, "_render_models", held_render)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        provider_index = container._step_index_for_id(STEP_PROVIDER)
+        model_index = container._step_index_for_id(STEP_MODEL)
+        container.show_step(provider_index)
+        provider = container.steps[provider_index]
+        assert isinstance(provider, ProviderStep)
+        provider.select_provider("custom")
+        await _until_discovery(pilot, provider, "complete")
+        model = container.steps[model_index]
+        assert isinstance(model, ModelStep)
+
+        await container._advance()
+        assert container.current_step == model_index
+        await asyncio.wait_for(loading_row_reached.wait(), timeout=3.0)
+        await pilot.press("ctrl+b")
+        await pilot.pause(0.3)
+        assert container.current_step == provider_index
+
+        release_loading_row.set()
+        await container._advance()
+        await _until_models(pilot, model, "cached-model")
+        assert scope_service.discover_models.await_count == 1
+
+
 @pytest.mark.parametrize("visit", ["back_to_provider", "back_to_model", "retry"])
 @pytest.mark.asyncio
 async def test_a_failed_discovery_is_asked_again_on_every_visit(visit: str):

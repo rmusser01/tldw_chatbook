@@ -7,7 +7,7 @@ timeout or outcome for both steps.
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import Any, Mapping
 
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 
@@ -198,6 +198,31 @@ def discovery_is_reusable(owner: object, discovery_key: object) -> bool:
         and getattr(owner, "_selected_discovery_state", "")
         in REUSABLE_DISCOVERY_STATES
     )
+
+
+def drop_unreusable_handoff(owner: Any) -> None:
+    """Drop ``owner``'s handed-over discovery result unless it is reusable.
+
+    Qodo (PR #3001): Model's hide used to drop every result, including a
+    model list that had arrived, while ``discovery_is_reusable`` still let
+    that discovery stand for its identity. A Back before Model drew the list
+    then left nobody asking again, and Model fell back to curated models. So
+    a list that arrived is kept, under the same rule that reuses it; any
+    other result is dropped. The caller has already fenced a running
+    discovery, which therefore reads as cancelled here.
+
+    Args:
+        owner: The ProviderStep whose selected discovery Model no longer
+            consumes. Its result maps and the wizard's handoff copies are
+            cleared in place.
+    """
+
+    if getattr(owner, "_selected_discovery_state", "") in REUSABLE_DISCOVERY_STATES:
+        return
+    owner._selected_provider_models.clear()
+    owner._selected_provider_outcomes.clear()
+    owner.wizard._first_run_selected_provider_models = {}
+    owner.wizard._first_run_selected_provider_outcomes = {}
 
 
 def discovery_failed_for(owner: object, discovery_key: object) -> bool:

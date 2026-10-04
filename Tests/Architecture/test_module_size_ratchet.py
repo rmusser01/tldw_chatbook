@@ -168,7 +168,9 @@ _BUDGETS: dict[str, int] = {
     # Summary, the shared widgets, the discovery helpers, the busy line and
     # the step guard) have no row: this file pins hand-picked god modules, and
     # a row on a small module would stop the next fix adding even one line.
-    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2461,
+    # Provider 2,461 -> 2,458: the Qodo round moved the handoff clear into
+    # first_run_model_discovery.drop_unreusable_handoff.
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2458,
     "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1716,
     "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1070,
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
