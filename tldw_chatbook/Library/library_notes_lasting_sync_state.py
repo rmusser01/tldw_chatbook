@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from enum import StrEnum
 from math import ceil
 from typing import TYPE_CHECKING, Literal
@@ -1314,7 +1315,65 @@ def recovery_finished_line(runtime: object, root_id: str) -> str:
     return RECOVERY_FINISHED_HEALTHY
 
 
+#: Manage sync folders: one root row's status, in the user's terms. Moved
+#: here from ``library_notes_sync_controller.py`` (TASK-32633 slice) with the
+#: rest of this screen's presentation copy.
+ROOT_STATUS_LABELS = {
+    "up_to_date": "✓ Up to date",
+    "changes_available": "◌ Changes available",
+    "paused": "Ⅱ Paused",
+    "offline": "⚠ Offline",
+    "passive": "Ⅱ Open in another process",
+    "needs_attention": "⚠ Needs attention",
+    #: task-32604 fix round 2: not a runtime status -- the label a root wears
+    #: when the runtime stopped watching. "✓ Up to date" is the last thing
+    #: PUBLISHED, not the truth, once nothing is carrying changes either way.
+    "not_watching": "⚠ Sync stopped",
+    "partial": "⚠ Partial",
+    "failed": "✕ Failed",
+    "unsupported": "✕ Blocked",
+    "starting": "◌ Starting",
+}
+
+
+def root_status_label(
+    status: str, published_at: float | None, *, now: datetime | None = None
+) -> str:
+    """The status label for one root row, dated when it claims to be healthy.
+
+    TASK-32633 slice (review finding N-03): until every note-write path tells
+    lasting sync about its write, a live root's "✓ Up to date" can be stale.
+    The healthy label therefore says when the runtime last confirmed it --
+    "✓ Up to date as of HH:MM", the local wall clock of the publication that
+    carried the status (``NotesSyncRootRuntimeSnapshot.published_at``); a
+    confirmation from another day carries its date too ("as of 2026-10-03
+    08:25"), so yesterday's minute never reads as today's. The paint never
+    invents a time: a snapshot without one keeps the bare label (every
+    production publication carries one -- pinned by
+    ``Tests/Architecture/test_notes_sync_snapshot_construction.py``).
+
+    Args:
+        status: The runtime status code.
+        published_at: Epoch seconds of the publication, or ``None``.
+        now: The current moment, for tests; defaults to the wall clock.
+
+    Returns:
+        The label, in the codebase's local-time spelling (tz-aware, then
+        localised, like ``note_file_written_label``).
+    """
+
+    label = ROOT_STATUS_LABELS.get(status, status.replace("_", " ").title())
+    if status != "up_to_date" or published_at is None:
+        return label
+    confirmed = datetime.fromtimestamp(published_at, tz=UTC).astimezone()
+    today = (datetime.now(tz=UTC) if now is None else now).astimezone().date()
+    stamp = confirmed.strftime("%H:%M" if confirmed.date() == today else "%Y-%m-%d %H:%M")
+    return f"{label} as of {stamp}"
+
+
 __all__ = [
+    "ROOT_STATUS_LABELS",
+    "root_status_label",
     "RECOVERY_FINISHED_HEALTHY",
     "RECOVERY_FINISHED_UNHEALTHY",
     "recovery_finished_line",

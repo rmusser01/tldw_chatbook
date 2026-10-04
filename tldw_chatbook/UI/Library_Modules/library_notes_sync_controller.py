@@ -14,6 +14,7 @@ from tldw_chatbook.Notes.note_import_discovery import folder_is_obsidian_vault
 
 from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LASTING_SYNC_HISTORY_PAGE_SIZE,
+    ROOT_STATUS_LABELS,
     LastingSyncApplyBlocker,
     LastingSyncHistory,
     LastingSyncHistoryRow,
@@ -25,6 +26,7 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     LibraryNotesLastingSyncSnapshot,
     build_reconciliation_review,
     check_failure_line,
+    root_status_label,
     check_failure_row,
     recovery_finished_line,
     initial_lasting_sync_snapshot,
@@ -247,22 +249,6 @@ class InertLastingSyncRuntime:
         return ()
 
 
-_STATUS_LABELS = {
-    "up_to_date": "✓ Up to date",
-    "changes_available": "◌ Changes available",
-    "paused": "Ⅱ Paused",
-    "offline": "⚠ Offline",
-    "passive": "Ⅱ Open in another process",
-    "needs_attention": "⚠ Needs attention",
-    #: task-32604 fix round 2: not a runtime status -- the label a root wears
-    #: when the runtime stopped watching. "✓ Up to date" is the last thing
-    #: PUBLISHED, not the truth, once nothing is carrying changes either way.
-    "not_watching": "⚠ Sync stopped",
-    "partial": "⚠ Partial",
-    "failed": "✕ Failed",
-    "unsupported": "✕ Blocked",
-    "starting": "◌ Starting",
-}
 _ACTION_LABELS = {
     "sync_now": "Check changes",
     "review_changes": "Review changes",
@@ -806,15 +792,15 @@ class LibraryNotesSyncController:
         status, next_action = root.status, root.next_action
         action_label = failed_action or next_action
         if failure:
-            status_label = _STATUS_LABELS["needs_attention"]
+            status_label = ROOT_STATUS_LABELS["needs_attention"]
         elif runtime_status != "active" and status == "up_to_date":
-            status_label = _STATUS_LABELS[
+            status_label = ROOT_STATUS_LABELS[
                 "starting" if runtime_status == "starting" else "not_watching"
             ]
         else:
-            status_label = _STATUS_LABELS.get(
-                status, status.replace("_", " ").title()
-            )
+            # TASK-32633 slice (N-03): the healthy label is dated from the
+            # publication, so "Up to date" never reads as a standing promise.
+            status_label = root_status_label(status, root.published_at)
         return LastingSyncRootRow(
             root.root_id,
             "Sync folder (name unavailable before cutover)",

@@ -31069,11 +31069,9 @@ class LibraryScreen(BaseAppScreen):
             failure_message = (
                 "Could not verify affected folders — no changes were made."
             )
-        if failure_message:
-            pass
-        elif not callable(delete_note):
+        if not failure_message and not callable(delete_note):
             failure_message = "Note deletion is unavailable."
-        else:
+        elif not failure_message:
             try:
                 deleted = bool(
                     await self._run_library_service_call(
@@ -31096,6 +31094,10 @@ class LibraryScreen(BaseAppScreen):
                 failure_message = "Could not delete this note."
 
         if deleted:
+            # TASK-32633 (N-03): a deleted synced note is a deletion review.
+            await notes_sync_attention.signal_library_note_lasting_sync(
+                self, admission.note_id
+            )
             self._remove_library_note_source_record(admission.note_id)
             self._notes_state.delete_receipt = LibraryNoteDeleteReceipt(
                 note_id=admission.note_id,

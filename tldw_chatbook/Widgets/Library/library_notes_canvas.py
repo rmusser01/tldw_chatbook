@@ -227,6 +227,25 @@ NOTE_LOCATION_DATABASE_ONLY = "In the Library database only — no file on disk"
 #: for the relationship (Keep a folder synced), not an internal name.
 NOTE_LOCATION_SYNCED_PREFIX = "In a synced folder"
 
+#: The inline delete prompt (task-32268: rendered inside Info, under Delete).
+DELETE_CONFIRM_COPY = "Delete this note? Undo will be available in the Notes list."
+#: TASK-32633 (review finding N-03, third sentence): deleting a note that
+#: lives in a sync folder never touches its file -- lasting sync holds the
+#: folder for review, and in this release only restoring the note resolves
+#: it (TASK-34000.15). Said in the prompt, in plain words, and kept short:
+#: the Info confirm clips at 120x36 (N-10) and every extra line makes it
+#: worse.
+DELETE_CONFIRM_COPY_SYNCED = (
+    "Delete this note? Its file stays on disk; the synced folder waits for "
+    "review until the note is restored. Undo will be available in the Notes list."
+)
+
+
+def delete_confirm_copy(*, synced: bool) -> str:
+    """The delete prompt's sentence for a note in, or not in, a sync folder."""
+
+    return DELETE_CONFIRM_COPY_SYNCED if synced else DELETE_CONFIRM_COPY
+
 #: TASK-34000.2: said right after the world when the note's sync folder is
 #: held for attention -- nothing typed here reaches the file until it is
 #: resolved, so it outranks the path and the write time for the row's cells.
@@ -3145,7 +3164,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Mount the delete prompt where task-32268 requires it: in Danger."""
         with Vertical(id="library-note-delete-confirmation"):
             yield Static(
-                "Delete this note? Undo will be available in the Notes list.",
+                delete_confirm_copy(synced=False),
                 id="library-note-delete-confirm-copy",
                 markup=False,
             )
@@ -3595,6 +3614,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.query_one("#library-note-wide-utilities").display = False
         self.query_one("#library-note-conflict-region").display = conflict
         self.query_one("#library-note-delete-confirmation").display = confirming_delete
+        if confirming_delete:
+            # TASK-32633 (N-03): a synced note's delete says what happens to
+            # its file, read from the same live location the row states.
+            confirm_copy = self.query_one("#library-note-delete-confirm-copy", Static)
+            wanted = delete_confirm_copy(synced=bool(state.location_path))
+            if self._static_text(confirm_copy) != wanted:
+                confirm_copy.update(wanted)
 
         locked = confirming_delete or state.destructive_running or bulk_read_only
         # task-32106 (PR #2571 re-review, NEW-2): DISABLED, not read-only,

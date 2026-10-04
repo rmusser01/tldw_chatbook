@@ -597,10 +597,7 @@ from ...Widgets.Library.library_notes_sync_roots_canvas import (
 )
 from .canvas_sync import _sync_library_canvas
 from .library_notes_state import LibraryNotesState, notes_state_shim_attr
-from .library_notes_sync_attention import (
-    load_library_note_location,
-    schedule_library_notes_sync_attention,
-)
+from . import library_notes_sync_attention as notes_sync_attention
 from .library_notes_work_session import (
     NotesWorkSessionEvent,
     NotesWorkSessionPhase,
@@ -3536,7 +3533,7 @@ class LibraryNotesController:
         the note's sync folder is held for attention and, after a save, waits
         for the pass that save hinted before it re-reads.
         """
-        await load_library_note_location(self, note_id, after_save=after_save)
+        await notes_sync_attention.load_library_note_location(self, note_id, after_save=after_save)
 
     @on(Button.Pressed, ".library-note-backlink")
     async def handle_library_note_backlink(self, event: Button.Pressed) -> None:
@@ -4991,7 +4988,7 @@ class LibraryNotesController:
             self._apply_library_notes_footer_context()
             # TASK-34000.2: a Check, Recovery or conflict choice can hold or
             # release a folder; the tree, list and editor follow it.
-            schedule_library_notes_sync_attention(self)
+            notes_sync_attention.schedule_library_notes_sync_attention(self)
         if (
             self.is_mounted
             and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE
@@ -6049,6 +6046,9 @@ class LibraryNotesController:
                     failure_message = "Could not restore this note."
 
             if restored_record is not None:
+                # TASK-32633 slice (N-03): the restore resolves the deletion
+                # review a Delete raised; the hint re-plans the held root.
+                await notes_sync_attention.signal_library_note_lasting_sync(self, receipt.note_id)
                 self._append_library_note_source_record(restored_record)
                 if self._library_note_delete_receipt == receipt:
                     self._library_note_delete_receipt = None

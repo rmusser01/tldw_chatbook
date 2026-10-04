@@ -3011,8 +3011,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 2,
-      "diagnostic_digest": "d29186cb9355855d626c",
+      "call_count": 3,
+      "diagnostic_digest": "7815bd284078d101f83a",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Library_Modules/library_notes_sync_attention.py",
       "reason": "remaining Chatbook production diagnostic owner"

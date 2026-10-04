@@ -763,8 +763,8 @@ anywhere — superseded by task-32604 below.) **Review** also appears on its own
 when a root's changes need attention;
 legacy candidates use **Review migration**. **Pause** and **Resume** control an
 active root. **Resume** re-activates the root and runs the same check as
-**Check changes**: a root with nothing changed returns to "✓ Up to date · Next:
-Check changes", and edits made while it was paused surface as "◌ Changes
+**Check changes**: a root with nothing changed returns to "✓ Up to date as of
+HH:MM · Next: Check changes", and edits made while it was paused surface as "◌ Changes
 available" or "⚠ Needs attention · Next: Review changes" (task-32519). A check
 the app cannot run says so on the row itself: the row flips to "⚠ Needs
 attention · Check failed — <reason> · Next: <action>" and offers that action's
@@ -807,9 +807,10 @@ note — you do not have to run **Check changes**, and the row goes on saying
 "✓ Up to date" because by then it is (task-32604). This depends on lasting
 sync still running: if it has stopped, nothing is carrying changes either way
 and the root's row says so — "⚠ Sync stopped · Next: Check changes" — instead
-of claiming to be up to date. (The row says it the next time the list is
-drawn: on opening **Manage sync folders**, or on returning to the Library. A
-list you are already sitting on does not repaint itself.) Until this the note
+of claiming to be up to date. (That one label still appears only on the next
+redraw — on opening **Manage sync folders**, or on returning to the Library:
+a runtime that has stopped publishes nothing, so a list you are already
+sitting on cannot learn it from a publication.) Until this the note
 side
 produced no signal at all: Chatbook watches the folder, not the notes
 database, so a note you saved stayed in Notes only and its file kept its old
@@ -844,11 +845,50 @@ for now) — never a silent winner, and never "Recovery failed — RuntimeError"
 next to a **Check changes** that refused the same entry. A folder already
 stuck that way by an earlier build is healed by the same button.
 
+**The healthy row is dated.** Because not every way of writing a note tells
+lasting sync about it yet (the list below), a root's healthy status names the
+minute it was last confirmed — "✓ Up to date as of 14:32 · Next: Check
+changes", in your local time; a confirmation from another day carries its
+date, "as of 2026-10-03 08:25" — rather than standing as an unqualified
+promise. The time comes from the runtime's own publication, so it moves when
+a pass finishes, and the rows in **Manage sync folders** follow the runtime
+while you are looking at them: a pass that finishes while you sit on the list
+repaints its row within a moment, without a keypress (TASK-32633, review
+finding N-03).
+
+**Deleting a synced note holds its folder until you restore the note.**
+Lasting sync never chooses a winner, and that includes a deletion: when you
+delete a note that lives in a sync folder, the file stays on disk, byte for
+byte, and the folder is held — the tree row reads "⚠ Needs attention", the
+list "Library notes · ⚠ A sync folder needs attention · Next: Open Manage sync
+folders.", and the root's row "⚠ Needs attention · Next: Review changes". The
+delete prompt says so before you confirm: "Delete this note? Its file stays
+on disk; the synced folder waits for review until the note is restored. Undo
+will be available in the Notes list." Know what "waits" means in this
+release: **Review changes** shows the deletion but cannot resolve it — every
+choice on that row is disabled ("Deletion review is unavailable in this
+release", TASK-34000.15) — and **nothing in that folder syncs in either
+direction** while it is held. The one way back is to restore the note:
+**Undo** on the receipt, or **Restore** in **Recently deleted**, in this
+session or a later one. The folder then returns to "✓ Up to date as of HH:MM"
+on its own, with no **Check changes**, and the file is unchanged throughout.
+(One narrow exception: if a backup is capturing the profile at the moment you
+restore, the folder waits for your next change to one of its notes, or for
+**Check changes**.)
+One known gap remains after that: the first edit you make to that file *on
+disk* is refused by the folder — "⚠ Needs attention" with nothing to review —
+until TASK-34000.49 lands; editing the note in Chatbook first turns it into an
+ordinary "Both file and note changed" review you can resolve. Before this,
+deleting a synced note left the row at "✓ Up to date" with the file still on
+disk and nothing to say the folder had anything to decide (TASK-32633 slice,
+N-03).
+
 **What this covers, exactly: editing an existing synced note in the Library
-note editor.** That is the one write into a note that tells lasting sync
-anything. These do not, and their files stay as they are until you run
-**Check changes**, until something changes on disk, or until the next start —
-while the row goes on reading "✓ Up to date":
+note editor, and deleting or restoring one through the Library.** Those are
+the writes into a note that tell lasting sync anything. These do not, and
+their files stay as they are until you run **Check changes**, until something
+changes on disk, or until the next start — while the row goes on reading
+"✓ Up to date as of <the last time it was confirmed>":
 
 - **New note**, including a new note created straight into a synced folder.
 - **Save as Note** in Console, and the same action on text you select inside a
@@ -857,7 +897,8 @@ while the row goes on reading "✓ Up to date":
   assistant's own `create_note` or `update_note` tool, by the Library
   `library_save_note` tool, by **Import once** over a note that already
   exists, or by a chatbook import.
-- Deleting or restoring a note.
+- Deleting a note from anywhere other than the Library (a Research quick
+  note's delete, for instance).
 
 None of those is new — none of them ever told lasting sync anything, and
 task-32604 changed only the editor — but none is fixed either, so if you need

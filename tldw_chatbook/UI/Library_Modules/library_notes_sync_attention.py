@@ -175,6 +175,7 @@ async def refresh_library_notes_sync_attention(
 
     runtime = runtime if runtime is not None else _runtime(host)
     ensure_library_notes_sync_attention_listener(host, runtime=runtime)
+    refresh_manage_sync_folders_rows(host)
     folder_ids = frozenset(
         await _ask(runtime, "attention_folder_ids", default=frozenset()) or ()
     )
@@ -198,6 +199,71 @@ async def refresh_library_notes_sync_attention(
         and host._library_notes_view in _ATTENTION_VIEWS
     ):
         _sync_library_canvas(host, "notes")
+
+
+def refresh_manage_sync_folders_rows(host: Any) -> bool:
+    """Re-project the Manage sync folders rows if that view is showing.
+
+    TASK-32633 slice (N-03): the root rows are drawn from the runtime's last
+    publications, and before this they were re-read only on entering the view
+    or acting on a row -- a pass that finished while the user sat on the list
+    (a note deleted or restored, a disk edit) changed nothing on screen. The
+    same listener seam that turns the tree, list and editor turns these rows.
+    Publishing is conditional on a change: the publication itself schedules
+    this refresh again, so an unconditional publish would loop.
+
+    Args:
+        host: The Notes controller or screen.
+
+    Returns:
+        Whether the rows changed and were published.
+    """
+
+    controller = getattr(host, "_library_notes_sync_controller", None)
+    if controller is None or getattr(host, "_library_notes_view", "") != "lasting_roots":
+        return False
+    before = controller.snapshot.roots
+    controller.refresh_roots(publish=False)
+    if controller.snapshot.roots == before:
+        return False
+    controller.refresh_roots()
+    return True
+
+
+async def signal_library_note_lasting_sync(host: Any, note_id: str) -> tuple[str, ...]:
+    """Tell lasting sync that ``note_id`` was just written, deleted or restored.
+
+    TASK-32633 slice (review finding N-03). The Library editor's save goes
+    through its session port, which hints the runtime (task-32604); the
+    Library's Delete and Undo/Restore did not, so a deleted synced note left
+    its root reading "✓ Up to date" with the file still on disk. This is the
+    one seam for the Notes side's writes that bypass that port. What the hint
+    does is the runtime's: a note-side deletion is a deletion review (the file
+    is never removed on its own), a restore re-plans the held root.
+
+    The write that just succeeded is never failed by its signal: no runtime
+    yet, a refusing runtime or any error is ``()``, logged as metadata.
+
+    Args:
+        host: The Notes controller or screen.
+        note_id: The note just written.
+
+    Returns:
+        The root ids the runtime hinted, for callers that report or test it.
+    """
+
+    runtime = _runtime(host)
+    note_changed = getattr(runtime, "note_changed", None)
+    if not note_id or not callable(note_changed):
+        return ()
+    try:
+        return tuple(await note_changed(note_id) or ())
+    except Exception as error:  # noqa: BLE001 - bounded, metadata only
+        logger.warning(
+            "Lasting sync was not signalled for a Library note write; error_type={}",
+            type(error).__name__,
+        )
+        return ()
 
 
 def schedule_library_notes_sync_attention(host: Any) -> None:
@@ -334,6 +400,8 @@ __all__ = [
     "load_library_note_location",
     "note_file_written_label",
     "refresh_library_notes_sync_attention",
+    "refresh_manage_sync_folders_rows",
     "release_library_notes_sync_attention_listener",
     "schedule_library_notes_sync_attention",
+    "signal_library_note_lasting_sync",
 ]

@@ -441,7 +441,13 @@ _BUDGETS: dict[str, int] = {
     # (keyed on `root_id == ""` => setup), so each of the two Check paths
     # spends exactly one line on it. This row was briefly pinned at 2128 with
     # the table in the controller; that was rejected in review and reverted.
-    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2380,
+    #
+    # 2026-10-03, TASK-32633 slice (N-03): 2380 -> 2366 (-14), a MOVE. The
+    # root-status copy table moved to `Library/library_notes_lasting_sync_
+    # state.py` as `ROOT_STATUS_LABELS`, next to the refusal table above, and
+    # the healthy label is now dated there (`root_status_label`); the
+    # controller spends one line on the call it used to spend three on.
+    "tldw_chatbook/UI/Library_Modules/library_notes_sync_controller.py": 2366,
     "tldw_chatbook/UI/Library_Modules/library_prompt_browse_controller.py": 281,
     # 2026-09-05, wave-6 task 2 (prompts controller PR, series 2/3): born
     # governed the moment this file existed (task-31203 AC#4's glob-based

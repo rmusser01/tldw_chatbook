@@ -109,3 +109,82 @@ def test_ensure_registers_once_and_release_unregisters() -> None:
     attention.release_library_notes_sync_attention_listener(host)
     attention.release_library_notes_sync_attention_listener(_Host(None))
     assert removed == [added[0]]
+
+
+# --- TASK-32633 slice (N-03): the Notes side's signal, and Manage rows following
+
+
+class _SignalRuntime:
+    def __init__(self, *, hinted=("root-1",), raise_error: bool = False) -> None:
+        self.hinted = hinted
+        self.raise_error = raise_error
+        self.asked: list[str] = []
+
+    async def note_changed(self, note_id: str):
+        self.asked.append(note_id)
+        if self.raise_error:
+            raise RuntimeError("runtime closed")
+        return self.hinted
+
+
+@pytest.mark.asyncio
+async def test_signal_library_note_lasting_sync_hints_the_runtime_and_never_raises() -> None:
+    """One seam for the Notes side's writes that bypass the editor port."""
+
+    runtime = _SignalRuntime()
+    host = _Host(_App())
+    host.app_instance.notes_sync_runtime_owner = runtime
+    assert await attention.signal_library_note_lasting_sync(host, "note-1") == (
+        "root-1",
+    )
+    assert runtime.asked == ["note-1"]
+
+    # No runtime yet (boot-deferred), no note id, or a refusing runtime: the
+    # write that just succeeded is never failed by its signal.
+    assert await attention.signal_library_note_lasting_sync(_Host(_App()), "note-1") == ()
+    assert await attention.signal_library_note_lasting_sync(host, "") == ()
+    assert runtime.asked == ["note-1"]
+    host.app_instance.notes_sync_runtime_owner = _SignalRuntime(raise_error=True)
+    assert await attention.signal_library_note_lasting_sync(host, "note-2") == ()
+
+
+class _SyncController:
+    """The Manage sync folders projection, as the attention refresh sees it."""
+
+    def __init__(self, rows) -> None:
+        self._rows = iter(rows)
+        self.snapshot = SimpleNamespace(roots=next(self._rows))
+        self.calls: list[bool] = []
+
+    def refresh_roots(self, *, publish: bool = True) -> None:
+        self.calls.append(publish)
+        if not publish:
+            self.snapshot = SimpleNamespace(roots=next(self._rows, self.snapshot.roots))
+
+
+def test_manage_sync_folders_rows_follow_a_publication_and_publish_only_a_change() -> None:
+    """The rows re-project through the same listener seam; a no-change refresh
+    publishes nothing, so the publication's own attention refresh cannot loop."""
+
+    changed = _SyncController([("row-old",), ("row-new",)])
+    host = SimpleNamespace(
+        _library_notes_view="lasting_roots", _library_notes_sync_controller=changed
+    )
+    assert attention.refresh_manage_sync_folders_rows(host) is True
+    assert changed.calls == [False, True]
+
+    unchanged = _SyncController([("row-same",), ("row-same",)])
+    host = SimpleNamespace(
+        _library_notes_view="lasting_roots", _library_notes_sync_controller=unchanged
+    )
+    assert attention.refresh_manage_sync_folders_rows(host) is False
+    assert unchanged.calls == [False]
+
+    # Not on Manage sync folders: nothing is re-projected.
+    elsewhere = _SyncController([("row-old",), ("row-new",)])
+    host = SimpleNamespace(
+        _library_notes_view="list", _library_notes_sync_controller=elsewhere
+    )
+    assert attention.refresh_manage_sync_folders_rows(host) is False
+    assert elsewhere.calls == []
+    assert attention.refresh_manage_sync_folders_rows(SimpleNamespace()) is False
