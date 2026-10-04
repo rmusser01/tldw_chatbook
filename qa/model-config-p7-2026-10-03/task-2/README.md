@@ -47,3 +47,33 @@ Each capture is plain text (`.txt`, `tmux capture-pane -p`) and with colour esca
 - `05-local-key-check-after-t`: after **t**, the Key check row reads "Not ready ·
   refused :11434" and the card did not move; the labelled result rows are in the
   inspector's Key block, and the toast says the listing failed.
+
+## Review fix round 1 (captures 06-09)
+
+Same isolation as above: `env -i`, a fresh scratch `HOME`/`XDG_*`/`TLDW_CONFIG_PATH`
+for every launch, the null keyring, and `users_name = "verify_p7t2_fix1"`. The scratch
+profile was written from the shipped template text by a process whose own `HOME`,
+`XDG_*` and `TLDW_CONFIG_PATH` pointed at a second scratch directory. Clicks were SGR
+mouse sequences sent through tmux, so they took the terminal driver's path.
+
+- `06-provider-list-open-footer`: `olla` typed, list open. The footer reads "Esc, s save
+  category | Esc, r revert category | Esc, t test provider".
+- `07-after-esc-footer`: one **Esc**. The list is closed, the control shows Anthropic again
+  without the focus edge, and the footer reads "s save category | r revert category |
+  t test provider". The "Esc, s" hint was true.
+- `08-model-after-five-tabs`: from the Provider control (Anthropic, key saved in config),
+  five **Tab** presses: API key, **Clear**, Env var, Endpoint, then Model. **Test (t)** is
+  not a Tab stop.
+- `09-held-click-1s-chose-ollama` (plain text only): `olla` typed, then the mouse
+  pressed on the Ollama row and released 1.0 s later. Ollama is chosen and the control
+  keeps focus.
+
+Held clicks on the Ollama row, one fresh launch per hold:
+
+| Hold | Before the fix (`db2f3b5215`) | After the fix |
+|---|---|---|
+| 0 s | Ollama | Ollama |
+| 0.1 s | **Arcee AI**, a wrong row (likely the list closed and refilled unfiltered before the release) | Ollama |
+| 0.3 s | Anthropic (click lost, list closed) | Ollama |
+| 1.0 s | Anthropic (click lost, list closed) | Ollama |
+| 2.0 s | not run | Ollama |

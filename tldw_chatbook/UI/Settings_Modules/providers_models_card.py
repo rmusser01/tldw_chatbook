@@ -22,6 +22,7 @@ from textual import events
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import QueryError
+from textual.errors import NoWidget
 from textual.widgets import (
     Button,
     Checkbox,
@@ -149,18 +150,39 @@ class ProviderFilterInput(PickerSearchInput):
 
     def _on_key(self, event: events.Key) -> None:
         if event.key == "escape" and self._picker().display:
-            # Input's own handlers never see it: the list closes instead.
-            event.prevent_default()
-            event.stop()
+            # The list closes and Escape goes on to the screen, which releases
+            # the field (task-1560), so the footer's "Esc, s" holds (ADR-031).
             close_provider_list(self.screen)
-            self.select_all()  # The next keystroke filters afresh.
 
     def _on_blur(self, event: events.Blur) -> None:
         self.set_timer(_BLUR_CLOSE_DELAY_SECONDS, self._close_after_blur)
 
     def _close_after_blur(self) -> None:
-        if self.is_mounted and not self.has_focus:
-            close_provider_list(self.screen)
+        if not self.is_mounted or self.has_focus:
+            return
+        if self._pressed_on_open_list():
+            # The press moved focus to the scrolling pane; App sends the Click
+            # that chooses only at the release, so keep the list until then.
+            self.focus(scroll_visible=False)
+            return
+        close_provider_list(self.screen)
+
+    def _pressed_on_open_list(self) -> bool:
+        """Whether focus left for a mouse press on the open list.
+
+        Returns:
+            True when the list is open, focus went to a container that holds
+            it, and the pointer is over the list (or its scrollbar).
+        """
+        try:
+            picker = self._picker()
+            focused = self.screen.focused
+            if not picker.display or focused not in picker.ancestors:
+                return False
+            under, _region = self.screen.get_widget_at(*self.app.mouse_position)
+        except (QueryError, NoWidget):  # e.g. the card unmounted meanwhile
+            return False
+        return picker in under.ancestors_with_self
 
 
 def open_provider_list(screen: SettingsScreen) -> None:
@@ -800,12 +822,16 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 classes="settings-key-check-verdict",
                 markup=False,
             )
-            yield Button(
+            test_button = Button(
                 KEY_CHECK_ACTION_LABEL,
                 id="settings-test-provider",
                 compact=True,
                 tooltip=PROVIDER_TEST_GUIDANCE,
             )
+            # Parent AC#2: t runs it (spec mock (c) shows "t test key"), so it
+            # is not a Tab stop between Endpoint and Model; a click still runs it.
+            test_button.can_focus = False
+            yield test_button
         yield Static(
             screen._provider_save_result,
             id="settings-provider-save-result",
