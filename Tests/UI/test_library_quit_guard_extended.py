@@ -3,7 +3,7 @@
 TASK-34000.1 (review N-01). ``test_library_quit_guard.py`` is the lean
 PR-gated core. These cover every other variant and run with the full
 ``Tests/UI`` suite, not the UI Fast Lane, which is near its 20-minute cap
-(TASK-34000.47):
+(TASK-34353):
 - AC#3: an untouched new note, and a whitespace-only-title new note, leave
   no row and do not ask.
 - AC#2: a failed write and a conflicting save ask; Discard keeps the other

@@ -11,7 +11,7 @@ This is the lean core that gates pull requests (``scripts/ui_pr_gate_census.txt`
 - Ctrl+Q over a refused save asks, with Keep editing focused.
 
 Each test is one real app boot, about 10-20 s. The UI Fast Lane is near its
-20-minute cap (TASK-34000.47), so every other variant lives in
+20-minute cap (TASK-34353), so every other variant lives in
 ``test_library_quit_guard_extended.py``, which runs with the full
 ``Tests/UI`` suite.
 
