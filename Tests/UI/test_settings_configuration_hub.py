@@ -7802,14 +7802,14 @@ async def test_settings_read_only_overview_hides_actions_and_clean_privacy_disab
             pilot,
             SettingsCategoryId.PRIVACY_SECURITY,
             expected_text=(
-                "Canvas availability and create auto-open are editable; hard quotas, privacy posture, and secrets remain read-only and redacted."
+                "Key encryption, Canvas availability and create auto-open are editable; hard quotas, privacy posture, and secret values remain read-only and redacted."
             ),
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
         visible = _visible_text(screen)
         assert (
-            "Canvas availability and create auto-open are editable; hard quotas, privacy posture, and secrets remain read-only and redacted."
+            "Key encryption, Canvas availability and create auto-open are editable; hard quotas, privacy posture, and secret values remain read-only and redacted."
             in visible
         )
         assert "Check Privacy" in visible
@@ -11537,15 +11537,24 @@ async def test_settings_first_slice_categories_have_real_content(
 
 
 @pytest.mark.asyncio
-async def test_settings_privacy_and_diagnostics_label_unsupported_mutations_as_wip():
+@private_profile_test
+async def test_settings_privacy_and_diagnostics_label_unsupported_mutations_as_wip(
+    request,
+):
+    # TASK-34100.4 review round 1 (F3): a private profile, because
+    # `_build_test_app` reloads app config and trips ADR-126's
+    # raw_source_selection_changed under the per-test redirect -- without it
+    # this test never reached the Encryption card assertion.
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
         for button_id, expected, exposes_raw_cli_draft in (
             (
+                # TASK-34100.4: key encryption is now a password-gated card,
+                # so Privacy & Security no longer labels it "not available".
                 "#settings-category-privacy-security",
-                "Credential mutation: not available yet",
+                "Encrypt keys…",
                 True,
             ),
             (
@@ -11565,8 +11574,9 @@ async def test_settings_privacy_and_diagnostics_label_unsupported_mutations_as_w
 
             assert expected in text
             if exposes_raw_cli_draft:
-                # Privacy posture and credential mutation remain read-only, but
-                # the raw CLI unlock is an intentionally narrow editable draft.
+                # Privacy posture remains read-only; the raw CLI unlock is an
+                # intentionally narrow editable draft (key encryption acts
+                # through its own password-gated card, not the draft pair).
                 assert screen.query_one("#settings-save-category", Button).disabled
                 assert screen.query_one("#settings-revert-category", Button).disabled
             else:
@@ -11606,7 +11616,10 @@ def _strip_sensitive_config_sections(app_config: dict) -> None:
 
 
 @pytest.mark.asyncio
-async def test_settings_privacy_security_renders_guided_redacted_posture(monkeypatch):
+@private_profile_test
+async def test_settings_privacy_security_renders_guided_redacted_posture(
+    request, monkeypatch
+):
     app = _build_test_app()
     # task-15270: the posture counts sensitive leaves across the WHOLE config
     # (`_sensitive_config_field_count` walks every leaf), so an absolute "2
@@ -11640,15 +11653,16 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
         assert "Privacy posture" in text
         assert "Credential sources" in text
         assert "Data boundary" in text
-        assert "Config encryption: disabled" in text
+        # TASK-34100.4: the Encryption card owns the state line.
+        assert (
+            "Config encryption: Off — API keys are stored as plain text in config.toml."
+            in text
+        )
         assert "Sensitive config fields: 2 present" in text
         assert "Provider env vars: 1 of 2 referenced env vars are set (1 unset)" in text
         assert "Provider config secrets: 1 present" in text
         assert "Preferred source: environment variables" in text
-        assert (
-            "Credential mutation: not available yet - password-gated flow required"
-            in text
-        )
+        assert "Credential mutation" not in text
         assert "Open Providers & Models" in text
         assert "Open Advanced Config" in text
         assert "Environment variables are preferred for provider credentials." in text

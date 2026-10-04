@@ -337,8 +337,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 56,
-      "diagnostic_digest": "3da468c85ef747fe03f2",
+      "call_count": 57,
+      "diagnostic_digest": "2ecb9e2e41f78e039227",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/Chat_Functions.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
@@ -3340,6 +3340,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "8c643031f09a6107d0ba",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Screens/settings_encryption.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "0d03ea7b0e2092a1e742",
       "owner": "TASK-494",
@@ -4195,7 +4202,7 @@
     },
     {
       "call_count": 1,
-      "diagnostic_digest": "b9884cee12b1eeae597e",
+      "diagnostic_digest": "1c6b7e3a0f425b124bee",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/password_dialog.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4383,8 +4390,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 49,
-      "diagnostic_digest": "3ee90cdaafc682f9f563",
+      "call_count": 44,
+      "diagnostic_digest": "9b645df0e21cbe46c480",
       "owner": "TASK-494",
       "path": "tldw_chatbook/app_entry.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -4439,8 +4446,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 118,
-      "diagnostic_digest": "74b1322038d0b901703e",
+      "call_count": 136,
+      "diagnostic_digest": "10071ce7ebfd7ea183e7",
       "owner": "TASK-494",
       "path": "tldw_chatbook/config.py",
       "reason": "remaining Chatbook production diagnostic owner"

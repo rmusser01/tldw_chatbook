@@ -70,7 +70,7 @@ OpenAI-compatible**.
 | Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |
 | Appearance | Theme and splash screen card | Settings ▸ Appearance |
 | Voice | Spoken replies — PocketTTS, OmniVoice (local, installs its model here), Official OpenAI or a compatible endpoint; sample + "Test and Hear" (endpoint/model under Advanced) | Settings ▸ Speech & TTS |
-| Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security is a read-out; encryption changes are password-gated and not editable there |
+| Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security ▸ **Encryption**: Encrypt keys, Change password, Turn off encryption (each asks for the master password) |
 
 The Tools step is the only place in setup that turns a tool on, and it says
 so up front: "Everything is off by default. Tools that read or change your
@@ -116,6 +116,63 @@ configured providers' model lists online at startup. Whatever you choose is
 final until you change it in Settings; finishing setup never hands you a
 separate consent pop-up afterwards. Local servers (Ollama, llama.cpp) are auto-detected on localhost; no
 probe traffic leaves your machine without your action.
+
+## Starting chatbook when your keys are encrypted
+
+If you set a master password (Protect keys, or Settings ▸ Privacy &
+Security ▸ Encryption), chatbook asks for it in the terminal before the app
+opens. Both ways of starting it — `tldw-cli` and
+`python -m tldw_chatbook.app` — use the same prompt:
+
+```
+Your saved API keys are encrypted. Enter the master password you set during setup.
+Master password (leave empty if you forgot it):
+```
+
+- **A wrong password** prints "That password didn't match. Try again." and
+  asks again. There is no limit on attempts.
+- **The right password, but a key encrypted with a different one** (left
+  behind by an older version that let you set a second password) prints
+  "That password is right, but some saved keys were encrypted with a
+  different password and can't be read with it." The app does not open with
+  keys it cannot read. If you remember the earlier master password, enter
+  it; otherwise leave the prompt empty to reset the keys.
+- **An earlier password that still reads every saved key** is accepted even
+  though it is not the latest one you set. chatbook says "That password
+  reads every saved key, so it is your master password again", re-encrypts
+  the keys under it and waits for Enter before opening the app. The later
+  password stops working.
+- **Forgot it?** Press Enter on an empty prompt. chatbook explains what a
+  reset does and offers `[R]eset saved keys or [Q]uit`. **Reset** removes
+  every encrypted value from config.toml and turns encryption off, then
+  waits for Enter so you can read what happened, and opens the app. Chats,
+  notes and documents are not touched; you re-enter your API keys in
+  Settings ▸ Providers & Models. **Quit** leaves everything as it was. The
+  choice is read from the terminal even when standard input is redirected.
+- **Ctrl+C or Ctrl+D** at the prompt, or while the password is being
+  checked, quits without changing anything.
+- **config.toml says encryption is on but its password check is missing**:
+  chatbook says so. If saved keys are encrypted, it asks for the master
+  password: one that reads every key unlocks them and repairs the check, and
+  an empty entry offers the reset. If nothing is encrypted, it offers the
+  `[R]eset saved keys or [Q]uit` choice straight away.
+- If chatbook cannot ask privately (no terminal attached), it opens a small
+  recovery window that says so in plain words; relaunch from a terminal to try
+  again. Backup & Restore stays one button away there but no longer opens on
+  its own.
+- **Browser sessions (`tldw-cli --serve`) cannot ask for the master
+  password.** Each browser session shows that recovery window instead of
+  prompting on the server's terminal. To serve chatbook in a browser, turn
+  encryption off first (from a terminal launch, in Settings ▸ Privacy &
+  Security ▸ Encryption). In that window, opening another profile from
+  Backup & Restore says it needs a terminal instead of ending the session.
+
+A saved key that is still encrypted is never treated as a usable key. If a
+key cannot be decrypted, its provider shows as not ready, never ready. A
+provider that needs a key reads as missing its key ("API key missing", and
+"API key source: missing" in Providers & Models). A local provider that
+needs no key still says why: "Saved API key is still encrypted". Either
+way, re-enter or clear the key in Settings ▸ Providers & Models.
 
 ## Running it again
 

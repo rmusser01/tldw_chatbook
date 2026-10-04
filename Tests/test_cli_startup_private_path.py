@@ -53,6 +53,9 @@ def _stub_startup_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
     launcher.startup_preflight = lambda: (None, None)
     launcher.minimal_recovery = lambda reason: 0
     launcher.recovery_main = lambda argv: 0
+    # TASK-34100.4: cli.py now runs the shared unlock (preflight + admission
+    # + password install) through this one function; None admits startup.
+    launcher.startup_unlock = lambda: None
     monkeypatch.setitem(
         sys.modules, "tldw_chatbook.Backup_Recovery.launcher", launcher
     )

@@ -10058,8 +10058,9 @@ class SettingsScreen(BaseAppScreen):
             return "Changes apply on next launch; active handles stay unchanged."
         if category is SettingsCategoryId.PRIVACY_SECURITY:
             return (
-                "Canvas availability and create auto-open are editable; hard quotas, "
-                "privacy posture, and secrets remain read-only and redacted."
+                "Key encryption, Canvas availability and create auto-open are "
+                "editable; hard quotas, privacy posture, and secret values remain "
+                "read-only and redacted."
             )
         if category is SettingsCategoryId.PERSONAL_CONTEXT:
             return "Encrypted local profile; record and authority actions apply immediately."
@@ -23277,14 +23278,20 @@ class SettingsScreen(BaseAppScreen):
                 "Privacy & Security",
                 classes="destination-section settings-column-title",
             )
+            # TASK-34100.4: the key-encryption lifecycle's Settings home (its
+            # own module, imported on first render to keep the screen's
+            # pre-import payload unchanged).
+            from .settings_encryption import EncryptionSettingsCard
+            from ...config import get_encryption_password
+
+            yield EncryptionSettingsCard(
+                enabled=posture.encryption_enabled,
+                unlocked=get_encryption_password() is not None,
+            )
             with Vertical(
                 id="settings-privacy-security-card", classes="settings-focus-card"
             ):
                 yield Static("Privacy posture", classes="destination-section")
-                yield self._detail_row(
-                    "Config encryption",
-                    "enabled" if posture.encryption_enabled else "disabled",
-                )
                 yield self._detail_row(
                     "Redaction",
                     "active; raw secret values hidden",
@@ -23354,10 +23361,6 @@ class SettingsScreen(BaseAppScreen):
                 yield Static("Data boundary", classes="destination-section")
                 yield self._detail_row("Local data", posture.data_boundary)
                 yield self._detail_row("Server tokens", posture.server_boundary)
-                yield self._detail_row(
-                    "Credential mutation",
-                    "not available yet - password-gated flow required",
-                )
                 yield Static(
                     self._privacy_check_text(),
                     id="settings-privacy-check-result",

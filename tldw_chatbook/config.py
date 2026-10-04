@@ -86,6 +86,7 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
 from tldw_chatbook.Utils.console_background_effects import (
     normalize_console_background_effects,
 )
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.startup_errors import private_path_repair_hint
 from tldw_chatbook.Utils.private_paths import (
@@ -627,7 +628,31 @@ def _report_config_path_posture(
 
 
 # --- Encryption support ---
-_ENCRYPTION_PASSWORD = None  # Cached password for the session
+
+
+def _take_startup_unlock() -> tuple[Optional[str], bool]:
+    """The startup unlock's outcome, if it is running (TASK-34100.4 round 2).
+
+    `Backup_Recovery.launcher.startup_unlock` imports this module only after
+    the master password was typed; taking it here, before the module-level
+    load below, means that load decrypts instead of warning "no password is
+    set" right after the right password. Read through ``sys.modules`` so
+    config never imports the launcher itself.
+
+    Returns:
+        ``(password, pending)`` from ``launcher.take_startup_unlock()``, or
+        ``(None, False)`` when no startup unlock is in progress.
+    """
+    launcher = sys.modules.get("tldw_chatbook.Backup_Recovery.launcher")
+    take = getattr(launcher, "take_startup_unlock", None)
+    if not callable(take):
+        return None, False
+    return take()
+
+
+# Cached password for the session; True while a startup reset or re-key is
+# about to finish the unlock (the locked import-time load is then expected).
+_ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING = _take_startup_unlock()
 _ENCRYPTION_MODULE = None  # Lazily loaded encryption module
 _CONFIG_GENERATION = 0
 _CONFIG_PERSISTENCE_ERROR = None
@@ -1018,7 +1043,9 @@ def set_encryption_password(password: str):
     re-decrypted on the next load.
     """
     global _ENCRYPTION_PASSWORD, _SETTINGS_CACHE, _CONFIG_CACHE
+    global _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = password
+    _STARTUP_UNLOCK_PENDING = False
     _SETTINGS_CACHE = None
     _CONFIG_CACHE = None
     logger.info("Encryption password set for current session")
@@ -1031,8 +1058,9 @@ def get_encryption_password() -> Optional[str]:
 
 def clear_encryption_password():
     """Clear the encryption password from memory."""
-    global _ENCRYPTION_PASSWORD
+    global _ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = None
+    _STARTUP_UNLOCK_PENDING = False
     logger.info("Encryption password cleared from memory")
 
 
@@ -1052,9 +1080,15 @@ def _decrypt_config_section_with_status(
 
     password = get_encryption_password()
     if not password:
-        logger.warning(
-            "Encryption is enabled but no password is set. Cannot decrypt config."
-        )
+        if _STARTUP_UNLOCK_PENDING:
+            # A startup reset or re-key installs its outcome right after this
+            # import; a locked load now is expected, not a problem to report
+            # under the prompt (TASK-34100.4 review round 2).
+            logger.debug("Encrypted config loaded before the startup unlock finished.")
+        else:
+            logger.warning(
+                "Encryption is enabled but no password is set. Cannot decrypt config."
+            )
         return _ConfigDecryptionResult(config_data, True)
 
     try:
@@ -1544,13 +1578,53 @@ PROVIDER_API_KEY_PLACEHOLDERS = frozenset(
 )
 
 
+#: The prefix `Utils/config_encryption.ConfigEncryption` writes on every
+#: encrypted config value (pinned equal by
+#: Tests/test_config_encryption_lifecycle.py). Kept as a literal here so the
+#: key resolver below never imports the encryption engine.
+ENCRYPTED_CONFIG_VALUE_PREFIX = "enc:"
+
+
+def is_encrypted_config_value(value: object) -> bool:
+    """Whether ``value`` is still-encrypted ``enc:`` config ciphertext.
+
+    TASK-34100.4 (new-protect-summary-03): ciphertext is never a credential.
+    A locked session (encryption on, no password) or a value that did not
+    decrypt keeps its ``enc:`` form in the loaded config, so every code path
+    that reads a key straight from config must treat it as unusable.
+    """
+    return isinstance(value, str) and value.strip().startswith(
+        ENCRYPTED_CONFIG_VALUE_PREFIX
+    )
+
+
+def without_ciphertext(value: Any, absent: Any = None) -> Any:
+    """Return ``value`` unchanged, or ``absent`` when it is ``enc:`` ciphertext.
+
+    For key reads that must keep their own blank/placeholder semantics (the
+    summarizers distinguish a configured-blank key from a missing one) but
+    must never send ciphertext. Provider handlers use
+    `resolve_provider_api_key` instead.
+    """
+    return absent if is_encrypted_config_value(value) else value
+
+
 def resolve_provider_api_key(value: object) -> Optional[str]:
     """Return `value` stripped, or `None` if it is not a usable provider API
-    key (not a string, blank, or one of `PROVIDER_API_KEY_PLACEHOLDERS`)."""
+    key (not a string, blank, one of `PROVIDER_API_KEY_PLACEHOLDERS`, or
+    still-encrypted `enc:` ciphertext).
+
+    TASK-34100.4 (new-protect-summary-03): ciphertext reads as ABSENT. A
+    locked session (encryption on, no password) or a value that did not
+    decrypt keeps its `enc:` form in the loaded config; accepting it made
+    readiness report Ready and sent the ciphertext as a bearer token.
+    """
     if not isinstance(value, str):
         return None
     stripped = value.strip()
     if stripped in PROVIDER_API_KEY_PLACEHOLDERS:
+        return None
+    if is_encrypted_config_value(stripped):
         return None
     return stripped or None
 
@@ -7403,6 +7477,26 @@ def _write_raw_cli_config_unlocked(
             f"Refusing to write {config_path}: the serialized configuration "
             f"does not parse back as valid TOML ({exc})"
         ) from exc
+    _commit_serialized_cli_config_unlocked(
+        config_path, serialized, application_directory
+    )
+    return parsed_back
+
+
+def _commit_serialized_cli_config_unlocked(
+    config_path: Path,
+    serialized: str,
+    application_directory: Path | None,
+) -> None:
+    """Atomically commit exact serialized config text while the lock is held.
+
+    Shared by `_write_raw_cli_config_unlocked` and the encryption lifecycle's
+    byte-exact rollback (TASK-34100.4), so a restore advances an owned
+    recovery binding exactly like an ordinary write does. Not itself
+    `_config_participants.guarded` (that allowlist is closed): every caller
+    already runs inside `_config_write_lock`'s participant operation.
+    """
+
     from .Backup_Recovery.config_binding import preserve_owned_binding
 
     with preserve_owned_binding(
@@ -7416,7 +7510,6 @@ def _write_raw_cli_config_unlocked(
         )
     _report_config_path_posture(result)
     _invalidate_config_caches()
-    return parsed_back
 
 
 def _install_bootstrap_cache_from_raw(
@@ -9745,36 +9838,422 @@ def get_detected_api_providers() -> List[str]:
     return providers
 
 
+# --- Config key-encryption lifecycle (TASK-34100.4) ---------------------------
+#
+# One owner for the four states (off / on / locked / unlocked). Every change
+# below follows the same contract, because a mistake here locks people out of
+# their own app (first-run review 2026-10-02, protect-summary-04):
+#
+# * validate BEFORE writing -- the replacement document must strict-decrypt
+#   with the password the session will hold afterwards, and must not leave a
+#   plaintext secret behind in an encrypted file;
+# * if anything fails after the write (the runtime publish, a binding check),
+#   restore the previous file bytes -- or remove a file this call created --
+#   and the previous in-process password, so a failure never leaves the disk
+#   changed while the caller is told nothing happened;
+# * never decrypt non-strictly: a file whose keys do not match its verifier is
+#   refused untouched instead of having its ciphertext written back as values.
+
+
+def _set_session_encryption_password(password: Optional[str]) -> None:
+    """Install (or clear) the in-process password and drop stale caches."""
+
+    global _SETTINGS_CACHE, _CONFIG_CACHE
+    if password is None:
+        clear_encryption_password()
+        _SETTINGS_CACHE = None
+        _CONFIG_CACHE = None
+        return
+    set_encryption_password(password)
+
+
+def _parse_raw_cli_config_text(serialized: Optional[str]) -> Dict[str, Any]:
+    if serialized is None:
+        return {}
+    loaded = tomllib.loads(serialized)
+    if not isinstance(loaded, dict):
+        raise TypeError("The CLI config must contain a top-level table")
+    return loaded
+
+
+def _password_verifier(config_data: Mapping[str, Any]) -> Optional[str]:
+    encryption = config_data.get("encryption", {})
+    if not isinstance(encryption, Mapping):
+        return None
+    verifier = encryption.get("password_verifier")
+    return verifier if isinstance(verifier, str) and verifier else None
+
+
+def _validate_encrypted_document(
+    document: Mapping[str, Any],
+    password: str,
+) -> None:
+    """Raise unless ``document`` is a safe encrypted config for ``password``.
+
+    The check mirrors what the next publish and the next startup do: the
+    merged view must strict-decrypt, and no sensitive value may stay plain.
+    """
+
+    merged = deep_merge_dicts(DEFAULT_CONFIG_FROM_TOML, dict(document))
+    get_encryption_module().decrypt_config_strict(merged, password)
+    if _contains_unencrypted_sensitive_value(document):
+        raise ValueError("An encrypted config would keep a plaintext secret")
+
+
+def _strip_encrypted_values(config_data: Mapping[str, Any]) -> Dict[str, Any]:
+    """Return a copy with every ``enc:`` string value removed, in every table.
+
+    Arrays are walked too (Qodo round, PR #3000): an ``enc:`` element is
+    dropped from its array and a table inside an array is stripped like any
+    other, so a reset never leaves ciphertext behind in a TOML array.
+    """
+
+    stripped: Dict[str, Any] = {}
+    for key, value in config_data.items():
+        if is_encrypted_config_value(value):
+            continue
+        stripped[key] = _strip_encrypted_item(value)
+    return stripped
+
+
+def _strip_encrypted_item(value: Any) -> Any:
+    """Strip ``enc:`` strings from one table or array value (copied)."""
+
+    if isinstance(value, Mapping):
+        return _strip_encrypted_values(value)
+    if isinstance(value, list):
+        return [
+            _strip_encrypted_item(item)
+            for item in value
+            if not is_encrypted_config_value(item)
+        ]
+    return copy.deepcopy(value)
+
+
+def _encrypted_value_paths(
+    config_data: Mapping[str, Any], prefix: tuple[str, ...] = ()
+) -> list[str]:
+    """Dotted paths of every ``enc:`` value outside the ``[encryption]`` table."""
+
+    paths: list[str] = []
+    for key, value in config_data.items():
+        if not prefix and key == "encryption":
+            continue
+        if isinstance(value, Mapping):
+            paths.extend(_encrypted_value_paths(value, prefix + (str(key),)))
+        elif is_encrypted_config_value(value):
+            paths.append(".".join(prefix + (str(key),)))
+    return paths
+
+
+def _contains_encrypted_value(config_data: Mapping[str, Any]) -> bool:
+    return bool(_encrypted_value_paths(config_data))
+
+
+def _already_encrypted_with(config_data: Mapping[str, Any], password: str) -> bool:
+    """Whether an encryption-on file is already exactly what enabling with
+    ``password`` would produce: the verifier accepts it, every saved value
+    strict-decrypts with it, and no sensitive value is left in plain text."""
+
+    verifier = _password_verifier(config_data)
+    if verifier is None:
+        return False
+    if not get_encryption_module().verify_password(password, verifier):
+        return False
+    try:
+        _validate_encrypted_document(config_data, password)
+    except ValueError:
+        return False
+    return True
+
+
+def _restore_previous_config_unlocked(
+    config_path: Path,
+    previous_serialized: Optional[str],
+) -> None:
+    """Put the exact previous bytes back (or remove a file this call created).
+
+    Args:
+        config_path: The selected config file the failed change wrote.
+        previous_serialized: The file's exact text before the change, or
+            None when the change created the file.
+
+    Raises:
+        ValueError: The path fails ``validate_path_simple``; nothing is
+            removed.
+        OSError: Reading, removing or rewriting the file failed.
+    """
+
+    current = _try_read_cli_config_serialized_unlocked(config_path)
+    if current == previous_serialized:
+        return
+    if previous_serialized is None:
+        # The only raw filesystem call here; the restore write below goes
+        # through the private atomic writer. Same validation as the hooks
+        # snapshot's lock target: the path only reaches unlink(), never a
+        # shell, and unlink() removes a link itself, not what it points to.
+        removable = validate_path_simple(
+            config_path,
+            require_exists=False,
+            probe_existing=False,
+            reject_shell_metacharacters=False,
+        )
+        removable.unlink(missing_ok=True)
+        _invalidate_config_caches()
+        return
+    _commit_serialized_cli_config_unlocked(
+        config_path,
+        previous_serialized,
+        _prepare_config_parent(config_path),
+    )
+
+
+def _unlock_session_with_password_unlocked(config_path: Path, password: str) -> bool:
+    """Install ``password`` for an unchanged file and republish settings.
+
+    The same-password enable writes nothing, but a session that loaded the
+    file without the password published its ciphertext in ``settings``;
+    installing the password alone left every reader of that global on the
+    locked view (Qodo round, PR #3000). Callers hold the write lock and have
+    already checked that ``password`` reads the file.
+
+    Args:
+        config_path: The selected config file (used for log context only).
+        password: The master password the file is encrypted under.
+
+    Returns:
+        True when the session holds ``password`` and the published settings
+        are decrypted with it; False when the publish failed, in which case
+        the previous session password is put back.
+    """
+
+    previous_password = get_encryption_password()
+    _set_session_encryption_password(password)
+    try:
+        _publish_runtime_config_unlocked()
+        return True
+    except Exception as error:
+        logger.error(
+            "Publishing the unlocked config failed; the session was left as "
+            "it was (action=enable, config_path={}, error_type={}).",
+            redact_user_paths(str(config_path)),
+            type(error).__name__,
+        )
+    _set_session_encryption_password(previous_password)
+    return False
+
+
+def _session_password_for_file(
+    config_path: Path,
+    previous_serialized: Optional[str],
+    *,
+    previous_password: Optional[str],
+    written_password: Optional[str],
+) -> Optional[str]:
+    """The password that reads the file as it is after a rollback attempt."""
+
+    try:
+        current = _try_read_cli_config_serialized_unlocked(config_path)
+    except Exception:
+        return None
+    if current == previous_serialized:
+        return previous_password
+    return written_password
+
+
+def _commit_encryption_change_unlocked(
+    config_path: Path,
+    document: Mapping[str, Any],
+    previous_serialized: Optional[str],
+    *,
+    session_password: Optional[str],
+    action: str,
+) -> bool:
+    """Write ``document``, install ``session_password`` and publish -- or roll back.
+
+    Callers hold the write lock and have already validated ``document``.
+    """
+
+    previous_password = get_encryption_password()
+    try:
+        raw_written = _write_raw_cli_config_unlocked(config_path, document)
+        _set_session_encryption_password(session_password)
+        _publish_runtime_config_unlocked(raw_config=raw_written)
+        return True
+    except Exception as error:
+        logger.error(
+            "Config encryption change failed; restoring the previous config "
+            "(action={}, error_type={}).",
+            action,
+            type(error).__name__,
+        )
+    try:
+        _restore_previous_config_unlocked(config_path, previous_serialized)
+    except Exception as restore_error:
+        logger.error(
+            "Restoring the previous config after a failed encryption change "
+            "failed (action={}, error_type={}).",
+            action,
+            type(restore_error).__name__,
+        )
+    # The session password must match what the file holds NOW (review round
+    # 1, F7): the previous one after a restore, the new one when the restore
+    # failed and the new document stayed. Reverting it then would encrypt the
+    # next save under the old password beside the new verifier -- the
+    # stranded state. An unreadable file locks the session rather than guess.
+    _set_session_encryption_password(
+        _session_password_for_file(
+            config_path,
+            previous_serialized,
+            previous_password=previous_password,
+            written_password=session_password,
+        )
+    )
+    try:
+        _publish_runtime_config_unlocked()
+    except Exception as publish_error:
+        logger.warning(
+            "Republishing the restored config failed (action={}, error_type={}).",
+            action,
+            type(publish_error).__name__,
+        )
+    return False
+
+
+def config_encryption_enabled_on_disk() -> Optional[bool]:
+    """Whether the selected config file currently has encryption turned on.
+
+    Returns:
+        True or False from the file, or None when it could not be read (the
+        caller keeps whatever state it already showed).
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        return _encryption_enabled(_parse_raw_cli_config_text(serialized))
+    except Exception as error:
+        logger.warning(
+            "Reading the config encryption state failed (error_type={}).",
+            type(error).__name__,
+        )
+        return None
+
+
+def encrypted_value_paths_on_disk() -> list[str]:
+    """Dotted paths of the ``enc:`` values in the selected config file.
+
+    Used to name a value that is still encrypted under an earlier password
+    when encrypting is refused over it. Empty when there are none or the file
+    cannot be read.
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        return _encrypted_value_paths(_parse_raw_cli_config_text(serialized))
+    except Exception as error:
+        logger.warning(
+            "Listing encrypted config values failed (error_type={}).",
+            type(error).__name__,
+        )
+        return []
+
+
+def verify_config_encryption_password(password: str) -> bool:
+    """Whether ``password`` matches the saved master-password verifier.
+
+    Returns False when encryption is off or the verifier is missing. Runs
+    scrypt, so call it off the UI thread.
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        config_data = _parse_raw_cli_config_text(serialized)
+        verifier = _password_verifier(config_data)
+        if not _encryption_enabled(config_data) or verifier is None:
+            return False
+        return bool(get_encryption_module().verify_password(password, verifier))
+    except Exception as error:
+        logger.warning(
+            "Checking the master password failed (error_type={}).",
+            type(error).__name__,
+        )
+        return False
+
+
 def enable_config_encryption(password: str) -> bool:
     """
     Enable encryption for the config file and encrypt existing API keys.
+
+    Refuses (returns False without writing) when encryption is already on
+    with a different password: re-running enable used to rewrite the
+    verifier over keys still encrypted under the first password. Use
+    `change_encryption_password` to rotate. Enabling again with the SAME
+    password, on a file that is already fully encrypted under it, writes
+    nothing and returns True (review round 2, R2-F4); when this session did
+    not hold that password it is installed and the runtime settings are
+    republished, so a locked session is fully unlocked (Qodo round).
 
     Args:
         password: The master password to use for encryption
 
     Returns:
-        True if encryption was enabled successfully
+        True if encryption was enabled successfully, or already was with
+        this password
     """
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
-            config_data = _read_raw_cli_config_unlocked(config_path)
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if _encryption_enabled(config_data):
+                if _already_encrypted_with(config_data, password):
+                    if get_encryption_password() != password and not (
+                        _unlock_session_with_password_unlocked(config_path, password)
+                    ):
+                        return False
+                    logger.info(
+                        "Config encryption is already enabled with this "
+                        "password; nothing was changed."
+                    )
+                    return True
+                logger.warning(
+                    "Config encryption is already enabled; refusing to enable "
+                    "it again. Change the master password instead."
+                )
+                return False
             encrypted_config = encrypt_api_keys_in_config(config_data, password)
-            raw_written = _write_raw_cli_config_unlocked(config_path, encrypted_config)
-            set_encryption_password(password)
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _validate_encrypted_document(encrypted_config, password)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                encrypted_config,
+                previous,
+                session_password=password,
+                action="enable",
+            ):
+                return False
 
         logger.success("Config encryption enabled successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to enable config encryption: {e}")
+        logger.error(
+            "Failed to enable config encryption (error_type={}).", type(e).__name__
+        )
         return False
 
 
 def disable_config_encryption(password: str) -> bool:
     """
     Disable encryption for the config file and decrypt all values.
+
+    Every saved value must decrypt with ``password`` (strict); otherwise the
+    file is left untouched and False is returned.
 
     Args:
         password: The master password to verify before disabling
@@ -9785,36 +10264,68 @@ def disable_config_encryption(password: str) -> bool:
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
-            config_data = _read_raw_cli_config_unlocked(config_path)
-            encryption_config = config_data.get("encryption", {})
-            if encryption_config.get("enabled", False):
-                enc_module = get_encryption_module()
-                password_verifier = encryption_config.get("password_verifier", "")
-                if not password_verifier:
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if _encryption_enabled(config_data):
+                verifier = _password_verifier(config_data)
+                if verifier is None:
                     logger.error("No password verifier found in encryption config")
                     return False
-                if not enc_module.verify_password(password, password_verifier):
+                enc_module = get_encryption_module()
+                if not enc_module.verify_password(password, verifier):
                     logger.error("Invalid password provided")
                     return False
-
-            set_encryption_password(password)
-            decrypted_config = decrypt_config_section(config_data)
+                try:
+                    decrypted_config = enc_module.decrypt_config_strict(
+                        config_data, password
+                    )
+                except ValueError:
+                    logger.error(
+                        "Some saved values do not decrypt with this password; "
+                        "encryption was left on (action=disable, config_path={}).",
+                        redact_user_paths(str(config_path)),
+                    )
+                    return False
+            elif "encryption" in config_data:
+                decrypted_config = copy.deepcopy(config_data)
+            else:
+                _set_session_encryption_password(None)
+                logger.info("Config encryption is already disabled")
+                return True
             decrypted_config.pop("encryption", None)
-            raw_written = _write_raw_cli_config_unlocked(config_path, decrypted_config)
-            clear_encryption_password()
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            if _contains_encrypted_value(decrypted_config):
+                logger.error(
+                    "Encrypted values would remain after disabling encryption; "
+                    "encryption was left on (action=disable, config_path={}).",
+                    redact_user_paths(str(config_path)),
+                )
+                return False
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                decrypted_config,
+                previous,
+                session_password=None,
+                action="disable",
+            ):
+                return False
 
         logger.success("Config encryption disabled successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to disable config encryption: {e}")
+        logger.error(
+            "Failed to disable config encryption (error_type={}).", type(e).__name__
+        )
         return False
 
 
 def change_encryption_password(old_password: str, new_password: str) -> bool:
     """
     Change the encryption password.
+
+    Every saved value must decrypt with ``old_password`` (strict), and the
+    re-encrypted document must decrypt with ``new_password`` before it is
+    written; otherwise the file is left untouched.
 
     Args:
         old_password: The current password
@@ -9826,36 +10337,155 @@ def change_encryption_password(old_password: str, new_password: str) -> bool:
     try:
         config_path = get_cli_config_path()
         with _config_write_lock(config_path):
-            config_data = _read_raw_cli_config_unlocked(config_path)
-            encryption_config = config_data.get("encryption", {})
-            if not encryption_config.get("enabled", False):
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if not _encryption_enabled(config_data):
                 logger.error("Encryption is not enabled")
                 return False
 
             enc_module = get_encryption_module()
-            password_verifier = encryption_config.get("password_verifier", "")
-            if not password_verifier:
+            verifier = _password_verifier(config_data)
+            if verifier is None:
                 logger.error("No password verifier found in encryption config")
                 return False
-            if not enc_module.verify_password(old_password, password_verifier):
+            if not enc_module.verify_password(old_password, verifier):
                 logger.error("Invalid current password provided")
                 return False
-
-            set_encryption_password(old_password)
-            decrypted_config = decrypt_config_section(config_data)
+            try:
+                decrypted_config = enc_module.decrypt_config_strict(
+                    config_data, old_password
+                )
+            except ValueError:
+                logger.error(
+                    "Some saved values do not decrypt with the current password; "
+                    "the password was not changed (action=change, config_path={}).",
+                    redact_user_paths(str(config_path)),
+                )
+                return False
             encrypted_config = encrypt_api_keys_in_config(
                 decrypted_config,
                 new_password,
             )
-            raw_written = _write_raw_cli_config_unlocked(config_path, encrypted_config)
-            set_encryption_password(new_password)
-            _publish_runtime_config_unlocked(raw_config=raw_written)
+            _validate_encrypted_document(encrypted_config, new_password)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                encrypted_config,
+                previous,
+                session_password=new_password,
+                action="change",
+            ):
+                return False
 
         logger.success("Encryption password changed successfully")
         return True
 
     except Exception as e:
-        logger.error(f"Failed to change encryption password: {e}")
+        logger.error(
+            "Failed to change encryption password (error_type={}).",
+            type(e).__name__,
+        )
+        return False
+
+
+def rekey_encryption_verifier(password: str) -> bool:
+    """Make ``password`` the master password again when it reads every key.
+
+    For an encryption-on file whose verifier is missing, or was rewritten
+    for another password while the keys stayed under this one (the stranded
+    state an old second enable left behind). Without this the only way past
+    either was a reset that deleted keys this password still reads (TASK-
+    34100.4 review round 2, R2-F5). Every ``enc:`` value outside
+    ``[encryption]`` must strict-decrypt with ``password``, and there must be
+    at least one -- with none, any guess would "read every key". The file is
+    re-encrypted under ``password`` with a new verifier, through the same
+    validate-then-write and rollback as `change_encryption_password`.
+
+    Args:
+        password: The password the user typed at the startup prompt.
+
+    Returns:
+        True when the file now answers to ``password`` and the session holds
+        it; False (file untouched) otherwise.
+    """
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            config_data = _parse_raw_cli_config_text(previous)
+            if not _encryption_enabled(config_data):
+                return False
+            values = {
+                key: value for key, value in config_data.items() if key != "encryption"
+            }
+            if not _contains_encrypted_value(values):
+                return False
+            try:
+                decrypted_config = get_encryption_module().decrypt_config_strict(
+                    values, password, log_failure=False
+                )
+            except ValueError:
+                return False
+            decrypted_config["encryption"] = copy.deepcopy(config_data["encryption"])
+            encrypted_config = encrypt_api_keys_in_config(decrypted_config, password)
+            _validate_encrypted_document(encrypted_config, password)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                encrypted_config,
+                previous,
+                session_password=password,
+                action="rekey",
+            ):
+                return False
+
+        logger.success("The master-password check was repaired")
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Repairing the master-password check failed (error_type={}).",
+            type(e).__name__,
+        )
+        return False
+
+
+def reset_encrypted_config_values() -> bool:
+    """Forgot-password reset: drop every encrypted value and turn encryption off.
+
+    Strips every ``enc:`` value from every table and array (sensitive or
+    not -- none of them can be read without the password) and removes
+    ``[encryption]``. Chats, notes, documents and every plain setting are
+    untouched; the user re-enters API keys afterwards.
+
+    Returns:
+        True when the file now holds no encrypted value and encryption is off.
+    """
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            previous = _try_read_cli_config_serialized_unlocked(config_path)
+            if previous is None:
+                _set_session_encryption_password(None)
+                return True
+            config_data = _parse_raw_cli_config_text(previous)
+            stripped = _strip_encrypted_values(config_data)
+            stripped.pop("encryption", None)
+            if not _commit_encryption_change_unlocked(
+                config_path,
+                stripped,
+                previous,
+                session_password=None,
+                action="reset",
+            ):
+                return False
+
+        logger.success("Encrypted config values were reset")
+        return True
+
+    except Exception as e:
+        logger.error(
+            "Resetting encrypted config values failed (error_type={}).",
+            type(e).__name__,
+        )
         return False
 
 
