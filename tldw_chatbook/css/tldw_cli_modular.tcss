@@ -16334,6 +16334,18 @@ SmartContentTree Tree > .selected-node {
     height: auto;
 }
 
+
+#setup-voice-body,
+#setup-voice-key-row {
+    height: auto;
+}
+
+
+#setup-voice-service-status {
+    height: auto;
+    min-height: $ds-size-1;
+}
+
 .setup-voice-segmented {
     layout: horizontal;
     height: $ds-size-3;
@@ -16354,13 +16366,14 @@ SmartContentTree Tree > .selected-node {
     text-style: bold underline;
 }
 
+
 .setup-voice-output-row {
-    height: $ds-size-5;
+    height: auto;
 }
 
 .setup-voice-output-row > Vertical {
     width: $ds-width-fill;
-    height: $ds-size-5;
+    height: auto;
 }
 
 #setup-voice-sample-count {

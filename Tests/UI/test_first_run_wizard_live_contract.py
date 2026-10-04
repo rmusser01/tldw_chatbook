@@ -2246,6 +2246,11 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
 ) -> None:
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
     app.theme = theme
+    # TASK-34100.8: the step probes a local service with one TCP connect.
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Wizards.first_run_voice_step.probe_endpoint_reachable",
+        lambda _url: False,
+    )
 
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=size) as pilot:
@@ -2262,6 +2267,10 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
 
             step = container.steps[voice_index]
             assert isinstance(step, VoiceSetupStep)
+            # TASK-34100.8: a fresh profile starts on "No voice for now",
+            # which hides the try-it controls; picking a service shows them.
+            step._select_preset_button("setup-voice-preset-pocket")
+            await pilot.pause(0.2)
 
             # TASK-21148 (UAT V-1/V-2): the try-it controls lead the step;
             # plumbing lives under the Advanced disclosure. The primary
@@ -2300,7 +2309,8 @@ async def test_voice_step_controls_are_stable_and_scroll_reachable(
                 step.query_one("#setup-voice-endpoint", Input),
                 step.query_one("#setup-voice-auth"),
                 step.query_one("#setup-voice-model", Input),
-                step.query_one("#setup-voice-voice", Input),
+                # TASK-34100.8: Voice is a picker (Select + "Other…").
+                step.query_one("#setup-voice-voice-select"),
             )
             assert all(c.region.width > 0 for c in advanced_controls)
             assert all(c.region.right <= size[0] for c in advanced_controls)

@@ -164,8 +164,9 @@ _BUDGETS: dict[str, int] = {
     # fence's focus hold into first_run_step_guard.py (3,182); round 2 held the
     # fence through finishing (3,181); round 3 shared the discovery reuse rule
     # (3,179). The wizard keeps the container, progress, nav bar, dialog and
-    # screen.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3177,
+    # screen. TASK-34100.8: the Voice resume restore moved onto the step
+    # (VoiceSetupStep.restore_checkpoint) -> 3,145.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3145,
     # TASK-34100.1: the step modules the split left at 1,000 lines or more
     # are pinned at their exact size, so the split cannot regrow a god module
     # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
@@ -179,7 +180,10 @@ _BUDGETS: dict[str, int] = {
     # first_run_model_discovery.drop_unreusable_handoff.
     "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2458,
     "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1708,
-    "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1070,
+    # TASK-34100.8: Voice 1,070 -> 1,053 -- its OmniVoice half moved to
+    # first_run_voice_omnivoice.py while the step gained the SF3 fixes, whose
+    # logic lives in first_run_voice_{prefill,status,pickers}.py.
+    "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1053,
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,

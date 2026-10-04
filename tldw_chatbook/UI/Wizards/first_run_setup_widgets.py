@@ -390,6 +390,20 @@ class SetupStep(step_guard.WizardErrorGuard, WizardStep):
         strip.update(message)
         strip.remove_class("hidden")
 
+    def clear_step_error(self) -> None:
+        """Empty the pinned error strip once the user changes something.
+
+        TASK-34100.8 (new-voice-speech-03): a refused Next's reason used to
+        stay on screen after its cause was fixed, next to a newer, different
+        status. A step calls this from its input and choice handlers.
+        """
+        try:
+            strip = self.screen.query_one("#setup-step-error-pinned", Static)
+        except Exception:  # noqa: BLE001 - not mounted, or a bare test host
+            return
+        strip.update("")
+        strip.add_class("hidden")
+
     def refresh(
         self,
         *regions: "Region",  # noqa: UP037

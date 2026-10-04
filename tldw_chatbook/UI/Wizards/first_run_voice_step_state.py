@@ -497,7 +497,8 @@ OMNIVOICE_READY_COPY = (
 OMNIVOICE_CHECKING_COPY = "Checking the OmniVoice model…"
 OMNIVOICE_GENERATING_COPY = "Generating locally (first run loads the model)…"
 OMNIVOICE_SAMPLE_FAILED_COPY = (
-    "Couldn't play a test sample — you can still save and test later in Speech Lab."
+    "Test failed — OmniVoice couldn't make a sample. You can still continue "
+    "with Next and test later in Speech Lab."
 )
 OMNIVOICE_DEFAULT_WITHOUT_MODEL_COPY = (
     "Install the OmniVoice model first, or uncheck Use as default."

@@ -13,7 +13,8 @@ from textual import on
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static
 
 # TASK-33921: the step moved to its own module; patch where it looks names up.
-import tldw_chatbook.UI.Wizards.first_run_voice_step as voice_step_module
+# TASK-34100.8: the OmniVoice half moved again, into first_run_voice_omnivoice.
+import tldw_chatbook.UI.Wizards.first_run_voice_omnivoice as voice_step_module
 from Tests.Wizards.test_first_run_setup_wizard import _StepHost
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,

@@ -44,7 +44,6 @@ from tldw_chatbook.config import get_runtime_config_snapshot
 from tldw_chatbook.UI.Wizards import first_run_model_discovery as model_discovery
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards import first_run_step_guard as step_guard
-from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupRadioButton as SetupRadioButton,  # re-exported: old import path
     _radio_model_id,
@@ -1108,7 +1107,11 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             cancel.tooltip = (
                 "Save completed steps and continue later from Settings ▸ Diagnostics."
             )
-            hints.update("Enter / Ctrl+N next · Ctrl+B back · Esc exit setup")
+            hints.update(
+                # TASK-34100.8: a step whose Enter differs says so (Voice).
+                getattr(step, "KEY_HINTS", "")
+                or "Enter / Ctrl+N next · Ctrl+B back · Esc exit setup"
+            )
 
     def _restore_resume_target(self) -> None:
         """Show a validated resume target and clear its marker after paint."""
@@ -1196,42 +1199,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             from tldw_chatbook.UI.Wizards.first_run_voice_step import VoiceSetupStep
 
             if isinstance(voice_step, VoiceSetupStep) and voice_values:
-                initial = voice_step._initial_draft()
-                restored_voice = voice_state.VoiceSetupDraft(
-                    endpoint=str(voice_values.get("endpoint", initial.endpoint)),
-                    authentication_mode=str(
-                        voice_values.get(
-                            "authentication_mode",
-                            initial.authentication_mode,
-                        )
-                    ),
-                    model_id=str(voice_values.get("model_id", initial.model_id)),
-                    voice_id=str(voice_values.get("voice_id", initial.voice_id)),
-                    response_format=str(
-                        voice_values.get("response_format", initial.response_format)
-                    ),
-                    speed=float(voice_values.get("speed", initial.speed)),
-                    sample_text=str(
-                        voice_values.get("sample_text", initial.sample_text)
-                    ),
-                    use_as_default=bool(
-                        voice_values.get("use_as_default", initial.use_as_default)
-                    ),
-                )
-                voice_step._custom_draft = restored_voice
-                voice_step._preset = voice_state.VOICE_PRESET_CUSTOM
-                voice_step._apply_draft_to_controls(restored_voice)
-                self._restore_radio_selection(
-                    voice_step.query_one("#setup-voice-preset", RadioSet),
-                    lambda button: button.id == "setup-voice-preset-custom",
-                )
-                if voice_values.get("preset") == voice_state.VOICE_PRESET_OMNIVOICE:
-                    voice_step._preset = voice_state.VOICE_PRESET_OMNIVOICE
-                    self._restore_radio_selection(
-                        voice_step.query_one("#setup-voice-preset", RadioSet),
-                        lambda button: button.id == "setup-voice-preset-omnivoice",
-                    )
-                    voice_step._set_omnivoice_mode(True)
+                voice_step.restore_checkpoint(voice_values)
 
             rag_values = draft.values.get(wizard_state.STEP_RAG, {})
             rag_step = self.steps[self._step_index_for_id(wizard_state.STEP_RAG)]

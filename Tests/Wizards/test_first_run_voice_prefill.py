@@ -462,7 +462,7 @@ def test_service_status_lines_say_whether_a_service_will_work() -> None:
     assert "key found" in status.service_status_copy(
         vs.VOICE_PRESET_OFFICIAL_OPENAI, endpoint=_OFFICIAL, key_found=True
     )
-    assert "needs an OpenAI API key" in status.service_status_copy(
+    assert "no OpenAI API key found" in status.service_status_copy(
         vs.VOICE_PRESET_OFFICIAL_OPENAI, endpoint=_OFFICIAL, key_found=False
     )
     assert status.service_status_copy(vs.VOICE_PRESET_NONE, endpoint="") == (

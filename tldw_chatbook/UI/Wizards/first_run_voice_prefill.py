@@ -19,11 +19,21 @@ from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_authentication_mode,
     normalize_openai_compatible_endpoint,
 )
+from tldw_chatbook.TTS.pocket_tts_native import POCKET_TTS_VOICES
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as vs
 
 #: What the runtime uses for the OpenAI slot when nothing is saved
 #: (``TTSPreferencesSnapshot.from_settings`` and the OpenAI backend).
 _RUNTIME_FALLBACK = ("tts-1-hd", "shimmer", "mp3")
+
+#: The presets that save to the OpenAI-compatible slot (one endpoint).
+OPENAI_SLOT_PRESETS = frozenset(
+    {
+        vs.VOICE_PRESET_POCKET_TTS,
+        vs.VOICE_PRESET_OFFICIAL_OPENAI,
+        vs.VOICE_PRESET_CUSTOM,
+    }
+)
 
 _PRESET_NAMES = {
     vs.VOICE_PRESET_POCKET_TTS: "PocketTTS",
@@ -246,9 +256,78 @@ def current_voice_copy(saved: SavedVoice) -> str:
     return f"Current voice: {voice_label(saved)} — unchanged unless you edit it."
 
 
+#: What each named service offers under Advanced: (models, voices, formats).
+#: Picking among these keeps the service; anything else makes it Custom.
+_PRESET_CHOICES: Mapping[
+    str, tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]
+] = {
+    vs.VOICE_PRESET_POCKET_TTS: ((vs.POCKET_TTS_MODEL,), POCKET_TTS_VOICES, ("wav",)),
+    vs.VOICE_PRESET_OFFICIAL_OPENAI: (
+        ("tts-1", "tts-1-hd"),
+        vs.OFFICIAL_OPENAI_TTS_VOICES,
+        vs.RESPONSE_FORMATS,
+    ),
+}
+
+
+def voices_for(preset: str) -> tuple[str, ...]:
+    """The Voice picker's list for a service (Custom offers only Other…)."""
+    return _PRESET_CHOICES.get(preset, ((), (), ()))[1]
+
+
+def formats_for(preset: str) -> tuple[str, ...]:
+    """The Format picker's list for a service."""
+    return _PRESET_CHOICES.get(preset, ((), (), vs.RESPONSE_FORMATS))[2]
+
+
+def draft_matches_preset(draft: vs.VoiceSetupDraft, preset: str) -> bool:
+    """Whether the Advanced fields still describe ``preset``.
+
+    TASK-34100.8 (new-voice-speech-02): the endpoint and authentication must
+    be the preset's own, and model, voice and format one it offers.
+    """
+    if preset not in _PRESET_CHOICES:
+        return True
+    expected = vs.apply_voice_preset(draft, preset)
+    models, voices, formats = _PRESET_CHOICES[preset]
+    return (
+        draft.endpoint.strip() == expected.endpoint
+        and draft.authentication_mode == expected.authentication_mode
+        and draft.model_id.strip() in models
+        and draft.voice_id.strip() in voices
+        and draft.response_format in formats
+    )
+
+
+def draft_from_checkpoint(
+    values: Mapping[str, object], fallback: vs.VoiceSetupDraft
+) -> vs.VoiceSetupDraft:
+    """Rebuild a draft from a resume checkpoint's non-secret Voice values."""
+
+    def text(key: str, default: str) -> str:
+        value = values.get(key, default)
+        return value if isinstance(value, str) else default
+
+    speed = values.get("speed", fallback.speed)
+    return vs.VoiceSetupDraft(
+        endpoint=text("endpoint", fallback.endpoint),
+        authentication_mode=text("authentication_mode", fallback.authentication_mode),
+        model_id=text("model_id", fallback.model_id),
+        voice_id=text("voice_id", fallback.voice_id),
+        response_format=text("response_format", fallback.response_format),
+        speed=float(speed) if isinstance(speed, (int, float)) else fallback.speed,
+        sample_text=text("sample_text", fallback.sample_text),
+        use_as_default=bool(values.get("use_as_default", fallback.use_as_default)),
+    )
+
+
 __all__ = [
+    "OPENAI_SLOT_PRESETS",
     "SavedVoice",
     "current_voice_copy",
+    "draft_from_checkpoint",
+    "draft_matches_preset",
+    "formats_for",
     "initial_voice_draft",
     "raw_app_tts",
     "reply_voice_uses_openai_slot",
@@ -256,4 +335,5 @@ __all__ = [
     "service_name",
     "should_persist_voice_config",
     "voice_label",
+    "voices_for",
 ]

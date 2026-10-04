@@ -32,14 +32,14 @@ PLAYBACK_FAILED_COPY = (
 TESTING_COPY = "Testing voice…"
 CANCELLED_COPY = "Test cancelled. Press Test and Hear to retry."
 KEY_NEEDED_COPY = (
-    'OpenAI voice needs an OpenAI API key. Paste one below, pick another '
+    "OpenAI voice needs an OpenAI API key. Paste one below, pick another "
     'service, or choose "No voice for now".'
 )
 DEFAULT_HELP_COPY = "Turn on Speak replies in Console to hear answers automatically."
 LEAVE_TITLE = "Leave setup?"
 LEAVE_MESSAGE = (
     "Settings ▸ Speech & TTS opens so you can add the OpenAI key. Your progress "
-    "is saved: setup will pick up at Voice next time."
+    "is saved. Setup will pick up at Voice next time."
 )
 
 
@@ -95,7 +95,7 @@ def service_status_copy(
     if preset == vs.VOICE_PRESET_OFFICIAL_OPENAI:
         if key_found:
             return "OpenAI — uses your OpenAI key (key found)."
-        return "OpenAI — needs an OpenAI API key. Paste one below to use it."
+        return "OpenAI — no OpenAI API key found yet."
     host = vs.endpoint_host(endpoint)
     if preset == vs.VOICE_PRESET_POCKET_TTS:
         if reachable is None:
@@ -125,9 +125,10 @@ def voice_test_failure_copy(error: BaseException, *, preset: str) -> str:
         The status line.
     """
     if not isinstance(error, vs.VoiceSampleError):
-        if isinstance(error, ValueError) and str(error):
-            return f"Test failed — {error}"
-        return "Test failed — the sample could not be sent. Check the service, then retry."
+        # Never echo an unclassified error: it may carry server text.
+        return (
+            "Test failed — the sample could not be sent. Check the service, then retry."
+        )
     host = error.host
     code = f" (HTTP {error.status_code})" if error.status_code else ""
     if error.kind == "not_running":
@@ -155,8 +156,11 @@ def voice_test_failure_copy(error: BaseException, *, preset: str) -> str:
         "not_audio": "the server answered, but not with audio. Check Endpoint and "
         "Format under Advanced.",
         "too_large": "the sample was larger than 8 MB.",
-    }.get(error.kind, f"the speech server answered HTTP {error.status_code}. Retry, "
-    "or check the server.")
+    }.get(
+        error.kind,
+        f"the speech server answered HTTP {error.status_code}. Retry, "
+        "or check the server.",
+    )
     return f"Test failed — {copy}"
 
 

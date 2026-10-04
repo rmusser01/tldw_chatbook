@@ -2037,31 +2037,44 @@ class TestVoiceSummaryRow:
         labels = [r.label for r in build_summary_rows({}, {}, rag_deps_installed=False)]
         assert labels.index("Voice") == labels.index("Speech transcription") + 1
 
+    # TASK-34100.8 (voice-speech-06): the row names service, model and voice
+    # ("OpenAI · tts-1-hd · shimmer"). PocketTTS's preset is now its own
+    # server's /tts route on :8000, so the old :8765 OpenAI-route URL reads as
+    # the custom endpoint it always was.
     @pytest.mark.parametrize(
         ("app_tts", "detail"),
         [
-            ({"default_provider": "omnivoice"}, "OmniVoice (default voice)"),
+            ({"default_provider": "omnivoice"}, "OmniVoice"),
+            (
+                {
+                    "default_provider": "openai",
+                    "OPENAI_BASE_URL": "http://127.0.0.1:8000/tts",
+                    "default_model": "pocket-tts",
+                    "default_voice": "alba",
+                },
+                "PocketTTS · pocket-tts · alba",
+            ),
             (
                 {
                     "default_provider": "openai",
                     "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
                 },
-                "PocketTTS (default voice)",
+                "Custom endpoint 127.0.0.1:8765 · tts-1-hd · shimmer",
             ),
             (
                 {
                     "default_provider": "openai",
                     "OPENAI_BASE_URL": "https://api.openai.com/v1/audio/speech",
                 },
-                "OpenAI (default voice)",
+                "OpenAI · tts-1-hd · shimmer",
             ),
-            ({"default_provider": "openai"}, "OpenAI (default voice)"),
+            ({"default_provider": "openai"}, "OpenAI · tts-1-hd · shimmer"),
             (
                 {
                     "default_provider": "openai",
                     "OPENAI_BASE_URL": "http://tts.lan:9000/v1/audio/speech",
                 },
-                "Custom endpoint tts.lan:9000 (default voice)",
+                "Custom endpoint tts.lan:9000 · tts-1-hd · shimmer",
             ),
             ({"default_provider": "kokoro"}, "kokoro (default voice)"),
             (
@@ -2069,7 +2082,7 @@ class TestVoiceSummaryRow:
                     "default_provider": "openai",
                     "OPENAI_BASE_URL": "https://[2001:db8::1]:8765/v1/audio/speech",
                 },
-                "Custom endpoint [2001:db8::1]:8765 (default voice)",
+                "Custom endpoint [2001:db8::1]:8765 · tts-1-hd · shimmer",
             ),
         ],
     )
@@ -2084,12 +2097,10 @@ class TestVoiceSummaryRow:
         """An endpoint saved without Use as default is named, not claimed as default."""
         from tldw_chatbook.UI.Wizards.first_run_setup_state import ROW_CONFIGURED
 
-        row = self._voice(
-            {"app_tts": {"OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech"}}
-        )
+        row = self._voice({"app_tts": {"OPENAI_BASE_URL": "http://127.0.0.1:8000/tts"}})
         assert (row.state, row.detail) == (
             ROW_CONFIGURED,
-            "PocketTTS (saved, not the default voice)",
+            "PocketTTS · pocket-tts · alba (saved, not the default voice)",
         )
 
     def test_loaded_config_backfill_is_not_a_choice(self):

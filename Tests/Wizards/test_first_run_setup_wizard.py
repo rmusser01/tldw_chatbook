@@ -17,6 +17,7 @@ from textual.widgets import (
     Checkbox,
     Collapsible,
     Input,
+    Label,
     OptionList,
     RadioButton,
     RadioSet,
@@ -41,6 +42,7 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
     HandoffChannel,
     PendingHandoffStore,
 )
+from tldw_chatbook.UI.Wizards import first_run_voice_status as voice_status
 from tldw_chatbook.UI.Wizards.BaseWizard import (
     WizardNavigation,
     WizardProgress,
@@ -152,6 +154,13 @@ class _HostApp(App):
                 ),
             )
         )
+
+
+async def _pick_pocket_tts(step, pilot) -> None:
+    """TASK-34100.8: a fresh Voice step starts on "No voice for now"; the
+    tests that exercise a service pick PocketTTS the way a user would."""
+    step._select_preset_button("setup-voice-preset-pocket")
+    await pilot.pause()
 
 
 class _StyledHostApp(_HostApp):
@@ -312,15 +321,23 @@ async def test_voice_step_compact_controls_are_ordered_and_default_is_opt_in():
 async def test_invalid_voice_sample_disables_only_test_and_preserves_configuration():
     from types import SimpleNamespace
 
+    class CapturingHost(_StepHost):
+        saved_event: STTSSettingsSaveEvent | None = None
+
+        @on(STTSSettingsSaveEvent)
+        def capture_save(self, event: STTSSettingsSaveEvent) -> None:
+            self.saved_event = event
+
     wizard = SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={})
     step = VoiceSetupStep(
         wizard=wizard,
         config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
     )
-    app = _StepHost(step)
+    app = CapturingHost(step)
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         endpoint = step.query_one("#setup-voice-endpoint", Input)
         model = step.query_one("#setup-voice-model", Input)
         voice = step.query_one("#setup-voice-voice", Input)
@@ -338,9 +355,13 @@ async def test_invalid_voice_sample_disables_only_test_and_preserves_configurati
         assert "0 / 500" in str(
             step.query_one("#setup-voice-sample-count", Static).renderable
         )
-        ok, error = await step.commit()
-        assert ok is False
-        assert "sample" in error.casefold()
+        # TASK-34100.8 (voice-speech-05): the sample only matters to the
+        # test; a blank one no longer blocks Next -- the save goes out.
+        commit = __import__("asyncio").create_task(step.commit())
+        await pilot.pause()
+        assert app.saved_event is not None
+        assert app.saved_event.settings["OPENAI_BASE_URL"] == endpoint.value
+        commit.cancel()
 
 
 @pytest.mark.asyncio
@@ -355,6 +376,7 @@ async def test_invalid_voice_speed_returns_inline_validation_instead_of_raising(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-speed", Input).value = "not-a-number"
 
         ok, error = await step.commit()
@@ -407,6 +429,7 @@ async def test_voice_save_result_uses_submitted_default_choice() -> None:
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-default", Checkbox).value = True
         await pilot.pause()
         commit = __import__("asyncio").create_task(step.commit())
@@ -432,6 +455,37 @@ async def test_voice_save_result_uses_submitted_default_choice() -> None:
 
 
 @pytest.mark.asyncio
+async def test_untouched_voice_step_commit_posts_nothing() -> None:
+    """TASK-34100.8 (voice-speech-01) replaces the TASK-32959-era pin that an
+    untouched Next with 'Use as default' unticked still saved (and waited for
+    the runtime). Next on an untouched step now writes nothing at all."""
+    from types import SimpleNamespace
+
+    class CapturingHost(_StepHost):
+        saved_event: STTSSettingsSaveEvent | None = None
+
+        @on(STTSSettingsSaveEvent)
+        def capture_save(self, event: STTSSettingsSaveEvent) -> None:
+            self.saved_event = event
+
+    step = VoiceSetupStep(
+        wizard=SimpleNamespace(app_instance=MagicMock(app_config={}), wizard_data={}),
+        config=WizardStepConfig(id=STEP_VOICE, title="Voice", step_number=4),
+    )
+    app = CapturingHost(step)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert step._preset == "none"
+        assert step.query_one("#setup-voice-preset-none", RadioButton).value is True
+        assert step.query_one("#setup-voice-body").display is False
+
+        assert await step.commit() == (True, "")
+        await pilot.pause()
+        assert app.saved_event is None
+
+
+@pytest.mark.asyncio
 async def test_voice_save_waits_for_applied_runtime_when_default_is_opted_out() -> None:
     from types import SimpleNamespace
 
@@ -450,9 +504,13 @@ async def test_voice_save_waits_for_applied_runtime_when_default_is_opted_out() 
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         commit = __import__("asyncio").create_task(step.commit())
         await pilot.pause()
         assert app.saved_event is not None
+        # TASK-34100.8: unticked writes no default selection.
+        assert app.saved_event.persist_default_preferences is False
+        assert app.saved_event.preferences is None
 
         step.receive_stts_settings_save_result(
             STTSSettingsSaveResult(
@@ -518,8 +576,8 @@ async def test_voice_resume_restores_all_non_secret_controls():
 
 @pytest.mark.asyncio
 async def test_voice_resume_restores_the_omnivoice_preset(monkeypatch):
-    # TASK-33921: the Voice step looks this up in its own module.
-    import tldw_chatbook.UI.Wizards.first_run_voice_step as voice_step_module
+    # TASK-34100.8: the OmniVoice half looks this up in its own module.
+    import tldw_chatbook.UI.Wizards.first_run_voice_omnivoice as voice_step_module
 
     monkeypatch.setattr(
         voice_step_module, "omnivoice_setup_state", lambda *_a, **_k: "ready"
@@ -565,11 +623,12 @@ async def test_voice_sample_failure_stays_locally_valid_and_needs_test(monkeypat
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
         await pilot.pause(0.1)
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
-        assert "Not tested yet" in status
+        assert status.startswith("Test failed — ")
         assert "server-owned" not in status
         assert step.query_one("#setup-voice-test", Button).disabled is False
         assert voice_state.validate_voice_setup_draft(
@@ -604,6 +663,7 @@ async def test_voice_late_sample_success_cannot_verify_changed_endpoint(monkeypa
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
         await asyncio.wait_for(started.wait(), timeout=1)
         step.query_one(
@@ -613,7 +673,7 @@ async def test_voice_late_sample_success_cannot_verify_changed_endpoint(monkeypa
         release.set()
         await pilot.pause(0.1)
 
-        assert "Not tested yet" in str(
+        assert "Optional — press Test and Hear" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
         assert step._verified_draft is None
@@ -683,6 +743,7 @@ async def test_voice_edit_cancels_inflight_sample_and_reenables_valid_test(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         button = step.query_one("#setup-voice-test", Button)
         button.press()
         await asyncio.wait_for(started.wait(), timeout=1)
@@ -693,7 +754,7 @@ async def test_voice_edit_cancels_inflight_sample_and_reenables_valid_test(
         await pilot.pause()
 
         assert button.disabled is False
-        assert "Not tested yet" in str(
+        assert "Optional — press Test and Hear" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -729,6 +790,7 @@ async def test_voice_auth_and_preset_changes_cancel_inflight_sample(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         button = step.query_one("#setup-voice-test", Button)
         button.press()
         await asyncio.wait_for(started.wait(), timeout=1)
@@ -743,7 +805,7 @@ async def test_voice_auth_and_preset_changes_cancel_inflight_sample(
         await pilot.pause()
 
         assert button.disabled is True
-        assert "API key required" in str(
+        assert "needs an OpenAI API key" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -770,6 +832,7 @@ async def test_voice_external_worker_cancel_restores_retry_state(monkeypatch) ->
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         button = step.query_one("#setup-voice-test", Button)
         button.press()
         await asyncio.wait_for(started.wait(), timeout=1)
@@ -778,7 +841,7 @@ async def test_voice_external_worker_cancel_restores_retry_state(monkeypatch) ->
         await pilot.pause(0.1)
 
         assert button.disabled is False
-        assert "Not tested yet" in str(
+        assert "Test cancelled" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -814,6 +877,7 @@ async def test_voice_lifecycle_cancels_sample_and_restores_retry_state(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         button = step.query_one("#setup-voice-test", Button)
         button.press()
         await asyncio.wait_for(started.wait(), timeout=1)
@@ -823,7 +887,7 @@ async def test_voice_lifecycle_cancels_sample_and_restores_retry_state(
         await pilot.pause()
 
         assert button.disabled is False
-        assert "Not tested yet" in str(
+        assert "Test cancelled" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -861,6 +925,7 @@ async def test_stale_voice_completion_cannot_overwrite_newer_testing_state(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         button = step.query_one("#setup-voice-test", Button)
         button.press()
         await asyncio.wait_for(started[0].wait(), timeout=1)
@@ -880,7 +945,7 @@ async def test_stale_voice_completion_cannot_overwrite_newer_testing_state(
         releases[1].set()
         await pilot.pause(0.1)
         assert button.disabled is False
-        assert "Verified" in str(
+        assert "Played the sample" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
 
@@ -897,11 +962,15 @@ async def test_reselecting_current_voice_preset_preserves_user_edits() -> None:
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         model = step.query_one("#setup-voice-model", Input)
         model.value = "user-edited-pocket-model"
         await pilot.pause()
 
-        pressed = step.query_one("#setup-voice-preset-pocket", RadioButton)
+        # TASK-34100.8 (new-voice-speech-02): the edit made the service
+        # Custom; re-selecting the current one keeps the edit.
+        assert step._preset == "custom"
+        pressed = step.query_one("#setup-voice-preset-custom", RadioButton)
         step._on_preset(SimpleNamespace(pressed=pressed))
         await pilot.pause()
 
@@ -938,9 +1007,12 @@ async def test_official_voice_without_key_is_actionable_and_cannot_test_or_save(
         await pilot.pause()
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
-        assert "API key required" in status
+        assert status == voice_status.KEY_NEEDED_COPY
         assert len(status) <= 120
-        assert step.query_one("#setup-voice-add-key", Button).display is True
+        # TASK-34100.8 (voice-speech-04): an inline masked key field and the
+        # leave-for-Settings button, not a dead end.
+        assert step.query_one("#setup-voice-key-row").display is True
+        assert step.query_one("#setup-voice-api-key", Input).password is True
         assert step.query_one("#setup-voice-test", Button).disabled is True
 
         step.query_one("#setup-voice-test", Button).press()
@@ -949,7 +1021,8 @@ async def test_official_voice_without_key_is_actionable_and_cannot_test_or_save(
 
         ok, error = await step.commit()
         assert ok is False
-        assert "Add an API key in Settings" in error
+        assert error == voice_status.KEY_NEEDED_COPY
+        assert "No voice for now" in error
         assert sample_calls == 0
 
 
@@ -980,8 +1053,8 @@ async def test_official_voice_refreshes_after_configured_environment_key_added(
         await pilot.pause()
 
         assert step.query_one("#setup-voice-test", Button).disabled is False
-        assert step.query_one("#setup-voice-add-key", Button).display is False
-        assert "Not tested yet" in str(
+        assert step.query_one("#setup-voice-key-row").display is False
+        assert "Optional — press Test and Hear" in str(
             step.query_one("#setup-voice-status", Static).renderable
         )
         assert "sk-added-outside-draft" not in repr(step.get_step_data())
@@ -1021,7 +1094,7 @@ async def test_official_voice_recognizes_existing_settings_credential_locations(
         await pilot.pause()
 
         assert step.query_one("#setup-voice-test", Button).disabled is False
-        assert step.query_one("#setup-voice-add-key", Button).display is False
+        assert step.query_one("#setup-voice-key-row").display is False
         assert "synthetic-test-credential" not in repr(step.get_step_data())
 
 
@@ -1050,6 +1123,12 @@ async def test_missing_key_action_checkpoints_voice_and_routes_to_tts_settings(
         container.persist_current_checkpoint = persist
 
         step.query_one("#setup-voice-add-key", Button).press()
+        await pilot.pause(0.2)
+        # TASK-34100.8 (voice-speech-04): leaving setup asks first.
+        persist.assert_not_awaited()
+        message = app.screen.query_one(".dialog-message", Label)
+        assert "Setup will pick up at Voice" in str(message.render())
+        app.screen.query_one("#confirm-button", Button).press()
         await pilot.pause(0.2)
 
         persist.assert_awaited_once()
@@ -1082,6 +1161,8 @@ async def test_missing_key_action_without_callback_stays_bounded_and_does_not_cr
         step.query_one("#setup-voice-preset-official", RadioButton).value = True
         await pilot.pause()
         step.query_one("#setup-voice-add-key", Button).press()
+        await pilot.pause()
+        app.screen.query_one("#confirm-button", Button).press()
         await pilot.pause()
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
@@ -1116,13 +1197,15 @@ async def test_voice_playback_failure_cleans_new_file_and_keeps_verification(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
         await pilot.pause(0.1)
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
         assert step._verified_draft is not None
-        assert status == "Verified, playback failed. Retry playback/test."
-        assert len(status) <= 80
+        # TASK-34100.8: a playback failure is distinct from a test failure.
+        assert status == voice_status.PLAYBACK_FAILED_COPY
+        assert len(status) <= 120
         assert list(tmp_path.glob("chatbook-voice-sample-*")) == []
         assert step._sample_audio_path is None
 
@@ -1161,6 +1244,7 @@ async def test_voice_playback_creates_the_app_audio_player_on_first_use(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
         await pilot.pause(0.1)
 
@@ -1198,11 +1282,12 @@ async def test_voice_playback_reports_failure_when_no_os_player_is_found(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
         await pilot.pause(0.1)
 
         status = str(step.query_one("#setup-voice-status", Static).renderable)
-        assert status == "Verified, playback failed. Retry playback/test."
+        assert status == voice_status.PLAYBACK_FAILED_COPY
         assert list(tmp_path.glob("chatbook-voice-sample-*")) == []
 
 
@@ -1237,6 +1322,7 @@ async def test_voice_playback_cancellation_cleans_new_file(
 
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
+        await _pick_pocket_tts(step, pilot)
         step.query_one("#setup-voice-test", Button).press()
         await asyncio.wait_for(playback_started.wait(), timeout=1)
         app.workers.cancel_group(step, "setup-voice-sample")
@@ -1246,7 +1332,7 @@ async def test_voice_playback_cancellation_cleans_new_file(
         assert step._sample_audio_path is None
         assert step._verified_draft is not None
         status = str(step.query_one("#setup-voice-status", Static).renderable)
-        assert status == "Verified, playback failed. Retry playback/test."
+        assert status == voice_status.PLAYBACK_FAILED_COPY
 
 
 @pytest.mark.asyncio
@@ -10097,7 +10183,7 @@ async def test_summary_step_reads_back_the_saved_voice():
         step.on_show()
         await app.workers.wait_for_complete()
         rendered = str(step.query_one("#setup-summary-rows", Static).render())
-        assert "✓ Voice — OmniVoice (default voice)" in rendered
+        assert "✓ Voice — OmniVoice" in rendered
 
 
 @pytest.mark.asyncio

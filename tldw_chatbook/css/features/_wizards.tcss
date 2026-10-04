@@ -1118,6 +1118,20 @@ SmartContentTree Tree > .selected-node {
     height: auto;
 }
 
+/* TASK-34100.8: the try-it body ("No voice for now" hides it) and the inline
+ * OpenAI key row are Verticals too; 1fr here made the step under-report its
+ * height, so Advanced fields scrolled out of reach. */
+#setup-voice-body,
+#setup-voice-key-row {
+    height: auto;
+}
+
+/* The line under the Service radio: will this service work? */
+#setup-voice-service-status {
+    height: auto;
+    min-height: $ds-size-1;
+}
+
 .setup-voice-segmented {
     layout: horizontal;
     height: $ds-size-3;
@@ -1138,13 +1152,15 @@ SmartContentTree Tree > .selected-node {
     text-style: bold underline;
 }
 
+/* TASK-34100.8: Format is a picker whose "Other…" reveals a text field, so
+ * the row grows with it instead of clipping at a fixed height. */
 .setup-voice-output-row {
-    height: $ds-size-5;
+    height: auto;
 }
 
 .setup-voice-output-row > Vertical {
     width: $ds-width-fill;
-    height: $ds-size-5;
+    height: auto;
 }
 
 #setup-voice-sample-count {

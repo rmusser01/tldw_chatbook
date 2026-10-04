@@ -155,11 +155,16 @@ async def run_quick_voice_setup(endpoint: str, config_path: Path):
             await pilot.pause()
 
             step.query_one("#setup-voice-test", Button).press()
+            # TASK-34100.8 (voice-speech-06): success reads "Played the sample".
             for _ in range(100):
-                if "Verified" in str(step.query_one("#setup-voice-status").renderable):
+                if "Played the sample" in str(
+                    step.query_one("#setup-voice-status").renderable
+                ):
                     break
                 await pilot.pause(0.02)
-            assert "Verified" in str(step.query_one("#setup-voice-status").renderable)
+            assert "Played the sample" in str(
+                step.query_one("#setup-voice-status").renderable
+            )
 
             ok, error = await step.commit()
             assert (ok, error) == (True, "")
