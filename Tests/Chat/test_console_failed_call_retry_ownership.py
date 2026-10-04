@@ -1,5 +1,6 @@
 """A failed call authorizes an unchanged retry, never arbitrary tool history."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -7,7 +8,11 @@ import pytest
 from Tests.Chat.test_console_trace_runtime import (
     _saved_message,
     _semantic_request,
+)
+from Tests.Chat.test_console_trace_runtime import (
     make_database as _make_database_fixture,
+)
+from Tests.Chat.test_console_trace_runtime import (
     make_gateway as _make_gateway_fixture,
 )
 from tldw_chatbook.Chat.Chat_Deps import ChatProviderError, ChatRateLimitError
@@ -38,6 +43,13 @@ make_gateway = _make_gateway_fixture
         "updated_system",
         "changed_system",
         "changed_surface",
+        "changed_provider",
+        "changed_model",
+        "changed_endpoint",
+        "changed_temperature",
+        "changed_response_format",
+        "changed_reasoning",
+        "changed_streaming",
         "changed_actor",
         "changed_chain",
         "changed_policy",
@@ -92,14 +104,14 @@ async def test_failed_call_retry_requires_exact_durable_chain(
     def prepare_request(*args, **kwargs):
         prepared = prepare(*args, **kwargs)
         if wire_style == "distinct_roles":
-            return prepare_provider_request(
+            prepared = prepare_provider_request(
                 prepared.semantic,
                 wire_style=wire_style,
                 provider=prepared.provider,
                 model=prepared.model,
                 capacity=prepared.capacity,
             )
-        return prepared
+        return replace(prepared, response_format=response_format)
 
     monkeypatch.setattr(gateway, "prepare_chat_request", prepare_request)
     resolution = ConsoleProviderResolution(
@@ -120,6 +132,8 @@ async def test_failed_call_retry_requires_exact_durable_chain(
                 TraceProvenanceSource.RENDERED_SYSTEM, policy
             ),
         )
+
+    response_format = None
 
     async def send(route):
         request = _semantic_request(
@@ -155,6 +169,20 @@ async def test_failed_call_retry_requires_exact_durable_chain(
         ).fetchone()[0] == ("dispatch_started" if unfinished else "error")
     if scenario == "cold":
         gateway._trace_call_boundary_factory = ConsoleTraceBoundaryFactory(database)
+    elif scenario == "changed_provider":
+        resolution = replace(resolution, provider="groq", execution_key="groq")
+    elif scenario == "changed_model":
+        resolution = replace(resolution, model="deepseek-reasoner")
+    elif scenario == "changed_endpoint":
+        resolution = replace(resolution, base_url="https://other.example/v1")
+    elif scenario == "changed_temperature":
+        resolution = replace(resolution, temperature=0.25)
+    elif scenario == "changed_reasoning":
+        resolution = replace(resolution, reasoning_effort="high")
+    elif scenario == "changed_streaming":
+        resolution = replace(resolution, streaming=True)
+    elif scenario == "changed_response_format":
+        response_format = {"type": "json_object"}
     elif scenario == "changed_system":
         messages[0] = {"role": "system", "content": "Unobserved changed instructions"}
     elif scenario == "changed_surface":

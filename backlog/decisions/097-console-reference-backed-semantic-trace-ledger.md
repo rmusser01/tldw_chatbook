@@ -648,7 +648,10 @@ call-boundary proof. The failed call must be settled and provider-inactive.
 Compare rendered system content against the immediately preceding call in
 both distinct-role and single-preamble wire formats. The final header comparison
 runs in the dispatch-binding transaction before capability promotion; changed
-system content cannot bypass unchanged-message checks.
+system content cannot bypass unchanged-message checks. Provider, model, endpoint,
+generation parameters, response format, reasoning controls, tool schemas and
+literal provider envelope must also match the preceding failed attempt. The
+AGENT_FIRST to TOOL_LOOP route transition is allowed; it grants no target change.
 An appended or replaced surface, unknown/open dispatch, stale or foreign chain,
 or unsaved settlement remains ineligible. Each retry reserves a distinct ordered
 call; it never rewrites the failed call or relabels it as a tool response.
