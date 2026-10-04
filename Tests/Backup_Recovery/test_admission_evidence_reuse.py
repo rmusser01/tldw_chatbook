@@ -307,6 +307,7 @@ class _Tracer:
 
         self.active = False
         self.paths: set[str] = set()
+        self.relative_callers: dict[str, list[str]] = {}
         self._fcntl = fcntl
 
         def absolute(target, dir_fd=None) -> None:
@@ -319,6 +320,18 @@ class _Tracer:
                 if dir_fd is not None and not os.path.isabs(name):
                     name = os.path.join(self._fd_path(dir_fd), name)
                 self.paths.add(os.path.normpath(name))
+                if not os.path.isabs(name):
+                    # Source-line formatting would itself open Python files
+                    # and contaminate this dependency observer.
+                    frames = []
+                    frame = sys._getframe(1)
+                    for _ in range(8):
+                        if frame is None:
+                            break
+                        code = frame.f_code
+                        frames.append(f"{code.co_filename}:{frame.f_lineno}:{code.co_name}")
+                        frame = frame.f_back
+                    self.relative_callers.setdefault(name, frames)
 
         def wrap(original):
             def traced(target=".", *args, **kwargs):
@@ -424,7 +437,7 @@ def test_the_evidence_stamps_every_path_the_derivation_reads(
 
     assert str(root / "admission" / "registry.json") in tracer.paths, "trace saw nothing"
     unstamped = sorted(p for p in tracer.paths if not covered(p))
-    assert not unstamped, "\n".join(unstamped)
+    assert not unstamped, "\n".join(unstamped) + "\n" + repr(tracer.relative_callers)
 
 
 def test_restoring_a_drifted_selector_is_not_served_from_unbound_evidence(

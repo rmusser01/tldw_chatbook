@@ -22,6 +22,10 @@ from ...Chat.console_chat_models import (
     ConsoleRunStatus,
     fold_greeting_into_system_prompt,
 )
+from ...Chat.console_context_policy import (
+    ConsoleContextPolicyOverrides,
+    context_policy_overrides_from_console_config,
+)
 from ...Chat.console_cost_tracker import (
     ConsoleCacheState,
     ConsoleCostSnapshot,
@@ -110,6 +114,7 @@ class ConsoleReadinessConfigRead:
     source_before: tuple[int, str]
     value: Mapping
     source_after: tuple[int, str]
+    context_policy: ConsoleContextPolicyOverrides | None = None
 
 
 class ConsoleReadinessConfigProjection:
@@ -124,6 +129,9 @@ class ConsoleReadinessConfigProjection:
         self.key = self.value = None
         self.at = 0.0
         self.pending = False
+        self.context_policy = None
+        self._settled = asyncio.Event()
+        self._settled.set()
 
     @classmethod
     def for_screen(cls, screen: Any) -> ConsoleReadinessConfigProjection:
@@ -141,8 +149,21 @@ class ConsoleReadinessConfigProjection:
                 with operation(config) as active:
                     before = checked_config_identity(config, active)
                     value = copy.deepcopy(load_settings())
+                    # Match live get_cli_setting's sparse CLI lookup, rather
+                    # than deriving policy from the merged application map.
+                    console = config.load_cli_config_and_ensure_existence().get(
+                        "console"
+                    )
+                    try:
+                        policy = context_policy_overrides_from_console_config(
+                            console if isinstance(console, dict) else None
+                        )
+                    except (TypeError, ValueError):
+                        # The existing display reader treats invalid policy as
+                        # unavailable; provider readiness still has its mapping.
+                        policy = None
                     return ConsoleReadinessConfigRead(
-                        before, value, checked_config_identity(config, active)
+                        before, value, checked_config_identity(config, active), policy
                     )
 
             projection = cls(screen, read_current=read_current)
@@ -170,6 +191,9 @@ class ConsoleReadinessConfigProjection:
             session_id,
             getattr(owner, "workspace_id", None),
             store.session_settings_revision(session_id) if owner is not None else None,
+            id(owner),
+            owner,
+            getattr(app, "app_config", None),
         )
 
     def run(self, body: Callable[[], Any]) -> bool:
@@ -181,6 +205,7 @@ class ConsoleReadinessConfigProjection:
             not current or time.monotonic() - self.at >= self.max_age
         ) and not self.pending:
             self.pending = True
+            self._settled.clear()
             screen.run_worker(
                 self._refresh(key), exclusive=False, group="console-readiness-config"
             )
@@ -194,6 +219,18 @@ class ConsoleReadinessConfigProjection:
         finally:
             screen._console_readiness_projection_active = previous
 
+    async def warm(self) -> bool:
+        """Wait for the same checked owner when a modal needs cold display data."""
+        key = self._key()
+        self.run(lambda: None)
+        if self.pending:
+            await self._settled.wait()
+        return (
+            key == self._key() == self.key
+            and self.value is not None
+            and time.monotonic() - self.at < self.max_age
+        )
+
     async def _refresh(self, key: tuple) -> None:
         worker = asyncio.create_task(asyncio.to_thread(self.read_current))
         try:
@@ -202,10 +239,15 @@ class ConsoleReadinessConfigProjection:
             except asyncio.CancelledError:
                 # The native read still owns its resources until its callback
                 # exits; cancellation may not publish or finish ownership early.
-                try:
-                    await asyncio.shield(worker)
-                except Exception:  # noqa: BLE001 - preserve cancellation identity.
-                    pass
+                while not worker.done():
+                    try:
+                        await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:  # noqa: BLE001 - cancellation takes precedence.
+                        break
+                if not worker.cancelled():
+                    worker.exception()
                 raise
             if (
                 not isinstance(result, ConsoleReadinessConfigRead)
@@ -229,14 +271,20 @@ class ConsoleReadinessConfigProjection:
             # Convergence may change this same owner's settings revision. It
             # cannot authorize publishing to a different profile or owner.
             current_key = self._key()
-            if current_key[:-1] != key[:-1]:
+            if (*current_key[:7], *current_key[8:]) != (*key[:7], *key[8:]):
                 return
-            changed = self.key != current_key or self.value != value
+            changed = (
+                self.key != current_key
+                or self.value != value
+                or self.context_policy != result.context_policy
+            )
             self.key, self.value, self.at = current_key, value, time.monotonic()
+            self.context_policy = result.context_policy
         except Exception:  # noqa: BLE001 - remain cold and retryable.
             return
         finally:
             self.pending = False
+            self._settled.set()
         if changed:
             self.screen.run_worker(
                 self.screen._sync_native_console_chat_ui(),
@@ -317,7 +365,9 @@ class ConsoleContextReadSnapshot:
         max_age: float = 1.0,
         schedule: Callable | None = None,
         refresh: Callable | None = None,
+        config_projection: ConsoleReadinessConfigProjection | None = None,
     ) -> None:
+        self.config_projection = config_projection
         self.task = None
         self.key = None
         self.value = None
@@ -337,6 +387,14 @@ class ConsoleContextReadSnapshot:
                 max_age=max_age,
                 schedule=screen.run_worker,
                 refresh=screen._sync_native_console_chat_ui,
+                config_projection=(
+                    ConsoleReadinessConfigProjection.for_screen(screen)
+                    if _screen_readiness_config(screen)
+                    and screen._console_config_snapshot_is_disk_loaded(
+                        _screen_readiness_config(screen)
+                    )
+                    else None
+                ),
             )
             screen._console_context_read_snapshot = snapshot
         return snapshot
@@ -351,8 +409,7 @@ class ConsoleContextReadSnapshot:
         finally:
             self.task = previous
 
-    @staticmethod
-    def _key(controller: Any, session_id: str) -> tuple | None:
+    def _key(self, controller: Any, session_id: str) -> tuple | None:
         try:
             store = controller.store
             owner = next(item for item in store.sessions() if item.id == session_id)
@@ -366,6 +423,8 @@ class ConsoleContextReadSnapshot:
                 getattr(getattr(controller, "app", None), "chachanotes_db", None),
                 store.active_session_id,
                 session_id,
+                id(owner),
+                owner,
                 owner.persisted_conversation_id,
                 owner.workspace_id,
                 getattr(owner, "active_run_id", None),
@@ -376,9 +435,25 @@ class ConsoleContextReadSnapshot:
                 store.session_settings_revision(session_id),
                 store.session_context_summary(session_id),
                 controller.run_state_for(session_id).status,
+                self.config_projection._key() if self.config_projection else None,
             )
         except (AttributeError, KeyError, StopIteration):
             return None
+
+    def _cache_key(self, controller: Any, session_id: str) -> tuple | None:
+        owner = self._key(controller, session_id)
+        projection = self.config_projection
+        if owner is None or projection is None:
+            return owner
+        if (
+            projection.key != projection._key()
+            or projection.value is None
+            or getattr(projection.screen, "_console_chat_store", None)
+            is not controller.store
+            or projection.key[5] != session_id
+        ):
+            return None
+        return (*owner, projection.context_policy)
 
     async def warm(self, controller: Any, session_id: str) -> bool:
         """Publish only a result whose captured owner survived the await."""
@@ -386,7 +461,12 @@ class ConsoleContextReadSnapshot:
             return await self._warm(controller, session_id)
 
     async def _warm(self, controller: Any, session_id: str) -> bool:
-        key = self._key(controller, session_id)
+        projection = self.config_projection
+        if projection is not None and not await projection.warm():
+            return False
+        key = self._cache_key(controller, session_id)
+        if key is None:
+            return False
         if (
             key is not None
             and key == self.key
@@ -400,10 +480,15 @@ class ConsoleContextReadSnapshot:
         if not callable(read):
             return False
         try:
-            value = await read(session_id)
+            if projection is not None:
+                value = await read(
+                    session_id, _presentation_global_overrides=projection.context_policy
+                )
+            else:
+                value = await read(session_id)
         except Exception:  # noqa: BLE001 - the existing live reader owns error policy.
             return False
-        if key is None or key != self._key(controller, session_id):
+        if key is None or key != self._cache_key(controller, session_id):
             return False
         self.key, self.value = key, value
         self.at = time.monotonic()
@@ -411,7 +496,9 @@ class ConsoleContextReadSnapshot:
 
     def inputs(self, controller: Any, session_id: str) -> tuple:
         """Read cheap UI state, scheduling finite work for cold/expired owners."""
-        key = self._key(controller, session_id)
+        if self.config_projection is not None:
+            self.config_projection.run(lambda: None)
+        key = self._cache_key(controller, session_id)
         read = getattr(controller, "context_control_presentation_inputs", None)
         if not callable(read):
             return controller.context_control_inputs(session_id)
@@ -444,7 +531,7 @@ class ConsoleContextReadSnapshot:
         previous = self.key, self.value
         try:
             async with self.lock:
-                published = key == self._key(
+                published = key == self._cache_key(
                     controller, session_id
                 ) and await self._warm(controller, session_id)
         finally:

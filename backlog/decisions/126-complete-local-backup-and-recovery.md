@@ -1418,3 +1418,124 @@ Participant closure, drain and resume are coordinator bookkeeping over exact ins
 
 
 The TASK-34403 finite-observation completion fence must verify native containing ancestors as well as the selected control entries. On Windows, retain all ancestor receipts from the same fresh bottom-up named tree and apply the existing private-parent owner and writable/sticky policy; observing but discarding those receipts is insufficient. On POSIX, hold completion pins live while reopening descendants before ancestors through the verified native path walk and compare the actual named physical identities to their held identities. A containing ancestor may be renamed without changing descendant inode metadata, so held-descriptor fstat alone is not a named-binding proof. These checks retain the existing platform trust rules and add no authority/cache boundary.
+
+
+### Checked sparse Console display policy sharing (TASK-34403 AC9)
+
+A screen-owned readiness read may capture the immutable sparse global Console policy
+from the same actual CLI bootstrap mapping while its existing native config operation
+is live, between the original before/after checked source tags. Its context-estimate
+presentation reader may share only the successfully published mapping's exact source,
+generation and full profile/session/workspace/settings owner, with the existing
+one-second refresh and cancellation/retirement rules. Cold explicit modal display
+warming waits for that checked read, without opening a second config lifetime.
+
+The shared argument belongs only to the named context-control presentation method.
+It is never a lease, permission decision, source proof for dispatch, or substitute for
+live context-control actions or provider preparation. Those paths continue independent
+fresh global-policy reads. Context cache identity also includes the published sparse
+policy so a fresh changed mapping invalidates estimates; live owner identity remains
+separate so first publication does not masquerade as a changed modal owner. Reject
+pending reads after source/generation/profile/session/workspace/settings changes.
+
+
+### TASK-34403 amendment: finite MCP owner classification and nested selection
+
+Immutable owner classification may use the actual installed class/kind mapping, checked against its existing bound source type, without re-reading generation evidence merely to choose that owner's fixed member names. It grants no file, payload or permission authority. Source admission retains fresh initial and final bound-source proof, native custody, exact path membership and producer identity checks. An exact same-source nested MCP raw scope may name its selected path from the full raw check that just returned in that synchronous call; its selected_read/path/writing checks and the subsequent full raw check remain in force. No witness value or selected path is cached across calls, workers, awaits or operations, and every raw check still observes fresh source/generation/native state.
+
+Creation evidence completeness: _ensure consumes exact ancestor creation intents before ordinary admission. The cache now stamps those exact paths absent; present markers force the unchanged full initializer, preserving its refusal or completed durable retry. Genuine Windows warm/full verdict divergence RED2 precedes this change; final root bundle32passed2 ordinary capability skips13.29s includes both new controls and the original creation/admission controls. No marker contents are parsed or trusted by optional evidence, no security/durability check is bypassed. Native macOS completeness qualification remains pending.
+
+
+### Bounded body-free Console display observations (TASK-34403)
+
+Ordinary subagent badge counts and Character browser scope presentation may retain their successful process-local observation for at most two seconds. This display-only cadence follows the existing subagent count TTL and reduces actual finite callbacks rather than weakening native checks inside them. Counts remain body-free and use one exact captured AgentRunsDB receiver. A bridge or receiver/library change, visible row set, run target or live child identity change invalidates immediately; a pending read cannot redirect to a replacement receiver or publish under its owner.
+
+The separately named Character presentation facade belongs only to general screen synchronization. Its owner includes config generation/selected source, app/config mapping, exact database, controller generation, active store/session/workspace/conversation binding and current character/open conversation. A queued waiter recomputes this owner after acquiring its async lock. Each fresh observation still performs both metadata pairs and its loop-side midpoint. Publication from a display-triggered refresh checks the captured ambient owner after awaited native work. Stable same-owner successful observations alone may be memoized; failure, cancellation or changed generation/owner cannot establish freshness. External database changes become visible within the bounded display interval.
+
+The memo grants no file, permission or dispatch authority. Existing direct refresh, action scope capture, final commit and midpoint validation always run their fresh native checks. A changed live run/child/owner is not delayed by the TTL. Cross-callback native/permission caching and retaining the 0.2-second active badge polling were rejected: the former loses fresh authority, while measured actual display-only callbacks make the latter a major preparation cost. Existing whole-send and heartbeat ratchets remain unchanged.
+
+
+### TASK-34403 amendment: finite external MCP catalog worker and loop projection
+
+The exact standard UnifiedMCPControlPlaneService / LocalMCPControlService /
+LocalMCPStore catalog route reads one fresh catalog bundle in a finite worker.
+The bundle includes profile definitions, discovery snapshots and runtime state;
+no permission or checked-source observation survives for another call. Native
+store admission remains independent on the worker with its original source and
+path checks. Governance and the actual caller-loop client/plugin connection
+projection remain on that loop. Custom services and subclasses keep their
+existing service route and behavior.
+
+Capture the exact local service and store before starting the worker and reject
+replacement before publication. Recheck governance before projecting the result.
+The existing async producer interval stays live until the already-started worker
+settles, including on repeated awaiter cancellation. Cancellation is propagated
+only after the worker's native scope has retired; worker errors during retirement
+do not replace that cancellation. No coroutine is moved to another event loop,
+no new maintenance or native authority is borrowed from the caller, and no idle
+worker resources or permission cache are introduced.
+
+The prior asynchronous method performed two complete blocking store loads on
+its caller loop. Offloading the entire local-service call was rejected because
+its governance and live connection observations belong to that loop. One finite
+blocking bundle read preserves the current store contract while removing both
+that blocking loop work and the duplicate load. Cancellation that immediately
+released the producer while its native worker remained live was rejected as an
+incomplete retirement boundary.
+
+
+### TASK-34405 amendment: repository issued state and fresh native path proof
+
+The shared storage coordinator synchronizes exact issued operation membership, installed repository identity, captured path scope, live lease and accepted native hold. It must not remain held while a repository boundary performs fresh parent observation or path resolution. Each full source check validates its pure issued state under the coordinator, performs the unchanged fresh native observation outside it, and validates the exact captured state again before returning. Callers that reuse, restore or publish operation discovery perform a final pure fence inside their short coordinator interval. No observed path or permission value survives into a later call.
+
+Already counted same-owner work may complete during pause while its exact lease/hold remains live. New owners and independent repositories still require ordinary admission and refuse after pause; removed operations, leases or installed participants, changed source/path and unqualified native holds refuse even when native observation started earlier. Pure source checks do not grant native or maintenance authority. Moving guards into a worker while retaining the shared coordinator and temporarily unlocking callers through private RLock methods were rejected: the former still blocks the UI and the latter obscures producer ownership and final state races.
+
+
+### Exact live-empty fleet display precedence (TASK-34403)
+
+The fleet rail shares the existing summary live-over-historical contract: an exact real bridge and AgentRunsDB may render its process-owned setup marker or its bound running primary snapshot even when its children are empty. Nonempty fleet handles remain first, including survivors from a preceding turn; inline live summaries render from the same current snapshot. A live setup marker deliberately suppresses the previous terminal turn, as the bridge already documents. Unknown or restored bridges lacking that process-local ownership, terminal runs and custom bridge fallbacks continue fresh bounded durable history projection.
+
+This is display source selection, not storage admission or a permission verdict. It removes repeated native historical queries and prevents previous durable children from being attributed to a known current empty run. Skipping history for arbitrary non-idle/custom snapshots or deleting terminal history was rejected because those states do not establish this live source contract.
+
+
+### TASK-34403 amendment: fresh async Console definition maximum preparation
+
+Actual asynchronous Console submission and continuation paths may prepare their
+MCP definition maximum through a separately named asynchronous capture entry.
+Only exact standard service/local/store sources qualify for the worker split.
+The blocking worker reads the real permission payload once and local catalog
+bundle once, with each source retaining independent original raw admission and
+fresh source checks. Missing/corrupt/refused/changed source evidence freezes an
+empty maximum. A global kill switch freezes an empty maximum. Default permission
+profile resolution, definition hashing, builtin raw-name exclusions and the
+existing changed-definition marker/audit semantics remain in force. Any blocking
+audit work retains the same finite producer and worker retirement boundary.
+
+Governance, actual builtin inventory and UI-owned snapshot composition remain on
+the original caller loop. Exact standard default and screen builders accept the
+explicit detached maximum only for that same capture. No checked payload, maximum
+or permission verdict is retained for another request. Preserve true synchronous
+entry points and injected/custom provider contracts through their previous route.
+The maximum is a frozen narrowing ceiling; existing fresh invocation and final
+dispatch permission gates remain required.
+
+Capture the exact controller/app/store/session, owning workspace and settings
+revision, provider callback/config ownership, configuration module/generation and
+lexical selection, and MCP service/local/source receivers before awaiting work.
+Publication rechecks those owners and the actual raw source bindings observed by
+the worker. An await cannot redirect accepted work to a replacement receiver or
+turn actor. Refuse changed actor ownership and discard changed or uncertain source
+results. Cancellation retains the original counted producer until all started
+worker/native scopes retire, including repeated cancellation and worker errors.
+
+Native Windows measurement of the previous capture gives three complete payload
+loads, 5,428 opens and 0.655 seconds unprofiled. A diagnostic two-payload join
+preserves hashes with 3,525 opens and 0.424 seconds; both exceed the repository
+worker threshold. A synchronous join alone was therefore rejected as the UI
+repair. Offloading the full snapshot or creating another event loop was rejected
+because UI composition and actual inventory ownership belong to the existing
+loop. Silently changing synchronous/custom callbacks to an async contract or
+using a cross-request permission cache was also rejected.
+
+
+Display-owner completion clarification: exact session identity and original config mapping references are retained alongside their identity values, preventing field-equal session replacement or identity reuse from inheriting a memo. Readiness default convergence may alter only its own settings revision slot; every source/app/session/workspace/owner field remains compared. Repeated cancellation cannot settle the checked-read completion event or release display coalescing before its finite native worker retires. Custom bridge count callbacks preserve their declared behavior; only the exact standard bridge uses the captured direct AgentRunsDB query. None of these observations supplies action or dispatch authority.

@@ -4620,6 +4620,7 @@ def _close_remote_sessions_at_run_end(method: Callable[..., Any]):
 
 
 _PERSONAL_CONTEXT_SERVICE_UNSET = object()
+_PRESENTATION_GLOBAL_POLICY_UNSET = object()
 
 
 def _empty_profile_context_snapshot() -> "ProfileContextSnapshot":
@@ -12283,11 +12284,17 @@ class ConsoleChatController:
     def _run_owned_chat_db_operation(
         self, call: Callable[..., Any], /, *args: Any, **kwargs: Any
     ) -> Any:
-        """Close a worker invocation's chat handle after all its work unwinds."""
+        """Count a qualified finite chat callback before retiring its handle."""
         from tldw_chatbook.DB.base_db import operation_owned_connection
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
         database = getattr(self.store.persistence, "db", None)
         with operation_owned_connection(database):
+            if type(database) is CharactersRAGDB and not database.is_memory_db:
+                from tldw_chatbook.Backup_Recovery.participants import _core_operation
+
+                with _core_operation(database):
+                    return call(*args, **kwargs)
             return call(*args, **kwargs)
 
     async def _run_durable_db_call(
@@ -26662,12 +26669,19 @@ class ConsoleChatController:
                 )
         return owner.context_policy_overrides, global_overrides, effective
 
-    async def context_control_presentation_inputs(self, session_id: str) -> tuple:
+    async def context_control_presentation_inputs(
+        self,
+        session_id: str,
+        *,
+        _presentation_global_overrides: Any = _PRESENTATION_GLOBAL_POLICY_UNSET,
+    ) -> tuple:
         """Read one UI projection off-loop from captured, disposable lineage.
 
         The caller fences publication by its session/revision owner. Explicit
         actions and provider dispatch continue using their live synchronous
         authority seams. This finite callback owns only its new worker handle.
+        A screen may supply its checked sparse display policy; it grants no
+        native custody and is never read by live action or dispatch methods.
         """
         from tldw_chatbook.DB.base_db import run_owned_db_call
 
@@ -26713,11 +26727,23 @@ class ConsoleChatController:
                 boundary_message_id=boundary_row.persisted_message_id,
             )
 
+        if (
+            _presentation_global_overrides is not _PRESENTATION_GLOBAL_POLICY_UNSET
+            and _presentation_global_overrides is not None
+            and not isinstance(
+                _presentation_global_overrides, ConsoleContextPolicyOverrides
+            )
+        ):
+            raise TypeError("Invalid Console presentation policy.")
+
         def read() -> tuple:
-            try:
-                global_overrides = self._global_context_policy_overrides()
-            except Exception:
-                global_overrides = None
+            if _presentation_global_overrides is _PRESENTATION_GLOBAL_POLICY_UNSET:
+                try:
+                    global_overrides = self._global_context_policy_overrides()
+                except Exception:
+                    global_overrides = None
+            else:
+                global_overrides = _presentation_global_overrides
             effective = EffectiveMemoryResult(EffectiveMemoryKind.RAW)
             if repository is not None and conversation_id is not None:
                 snapshots = self._durable_context_snapshots(

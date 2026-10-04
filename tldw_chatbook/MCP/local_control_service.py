@@ -554,7 +554,6 @@ class LocalMCPControlService:
             ``discovery_snapshot`` and ``is_connected``.
         """
         self._require_allowed("mcp.external_profiles.list.local")
-        servers: list[dict[str, Any]] = []
         client = self.client
         active_sessions = getattr(client, "sessions", {}) if client is not None else {}
         catalog_reader = getattr(self.store, "get_external_catalog", None)
@@ -567,19 +566,31 @@ class LocalMCPControlService:
                 (profile, self.store.get_discovery_snapshot(profile.profile_id))
                 for profile in self.store.list_profiles()
             ]
-        for profile, snapshot in catalog:
+        records = [
+            {**profile.to_dict(), "discovery_snapshot": snapshot}
+            for profile, snapshot in catalog
+        ]
+        return self._project_external_catalog(records, active_sessions=active_sessions)
+
+    def _project_external_catalog(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        active_sessions: Mapping[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Project checked public catalog fields using live caller connections."""
+        servers: list[dict[str, Any]] = []
+        for record in records:
+            profile_id = record["profile_id"]
             servers.append(
                 {
-                    **profile.to_dict(),
-                    "discovery_snapshot": snapshot,
+                    **record,
                     "is_connected": (
-                        self.connection_ownership.is_connected(profile.profile_id)
-                        if profile.plugin_owner is not None
+                        self.connection_ownership.is_connected(profile_id)
+                        if record.get("plugin_owner") is not None
                         and self.connection_ownership is not None
-                        else profile.profile_id in active_sessions
-                        and not getattr(
-                            active_sessions[profile.profile_id], "_closed", False
-                        )
+                        else profile_id in active_sessions
+                        and not getattr(active_sessions[profile_id], "_closed", False)
                     ),
                 }
             )

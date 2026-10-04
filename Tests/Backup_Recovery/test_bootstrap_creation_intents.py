@@ -244,7 +244,12 @@ def test_windows_failed_entry_barrier_retry_synchronizes_exact_prior_entry(
     from Tests.Utils.test_windows_native_admission import _replace_security
     from tldw_chatbook.Utils import windows_files
 
-    root = tmp_path / "first" / "bootstrap"
+    # The elevated runner's pytest parent belongs to TokenOwner. Create
+    # our exact barrier target with explicit TokenUser ownership before
+    # changing its ACL; production chmod must keep refusing foreign owners.
+    parent = tmp_path / "explicit-user-private"
+    os.mkdir(parent, 0o700)
+    root = parent / "first" / "bootstrap"
     original_mkdir = os.mkdir
     first = True
 
@@ -255,7 +260,7 @@ def test_windows_failed_entry_barrier_retry_synchronizes_exact_prior_entry(
             first = False
             user = windows_files._native().user_sid
             _replace_security(
-                tmp_path,
+                parent,
                 f"D:P(D;;0x6;;;{user})(A;;FA;;;{user})(A;;FA;;;SY)(A;;FA;;;BA)",
             )
 
@@ -266,9 +271,9 @@ def test_windows_failed_entry_barrier_retry_synchronizes_exact_prior_entry(
                 control_records._ensure(root)
             assert error.value.winerror == 5
         finally:
-            os.chmod(tmp_path, 0o700)
+            os.chmod(parent, 0o700)
     marker = _intent(root.parent)
-    expected = _identity(tmp_path)
+    expected = _identity(parent)
     barriers = []
     original = control_records.flush_directory
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from concurrent.futures import Future
 from dataclasses import dataclass, replace
@@ -43,6 +44,7 @@ CONSOLE_CHARACTER_SEARCH_LIMIT = 8
 CONSOLE_CHARACTER_REPAIR_CANDIDATE_LIMIT = 20
 _SCOPE_CAPTURE_ATTEMPTS = 3
 _SCOPE_AMBIENT_CHECK_TIMEOUT_SECONDS = 10.0
+_CHARACTER_PRESENTATION_TTL_SECONDS = 2.0
 
 
 class ConsoleCharacterOperationPhase(StrEnum):
@@ -279,6 +281,9 @@ class ConsoleCharacterContextController:
         )
         self._query_handoff = query_handoff
         self._generation = 0
+        self._presentation_scope_lock = asyncio.Lock()
+        self._presentation_scope_key: tuple | None = None
+        self._presentation_scope_at = 0.0
         self.return_reveal = False
         self._browse_snapshot: ConsoleCharacterBrowseSnapshot | None = None
         self._activation_cancellation: asyncio.Event | None = None
@@ -463,6 +468,107 @@ class ConsoleCharacterContextController:
         self._generation += 1
         self._publish(replace(self.state, scope_fingerprint=None))
 
+    def _presentation_owner_key(self, screen: Any) -> tuple:
+        """Name the local display owner without obtaining storage authority."""
+        from tldw_chatbook import config
+
+        app = getattr(screen, "app_instance", None)
+        store = getattr(screen, "_console_chat_store", None)
+        session_id = getattr(store, "active_session_id", None)
+        owner = (
+            next((item for item in store.sessions() if item.id == session_id), None)
+            if store is not None
+            else None
+        )
+        return (
+            self._generation,
+            config.current_config_identity(),
+            app,
+            id(getattr(app, "app_config", None)),
+            getattr(app, "app_config", None),
+            getattr(app, "chachanotes_db", None),
+            self._database_accessor(),
+            self._current_character_identity(),
+            self._open_conversation_identity(),
+            store,
+            session_id,
+            id(owner),
+            owner,
+            getattr(owner, "workspace_id", None),
+            getattr(owner, "conversation_id", None),
+            getattr(owner, "conversation_binding_revision", None),
+            store.session_settings_revision(session_id) if owner is not None else None,
+            getattr(screen, "_console_chat_tearing_down", False),
+        )
+
+    async def refresh_presentation_if_scope_changed(self, screen: Any) -> bool:
+        """Bound display observations while preserving fresh live actions.
+
+        Args:
+            screen: Exact screen owning the ambient profile and active Chat.
+
+        Returns:
+            Whether a fresh Character state refresh was attempted.
+        """
+        async with self._presentation_scope_lock:
+            # A waiter must recapture its owner after acquiring the lock.
+            key = self._presentation_owner_key(screen)
+            if getattr(screen, "_console_chat_tearing_down", False):
+                return False
+            if (
+                key == self._presentation_scope_key
+                and time.monotonic() - self._presentation_scope_at
+                < _CHARACTER_PRESENTATION_TTL_SECONDS
+            ):
+                return False
+            self._presentation_scope_key = None
+            cancelled = False
+
+            def owner_is_current() -> bool:
+                return (
+                    not cancelled
+                    and key[1:] == self._presentation_owner_key(screen)[1:]
+                )
+
+            async def observe() -> bool:
+                try:
+                    snapshot = await self._capture_scope()
+                except (_ConsoleCharacterScopeChanged, _ConsoleCharacterScopeReadError):
+                    if cancelled or key != self._presentation_owner_key(screen):
+                        return False
+                else:
+                    if cancelled or key != self._presentation_owner_key(screen):
+                        return False
+                    if snapshot.fingerprint == self.state.scope_fingerprint:
+                        if not self.state.error:
+                            self._presentation_scope_key = key
+                            self._presentation_scope_at = time.monotonic()
+                        return False
+                # refresh owns its generation increment. Preserve every other
+                # ambient owner and its fresh generation/commit checks.
+                await self.refresh(_presentation_is_current=owner_is_current)
+                # A generation change or failure cannot establish freshness.
+                return True
+
+            owned = asyncio.create_task(observe())
+            try:
+                return await asyncio.shield(owned)
+            except asyncio.CancelledError:
+                cancelled = True
+                self._presentation_scope_key = None
+                # Keep the coalescing lock until the finite callback retires.
+                # Cancellation neither publishes a memo nor closes its handle.
+                while not owned.done():
+                    try:
+                        await asyncio.shield(owned)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:  # noqa: BLE001 - cancellation takes precedence.
+                        break
+                if not owned.cancelled():
+                    owned.exception()
+                raise
+
     async def refresh_if_scope_changed(self, *, force: bool = False) -> bool:
         try:
             snapshot = await self._capture_scope()
@@ -550,17 +656,26 @@ class ConsoleCharacterContextController:
         )
         return groups, self._load_unavailable_details_sync(service, groups)
 
-    async def refresh(self) -> None:
+    async def refresh(
+        self, *, _presentation_is_current: Callable[[], bool] | None = None
+    ) -> None:
         """Refresh the bounded projection under one complete scope fence."""
 
+        def presentation_is_current() -> bool:
+            return _presentation_is_current is None or _presentation_is_current()
+
+        if not presentation_is_current():
+            return
         generation = self._begin(ConsoleCharacterOperationPhase.REFRESHING)
         for _attempt in range(_SCOPE_CAPTURE_ATTEMPTS):
+            if not presentation_is_current():
+                return
             try:
                 snapshot = await self._capture_scope()
             except _ConsoleCharacterScopeChanged:
                 continue
             except _ConsoleCharacterScopeReadError as error:
-                if generation != self._generation:
+                if generation != self._generation or not presentation_is_current():
                     return
                 if not self._ambient_scope_matches(
                     error.database, error.current, error.open_conversation_id
@@ -582,6 +697,7 @@ class ConsoleCharacterContextController:
                 if (
                     generation == self._generation
                     and await self._operation_scope_is_current(snapshot, generation)
+                    and presentation_is_current()
                 ):
                     self._publish(
                         replace(
@@ -598,10 +714,12 @@ class ConsoleCharacterContextController:
                     database, self._load_recent_sync, database, fingerprint
                 )
             except Exception:  # noqa: BLE001 - DB boundary becomes visible recovery
-                if generation != self._generation:
+                if generation != self._generation or not presentation_is_current():
                     return
                 if not await self._operation_scope_is_current(snapshot, generation):
                     continue
+                if not presentation_is_current():
+                    return
                 self._publish(
                     replace(
                         self.state,
@@ -611,10 +729,12 @@ class ConsoleCharacterContextController:
                     )
                 )
                 return
-            if generation != self._generation:
+            if generation != self._generation or not presentation_is_current():
                 return
             if not await self._operation_scope_is_current(snapshot, generation):
                 continue
+            if not presentation_is_current():
+                return
             expanded = self.state.expanded_key
             keys = {group.key for group in groups}
             if expanded not in keys:
@@ -635,7 +755,7 @@ class ConsoleCharacterContextController:
                 )
             )
             return
-        if generation == self._generation:
+        if generation == self._generation and presentation_is_current():
             self._publish(
                 replace(
                     self.state,

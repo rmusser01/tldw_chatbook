@@ -59,17 +59,17 @@ class _Operation:
     def __init__(self):
         raise TypeError("operation_is_installed_owner_issued")
 
-    def check(self, path=None):
+    def _state(self):
+        """Validate issued metadata only; caller holds the coordinator."""
         from .participants import _installed_repositories
 
+        if self not in _operations or self.participant not in _installed_repositories:
+            raise bootstrap.RecoveryRequired("operation_provenance_invalid")
+        repository = self.participant.repository()
         if (
-            self not in _operations
-            or self.participant not in _installed_repositories
-            or self.participant.repository() is None
-            or self.participant.read_only
-            != getattr(self.participant.repository(), "_read_only", False)
-            or self.participant.repository()._maintenance_participant
-            is not self.participant
+            repository is None
+            or self.participant.read_only != getattr(repository, "_read_only", False)
+            or repository._maintenance_participant is not self.participant
             or self.pid != os.getpid()
             or self.thread is not threading.current_thread()
             or self.task is not _task_identity()
@@ -77,16 +77,6 @@ class _Operation:
             or self.lease not in _live_leases
         ):
             raise bootstrap.RecoveryRequired("operation_provenance_invalid")
-        if path is not None:
-            selected = lexical_path(path)
-            parent = os.stat(self.path.parent)
-            if (
-                selected != self.path
-                or selected.resolve() != self.resolved_path
-                or (parent.st_dev, parent.st_ino) != self.parent_identity
-                or self.participant.repository().db_path != self.path
-            ):
-                raise bootstrap.RecoveryRequired("operation_path_outside_scope")
         if _pause is not None:
             hold = _holds.get(self.lease._key)
             if (
@@ -98,6 +88,51 @@ class _Operation:
                 or hold.error is not None
             ):
                 raise bootstrap.RecoveryRequired("operation_native_scope_unqualified")
+        return (
+            self.participant,
+            repository,
+            self.lease,
+            self.path,
+            self.resolved_path,
+            self.parent_identity,
+            self.key,
+            self.hold,
+            self.lease._key,
+        )
+
+    def check(self, path=None):
+        with _lock:
+            expected = _check_operation_state(self)
+        if path is not None:
+            selected = lexical_path(path)
+            parent = os.stat(expected[3].parent)
+            resolved = selected.resolve() if selected == expected[3] else None
+        with _lock:
+            _check_operation_state(self, expected, path)
+            if path is not None and (
+                selected != expected[3]
+                or resolved != expected[4]
+                or (parent.st_dev, parent.st_ino) != expected[5]
+            ):
+                raise bootstrap.RecoveryRequired("operation_path_outside_scope")
+        return expected
+
+
+def _check_operation_state(operation, expected=None, path=None):
+    """Fence exact issued metadata without performing filesystem observation."""
+    if type(operation) is not _Operation:
+        raise bootstrap.RecoveryRequired("operation_provenance_invalid")
+    current = _Operation._state(operation)
+    if expected is not None:
+        if any(current[index] is not expected[index] for index in (0, 1, 2, 7)):
+            raise bootstrap.RecoveryRequired("operation_provenance_invalid")
+        if any(current[index] != expected[index] for index in (3, 4, 5, 6, 8)):
+            raise bootstrap.RecoveryRequired("operation_path_outside_scope")
+    if path is not None and (
+        lexical_path(path) != current[3] or current[1].db_path != current[3]
+    ):
+        raise bootstrap.RecoveryRequired("operation_path_outside_scope")
+    return current
 
 
 def _check_operation(operation, path=None):
@@ -105,7 +140,7 @@ def _check_operation(operation, path=None):
     # validation callback or an instance-shadowed method.
     if type(operation) is not _Operation:
         raise bootstrap.RecoveryRequired("operation_provenance_invalid")
-    _Operation.check(operation, path)
+    return _Operation.check(operation, path)
 
 
 @contextmanager
@@ -113,12 +148,16 @@ def _repository_operation(participant):
     from .participants import _check_core_retirement, _installed_repositories
 
     previous = getattr(_operation_local, "operation", None)
+    proof = _check_operation(previous, previous.path) if previous is not None else None
+    reuse = previous is not None and previous.participant is participant
+    target = participant.path
+    if reuse and target != previous.path:
+        _check_operation(previous, target)
     with _changed:
         if previous is not None:
-            _check_operation(previous, previous.path)
-        reuse = previous is not None and previous.participant is participant
+            _check_operation_state(previous, proof, previous.path)
         if reuse:
-            _check_operation(previous, participant.path)
+            _check_operation_state(previous, proof, participant.path)
         else:
             if (
                 participant not in _installed_repositories
@@ -170,6 +209,7 @@ def _repository_operation(participant):
             _check_core_retirement(participant)
             operation.key = operation.lease._key
             operation.hold = _holds.get(operation.key)
+            _check_operation_state(operation, path=operation.path)
             _operation_local.operation = operation
         yield operation
     finally:
@@ -182,9 +222,14 @@ def _repository_operation(participant):
                 _operations.discard(operation)
                 _changed.notify_all()
         finally:
+            proof = (
+                _check_operation(previous, previous.path)
+                if previous is not None
+                else None
+            )
             with _changed:
                 if previous is not None:
-                    _check_operation(previous, previous.path)
+                    _check_operation_state(previous, proof, previous.path)
                 _operation_local.operation = previous
 
 
@@ -210,7 +255,7 @@ class _Acquisition:
         if self.operation is not None:
             if path is None:
                 raise bootstrap.RecoveryRequired("operation_path_outside_scope")
-            _check_operation(self.operation, path)
+            return _check_operation(self.operation, path)
         elif _pause is not None:
             raise bootstrap.RecoveryRequired("storage_locally_paused")
 
@@ -218,16 +263,22 @@ class _Acquisition:
     def initializing(self, root, path):
         # The marker and native registration are a single same-process first-use
         # interval. Durable incomplete state from any other interval still refuses.
-        with _changed:
-            while True:
-                self.check(path)
+        while True:
+            operation = self.operation
+            proof = self.check(path)
+            with _changed:
                 if (
                     self not in _pending_acquisitions
                     or self.pid != os.getpid()
                     or self.thread is not threading.current_thread()
                     or self.task is not _task_identity()
+                    or self.operation is not operation
                 ):
                     raise bootstrap.RecoveryRequired("acquisition_provenance_invalid")
+                if self.cancel.is_set() or operation is None and _pause is not None:
+                    raise bootstrap.RecoveryRequired("storage_locally_paused")
+                if operation is not None:
+                    _check_operation_state(operation, proof, path)
                 leader = next(
                     (
                         other
@@ -938,6 +989,16 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
         return None
     if any(n.startswith(("pending-", "activation-update-")) for n in entries):
         return None
+    from .control_records import _creation_name
+
+    # Full authority derivation inspects each exact ancestor creation intent.
+    # Their absence must remain observable when reusing a completed decision;
+    # a newly unfinished entry must return to the original strict initializer.
+    creation_intents = {
+        child.parent / _creation_name(child)
+        for child in _chain(root)
+        if child.parent != child
+    }
     admission = root / "admission"
     content = [
         root,
@@ -946,6 +1007,7 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
         admission / "registry.lock",
         root / "unbound-owner",
         _QUALIFICATION_FILE,
+        *sorted(creation_intents),
         *sorted(root / n for n in entries if n not in _NOT_BOOTSTRAP_RECORDS),
     ]
     # The selector is an input even when unbound: a profile whose fingerprint
@@ -964,7 +1026,10 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
         s is not None and not stat.S_ISLNK(s[2]) for _, s in evidence.posture
     )
     # An absent selector is observed as absent; its appearance is a mismatch.
-    content_ok = all(s is not None for p, s in evidence.content if p != selector)
+    content_ok = all(
+        s is None if p in creation_intents else p == selector or s is not None
+        for p, s in evidence.content
+    )
     return evidence if posture_ok and content_ok else None
 
 

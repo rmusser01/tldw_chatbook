@@ -2416,16 +2416,60 @@ class UnifiedMCPControlPlaneService:
 
     @producer_call
     async def local_external_catalog(self) -> list[dict]:
-        # Records (profile fields + discovery_snapshot + is_connected) still
-        # come from the local service so governance enforcement and
-        # is_connected (read from the live client sessions) are unchanged.
-        # `runtime_state` is merged in from a single store bundle load
-        # rather than one `get_profile_runtime_state()` load per record.
-        records = list(self.local_service.get_external_servers() or [])
-        store = getattr(self.local_service, "store", None)
-        runtime_state_by_profile: dict[str, Any] = (
-            store.get_catalog_bundle()["profile_runtime_state"] if store else {}
-        )
+        from .local_control_service import LocalMCPControlService
+        from .local_store import LocalMCPStore
+
+        local = self.local_service
+        store = getattr(local, "store", None)
+        if type(local) is LocalMCPControlService and type(store) is LocalMCPStore:
+            from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+            local._require_allowed("mcp.external_profiles.list.local")
+            if self.local_service is not local or local.store is not store:
+                raise RecoveryRequired("mcp_source_selection_changed")
+            worker = asyncio.create_task(asyncio.to_thread(store.get_catalog_bundle))
+            try:
+                bundle = await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                # Keep the accepted producer interval live until the finite
+                # worker has retired its own native source scope.
+                while not worker.done():
+                    try:
+                        await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                if not worker.cancelled():
+                    worker.exception()
+                raise
+            if self.local_service is not local or local.store is not store:
+                raise RecoveryRequired("mcp_source_selection_changed")
+            local._require_allowed("mcp.external_profiles.list.local")
+            if self.local_service is not local or local.store is not store:
+                raise RecoveryRequired("mcp_source_selection_changed")
+            catalog = [
+                {
+                    **profile,
+                    "discovery_snapshot": bundle["discovery_snapshots"].get(
+                        str(profile["profile_id"]).strip()
+                    ),
+                }
+                for profile in bundle["profiles"]
+            ]
+            client = local.client
+            active_sessions = (
+                getattr(client, "sessions", {}) if client is not None else {}
+            )
+            records = local._project_external_catalog(
+                catalog, active_sessions=active_sessions
+            )
+            runtime_state_by_profile = bundle["profile_runtime_state"]
+        else:
+            records = list(local.get_external_servers() or [])
+            runtime_state_by_profile = (
+                store.get_catalog_bundle()["profile_runtime_state"] if store else {}
+            )
         for record in records:
             profile_id = str(record.get("profile_id") or "")
             record["runtime_state"] = runtime_state_by_profile.get(profile_id)

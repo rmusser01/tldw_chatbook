@@ -90,6 +90,19 @@ def _kind(source):
     return None
 
 
+def _source_owner(source):
+    """Name the actual producer kind without selected-path authority."""
+    kind = _kind(source)
+    if kind is None:
+        raise bootstrap.RecoveryRequired("mcp_source_not_supported")
+    bound = _BINDINGS.get(source)
+    if bound is not None and (
+        kind[0] is not bound.source_type or type(source) is not bound.source_type
+    ):
+        raise bootstrap.RecoveryRequired("mcp_source_selection_changed")
+    return kind[1]
+
+
 def bind(source):
     """Capture already-selected real configuration, never load custom config."""
     if source in _BINDINGS:
@@ -169,7 +182,7 @@ def selection(source):
 
 
 def members(source, selected):
-    owner = binding(source)[0]
+    owner = _source_owner(source)
     if owner == "mcp.history":
         targets = (selected, selected.with_name(selected.name + ".1"))
         temps = {p: p.parent / f".{p.name}.{secrets.token_hex(8)}.tmp" for p in targets}
@@ -195,7 +208,7 @@ def _identity(state, path):
 
 
 def preflight(state):
-    owner = binding(state.source)[0]
+    owner = _source_owner(state.source)
     targets = (state.selected,)
     if owner == "mcp.permissions":
         targets += (state.selected.with_suffix(state.selected.suffix + ".bak"),)

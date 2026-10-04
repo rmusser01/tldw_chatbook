@@ -1702,11 +1702,13 @@ class ConsoleAgentController:
            THIS process -- real per-child status, plus ``started_at``/
            ``finished_at`` (monotonic floats), which is the only source
            that can render an "elapsed" segment.
-        2. ``bridge.historical_snapshot(conversation_id).subagents``: the
-           durable fallback for a resumed conversation. Exact file-backed
+        2. The exact standard bridge's process-owned setup or bound running
+           primary snapshot, including a meaningful empty child list.
+        3. ``bridge.historical_snapshot(conversation_id).subagents``: the
+           durable fallback for a resumed or terminal conversation. Exact file-backed
            bridges share a finite owned projection with the overview; cold
            reads defer instead of admitting database work on the UI thread.
-        3. ``bridge.subagent_runs(conversation_id)``: a last-resort raw-
+        4. ``bridge.subagent_runs(conversation_id)``: a last-resort raw-
            record fallback for a bridge stub that implements only the
            oldest surface (no ``historical_snapshot``) -- several test
            doubles in ``Tests/UI/test_console_agent_rail.py`` predate
@@ -1748,6 +1750,30 @@ class ConsoleAgentController:
                 )
                 for handle in handles
             )
+        from ...Chat.console_agent_bridge import ConsoleAgentBridge
+        from ...DB.AgentRuns_DB import AgentRunsDB
+
+        database = getattr(bridge, "_db", None)
+        if (
+            type(bridge) is ConsoleAgentBridge
+            and type(database) is AgentRunsDB
+            and not database.is_memory_db
+        ):
+            live = bridge.live_snapshot(conversation_id)
+            established = (
+                live.status == "setup"
+                and bridge._setup_started_at.get(conversation_id) is not None
+            ) or (
+                live.status == "running"
+                and bool(bridge.live_primary_run_id(conversation_id))
+            )
+            if established:
+                # Empty is meaningful for this actual process-owned turn.
+                # Previous durable children must not overlay current setup.
+                return tuple(
+                    _fleet_row_from_summary(summary, index)
+                    for index, summary in enumerate(live.subagents)
+                )
         historical_snapshot = getattr(bridge, "historical_snapshot", None)
         if historical_snapshot is not None:
             return tuple(
@@ -2341,6 +2367,7 @@ class ConsoleAgentController:
         row_ids = frozenset(
             cid for row in rows if (cid := getattr(row, "conversation_id", None))
         )
+        from ...Chat.console_agent_bridge import ConsoleAgentBridge
         from ...DB.AgentRuns_DB import AgentRunsDB
 
         database = getattr(bridge, "_db", None)
@@ -2351,6 +2378,7 @@ class ConsoleAgentController:
                 row_ids,
                 self._subagent_count_live_token(bridge, row_ids),
                 authority,
+                database,
             )
             owner = self._console_subagent_counts_read_owner
             if owner is None or owner[0] is not bridge or owner[1] is not authority:
@@ -2364,6 +2392,11 @@ class ConsoleAgentController:
                     "pending": False,
                     "at": 0.0,
                     "database": authority,
+                    "query": (
+                        database.count_subagents_by_conversation
+                        if type(bridge) is ConsoleAgentBridge
+                        else bridge.subagent_counts
+                    ),
                 }
                 self._console_subagent_counts_read[row_ids] = state
                 # Browser and workspace projections may alternate subsets.
@@ -2376,19 +2409,13 @@ class ConsoleAgentController:
                     self._console_subagent_counts_read.pop(
                         next(iter(self._console_subagent_counts_read))
                     )
-            # Active runs retain the existing 0.2s observation cadence, rather
-            # than restarting a DB read for every projection inside one tick.
+            # Live run/child/owner tokens invalidate immediately; unchanged
+            # display counts share the existing two-second observation window.
             from ..Screens.chat_screen import (
-                CONSOLE_ACTIVE_RUN_STATUSES,
                 CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS,
             )
 
-            controller = self._console_chat_controller
-            active = (
-                controller is not None
-                and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
-            )
-            ttl = 0.2 if active else CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
+            ttl = CONSOLE_SUBAGENT_COUNTS_CACHE_TTL_SECONDS
             if (
                 row_ids
                 and not state["pending"]
@@ -2436,7 +2463,9 @@ class ConsoleAgentController:
 
         try:
             values = await run_owned_db_call(
-                database, bridge.subagent_counts, list(state["key"][1])
+                database,
+                state["query"],
+                list(state["key"][1]),
             )
         except Exception:  # noqa: BLE001 - counts remain retryable.
             return
@@ -2447,6 +2476,7 @@ class ConsoleAgentController:
             return
         if (
             self._console_agent_bridge is not bridge
+            or bridge._db is not database
             or getattr(self.app_instance, "chachanotes_db", None)
             is not state["database"]
         ):
@@ -2456,6 +2486,7 @@ class ConsoleAgentController:
             state["key"][1],
             self._subagent_count_live_token(bridge, state["key"][1]),
             getattr(self.app_instance, "chachanotes_db", None),
+            database,
         ):
             return
         changed = state["values"] != values

@@ -18472,3 +18472,21 @@ In the 2026-10-04 Console pause repair, the installed MCP pause RMW fixture used
 **TASK-34368 / TASK-34367.1, 2026-10-04.** A real Together adapter HTTP429 initially looked like a successfully captured failed call. Its unchanged retry failed with surface_replacement_checkpoint_unavailable. An observer of the actual durable comparator showed the saved user revision matching an alignment_mismatch omission: independent expected reconstruction had missed the engine's resolved api_base_url and continuation forwarding. Test the first request header, saved revision and absence of omissions before asserting retry behavior. Merely receiving the provider outcome can hide capture loss and make changed-request negative controls pass for the wrong reason.
 
 The same review found Python mapping equality admitting boolean/number changes in frozen JSON settings, and actual schema enum arrays failing their first capture because frozen tuples reached an ordinary-JSON repository boundary. Use the existing canonical JSON identity contract and thaw at the existing serialization boundary; do not relax native/provider/source guards to get a retry through. Actual Groq HTTP qualification then found its supported response_format argument absent from the generic parameter map. These incidents needed gateway + adapter + durable trace observations together, while all sources stayed installed and independently verified.
+
+
+### A same-owner memo can still be too old for an explicit modal wait
+
+TASK-34403's shared checked display-policy fix initially let a modal warm wait return
+success when the fresh worker failed but an expired mapping still had the same owner.
+The actual controller/config expiry control reproduced one failure in 4.47 seconds:
+the display's permissible stale labels were incorrectly treated as a completed modal
+refresh. The fix checks both source/owner and completion age after the worker settles;
+the original one-second cadence remains unchanged. The final 51-case scoped bundle
+passes, including real cold/closed modal calls, cancellation and live-action controls.
+Use this incident to distinguish stale display continuity from a wait promising fresh
+checked data; identity equality alone cannot satisfy the latter.
+
+
+### A second cancellation can escape a single shielded cleanup await
+
+TASK-34403's checked readiness warm regression held the original checked_config_identity return while its real raw operation and two native leases remained active. The first cancellation entered its shielded cleanup await; a second cancellation escaped it, set pendingFalse/settledTrue and allowed a warmer to finish before native retirement. A loop that preserves cancellation precedence until the worker actually completes repairs this. The same control must hold an actual opened handle or live raw operation: a callback-entry barrier can precede physical connection allocation and cannot prove premature native close.

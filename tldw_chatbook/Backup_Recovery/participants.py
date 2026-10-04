@@ -408,13 +408,18 @@ def _core_access(repository):
         if operation is not None:
             if participant is None:
                 raise RecoveryRequired("repository_participant_not_installed")
-            storage._check_operation(operation, participant.path)
-            if operation.participant is not participant:
-                raise RecoveryRequired("operation_provenance_invalid")
+            storage._check_operation_state(operation)
         elif (
             participant is not None and participant.closed
         ) or storage._pause is not None:
             raise RecoveryRequired("storage_locally_paused")
+    if operation is not None:
+        proof = storage._check_operation(operation, participant.path)
+        with storage._lock:
+            _check_core_retirement(participant)
+            storage._check_operation_state(operation, proof, participant.path)
+            if operation.participant is not participant:
+                raise RecoveryRequired("operation_provenance_invalid")
 
 
 @contextmanager
@@ -576,8 +581,9 @@ def _core_getter(function):
 
         previous = getattr(storage._operation_local, "operation", None)
         if previous is not None and not repository.is_memory_db:
+            proof = storage._check_operation(previous, previous.path)
             with storage._lock:
-                storage._check_operation(previous, previous.path)
+                storage._check_operation_state(previous, proof, previous.path)
                 participant = _repository_participant(repository)
                 independent = previous.participant is not participant
             if independent:

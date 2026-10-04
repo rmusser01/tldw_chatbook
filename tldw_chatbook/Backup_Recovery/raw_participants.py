@@ -599,7 +599,7 @@ def _scope(
                 source.store_path
                 if route == "service"
                 else (
-                    mcp_sources.selection(source)[0]
+                    previous_state.selected
                     if route == mcp_sources.ROUTE
                     else chat_sources.selection(source, route, selected_read)[0]
                     if route in chat_sources.ROUTES
@@ -712,7 +712,7 @@ def _scope(
                     directories += (base,)
         if (
             route == mcp_sources.ROUTE
-            and mcp_sources.binding(source)[0] == "mcp.history"
+            and mcp_sources._source_owner(source) == "mcp.history"
         ):
             directories += (parent,) if parent not in directories else ()
         if route == "runtime_read":

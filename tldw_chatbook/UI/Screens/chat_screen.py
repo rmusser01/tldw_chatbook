@@ -18856,12 +18856,10 @@ class ChatScreen(BaseAppScreen):
             # raises (see `_refresh_active_character_avatar_if_scope_changed`
             # docstring, T3).
             await self._character._refresh_active_character_avatar_if_scope_changed()
-            # TASK-31244 review: the Character browser is screen-owned and
-            # survives rail recomposition. Revalidate its complete local scope
-            # on every existing native sync seam; the stable fingerprint makes
-            # settled ticks a no-op while profile, current-character, and local
-            # conversation mutations reload and fence stale commits.
-            await self._character_context.refresh_if_scope_changed()
+            # The display facade checks its exact ambient owner every tick;
+            # stable metadata observations expire within two seconds. Actions
+            # and commits retain their independent fresh native scope checks.
+            await self._character_context.refresh_presentation_if_scope_changed(self)
             # task-280: hand the control bar a pre-await snapshot (its own
             # pre-existing timing). The rail-VISIBILITY call below must NOT
             # reuse this snapshot: `_sync_console_native_session_tabs` can

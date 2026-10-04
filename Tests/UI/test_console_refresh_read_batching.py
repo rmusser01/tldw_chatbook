@@ -48,6 +48,13 @@ class _Bridge:
         self._db = db
         self.calls = []
         self.children = ()
+        query = db.count_subagents_by_conversation
+
+        def counted(ids):
+            self.calls.append(threading.get_ident())
+            return query(ids)
+
+        db.count_subagents_by_conversation = counted
 
     def live_snapshot(self, _cid):
         return SimpleNamespace(subagents=self.children)
@@ -56,7 +63,6 @@ class _Bridge:
         return ("turn", "run")
 
     def subagent_counts(self, ids):
-        self.calls.append(threading.get_ident())
         return self._db.count_subagents_by_conversation(ids)
 
 
@@ -279,14 +285,14 @@ async def test_old_profile_count_worker_cannot_publish_into_new_bridge(tmp_path)
             conversation_id="conv", agent_kind="subagent", parent_run_id=primary
         )
         old, new = _Bridge(old_db), _Bridge(new_db)
-        original = old.subagent_counts
+        original = old_db.count_subagents_by_conversation
 
         def held(ids):
             entered.set()
             assert release.wait(5)
             return original(ids)
 
-        old.subagent_counts = held
+        old_db.count_subagents_by_conversation = held
         agent, tasks = _agent(old)
         rows = (SimpleNamespace(conversation_id="conv"),)
         agent._console_subagent_counts_for_rows(old, rows)
