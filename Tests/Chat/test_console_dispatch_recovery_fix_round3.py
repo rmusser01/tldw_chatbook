@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+
 from Tests.Chat.test_console_automatic_library_preparation import (
     _PolicyCoordinator,
     _capture_staged_evidence,
@@ -77,11 +79,14 @@ async def test_app_disposal_retires_live_postcommit_bodies_even_without_tasks(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_app_disposal_releases_only_its_frozen_evidence_lease(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
+    request,
 ) -> None:
     db, store, controller, gateway = _controller(tmp_path)
+    assert await controller.hook_admission_reason() is None
     original = _staged_evidence_launch("original")
     newer = _staged_evidence_launch("newer")
     evidence_state: dict[str, object] = {"launch": original, "released": []}
@@ -120,11 +125,14 @@ async def test_app_disposal_releases_only_its_frozen_evidence_lease(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_app_disposal_scrubs_content_when_evidence_release_raises(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
+    request,
 ) -> None:
     db, store, controller, gateway = _controller(tmp_path)
+    assert await controller.hook_admission_reason() is None
     evidence_state: dict[str, object] = {
         "launch": _staged_evidence_launch("faulting"),
         "released": [],
@@ -308,11 +316,14 @@ async def test_replacement_controller_cannot_discard_unfinished_live_continuatio
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_discard_releases_only_exact_frozen_evidence_once(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
+    request,
 ) -> None:
     db, store, controller, gateway = _controller(tmp_path)
+    assert await controller.hook_admission_reason() is None
     original = _staged_evidence_launch("original")
     newer = _staged_evidence_launch("newer")
     evidence_state: dict[str, object] = {"launch": original, "released": []}

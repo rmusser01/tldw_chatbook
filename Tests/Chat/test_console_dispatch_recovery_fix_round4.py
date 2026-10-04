@@ -7,6 +7,8 @@ from typing import Any, Callable
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+
 from Tests.Chat.console_close_helpers import close_controller_session
 from Tests.Chat.test_console_automatic_library_preparation import (
     _PolicyCoordinator,
@@ -42,6 +44,7 @@ async def _accepted_evidence_recovery(
     release_override: Callable[[object, object], None] | None = None,
 ):
     db, store, controller, gateway = _controller(tmp_path)
+    assert await controller.hook_admission_reason() is None
     original = _staged_evidence_launch("original")
     newer = _staged_evidence_launch("newer")
     evidence_state: dict[str, object] = {"launch": original, "released": []}
@@ -72,9 +75,11 @@ async def _accepted_evidence_recovery(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_close_session_release_fault_cannot_skip_owner_cleanup(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
+    request,
 ) -> None:
     release_attempts = 0
 
@@ -116,9 +121,11 @@ async def test_close_session_release_fault_cannot_skip_owner_cleanup(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_close_session_releases_exact_evidence_once_and_preserves_replacement(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
+    request,
 ) -> None:
     (
         db,
