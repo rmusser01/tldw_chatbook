@@ -561,7 +561,8 @@ Button.settings-category-group-toggle:focus {
     display: none;
 }
 
-#settings-providers-models-card .settings-source-word {
+#settings-providers-models-card .settings-source-word,
+#settings-console-fallbacks .settings-source-word {
     width: $ds-width-fill;
     max-width: $ds-size-18;
     height: $ds-control-height-compact;
@@ -572,7 +573,8 @@ Button.settings-category-group-toggle:focus {
 }
 
 #settings-providers-models-card .settings-row-help,
-#settings-providers-models-card .settings-key-check-verdict {
+#settings-providers-models-card .settings-key-check-verdict,
+#settings-console-fallbacks .settings-row-help {
     width: $ds-width-fill;
     height: $ds-control-height-compact;
     padding: $ds-space-0 $ds-space-1;
@@ -580,7 +582,8 @@ Button.settings-category-group-toggle:focus {
     text-overflow: ellipsis;
 }
 
-#settings-providers-models-card .settings-row-help {
+#settings-providers-models-card .settings-row-help,
+#settings-console-fallbacks .settings-row-help {
     padding: $ds-space-0;
     color: $ds-text-muted;
 }
@@ -590,8 +593,17 @@ Button.settings-category-group-toggle:focus {
    enum size, so every Source word in the section lines up; the compact
    workbench rules above still stack a row and widen its field. */
 #settings-generation-defaults .settings-compact-input,
-#settings-generation-defaults .settings-compact-select {
+#settings-generation-defaults .settings-compact-select,
+#settings-console-fallbacks .settings-compact-input,
+#settings-console-fallbacks .settings-compact-select {
     width: $ds-size-16;
+}
+
+/* TASK-33007.7: Console Behavior's global fallbacks read the same rows as
+   Model defaults (above), so their container grows with them and their
+   Sampling disclosure costs one row closed, as the card's do (below). */
+#settings-console-fallbacks {
+    height: auto;
 }
 
 /* TASK-33007.5 (spec §6 "a closed disclosure costs 1 row"): the card's
@@ -602,7 +614,8 @@ Button.settings-category-group-toggle:focus {
    rows line up with Connect's. A title set after mount keeps an auto width's
    first measure, so it spans its row; the builders keep it to one row and
    the ellipsis is the narrow-workbench safety net. */
-#settings-providers-models-card Collapsible {
+#settings-providers-models-card Collapsible,
+#settings-console-fallbacks Collapsible {
     min-height: $ds-size-0;
     margin: $ds-space-0;
     padding: $ds-space-0;
@@ -610,12 +623,14 @@ Button.settings-category-group-toggle:focus {
     background: $ds-surface-panel;
 }
 
-#settings-providers-models-card Collapsible > Contents {
+#settings-providers-models-card Collapsible > Contents,
+#settings-console-fallbacks Collapsible > Contents {
     padding: $ds-space-0;
     background: $ds-surface-panel;
 }
 
-#settings-providers-models-card Collapsible > CollapsibleTitle {
+#settings-providers-models-card Collapsible > CollapsibleTitle,
+#settings-console-fallbacks Collapsible > CollapsibleTitle {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: $ds-control-height-compact;
