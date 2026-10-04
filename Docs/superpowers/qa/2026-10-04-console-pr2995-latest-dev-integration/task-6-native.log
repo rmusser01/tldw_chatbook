@@ -1,0 +1,11 @@
+.....                                                                    [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-native.xml -
+============================= slowest 25 durations =============================
+4.42s call     Tests/Chat/test_console_chat_start.py::test_native_commit_keeps_exact_worker_and_capacity_until_repeated_cancel_drains
+4.31s call     Tests/Chat/test_console_chat_start.py::test_native_uncontended_acceptance_restores_full_policy_and_retires_owned_handle
+2.49s call     Tests/Chat/test_console_chat_start.py::test_native_acceptance_refuses_real_writer_contention_and_restores_timeout
+1.31s setup    Tests/Chat/test_console_chat_create_integration.py::test_child_new_chat_prepares_confirms_executes_and_requires_fresh_approval
+1.27s setup    Tests/Chat/test_console_chat_create_integration.py::test_prepared_new_chat_destination_routing_disclosed_and_durable
+
+(10 durations < 1s hidden.)
+5 passed in 16.02s

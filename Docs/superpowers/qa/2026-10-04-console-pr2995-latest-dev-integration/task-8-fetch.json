@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "git",
+    "-c",
+    "gc.auto=0",
+    "fetch",
+    "origin",
+    "dev"
+  ],
+  "exit": 0,
+  "observed": "5e0341d1ec701865e019eb2fd8a5e2028ab2d474",
+  "expected": "a1571e86db29440c8bb3616f6c8ae25925b8ee7d"
+}

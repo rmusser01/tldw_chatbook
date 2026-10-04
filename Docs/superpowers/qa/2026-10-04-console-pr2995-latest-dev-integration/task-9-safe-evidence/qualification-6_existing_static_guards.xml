@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="14" time="64.886" timestamp="2026-10-04T08:40:21.156569-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Architecture.test_module_size_ratchet" name="test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_controller.py]" time="0.238" /><testcase classname="Tests.Architecture.test_module_size_ratchet" name="test_budget_is_not_left_slack[tldw_chatbook/Chat/console_chat_controller.py]" time="0.001" /><testcase classname="Tests.Architecture.test_module_size_ratchet" name="test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_store.py]" time="0.004" /><testcase classname="Tests.Architecture.test_module_size_ratchet" name="test_budget_is_not_left_slack[tldw_chatbook/Chat/console_chat_store.py]" time="0.001" /><testcase classname="Tests.Architecture.test_screen_size_ratchet" name="test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]" time="0.101" /><testcase classname="Tests.Architecture.test_screen_size_ratchet" name="test_budget_is_not_left_slack_after_a_wave[tldw_chatbook/UI/Screens/chat_screen.py]" time="0.001" /><testcase classname="Tests.Architecture.test_persistent_diagnostic_inventory" name="test_production_diagnostic_inventory_and_sink_topology_are_unchanged" time="60.046" /><testcase classname="Tests.Architecture.test_persistent_diagnostic_inventory" name="test_reviewed_diagnostic_changes_are_metadata_only" time="2.817" /><testcase classname="Tests.Chat.test_console_fork_transition_census" name="test_external_console_modules_do_not_write_live_fork_fields_directly" time="1.001" /><testcase classname="Tests.Chat.test_console_first_chat_handoff" name="test_no_unbounded_resolve_for_send_awaits_remain" time="0.297"><failure message="AssertionError: unbounded provider_gateway.resolve_for_send await(s) at line(s) [7538, 20507] — route them through self._resolve_for_send_bounded so no surface can hang (TASK-21150 item c / UAT H-3)&#10;assert not [7538, 20507]">def test_no_unbounded_resolve_for_send_awaits_remain():
+        """Every gateway resolve must go through the bounded seam.
+    
+        A source-level assertion (not a behavioral one) because the hazard is
+        "someone adds await self.provider_gateway.resolve_for_send(...) again":
+        only the text can catch that before it ships.
+        """
+        import ast
+        from pathlib import Path
+    
+        source = Path("tldw_chatbook/Chat/console_chat_controller.py").read_text()
+        tree = ast.parse(source)
+        offenders: list[int] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Await):
+                continue
+            call = node.value
+            if not isinstance(call, ast.Call):
+                continue
+            func = call.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "resolve_for_send"
+                and isinstance(func.value, ast.Attribute)
+                and func.value.attr == "provider_gateway"
+            ):
+                offenders.append(node.lineno)
+    
+        # The single sanctioned call is inside _resolve_for_send_bounded itself,
+        # where asyncio.wait_for supplies the deadline.
+        bounded = next(
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "_resolve_for_send_bounded"
+        )
+        allowed = {n.lineno for n in ast.walk(bounded) if isinstance(n, ast.Await)}
+        unbounded = sorted(set(offenders) - allowed)
+&gt;       assert not unbounded, (
+            "unbounded provider_gateway.resolve_for_send await(s) at line(s) "
+            f"{unbounded} — route them through self._resolve_for_send_bounded "
+            "so no surface can hang (TASK-21150 item c / UAT H-3)"
+        )
+E       AssertionError: unbounded provider_gateway.resolve_for_send await(s) at line(s) [7538, 20507] — route them through self._resolve_for_send_bounded so no surface can hang (TASK-21150 item c / UAT H-3)
+E       assert not [7538, 20507]
+
+Tests/Chat/test_console_first_chat_handoff.py:123: AssertionError</failure></testcase><testcase classname="Tests.Architecture.test_module_size_ratchet" name="test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_interrupt_rounds.py]" time="0.002" /><testcase classname="Tests.Architecture.test_module_size_ratchet" name="test_budget_is_not_left_slack[tldw_chatbook/Chat/console_interrupt_rounds.py]" time="0.001" /><testcase classname="Tests.Architecture.test_module_size_ratchet" name="test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_context_compaction.py]" time="0.001" /><testcase classname="Tests.Architecture.test_module_size_ratchet" name="test_budget_is_not_left_slack[tldw_chatbook/Chat/console_context_compaction.py]" time="0.001" /></testsuite></testsuites>

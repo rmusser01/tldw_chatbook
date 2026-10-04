@@ -1,0 +1,262 @@
+{
+  "base": "83c264f28663d76b712e8a1baa6b6193bf2a0fa8",
+  "head": "67fc5310471823262eb6ce344a539e699784bed8",
+  "status": "ahead",
+  "ahead_by": 12,
+  "commits": [
+    {
+      "sha": "b0c2d077f0f07b6d242fcca93c8d3fd0a886a50f",
+      "subject": "docs(spec): first-run setup shape design, revision 1 (TASK-34100.17)"
+    },
+    {
+      "sha": "16316553cf084c49bc9cccad5c0ca5332e0412d5",
+      "subject": "docs(spec): first-run setup shape, revision 2 after HCI and engineering critiques (TASK-34100.17)"
+    },
+    {
+      "sha": "d39db9745d651112b97c417f719526ed65924c0c",
+      "subject": "docs(spec): first-run setup shape, revision 3 -- owner approval, keychain optional (TASK-34100.17)"
+    },
+    {
+      "sha": "148be8bc6544ad216cd5d11a413ec48b9d86681a",
+      "subject": "docs(adr): ADR-217 first-run setup shape; amend ADR-012/029/033/076/126 (TASK-34100.17)"
+    },
+    {
+      "sha": "eb162b0251a2a871945fc4c68dd6b8aa656388c1",
+      "subject": "docs(backlog): file TASK-34100.18-.34, the setup-shape spec's follow-ups (TASK-34100.17)"
+    },
+    {
+      "sha": "5241c0bfae8d3583770f2d7d0b627e830c13e91d",
+      "subject": "docs(backlog): apply the setup-shape spec's on-approval edits to sibling tasks (TASK-34100.17)"
+    },
+    {
+      "sha": "ff1ea33affd132eb4a7c3c6ba87d0ad7ea47b65a",
+      "subject": "docs(backlog): close TASK-34100.17 -- owner approval, Q3 amendment, ADR-217, follow-ups"
+    },
+    {
+      "sha": "091b81a25a180a2f20f42572a1fdf7a2c989f513",
+      "subject": "docs(spec): review fixes for the Q3 ruling -- server-token row, second-machine key warnings (TASK-34100.17)"
+    },
+    {
+      "sha": "4f9b2fd40675fe6a791712f1a230a004877e6606",
+      "subject": "docs(spec): five Ready verdict states everywhere; .23 AC#1 lists the ! state (TASK-34100.17)"
+    },
+    {
+      "sha": "60df25807fa866a8fea36c5c93a90db4bd89fa69",
+      "subject": "docs(spec): keychain backup adapter ships with the first keychain save (TASK-34100.17)"
+    },
+    {
+      "sha": "235303288781980d44de507d32da69a111136afa",
+      "subject": "docs(spec): tokenless tldw server check uses only public docs-info (TASK-34100.17)"
+    },
+    {
+      "sha": "67fc5310471823262eb6ce344a539e699784bed8",
+      "subject": "Merge pull request #2982 from rmusser01/docs/task-34100.17-setup-shape-spec"
+    }
+  ],
+  "files": [
+    {
+      "filename": "Docs/superpowers/specs/2026-10-03-first-run-setup-shape-design.md",
+      "status": "added",
+      "additions": 2493,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/decisions/012-provider-credential-settings-boundary.md",
+      "status": "modified",
+      "additions": 37,
+      "deletions": 1
+    },
+    {
+      "filename": "backlog/decisions/029-local-private-data-boundary.md",
+      "status": "modified",
+      "additions": 28,
+      "deletions": 1
+    },
+    {
+      "filename": "backlog/decisions/033-application-session-state-ownership.md",
+      "status": "modified",
+      "additions": 27,
+      "deletions": 1
+    },
+    {
+      "filename": "backlog/decisions/076-library-lifecycle-progressive-disclosure.md",
+      "status": "modified",
+      "additions": 16,
+      "deletions": 1
+    },
+    {
+      "filename": "backlog/decisions/126-complete-local-backup-and-recovery.md",
+      "status": "modified",
+      "additions": 21,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/decisions/217-first-run-setup-shape-and-surfaces.md",
+      "status": "added",
+      "additions": 57,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/decisions/README.md",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 3
+    },
+    {
+      "filename": "backlog/tasks/task-21148 - Wizard-layout-and-density-pass.md",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 1
+    },
+    {
+      "filename": "backlog/tasks/task-28019 - First-run-wizard-offer-a-media-first-path.md",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 3
+    },
+    {
+      "filename": "backlog/tasks/task-34100 - First-run-setup-wizard-burn-down-of-the-2026-10-02-UX-review.md",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 1
+    },
+    {
+      "filename": "backlog/tasks/task-34100.10 - Setup-session-re-runs-resume-exits-and-entry-points-respect-existing-state.md",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 3
+    },
+    {
+      "filename": "backlog/tasks/task-34100.13 - Full-track-steps-earn-their-place-RAG-Tools-Notes-Speech-and-Appearance-do-what-they-say.md",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1
+    },
+    {
+      "filename": "backlog/tasks/task-34100.15 - One-setup-registry-consistent-names-real-change-it-later-homes-and-a-User-Guide-that-matches.md",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1
+    },
+    {
+      "filename": "backlog/tasks/task-34100.16 - Portable-setup-a-documented-second-machine-path-restore-that-understands-config-files-and-launch-flags.md",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1
+    },
+    {
+      "filename": "backlog/tasks/task-34100.17 - Owner-approved-design-spec-for-the-setup-flow-Quick-track-tldw-server-re-run-dashboard-Say-hello.md",
+      "status": "modified",
+      "additions": 67,
+      "deletions": 18
+    },
+    {
+      "filename": "backlog/tasks/task-34100.18 - Settings-Overview-shows-a-tldw-server-row-instead-of-the-hidden-Switch-Source-Server-button.md",
+      "status": "added",
+      "additions": 36,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.19 - One-runtime-source-coordinator-with-on-disk-rollback-and-a-tldw-server-probe-that-says-what-failed.md",
+      "status": "added",
+      "additions": 39,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.20 - Setup-core-outside-the-UI-package-a-step-host-protocol-an-exit-route-registry-and-a-setup-palette-provider.md",
+      "status": "added",
+      "additions": 40,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.21 - The-setup-Summary-always-shows-a-tldw-server-row-from-the-runtime-source-owner.md",
+      "status": "added",
+      "additions": 37,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.22 - The-setup-Summary-offers-Connect-a-tldw-server-through-the-shared-coordinator.md",
+      "status": "added",
+      "additions": 37,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.23 - Ready-screen-with-an-honest-verdict-three-exits-on-one-row-What-is-next-and-an-Esc-that-never-finishes-setup.md",
+      "status": "added",
+      "additions": 44,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.24 - Quick-setup-becomes-four-steps-Welcome-Connect-Model-Ready-with-a-total-that-never-changes-mid-run.md",
+      "status": "added",
+      "additions": 45,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.25 - A-documents-first-Welcome-choice-opens-Library-Import-and-defers-AI-setup.md",
+      "status": "added",
+      "additions": 39,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.26 - Review-your-setup-a-re-run-dashboard-with-single-step-changes-and-per-area-palette-commands.md",
+      "status": "added",
+      "additions": 46,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.27 - Full-setup-eleven-steps-in-dependency-order-with-a-tldw-server-step-and-Finish-with-defaults.md",
+      "status": "added",
+      "additions": 42,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.28 - Console-probe-turn-seams-for-the-setup-test-message-built-as-a-spike-first.md",
+      "status": "added",
+      "additions": 40,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.29 - Say-hello-on-Ready-and-the-dashboard-an-optional-real-test-message-with-an-honest-cost-line.md",
+      "status": "added",
+      "additions": 42,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.30 - Console-arrival-line-after-setup-and-Speak-and-Dictate-setup-sheets-at-the-moment-of-use.md",
+      "status": "added",
+      "additions": 41,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.31 - Optional-system-keychain-storage-for-provider-keys-with-config-toml-staying-the-default.md",
+      "status": "added",
+      "additions": 49,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.32 - Move-provider-keys-to-or-from-the-system-keychain-on-request-with-orphaned-items-and-long-Windows-values-handled.md",
+      "status": "added",
+      "additions": 36,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.33 - Plain-text-setup-with-tldw-cli-setup-plain-for-screen-readers-and-SSH-v1.md",
+      "status": "added",
+      "additions": 42,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.34 - Plain-text-setup-for-the-tldw-server-and-the-remaining-Full-track-areas.md",
+      "status": "added",
+      "additions": 39,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-34100.6 - Provider-step-a-real-skip-sticky-local-detection-endpoint-fields-search-and-honest-key-checks.md",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1
+    }
+  ]
+}

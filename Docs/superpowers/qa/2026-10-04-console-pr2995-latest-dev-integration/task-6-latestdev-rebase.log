@@ -1,0 +1,12 @@
+Rebasing (1/25)Rebasing (2/25)Auto-merging backlog/decisions/README.md
+CONFLICT (content): Merge conflict in backlog/decisions/README.md
+Auto-merging backlog/docs/lessons-backlog-hygiene.md
+CONFLICT (content): Merge conflict in backlog/docs/lessons-backlog-hygiene.md
+error: could not apply 27c734a042... Integrate Console bounded chat starts with current dev owners
+hint: Resolve all conflicts manually, mark them as resolved with
+hint: "git add/rm <conflicted_files>", then run "git rebase --continue".
+hint: You can instead skip this commit: run "git rebase --skip".
+hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
+Recorded preimage for 'backlog/decisions/README.md'
+Recorded preimage for 'backlog/docs/lessons-backlog-hygiene.md'
+Could not apply 27c734a042... Integrate Console bounded chat starts with current dev owners

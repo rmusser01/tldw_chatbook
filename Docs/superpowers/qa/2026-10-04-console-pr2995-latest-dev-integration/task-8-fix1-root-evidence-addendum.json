@@ -1,0 +1,12 @@
+{
+  "head": "d3443b9e4297fa20897cf99e77a3ae2c8c562b10",
+  "log": "task-8-fix1-final-immutable.log",
+  "log_sha256": "cbee267ac7088d20f1f7161add903f3f565d0f50401f02b5a7a5d669f97e82d9",
+  "log_bytes": 136972,
+  "explicit_immutable_lock_barrier_failures": 3,
+  "unattributed_error_list_failure": "subagent-revoke",
+  "corrected_blocked_read_controls_passed": 4,
+  "tests_replayed": 0,
+  "frozen_report_unchanged": true,
+  "cap_unresolved": true
+}

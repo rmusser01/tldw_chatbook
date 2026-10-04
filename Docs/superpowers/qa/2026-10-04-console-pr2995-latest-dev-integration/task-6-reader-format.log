@@ -1,0 +1,56 @@
+unformatted: File would be reformatted
+    --> Tests/UI/test_library_conversation_reader.py:1058:64
+     |
+1057 |                 assert (
+     -                     screen._notes_state.focus_intent_generation
+     -                     > prior_focus_generation
+1058 +                     screen._notes_state.focus_intent_generation > prior_focus_generation
+1059 |                 )
+--------------------------------------------------------------------------------
+1173 |             assert screen._conversations_state.reader_state.bulk_active
+     -             invalidated_generation = (
+     -                 screen._conversations_state.reader_state.generation
+     -             )
+1174 +             invalidated_generation = screen._conversations_state.reader_state.generation
+1175 |
+     |
+
+unformatted: File would be reformatted
+   --> Tests/UI/test_library_conversation_reader_freshness.py:375:26
+    |
+374 | @pytest.mark.asyncio
+    - @pytest.mark.parametrize("beta_versioned", [True, False], ids=["versioned", "bootstrap"])
+375 + @pytest.mark.parametrize(
+376 +     "beta_versioned", [True, False], ids=["versioned", "bootstrap"]
+377 + )
+378 | async def test_load_pending_across_a_list_read_is_rechecked_once_it_settles(
+--------------------------------------------------------------------------------
+408 |         monkeypatch.setattr(
+    -             controller, "_ensure_library_conversation_reader_selection", _recording_ensure
+409 +             controller,
+410 +             "_ensure_library_conversation_reader_selection",
+411 +             _recording_ensure,
+412 |         )
+    |
+
+unformatted: File would be reformatted
+   --> tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py:85:1
+    |
+84  | """
+85  +
+86  | from __future__ import annotations
+--------------------------------------------------------------------------------
+920 |
+921 +
+922 | # --- BEGIN generated conversations-state shims ---
+    |
+
+unformatted: File would be reformatted
+  --> tldw_chatbook/UI/Library_Modules/library_conversations_state.py:68:1
+   |
+67 | """
+68 +
+69 | from __future__ import annotations
+   |
+
+4 files would be reformatted, 4 files already formatted

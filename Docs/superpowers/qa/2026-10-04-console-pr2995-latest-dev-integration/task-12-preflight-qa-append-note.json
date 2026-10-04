@@ -1,0 +1,93 @@
+{
+  "status": "bounded append-only QA source preflight; no final integrated-tree verification/test claim",
+  "path": "Docs/QA/task-31245/switcher-reuse-and-mode-follow-up.md",
+  "pins": {
+    "base": "1b12df2757f901e5c8e7a1e8946ad98f315eb8f9",
+    "frozen": "5c0c57b48f8d478e620a7bd1dafc7785f4e046d9",
+    "upstream": "7d155170dc95557736a239a1ce7427981f4d50ec"
+  },
+  "membership": {
+    "Task11_final_historical_QA_map": "task-11-safe-evidence/final-historical-qa-carry.json",
+    "map_sha256": "9dd392d08bcb9ab6fd1e22febb0ff14a4989c0a5f55de2d8d312c5fefc4d988a",
+    "count": 12337,
+    "included": true,
+    "original_row": {
+      "base": "0562de952d1d4d214d5385a7106b8362303d8937",
+      "dev": "0562de952d1d4d214d5385a7106b8362303d8937",
+      "head": "0562de952d1d4d214d5385a7106b8362303d8937",
+      "exact": true
+    },
+    "Task9_direct_lowercase_qa_tree_count": 2027,
+    "Task9_direct_tree_includes_target": false,
+    "Task9_Task11_carry_references": [
+      {
+        "path": "task-11-freeze-map.json",
+        "sha256": "542aeb46837b86cfc273b5b1965c4d03e751986acd3fbe1d027c184f28676a07",
+        "status": "Historical receipt/source authority; unchanged functions or exact selected binding reversal, never a new-tree pass claim"
+      },
+      {
+        "path": "task-11-safe-evidence/final-receipt-carry-map.json",
+        "sha256": "06ac519bf406a8e5b2badf80ad95d3da89b61a2322edeacfd6594b0ffa86d208",
+        "status": "Historical receipt/source authority; unchanged functions or exact selected binding reversal, never a new-tree pass claim"
+      }
+    ]
+  },
+  "byte_proof": {
+    "base_equals_frozen": true,
+    "upstream_starts_with_entire_original": true,
+    "original": {
+      "bytes": 7982,
+      "lines": 133,
+      "sha256": "db7d9edb09f65f5132aa06d98dfe48932a6528a9407db62e156042b463841505",
+      "git_blob": "0562de952d1d4d214d5385a7106b8362303d8937"
+    },
+    "upstream": {
+      "bytes": 12399,
+      "lines": 203,
+      "sha256": "356b47f7fe349cb19f12bb432efaf44e52c59e89eb40d772ac54627e68904e49",
+      "git_blob": "1d32a4cb794e1e4c951f356e5249e7c460cdd794"
+    },
+    "append": {
+      "bytes": 4417,
+      "lines": 70,
+      "sha256": "281ec403c258c1210dac8b710e603d35eec99712ad7fbdc6cdcfe60d4a88a8d3"
+    },
+    "compare_additions": 70,
+    "compare_deletions": 0
+  },
+  "union_exception_proposal": {
+    "mapped_qa_paths_changed_by_exact_upstream_delta": [
+      "Docs/QA/task-31245/switcher-reuse-and-mode-follow-up.md"
+    ],
+    "other_mapped_historical_QA_paths_unchanged_by_incoming_delta": 12336,
+    "final_note": "Preserve 12,336 unaffected historical QA blob hashes exactly. For this one existing mapped document, retain the original Git blob0562de952d1d4d214d5385a7106b8362303d8937 and historical safe QA row, prove the complete7,982-byte original is the exact prefix, and accept only the exact upstream4,417-byte/70-line append. Record final document blob/hash matching upstream. Describe preservation as original bytes plus authorized upstream append; do not claim all12,337 final whole-file hashes remain identical.",
+    "final_tree_verification_required": true
+  },
+  "original_preflight_artifacts": {
+    "all_prior_manifest_entries_verified_exact": true,
+    "prior_manifest_sha256": "979442c703e22c4ac22770752af9a64c62328b255c396dbf58176dd8e95089db",
+    "prior_entries_preserved": {
+      "task-12-preflight-report.md": {
+        "bytes": 12984,
+        "sha256": "6d99137219cfb76bbfd7195cd7b7217a91dcfcdc9dec260bde0c04f4c0bd7eea"
+      },
+      "task-12-preflight-overlap-map.json": {
+        "bytes": 56093,
+        "sha256": "798743a7776ff671058cb133fddc897600b26fc6cfe7f76efdbd7e0daecf0cf0"
+      },
+      "task-12-preflight-selection.json": {
+        "bytes": 6451,
+        "sha256": "769676b0db5b8df5a23b3266d2613515edde96a38e124217708ab079a5081ca5"
+      },
+      "task-12-preflight-upstream-summary.json": {
+        "bytes": 14708,
+        "sha256": "9baae750a03a2d149860aa8c16163aa830ef1286a2b82ee9489b5396a0576a7c"
+      },
+      "task-12-preflight-production-delta.patch": {
+        "bytes": 35688,
+        "sha256": "bf50f00fa87ee2484e6a8c5fa9052f172d0bbb4169ae4e57fc529fba91cdb5a3"
+      }
+    }
+  },
+  "scope": "Only this QA append note and existing preflight manifest extension written; no original preflight report/map edits, fetch, source edits, tests or Git mutations."
+}

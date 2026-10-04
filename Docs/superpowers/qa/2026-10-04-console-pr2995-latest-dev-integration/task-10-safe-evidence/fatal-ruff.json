@@ -1,0 +1,45 @@
+{
+  "name": "fatal-ruff",
+  "command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+    "check",
+    "--no-cache",
+    "--select",
+    "E9,F63,F7,F82",
+    "tldw_chatbook/Chat/console_chat_store.py",
+    "tldw_chatbook/Chat/console_chat_fork.py",
+    "Tests/Chat/test_console_chat_fork.py"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "PYTHONPATH": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "isolation": "canonical Tests/conftest.py bootstrap and autouse private temporary profiles",
+  "started_unix": 1791121245.786486,
+  "duration_seconds": 0.028955936431884766,
+  "exit_code": 0,
+  "before": {
+    "HEAD": "fe4eaf365c08705dcbe3edfa542fa0259d9b038e",
+    "sha256": {
+      "tldw_chatbook/Chat/console_chat_store.py": "995dfd03d0dfb394a6d57e2520e9ffc776a11206da4f8069abeff6a51033f9e6",
+      "tldw_chatbook/Chat/console_chat_fork.py": "5d9be7714fca46a4f6dbe8248c06515d32b56f6d9d5bfadbcae5cc9f907c2e02",
+      "tldw_chatbook/Chat/console_chat_controller.py": "8a9b447cdebd826ea310745f84370c0fe5dcade79b8cbdfa9acb4b081186a9e0",
+      "Tests/Chat/test_console_chat_fork.py": "39b0c733f65e4df6d5fdb7b5eb47c90ee4adc8775db4a4c07385a6ff37d1d704",
+      "Tests/Chat/test_console_fork_public_boundaries.py": "6884bcaaae9e02ed82303df73bf7b9435c9550976b23759a391aca634a7bd0cb",
+      "Tests/Chat/test_console_trace_fork_lineage.py": "71af3339e75075e9616149e79e332a0fbf01b930d68e4b32fe74ed7e1524e671",
+      "Tests/Architecture/test_module_size_ratchet.py": "a1a9167e84c25bd2a79b46ef2307498f0b9c2c70424833e18efec41f572bce1a"
+    }
+  },
+  "after": {
+    "HEAD": "fe4eaf365c08705dcbe3edfa542fa0259d9b038e",
+    "sha256": {
+      "tldw_chatbook/Chat/console_chat_store.py": "995dfd03d0dfb394a6d57e2520e9ffc776a11206da4f8069abeff6a51033f9e6",
+      "tldw_chatbook/Chat/console_chat_fork.py": "5d9be7714fca46a4f6dbe8248c06515d32b56f6d9d5bfadbcae5cc9f907c2e02",
+      "tldw_chatbook/Chat/console_chat_controller.py": "8a9b447cdebd826ea310745f84370c0fe5dcade79b8cbdfa9acb4b081186a9e0",
+      "Tests/Chat/test_console_chat_fork.py": "39b0c733f65e4df6d5fdb7b5eb47c90ee4adc8775db4a4c07385a6ff37d1d704",
+      "Tests/Chat/test_console_fork_public_boundaries.py": "6884bcaaae9e02ed82303df73bf7b9435c9550976b23759a391aca634a7bd0cb",
+      "Tests/Chat/test_console_trace_fork_lineage.py": "71af3339e75075e9616149e79e332a0fbf01b930d68e4b32fe74ed7e1524e671",
+      "Tests/Architecture/test_module_size_ratchet.py": "a1a9167e84c25bd2a79b46ef2307498f0b9c2c70424833e18efec41f572bce1a"
+    }
+  },
+  "stable": true,
+  "log": "fatal-ruff.log"
+}

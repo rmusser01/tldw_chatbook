@@ -1,0 +1,61 @@
+{
+  "HEAD": "a5bce3259069cf5bf59aba8b9a8f9cf025dcfd75",
+  "files": [
+    "Tests/UI/test_close_under_quit_question.py",
+    "Tests/UI/test_modal_quit_in_flight_hooks.py",
+    "Tests/Architecture/test_guarded_modal_quit_census.py",
+    "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
+    "Tests/UI/test_console_video_picker_cancel.py"
+  ],
+  "exact_extra_nodes": [
+    "Tests/UI/test_app_quit_in_flight_modals.py::test_ctrl_q_waits_for_a_fork_that_is_committing",
+    "Tests/UI/test_app_quit_in_flight_modals.py::test_a_fork_that_finishes_under_the_quit_question_closes_after_wait"
+  ],
+  "concrete_function_nodes": [
+    "Tests/UI/test_close_under_quit_question.py::test_a_close_refused_under_the_question_finishes_after_wait",
+    "Tests/UI/test_close_under_quit_question.py::test_quit_anyway_still_quits_when_a_close_was_kept",
+    "Tests/UI/test_close_under_quit_question.py::test_a_kept_close_covered_again_before_it_runs_waits_for_the_next_resume",
+    "Tests/UI/test_close_under_quit_question.py::test_an_uncovered_close_is_immediate_and_happens_once",
+    "Tests/UI/test_close_under_quit_question.py::test_a_trace_export_written_under_the_question_reports_it_after_wait",
+    "Tests/UI/test_close_under_quit_question.py::test_a_proposal_resolved_under_the_question_returns_its_result_after_wait",
+    "Tests/UI/test_close_under_quit_question.py::test_a_review_committed_under_the_question_closes_after_wait",
+    "Tests/UI/test_close_under_quit_question.py::test_a_cleanup_finished_under_the_question_closes_the_review_after_wait",
+    "Tests/UI/test_close_under_quit_question.py::test_a_cleanup_after_an_unknown_save_closes_the_review_after_wait",
+    "Tests/UI/test_close_under_quit_question.py::test_a_prompts_apply_finished_under_the_question_closes_after_wait",
+    "Tests/UI/test_close_under_quit_question.py::test_a_switcher_open_committed_under_the_question_closes_after_wait",
+    "Tests/UI/test_close_under_quit_question.py::test_a_switcher_library_recovery_accepted_under_the_question_closes",
+    "Tests/UI/test_modal_quit_in_flight_hooks.py::test_mid_operation_ctrl_q_says_still_working_and_stays",
+    "Tests/UI/test_modal_quit_in_flight_hooks.py::test_a_repeated_ctrl_q_mid_operation_asks_to_quit_anyway",
+    "Tests/UI/test_modal_quit_in_flight_hooks.py::test_a_new_activity_is_announced_before_anything_is_asked",
+    "Tests/UI/test_modal_quit_in_flight_hooks.py::test_both_export_dialogs_name_the_one_shared_activity",
+    "Tests/UI/test_modal_quit_in_flight_hooks.py::test_idle_modal_lets_ctrl_q_through_silently",
+    "Tests/UI/test_modal_quit_in_flight_hooks.py::test_switcher_stays_only_while_a_chat_opening_commits",
+    "Tests/UI/test_modal_quit_in_flight_hooks.py::test_model_popover_asks_before_ctrl_q_drops_its_edits",
+    "Tests/UI/test_modal_quit_in_flight_hooks.py::test_model_popover_with_nothing_to_lose_quits_without_asking",
+    "Tests/Architecture/test_guarded_modal_quit_census.py::test_every_guarded_modal_close_has_a_ctrl_q_decision",
+    "Tests/Architecture/test_guarded_modal_quit_census.py::test_every_census_row_still_names_a_guarded_close",
+    "Tests/Architecture/test_guarded_modal_quit_census.py::test_every_confirm_quit_decision_is_backed_by_a_hook",
+    "Tests/Architecture/test_guarded_modal_quit_census.py::test_every_exemption_says_why",
+    "Tests/Architecture/test_guarded_modal_quit_census.py::test_negative_control_the_census_finds_each_kind_of_guard",
+    "Tests/Architecture/test_guarded_modal_quit_census.py::test_negative_control_the_live_census_reaches_known_guards",
+    "Tests/Architecture/test_quit_flow_prompt_choke_point.py::test_quit_flow_prompts_are_awaited_only_through_the_choke_point",
+    "Tests/Architecture/test_quit_flow_prompt_choke_point.py::test_the_scan_reaches_the_quit_flow_it_guards",
+    "Tests/Architecture/test_quit_flow_prompt_choke_point.py::test_negative_control_the_scan_catches_a_direct_and_a_transitive_wait",
+    "Tests/Architecture/test_quit_flow_prompt_choke_point.py::test_negative_control_module_functions_except_the_choke_point",
+    "Tests/Architecture/test_quit_flow_prompt_choke_point.py::test_negative_control_every_function_of_a_delegate_module",
+    "Tests/UI/test_console_video_picker_cancel.py::test_cancelling_the_save_picker_returns_to_the_storage_choice",
+    "Tests/UI/test_console_video_picker_cancel.py::test_only_an_explicit_discard_throws_the_video_away",
+    "Tests/UI/test_console_video_picker_cancel.py::test_discard_and_quit_over_the_picker_exits_without_reopening_the_choice",
+    "Tests/UI/test_app_quit_in_flight_modals.py::test_ctrl_q_waits_for_a_fork_that_is_committing",
+    "Tests/UI/test_app_quit_in_flight_modals.py::test_a_fork_that_finishes_under_the_quit_question_closes_after_wait"
+  ],
+  "why": "Exact parent-approved PR2998 modal mount-generation, repeated quit choke-point, guarded modal census, video cancel distinction and real fork-commit overlap controls. Full listed modules include original parameterizations; no old Task11 cohort replay.",
+  "test_hashes": {
+    "Tests/UI/test_close_under_quit_question.py": "3ffd6e49ea69e714f00e0d2342ce15cfa77723d48d622abd02a01747d8fc16c8",
+    "Tests/UI/test_modal_quit_in_flight_hooks.py": "28b26ed133900637b5bbdfdc4b788f0cf992ae58145af125a095f44e7e34eb33",
+    "Tests/Architecture/test_guarded_modal_quit_census.py": "2b5777f60fbbcf6863ce90877d5daba7d3b9483483e782ae40e64ac84966766b",
+    "Tests/Architecture/test_quit_flow_prompt_choke_point.py": "04981cd3c7be1a37a53ae259712fb3bb26023b5b1352cd88b8ad67fc791ea89e",
+    "Tests/UI/test_console_video_picker_cancel.py": "4931f7dd0de74748dda4d41391061e010b51f74311d7be6b9cebe8460be36896",
+    "Tests/UI/test_app_quit_in_flight_modals.py": "ee2c87725e0455559056b74de280b2babb0526ea4595f00faa5c760a96549373"
+  }
+}

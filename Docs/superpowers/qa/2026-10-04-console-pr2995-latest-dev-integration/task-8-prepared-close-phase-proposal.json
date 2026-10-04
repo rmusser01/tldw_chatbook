@@ -1,0 +1,48 @@
+{
+  "status": "read-only proposed interpretation; awaiting root recorded scope",
+  "base": "8bd3c9f5e529efc298bd6ccd63e0265878b07cf2",
+  "incoming": "5e0341d1ec701865e019eb2fd8a5e2028ab2d474",
+  "phase_contracts": [
+    {
+      "phase": "before save entry",
+      "proposal": "Incoming committed Close rejection precedes feature new_chat dispatch. Existing _chat_creation_source_live also rejects committed Close. Validate exact approved record again immediately before durable persistence, with no registry lock spanning I/O. Closed/refused source creates no row; retire token through existing finally."
+    },
+    {
+      "phase": "successful durable save, before restore/start",
+      "proposal": "Keep approved conversation and v2 draft if Close races persistence. In actual owner-loop restore callback check upstream _chat_create_source_is_open before restoring or starting. If retired, no stale placement/start; ok true and conversation_id retained, draft mode draft, start mode not_started, source_unavailable reason. Persist through existing launch metadata writer; failed outcome persistence remains review_required/outcome_unconfirmed. No orphan soft-delete or automatic retry."
+    },
+    {
+      "phase": "native preparation before AgentRuns acceptance",
+      "proposal": "Use existing coordinator source liveness/withdrawal/acceptance guard, now observing committed Close. Retain saved draft, truthful not_started outcome and only proven unaccepted reservation refund. No policy or admission owner change."
+    },
+    {
+      "phase": "after AgentRuns acceptance",
+      "proposal": "Keep existing accepted target independence, charges, conversation receipt and exact draft consumption. Source Close cannot roll back/delete target/refund. Current-source UI predicate gates observer only and does not change durable outcome. Resolve completion callback at UI execution time."
+    }
+  ],
+  "locking": {
+    "existing_pending_lock": "threading.Lock, non-reentrant",
+    "new_upstream_open_source_predicate": "No lock; reads _disposed/_session_close_generations/store.sessions. sessions returns list(_sessions.values()), also no lock.",
+    "proposed_factoring": "Extract _chat_creation_record_locked with unchanged exact-field/current-run/incarnation/workspace/cancel checks. Public _chat_creation_record acquires pending lock once and delegates. request_chat_create_confirm uses locked helper when its upstream atomic decision critical section already owns that lock. Fast remembered-grant decision and record approval must also be atomic; token.close runs outside held lock. No RLock, caller boolean or new lock."
+  },
+  "additional_controls": [
+    "Before-save Close: real prepared exact approval followed by begin_session_close with retained source; assert no conversation row and no UI result.",
+    "Pause real persistence after successful save; complete actual source Close, then resume draft/start paths: exact row/draft survives, no stale placement, no start call/automatic retry, truthful launch metadata and cleaned authority token.",
+    "Queue the real restore callback across source Close and apply same retained-draft assertions; preserve harmless navigation/detach current-view behavior.",
+    "Extend test_before_cutoff_withdrawal_preserves_latest_draft_and_refunds with actual source Close, using its real _native_start_rig and unchanged assertions/charge accounting.",
+    "Extend test_ledger_cutoff_retains_charge_and_requires_conversation_receipt with actual source Close while physical conversation commit is paused after AgentRuns acceptance; require target answer, both receipts, consumed exact draft and generation1, no target deletion or source-close refund.",
+    "Confirmation race: preserve upstream protected grant-write/Close control and feature exact prepared record/child refusal controls; exercise real pending decision resolution with worker completion to catch recursive lock deadlock.",
+    "Keep fork raw-payload executor tests and original soft-delete expectations intact; prepared-new_chat fixtures use actual prepare/exact approval and retain original outcome/interleave assertions except explicitly declared saved-draft differences."
+  ],
+  "provenance_inputs": {
+    "tldw_chatbook/Chat/console_chat_controller.py": "21f1ec16dd53e4ead6607f8472cbd3394aa9f562e51d69f598a66f6aa18c0f8c",
+    "tldw_chatbook/Chat/console_chat_store.py": "078c5c8ad875e74334a45c2a3e89adfe102ec3293b456719e7342cf12392a5b8",
+    "tldw_chatbook/Chat/console_chat_start.py": "d0cd0a4da8dd3a4cd2f185b2323d26a3517a975bc2860cf815f8437cea300c0a",
+    "Tests/Chat/test_console_chat_start.py": "c293994106834cbc20b631117206134ad1e656a91ae76d0ba527edf8bd30388b",
+    "Tests/Chat/test_console_chat_create_confirm.py": "6207c357aa83eec951aae9c114dbdfca80071f82d08a4d94f53c647f7bd6b402",
+    "Tests/Chat/test_console_chat_create_integration.py": "2501f1c8914c9851c78907b0c1f7fa9040e8888950495450cd61373a9c645c5a",
+    "backlog/decisions/219-console-chat-destinations-and-bounded-starts.md": "c43247ecb149c446e4fdc675d99de6fb383a1bd004bb74d661bceb7fbd8f62e5"
+  },
+  "tests_run": false,
+  "source_edits": false
+}

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="3" time="0.625" timestamp="2026-10-04T10:14:11.790472-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_legacy_session_reprojection_fires_summary_once_for_same_payload" time="0.317"><failure message="assert [] == [True]&#10;  &#10;  Right contains one more item: True&#10;  Use -v to get more diff">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10eb36810&gt;
+
+    @pytest.mark.bootstrap_profile
+    def test_legacy_session_reprojection_fires_summary_once_for_same_payload(monkeypatch):
+        ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
+        ctrl._remount_parked_skill_install = lambda session_id: None
+        ctrl._remount_parked_skill_script = lambda session_id: None
+        ctrl._reproject_pending_decision_for_session("s1")
+        ctrl._reproject_pending_decision_for_session("s1")
+        assert len(mounted) == 2
+        assert all(item is payload for item in mounted)
+&gt;       assert _ThreadStub.started == [True]
+E       assert [] == [True]
+E         
+E         Right contains one more item: True
+E         Use -v to get more diff
+
+Tests/Chat/test_permission_summary_wiring.py:342: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_legacy_session_reprojection_clears_no_payload_without_summary" time="0.046" /><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_unified_session_reprojection_returns_before_legacy_summary" time="0.042" /></testsuite></testsuites>

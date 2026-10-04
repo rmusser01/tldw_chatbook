@@ -1,0 +1,387 @@
+diff --git a/Docs/security/production-diagnostic-inventory.json b/Docs/security/production-diagnostic-inventory.json
+index d66f8f4600..551634b266 100644
+--- a/Docs/security/production-diagnostic-inventory.json
++++ b/Docs/security/production-diagnostic-inventory.json
+@@ -3599,19 +3599,68 @@
+       "reason": "remaining Chatbook production diagnostic owner"
+     },
+     {
+-      "call_count": 56,
+-      "diagnostic_digest": "df72ed2f9c15fbcf686c",
++      "call_count": 24,
++      "diagnostic_digest": "b016f2325aa32bdf25fd",
+       "owner": "TASK-494",
+       "path": "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py",
+       "reason": "remaining Chatbook production diagnostic owner"
+     },
+     {
+       "call_count": 3,
+-      "diagnostic_digest": "e57b0bf4b3925073e7e3",
++      "diagnostic_digest": "c89a269be74624f98abc",
++      "owner": "TASK-494",
++      "path": "tldw_chatbook/UI/Wizards/first_run_appearance_step.py",
++      "reason": "remaining Chatbook production diagnostic owner"
++    },
++    {
++      "call_count": 1,
++      "diagnostic_digest": "332d93a98039e599c047",
++      "owner": "TASK-494",
++      "path": "tldw_chatbook/UI/Wizards/first_run_model_step.py",
++      "reason": "remaining Chatbook production diagnostic owner"
++    },
++    {
++      "call_count": 1,
++      "diagnostic_digest": "44ad28b1ea3a2537e5a2",
++      "owner": "TASK-494",
++      "path": "tldw_chatbook/UI/Wizards/first_run_protect_step.py",
++      "reason": "remaining Chatbook production diagnostic owner"
++    },
++    {
++      "call_count": 4,
++      "diagnostic_digest": "212e7800d2355a576325",
++      "owner": "TASK-494",
++      "path": "tldw_chatbook/UI/Wizards/first_run_provider_step.py",
++      "reason": "remaining Chatbook production diagnostic owner"
++    },
++    {
++      "call_count": 2,
++      "diagnostic_digest": "2f0cfd1ce2637f223799",
++      "owner": "TASK-494",
++      "path": "tldw_chatbook/UI/Wizards/first_run_setup_widgets.py",
++      "reason": "remaining Chatbook production diagnostic owner"
++    },
++    {
++      "call_count": 16,
++      "diagnostic_digest": "939f7b413a4466e3ac6d",
++      "owner": "TASK-494",
++      "path": "tldw_chatbook/UI/Wizards/first_run_speech_step.py",
++      "reason": "remaining Chatbook production diagnostic owner"
++    },
++    {
++      "call_count": 6,
++      "diagnostic_digest": "8ed51c9fff508ded2b53",
+       "owner": "TASK-494",
+       "path": "tldw_chatbook/UI/Wizards/first_run_step_guard.py",
+       "reason": "remaining Chatbook production diagnostic owner"
+     },
++    {
++      "call_count": 5,
++      "diagnostic_digest": "0e1f9840af7a39e8c01a",
++      "owner": "TASK-494",
++      "path": "tldw_chatbook/UI/Wizards/first_run_summary_step.py",
++      "reason": "remaining Chatbook production diagnostic owner"
++    },
+     {
+       "call_count": 6,
+       "diagnostic_digest": "6a2fba384dfad6e3c7a1",
+@@ -4369,8 +4418,8 @@
+       "reason": "remaining Chatbook production diagnostic owner"
+     },
+     {
+-      "call_count": 119,
+-      "diagnostic_digest": "a1bf1f6d3152df54c97d",
++      "call_count": 120,
++      "diagnostic_digest": "f0954c73ea485c24303f",
+       "owner": "TASK-494",
+       "path": "tldw_chatbook/app.py",
+       "reason": "remaining Chatbook production diagnostic owner"
+diff --git a/Tests/Architecture/test_module_size_ratchet.py b/Tests/Architecture/test_module_size_ratchet.py
+index adad1da0dc..92da943635 100644
+--- a/Tests/Architecture/test_module_size_ratchet.py
++++ b/Tests/Architecture/test_module_size_ratchet.py
+@@ -151,8 +151,29 @@ _BUDGETS: dict[str, int] = {
+     # `origin/dev` 9e33252708 — see the module docstring's second pass.
+     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14324,
+     # TASK-33921: 10,854 on dev 2026-10-03 (over by 450); the Voice step moved
+-    # to UI/Wizards/first_run_voice_step.py.
+-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 9866,
++    # to UI/Wizards/first_run_voice_step.py. TASK-34100.1: every other step
++    # moved to its own module (9,866 -> 3,149), then the busy line and the
++    # worker helper's call sites landed (3,183); review round 1 moved the
++    # fence's focus hold into first_run_step_guard.py (3,182); round 2 held the
++    # fence through finishing (3,181); round 3 shared the discovery reuse rule
++    # (3,179). The wizard keeps the container, progress, nav bar, dialog and
++    # screen.
++    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3177,
++    # TASK-34100.1: the step modules the split left at 1,000 lines or more
++    # are pinned at their exact size, so the split cannot regrow a god module
++    # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
++    # Model. New code for one of them goes in a helper module beside the step
++    # (first_run_<step>_<topic>.py), never in a raised row. The smaller step
++    # modules and helpers (Welcome, RAG, Tools, Notes, Appearance, Protect,
++    # Summary, the shared widgets, the discovery helpers, the busy line and
++    # the step guard) have no row: this file pins hand-picked god modules, and
++    # a row on a small module would stop the next fix adding even one line.
++    # Provider 2,461 -> 2,458: the Qodo round moved the handoff clear into
++    # first_run_model_discovery.drop_unreusable_handoff.
++    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2458,
++    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1708,
++    "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1070,
++    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
+     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
+     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
+ }
+diff --git a/Tests/Architecture/test_wizard_lifecycle_guards.py b/Tests/Architecture/test_wizard_lifecycle_guards.py
+new file mode 100644
+index 0000000000..3140cf8cc5
+--- /dev/null
++++ b/Tests/Architecture/test_wizard_lifecycle_guards.py
+@@ -0,0 +1,188 @@
++"""TASK-34100.1 AC#3: wizard liveness and background-work rules, pinned by AST.
++
++**Liveness.** In Textual 8.2.8 ``is_mounted`` is sticky. ``_is_mounted`` is
++set True once and never cleared, so a removed step and a popped screen both
++still report ``is_mounted is True`` (backlog/docs/lessons-textual.md, "is_mounted
++never goes False"). Every liveness guard that read it was a no-op on the
++teardown it was written for. The first-run wizard alone had 43 such reads on
++2026-10-02, and they kept producing post-teardown crashes.
++``is_attached``, which walks ``_parent`` to the DOM root, is the predicate
++that goes False. This pins every module under ``UI/Wizards/`` at zero
++``.is_mounted`` reads, comments excluded.
++
++**Background work.** A Textual worker exits the whole app on an uncaught
++error unless it is started with ``exit_on_error=False``, and that default is
++how a failing Next quit the app during setup (TASK-33621.14). Every
++first-run worker now starts through ``first_run_step_guard.run_wizard_worker``
++or the ``wizard_work`` decorator. Both always pass ``exit_on_error=False`` and
++report an escaped error on the wizard's pinned status strip. This pins that
++no first-run module calls ``run_worker`` or ``@work`` directly.
++"""
++
++from __future__ import annotations
++
++import ast
++from pathlib import Path
++
++_REPO = Path(__file__).resolve().parents[2]
++_WIZARDS = _REPO / "tldw_chatbook" / "UI" / "Wizards"
++_HELPER = _WIZARDS / "first_run_step_guard.py"
++
++
++def _first_run_modules() -> list[Path]:
++    modules = [_WIZARDS / "FirstRunSetupWizard.py"]
++    modules += sorted(_WIZARDS.glob("first_run_*.py"))
++    return [path for path in modules if path != _HELPER]
++
++
++def _tree(path: Path) -> ast.AST:
++    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
++
++
++def _is_mounted_reads(tree: ast.AST) -> list[int]:
++    """Lines reading ``is_mounted``: ``x.is_mounted`` or ``getattr(x, "is_mounted")``."""
++    return [
++        node.lineno
++        for node in ast.walk(tree)
++        if (isinstance(node, ast.Attribute) and node.attr == "is_mounted")
++        or (isinstance(node, ast.Constant) and node.value == "is_mounted")
++    ]
++
++
++def _worker_names(tree: ast.AST) -> tuple[set[str], set[str]]:
++    """Local names bound to ``textual.work`` and to ``textual.worker.Worker``."""
++    work, worker = {"work"}, {"Worker"}
++    for node in ast.walk(tree):
++        if not isinstance(node, ast.ImportFrom) or not node.module:
++            continue
++        for alias in node.names:
++            bound = alias.asname or alias.name
++            if node.module == "textual" and alias.name == "work":
++                work.add(bound)
++            if node.module == "textual.worker" and alias.name == "Worker":
++                worker.add(bound)
++    return work, worker
++
++
++def _called_name(node: ast.AST) -> str:
++    target = node.func if isinstance(node, ast.Call) else node
++    if isinstance(target, ast.Name):
++        return target.id
++    return getattr(target, "attr", "")
++
++
++def _direct_workers(tree: ast.AST) -> list[str]:
++    """Workers started without the shared helper: ``run_worker(...)``,
++    ``@work`` under any alias, or a ``Worker(...)`` built by hand."""
++    work, worker = _worker_names(tree)
++    found = []
++    for node in ast.walk(tree):
++        if isinstance(node, ast.Call):
++            name = _called_name(node)
++            if name == "run_worker":
++                found.append(f"{node.lineno} run_worker(...)")
++            elif name in worker:
++                found.append(f"{node.lineno} {name}(...)")
++        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
++            for deco in node.decorator_list:
++                if _called_name(deco) in work:
++                    found.append(f"{node.lineno} @{_called_name(deco)}")
++    return found
++
++
++def test_no_wizard_module_reads_is_mounted() -> None:
++    offenders = [
++        f"{path.relative_to(_REPO)}:{line}"
++        for path in sorted(_WIZARDS.rglob("*.py"))
++        for line in _is_mounted_reads(_tree(path))
++    ]
++
++    assert offenders == [], (
++        "`is_mounted` never goes False in Textual 8, so it cannot tell a "
++        "removed widget from a live one. Use `is_attached`:\n  "
++        + "\n  ".join(offenders)
++    )
++
++
++def test_first_run_modules_start_no_worker_outside_the_shared_helper() -> None:
++    offenders = [
++        f"{path.name}:{found}"
++        for path in _first_run_modules()
++        for found in _direct_workers(_tree(path))
++    ]
++
++    assert offenders == [], (
++        "Start first-run background work with "
++        "first_run_step_guard.run_wizard_worker / @wizard_work, which never "
++        "exits the app and reports on the pinned strip:\n  "
++        + "\n  ".join(offenders)
++    )
++
++
++def test_the_guards_see_through_aliases_and_getattr() -> None:
++    """Review round 1: the scans must not be dodged by spelling.
++
++    ``getattr(x, "is_mounted")``, ``from textual import work as w`` and a
++    hand-built ``Worker(...)`` read and start exactly what the rules forbid.
++    """
++    source = """
++from textual import work as background
++from textual.worker import Worker as W
++
++class Step:
++    def alive(self):
++        return getattr(self, "is_mounted", False)
++
++    @background(thread=True)
++    def load(self):
++        pass
++
++    def start(self):
++        W(self, self.load)
++"""
++    tree = ast.parse(source)
++
++    assert _is_mounted_reads(tree) == [7]
++    assert sorted(_direct_workers(tree)) == ["10 @background", "14 W(...)"]
++
++
++def test_the_shared_helper_never_lets_a_worker_exit_the_app() -> None:
++    calls = [
++        node
++        for node in ast.walk(_tree(_HELPER))
++        if isinstance(node, ast.Call)
++        and isinstance(node.func, ast.Attribute)
++        and node.func.attr == "run_worker"
++    ]
++
++    assert len(calls) == 1, "the helper must be the one run_worker call site"
++    flags = {kw.arg: kw.value for kw in calls[0].keywords}
++    assert isinstance(flags.get("exit_on_error"), ast.Constant)
++    assert flags["exit_on_error"].value is False
++
++
++def test_app_side_first_run_workers_never_exit_the_app() -> None:
++    """Review round 2: the first-run workers app.py starts follow the rule too.
++
++    The recovery prompt's Resume / Start over worker ran with Textual's
++    default and could quit the app at relaunch. Every ``run_worker`` in
++    app.py whose group starts ``first-run`` must pass ``exit_on_error=False``.
++    """
++    tree = _tree(_REPO / "tldw_chatbook" / "app.py")
++    groups, offenders = [], []
++    for node in ast.walk(tree):
++        if not (isinstance(node, ast.Call) and _called_name(node) == "run_worker"):
++            continue
++        flags = {kw.arg: kw.value for kw in node.keywords}
++        group = flags.get("group")
++        if not (
++            isinstance(group, ast.Constant) and str(group.value).startswith("first-run")
++        ):
++            continue
++        groups.append(group.value)
++        keep = flags.get("exit_on_error")
++        if not (isinstance(keep, ast.Constant) and keep.value is False):
++            offenders.append(f"app.py:{node.lineno} group={group.value!r}")
++
++    assert "first-run-recovery" in groups, "the scan no longer finds the recovery worker"
++    assert offenders == [], "pass exit_on_error=False:\n  " + "\n  ".join(offenders)
+diff --git a/scripts/textual_await_dom_census.tsv b/scripts/textual_await_dom_census.tsv
+index efff9b1dab..eee4bbd018 100644
+--- a/scripts/textual_await_dom_census.tsv
++++ b/scripts/textual_await_dom_census.tsv
+@@ -116,13 +116,13 @@ tldw_chatbook/UI/Voice_Cloning_Window.py::on_mount	1
+ tldw_chatbook/UI/Watchlists_Modules/briefing_preset_modal.py::on_mount	1
+ tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py::_apply_effective_layout_request	2
+ tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py::_reconcile_body	2
+-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_apply_password_worker	1
+-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_discover_selected_provider	1
+-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_on_show_all_cards	1
+-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_on_show_all_themes	1
+-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_render_rows	2
+-tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::_run_probe	1
+ tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::open_voice_api_key_settings	1
++tldw_chatbook/UI/Wizards/first_run_appearance_step.py::_on_show_all_cards	1
++tldw_chatbook/UI/Wizards/first_run_appearance_step.py::_on_show_all_themes	1
++tldw_chatbook/UI/Wizards/first_run_protect_step.py::_apply_password_worker	1
++tldw_chatbook/UI/Wizards/first_run_provider_step.py::_discover_selected_provider	1
++tldw_chatbook/UI/Wizards/first_run_provider_step.py::_run_probe	1
++tldw_chatbook/UI/Wizards/first_run_summary_step.py::_render_rows	2
+ tldw_chatbook/UI/Wizards/first_run_voice_step.py::_run_voice_sample	4
+ tldw_chatbook/UI/Workflows_Modules/editor.py::render_draft	11
+ tldw_chatbook/Widgets/Console/console_agent_history_modal.py::_read_page	5
+diff --git a/tldw_chatbook/app.py b/tldw_chatbook/app.py
+index 964bc784f2..b1a5afa874 100644
+--- a/tldw_chatbook/app.py
++++ b/tldw_chatbook/app.py
+@@ -3741,7 +3741,12 @@ class TldwCli(
+                     "(category=persistence, error_type=save_returned_false)"
+                 )
+ 
+-        self.run_worker(_write, thread=True, group="first-run-env-key-notice-flag")
++        self.run_worker(
++            _write,
++            thread=True,
++            group="first-run-env-key-notice-flag",
++            exit_on_error=False,
++        )
+ 
+     def _push_first_run_wizard(self) -> None:
+         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
+@@ -3823,10 +3828,24 @@ class TldwCli(
+     def _handle_first_run_recovery_result(self, result: str | None) -> None:
+         if result not in {"resume", "start_over", "later"}:
+             return
++
++        async def apply() -> None:
++            # TASK-34100.1: setup work never exits the app. A failure reading
++            # the draft or opening the wizard re-offers the prompt instead.
++            try:
++                await self._apply_first_run_recovery_result(result)
++            except Exception as exc:  # noqa: BLE001 - the prompt is the recovery
++                # ``result`` is one of the three fixed choices checked above.
++                logger.error(
++                    "First-run recovery failed (choice={}, error_type={})",
++                    result,
++                    type(exc).__name__,
++                )
++                self.notify("Setup could not open. Try again.", severity="error")
++                self._schedule_first_run_recovery_retry()
++
+         self.run_worker(
+-            self._apply_first_run_recovery_result(result),
+-            exclusive=True,
+-            group="first-run-recovery",
++            apply(), exclusive=True, group="first-run-recovery", exit_on_error=False
+         )
+ 
+     async def _apply_first_run_recovery_result(self, result: str) -> None:

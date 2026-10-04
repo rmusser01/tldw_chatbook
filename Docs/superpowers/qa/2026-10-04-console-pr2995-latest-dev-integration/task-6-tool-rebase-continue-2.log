@@ -1,0 +1,14 @@
+Recorded resolution for 'Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py'.
+[detached HEAD 45c8aa97f3] Reject mixed native replay and preserve child chat drafts
+ 8 files changed, 609 insertions(+), 25 deletions(-)
+Rebasing (6/21)Rebasing (7/21)Rebasing (8/21)Auto-merging Tests/UI/test_console_session_controller.py
+Auto-merging tldw_chatbook/Chat/console_chat_controller.py
+CONFLICT (content): Merge conflict in tldw_chatbook/Chat/console_chat_controller.py
+Auto-merging tldw_chatbook/Chat/console_chat_store.py
+error: could not apply c9645efc58... fix(console): preserve child approval and consume mounted handoffs
+hint: Resolve all conflicts manually, mark them as resolved with
+hint: "git add/rm <conflicted_files>", then run "git rebase --continue".
+hint: You can instead skip this commit: run "git rebase --skip".
+hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
+Recorded preimage for 'tldw_chatbook/Chat/console_chat_controller.py'
+Could not apply c9645efc58... fix(console): preserve child approval and consume mounted handoffs

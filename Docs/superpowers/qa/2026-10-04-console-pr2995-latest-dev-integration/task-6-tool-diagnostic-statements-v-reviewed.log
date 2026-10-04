@@ -1,0 +1,39 @@
+tldw_chatbook/Chat/console_chat_start.py: 6 -> 6 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 0
+
+no diagnostic statement changed in this file between the two revisions. If the pin still lists it, the pin was already stale when it was committed -- widen the base revision.
+
+tldw_chatbook/Chat/console_chat_controller.py: 90 -> 90 diagnostic call(s)
+  moved/re-indented only: 0   removed: 3   added: 3
+
+- REMOVED -- these statements no longer exist:
+  - debug 40b366db0a9a5557 (was line 2193)
+      | logger.opt(exception=True).debug(
+      |     "Remote binding recovery probe could not be scheduled "
+      |     "(binding_id={})",
+      |     binding_id,
+      | )
+  - warning b42d7f6835cad471 (was line 12477)
+      | logger.warning(
+      |     "Console trace provenance could not be saved; "
+      |     "exception_type={}",
+      |     type(error).__name__,
+      | )
+  - warning aa15633591b9bbd6 (was line 13600)
+      | logger.warning("Uncertain trace dispatch checkpoint could not be saved.")
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + debug ca5a6597cc63ef9d (now line 2194)
+      | logger.opt(exception=True).debug(
+      |     "Remote binding recovery probe could not be scheduled (binding_id={})",
+      |     binding_id,
+      | )
+  + warning 856bb387b142faca (now line 12514)
+      | logger.warning(
+      |     "Console trace provenance could not be saved; exception_type={}",
+      |     type(error).__name__,
+      | )
+  + warning 7088cac4605a2479 (now line 13651)
+      | logger.warning(
+      |     "Uncertain trace dispatch checkpoint could not be saved."
+      | )

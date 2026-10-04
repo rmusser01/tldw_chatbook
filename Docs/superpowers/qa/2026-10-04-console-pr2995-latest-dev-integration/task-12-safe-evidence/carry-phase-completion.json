@@ -1,0 +1,11 @@
+{
+  "source_projections_completed": 11,
+  "source_projections_all_exact": true,
+  "historical_QA_12336_exact_plus_one_authorized_append": true,
+  "safe_artifact_pins_verified": 443,
+  "retained_verifier_errors": [
+    "Initial system Python lacks ast.TryStar; use repository .venv Python.",
+    "Source/QA projection process completed all assertions and wrote both maps, then evidence assembler treated a Task10 manifest display key as a relative path. Separate pins.py used the recorded path field and verified all443 hashes without rerunning source scans or tests."
+  ],
+  "source_changed_by_verifier": false
+}

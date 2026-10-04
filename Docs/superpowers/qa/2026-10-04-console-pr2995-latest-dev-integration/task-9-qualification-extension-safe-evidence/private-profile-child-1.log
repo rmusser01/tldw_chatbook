@@ -1,0 +1,7 @@
+.                                                                        [100%]
+- generated xml file: /private/tmp/task9-extension-failed38/test_confirm_callback_absent_f0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+1.06s call     Tests/Chat/test_console_skill_script_confirm.py::test_confirm_callback_absent_from_bridge_when_no_ui_sink_wired
+
+(2 durations < 1s hidden.)
+1 passed in 1.51s

@@ -1,0 +1,9 @@
+{
+  "path": "Tests/UI/test_console_native_chat_flow.py",
+  "function": "test_conversation_settings_return_real_navigation_restores_fresh_console_modal",
+  "before_sha256": "2ef3f853e51ad00d5873f7cf5f15f5e78b8d2f7ce66ff9bdf8f9bde048449d94",
+  "after_sha256": "79bbf9bf6de926365e2263d6896a18f444aa41d965f3a85aead4cfd97dd26258",
+  "only_helper_import_decorator_request": true,
+  "reversed_complete_ast_exact": true,
+  "all_original_body_assertions_exact": true
+}

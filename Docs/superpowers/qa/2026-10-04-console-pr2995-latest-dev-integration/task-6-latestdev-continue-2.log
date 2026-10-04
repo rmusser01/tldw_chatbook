@@ -1,0 +1,5 @@
+Recorded resolution for 'backlog/decisions/README.md'.
+[detached HEAD 5cfc6df95a] docs(console): allocate ADR219 for bounded chat starts
+ 8 files changed, 10 insertions(+), 10 deletions(-)
+ rename backlog/decisions/{211-console-chat-destinations-and-bounded-starts.md => 219-console-chat-destinations-and-bounded-starts.md} (99%)
+Rebasing (25/25)                                                                                Successfully rebased and updated refs/heads/codex/console-chat-starts-dev.

@@ -1,0 +1,3276 @@
+{
+  "Tests/Agents/test_agent_worktree_retire_race_copy.py": {
+    "hunks": {
+      "dev": [],
+      "head": []
+    },
+    "head_hunks": 0,
+    "unmatched": []
+  },
+  "Tests/Chat/test_console_activity_presentation.py": {
+    "hunks": {
+      "base": [
+        {
+          "old": [
+            "            classify_activity_status(",
+            "                STEP_TOOL_RESULT, refusal, tool_outcome=\"blocked\"",
+            "            )"
+          ],
+          "new": [
+            "            classify_activity_status(STEP_TOOL_RESULT, refusal, tool_outcome=\"blocked\")"
+          ]
+        }
+      ],
+      "dev": [
+        {
+          "old": [
+            "            classify_activity_status(",
+            "                STEP_TOOL_RESULT, refusal, tool_outcome=\"blocked\"",
+            "            )"
+          ],
+          "new": [
+            "            classify_activity_status(STEP_TOOL_RESULT, refusal, tool_outcome=\"blocked\")"
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "            classify_activity_status(",
+            "                STEP_TOOL_RESULT, refusal, tool_outcome=\"blocked\"",
+            "            )"
+          ],
+          "new": [
+            "            classify_activity_status(STEP_TOOL_RESULT, refusal, tool_outcome=\"blocked\")"
+          ]
+        }
+      ]
+    },
+    "head_hunks": 1,
+    "unmatched": []
+  },
+  "Tests/Chat/test_console_automatic_library_preparation.py": {
+    "hunks": {
+      "base": [],
+      "dev": [],
+      "head": []
+    },
+    "head_hunks": 0,
+    "unmatched": []
+  },
+  "Tests/Chat/test_console_compaction_ask_hold.py": {
+    "hunks": {
+      "dev": [
+        {
+          "old": [
+            ""
+          ],
+          "new": []
+        },
+        {
+          "old": [
+            ""
+          ],
+          "new": []
+        },
+        {
+          "old": [
+            "    new_rows = _system_rows(store)[len(system_rows_at_hold):]"
+          ],
+          "new": [
+            "    new_rows = _system_rows(store)[len(system_rows_at_hold) :]"
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            ""
+          ],
+          "new": []
+        },
+        {
+          "old": [
+            ""
+          ],
+          "new": []
+        },
+        {
+          "old": [
+            "    new_rows = _system_rows(store)[len(system_rows_at_hold):]"
+          ],
+          "new": [
+            "    new_rows = _system_rows(store)[len(system_rows_at_hold) :]"
+          ]
+        }
+      ]
+    },
+    "head_hunks": 3,
+    "unmatched": []
+  },
+  "Tests/Chat/test_console_context_budget_copy.py": {
+    "hunks": {
+      "dev": [],
+      "head": []
+    },
+    "head_hunks": 0,
+    "unmatched": []
+  },
+  "Tests/Chat/test_console_context_budget_routes.py": {
+    "hunks": {
+      "dev": [
+        {
+          "old": [
+            "async def test_a_window_the_reservation_fills_alerts_with_max_tokens(request, estimated) -> None:"
+          ],
+          "new": [
+            "async def test_a_window_the_reservation_fills_alerts_with_max_tokens(",
+            "    request, estimated",
+            ") -> None:"
+          ]
+        },
+        {
+          "old": [
+            "@pytest.mark.parametrize(\"mode\", [ContextCompactionMode.ASK, ContextCompactionMode.AUTOMATIC])"
+          ],
+          "new": [
+            "@pytest.mark.parametrize(",
+            "    \"mode\", [ContextCompactionMode.ASK, ContextCompactionMode.AUTOMATIC]",
+            ")"
+          ]
+        },
+        {
+          "old": [
+            "async def test_an_estimated_window_takes_the_same_route_as_a_verified_one(request, mode) -> None:"
+          ],
+          "new": [
+            "async def test_an_estimated_window_takes_the_same_route_as_a_verified_one(",
+            "    request, mode",
+            ") -> None:"
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "async def test_a_window_the_reservation_fills_alerts_with_max_tokens(request, estimated) -> None:"
+          ],
+          "new": [
+            "async def test_a_window_the_reservation_fills_alerts_with_max_tokens(",
+            "    request, estimated",
+            ") -> None:"
+          ]
+        },
+        {
+          "old": [
+            "@pytest.mark.parametrize(\"mode\", [ContextCompactionMode.ASK, ContextCompactionMode.AUTOMATIC])"
+          ],
+          "new": [
+            "@pytest.mark.parametrize(",
+            "    \"mode\", [ContextCompactionMode.ASK, ContextCompactionMode.AUTOMATIC]",
+            ")"
+          ]
+        },
+        {
+          "old": [
+            "async def test_an_estimated_window_takes_the_same_route_as_a_verified_one(request, mode) -> None:"
+          ],
+          "new": [
+            "async def test_an_estimated_window_takes_the_same_route_as_a_verified_one(",
+            "    request, mode",
+            ") -> None:"
+          ]
+        }
+      ]
+    },
+    "head_hunks": 3,
+    "unmatched": []
+  },
+  "Tests/Chat/test_console_context_compaction.py": {
+    "hunks": {
+      "base": [],
+      "dev": [],
+      "head": []
+    },
+    "head_hunks": 0,
+    "unmatched": []
+  },
+  "Tests/Chat/test_console_dispatch_recovery_fix_round3.py": {
+    "hunks": {
+      "base": [],
+      "dev": [],
+      "head": []
+    },
+    "head_hunks": 0,
+    "unmatched": []
+  },
+  "Tests/Chat/test_console_dispatch_recovery_fix_round4.py": {
+    "hunks": {
+      "base": [],
+      "dev": [],
+      "head": []
+    },
+    "head_hunks": 0,
+    "unmatched": []
+  },
+  "Tests/Chat/test_console_durable_turn_fix_round1.py": {
+    "hunks": {
+      "base": [],
+      "dev": [],
+      "head": []
+    },
+    "head_hunks": 0,
+    "unmatched": []
+  },
+  "Tests/Chat/test_console_staged_evidence_dispatch_pin.py": {
+    "hunks": {
+      "dev": [
+        {
+          "old": [
+            "    return \"\\n\".join(",
+            "        str(row.get(\"content\", \"\")) for row in entry[\"provider_messages\"]",
+            "    )"
+          ],
+          "new": [
+            "    return \"\\n\".join(str(row.get(\"content\", \"\")) for row in entry[\"provider_messages\"])"
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "    return \"\\n\".join(",
+            "        str(row.get(\"content\", \"\")) for row in entry[\"provider_messages\"]",
+            "    )"
+          ],
+          "new": [
+            "    return \"\\n\".join(str(row.get(\"content\", \"\")) for row in entry[\"provider_messages\"])"
+          ]
+        }
+      ]
+    },
+    "head_hunks": 1,
+    "unmatched": []
+  },
+  "Tests/Chat/test_console_turn_preparation.py": {
+    "hunks": {
+      "base": [
+        {
+          "old": [
+            "def test_preparation_bridge_requires_explicit_capture_on_policy_and_binds_route(ephemeral) -> (",
+            "    None",
+            "):",
+            "    preparation = replace(_preparation(ConsoleTurnPreparationState.READY), ephemeral=ephemeral)"
+          ],
+          "new": [
+            "def test_preparation_bridge_requires_explicit_capture_on_policy_and_binds_route(",
+            "    ephemeral,",
+            ") -> None:",
+            "    preparation = replace(",
+            "        _preparation(ConsoleTurnPreparationState.READY), ephemeral=ephemeral",
+            "    )"
+          ]
+        }
+      ],
+      "dev": [
+        {
+          "old": [
+            "def test_preparation_bridge_requires_explicit_capture_on_policy_and_binds_route(ephemeral) -> (",
+            "    None",
+            "):",
+            "    preparation = replace(_preparation(ConsoleTurnPreparationState.READY), ephemeral=ephemeral)"
+          ],
+          "new": [
+            "def test_preparation_bridge_requires_explicit_capture_on_policy_and_binds_route(",
+            "    ephemeral,",
+            ") -> None:",
+            "    preparation = replace(",
+            "        _preparation(ConsoleTurnPreparationState.READY), ephemeral=ephemeral",
+            "    )"
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "def test_preparation_bridge_requires_explicit_capture_on_policy_and_binds_route(ephemeral) -> (",
+            "    None",
+            "):",
+            "    preparation = replace(_preparation(ConsoleTurnPreparationState.READY), ephemeral=ephemeral)"
+          ],
+          "new": [
+            "def test_preparation_bridge_requires_explicit_capture_on_policy_and_binds_route(",
+            "    ephemeral,",
+            ") -> None:",
+            "    preparation = replace(",
+            "        _preparation(ConsoleTurnPreparationState.READY), ephemeral=ephemeral",
+            "    )"
+          ]
+        }
+      ]
+    },
+    "head_hunks": 1,
+    "unmatched": []
+  },
+  "Tests/Performance/test_textual_css_fastpath.py": {
+    "hunks": {
+      "base": [
+        {
+          "old": [
+            "                if node.parent is not None",
+            "                and getattr(node, \"_selector_names\", None)"
+          ],
+          "new": [
+            "                if node.parent is not None and getattr(node, \"_selector_names\", None)"
+          ]
+        },
+        {
+          "old": [
+            "                if any(",
+            "                    len(sset.selectors) > 1 for sset in rule.selector_set",
+            "                ):"
+          ],
+          "new": [
+            "                if any(len(sset.selectors) > 1 for sset in rule.selector_set):"
+          ]
+        },
+        {
+          "old": [
+            "        breakdown = \", \".join(",
+            "            f\"{key}={count}\" for key, count in per_key.most_common()",
+            "        )"
+          ],
+          "new": [
+            "        breakdown = \", \".join(f\"{key}={count}\" for key, count in per_key.most_common())"
+          ]
+        },
+        {
+          "old": [
+            "            \"Sample of current offenders:\\n  \"",
+            "            + \"\\n  \".join(offenders[:15])"
+          ],
+          "new": [
+            "            \"Sample of current offenders:\\n  \" + \"\\n  \".join(offenders[:15])"
+          ]
+        }
+      ],
+      "dev": [
+        {
+          "old": [
+            "                if node.parent is not None",
+            "                and getattr(node, \"_selector_names\", None)"
+          ],
+          "new": [
+            "                if node.parent is not None and getattr(node, \"_selector_names\", None)"
+          ]
+        },
+        {
+          "old": [
+            "                if any(",
+            "                    len(sset.selectors) > 1 for sset in rule.selector_set",
+            "                ):"
+          ],
+          "new": [
+            "                if any(len(sset.selectors) > 1 for sset in rule.selector_set):"
+          ]
+        },
+        {
+          "old": [
+            "        breakdown = \", \".join(",
+            "            f\"{key}={count}\" for key, count in per_key.most_common()",
+            "        )"
+          ],
+          "new": [
+            "        breakdown = \", \".join(f\"{key}={count}\" for key, count in per_key.most_common())"
+          ]
+        },
+        {
+          "old": [
+            "            \"Sample of current offenders:\\n  \"",
+            "            + \"\\n  \".join(offenders[:15])"
+          ],
+          "new": [
+            "            \"Sample of current offenders:\\n  \" + \"\\n  \".join(offenders[:15])"
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "                if node.parent is not None",
+            "                and getattr(node, \"_selector_names\", None)"
+          ],
+          "new": [
+            "                if node.parent is not None and getattr(node, \"_selector_names\", None)"
+          ]
+        },
+        {
+          "old": [
+            "                if any(",
+            "                    len(sset.selectors) > 1 for sset in rule.selector_set",
+            "                ):"
+          ],
+          "new": [
+            "                if any(len(sset.selectors) > 1 for sset in rule.selector_set):"
+          ]
+        },
+        {
+          "old": [
+            "        breakdown = \", \".join(",
+            "            f\"{key}={count}\" for key, count in per_key.most_common()",
+            "        )"
+          ],
+          "new": [
+            "        breakdown = \", \".join(f\"{key}={count}\" for key, count in per_key.most_common())"
+          ]
+        },
+        {
+          "old": [
+            "            \"Sample of current offenders:\\n  \"",
+            "            + \"\\n  \".join(offenders[:15])"
+          ],
+          "new": [
+            "            \"Sample of current offenders:\\n  \" + \"\\n  \".join(offenders[:15])"
+          ]
+        }
+      ]
+    },
+    "head_hunks": 4,
+    "unmatched": []
+  },
+  "Tests/Scripts/test_check_textual_worker_contract.py": {
+    "hunks": {
+      "base": [],
+      "dev": [
+        {
+          "old": [
+            "    source = _ASYNC_HANDBACK[handed] + f\"\"\""
+          ],
+          "new": [
+            "    source = (",
+            "        _ASYNC_HANDBACK[handed]",
+            "        + f\"\"\""
+          ]
+        },
+        {
+          "old": [],
+          "new": [
+            "    )"
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "    source = _ASYNC_HANDBACK[handed] + f\"\"\""
+          ],
+          "new": [
+            "    source = (",
+            "        _ASYNC_HANDBACK[handed]",
+            "        + f\"\"\""
+          ]
+        },
+        {
+          "old": [],
+          "new": [
+            "    )"
+          ]
+        }
+      ]
+    },
+    "head_hunks": 2,
+    "unmatched": []
+  },
+  "Tests/UI/test_console_compaction_hold_flow.py": {
+    "hunks": {
+      "dev": [
+        {
+          "old": [
+            "            \"choices\": [",
+            "                {\"message\": {\"content\": f\"answer-{number} \" + \"detail \" * 220}}",
+            "            ]"
+          ],
+          "new": [
+            "            \"choices\": [{\"message\": {\"content\": f\"answer-{number} \" + \"detail \" * 220}}]"
+          ]
+        },
+        {
+          "old": [
+            "",
+            ""
+          ],
+          "new": []
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "            \"choices\": [",
+            "                {\"message\": {\"content\": f\"answer-{number} \" + \"detail \" * 220}}",
+            "            ]"
+          ],
+          "new": [
+            "            \"choices\": [{\"message\": {\"content\": f\"answer-{number} \" + \"detail \" * 220}}]"
+          ]
+        },
+        {
+          "old": [
+            "",
+            ""
+          ],
+          "new": []
+        }
+      ]
+    },
+    "head_hunks": 2,
+    "unmatched": []
+  },
+  "Tests/UI/test_console_trace_call_recovery.py": {
+    "hunks": {
+      "base": [],
+      "dev": [
+        {
+          "old": [
+            "            str(button.label)",
+            "            for button in app.screen.query(Button)",
+            "            if button.display"
+          ],
+          "new": [
+            "            str(button.label) for button in app.screen.query(Button) if button.display"
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "            str(button.label)",
+            "            for button in app.screen.query(Button)",
+            "            if button.display"
+          ],
+          "new": [
+            "            str(button.label) for button in app.screen.query(Button) if button.display"
+          ]
+        }
+      ]
+    },
+    "head_hunks": 1,
+    "unmatched": []
+  },
+  "scripts/check_textual_worker_contract.py": {
+    "hunks": {
+      "base": [
+        {
+          "old": [
+            "            violations.append(",
+            "                f\"{_rel(path)}:{node.lineno}\\t{cls.name}.{target.attr}\"",
+            "            )"
+          ],
+          "new": [
+            "            violations.append(f\"{_rel(path)}:{node.lineno}\\t{cls.name}.{target.attr}\")"
+          ]
+        },
+        {
+          "old": [
+            "            handler.type.elts",
+            "            if isinstance(handler.type, ast.Tuple)",
+            "            else [handler.type]"
+          ],
+          "new": [
+            "            handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]"
+          ]
+        },
+        {
+          "old": [
+            "        hand_rolled = (",
+            "            self.callback_pushes if self.futures & self.awaited_futures else 0",
+            "        )"
+          ],
+          "new": [
+            "        hand_rolled = self.callback_pushes if self.futures & self.awaited_futures else 0"
+          ]
+        },
+        {
+          "old": [
+            "                    for target in (",
+            "                        node.targets if kind is ast.Assign else [node.target]",
+            "                    ):"
+          ],
+          "new": [
+            "                    for target in node.targets if kind is ast.Assign else [node.target]:"
+          ]
+        },
+        {
+          "old": [
+            "        \"#\\n\"",
+            "        + _NOTE_HEADER",
+            "        + \"#\\n\""
+          ],
+          "new": [
+            "        \"#\\n\" + _NOTE_HEADER + \"#\\n\""
+          ]
+        },
+        {
+          "old": [
+            "        \"#\\n\"",
+            "        + _NOTE_HEADER",
+            "        + \"#\\n\""
+          ],
+          "new": [
+            "        \"#\\n\" + _NOTE_HEADER + \"#\\n\""
+          ]
+        },
+        {
+          "old": [
+            "    resolved = sum(",
+            "        max(0, count - current.get(key, 0)) for key, count in known.items()",
+            "    )"
+          ],
+          "new": [
+            "    resolved = sum(max(0, count - current.get(key, 0)) for key, count in known.items())"
+          ]
+        },
+        {
+          "old": [
+            "        max(0, count - current_waits.get(key, 0))",
+            "        for key, count in known_waits.items()"
+          ],
+          "new": [
+            "        max(0, count - current_waits.get(key, 0)) for key, count in known_waits.items()"
+          ]
+        }
+      ],
+      "dev": [
+        {
+          "old": [
+            "            violations.append(",
+            "                f\"{_rel(path)}:{node.lineno}\\t{cls.name}.{target.attr}\"",
+            "            )"
+          ],
+          "new": [
+            "            violations.append(f\"{_rel(path)}:{node.lineno}\\t{cls.name}.{target.attr}\")"
+          ]
+        },
+        {
+          "old": [
+            "            handler.type.elts",
+            "            if isinstance(handler.type, ast.Tuple)",
+            "            else [handler.type]"
+          ],
+          "new": [
+            "            handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]"
+          ]
+        },
+        {
+          "old": [
+            "        self.aliases: list[",
+            "            tuple[str, _Ref, str | None, _Function | None, bool]",
+            "        ] = []"
+          ],
+          "new": [
+            "        self.aliases: list[tuple[str, _Ref, str | None, _Function | None, bool]] = []"
+          ]
+        },
+        {
+          "old": [
+            "        tuple[",
+            "            ast.AST, str | None, _Function | None, _Function | None, _Function | None",
+            "        ]"
+          ],
+          "new": [
+            "        tuple[ast.AST, str | None, _Function | None, _Function | None, _Function | None]"
+          ]
+        },
+        {
+          "old": [
+            "            new.live = id(node) not in dead and (",
+            "                enclosing is None or enclosing.live",
+            "            )"
+          ],
+          "new": [
+            "            new.live = id(node) not in dead and (enclosing is None or enclosing.live)"
+          ]
+        },
+        {
+          "old": [
+            "        foreign = {",
+            "            name[5:] for name in names - fn.futures if name.startswith(\"self.\")",
+            "        }"
+          ],
+          "new": [
+            "        foreign = {name[5:] for name in names - fn.futures if name.startswith(\"self.\")}"
+          ]
+        },
+        {
+          "old": [
+            "                    return self._follow(body, module, cls, None, (module.rel, cls, name), seen)"
+          ],
+          "new": [
+            "                    return self._follow(",
+            "                        body, module, cls, None, (module.rel, cls, name), seen",
+            "                    )"
+          ]
+        },
+        {
+          "old": [
+            "                        scope.local_aliases[name], module, cls, scope, (id(scope), name), seen"
+          ],
+          "new": [
+            "                        scope.local_aliases[name],",
+            "                        module,",
+            "                        cls,",
+            "                        scope,",
+            "                        (id(scope), name),",
+            "                        seen,"
+          ]
+        },
+        {
+          "old": [
+            "                            candidates.append((method, 1 if method.is_classmethod else 0))"
+          ],
+          "new": [
+            "                            candidates.append(",
+            "                                (method, 1 if method.is_classmethod else 0)",
+            "                            )"
+          ]
+        },
+        {
+          "old": [
+            "            return (",
+            "                name in self.waiting_bare_aliases or name in self.waiting_func_names",
+            "            )"
+          ],
+          "new": [
+            "            return name in self.waiting_bare_aliases or name in self.waiting_func_names"
+          ]
+        },
+        {
+          "old": [
+            "        \"#\\n\"",
+            "        + _NOTE_HEADER",
+            "        + \"#\\n\""
+          ],
+          "new": [
+            "        \"#\\n\" + _NOTE_HEADER + \"#\\n\""
+          ]
+        },
+        {
+          "old": [
+            "        \"#\\n\"",
+            "        + _NOTE_HEADER",
+            "        + \"#\\n\""
+          ],
+          "new": [
+            "        \"#\\n\" + _NOTE_HEADER + \"#\\n\""
+          ]
+        },
+        {
+          "old": [
+            "    resolved = sum(",
+            "        max(0, count - current.get(key, 0)) for key, count in known.items()",
+            "    )"
+          ],
+          "new": [
+            "    resolved = sum(max(0, count - current.get(key, 0)) for key, count in known.items())"
+          ]
+        },
+        {
+          "old": [
+            "        max(0, count - current_waits.get(key, 0))",
+            "        for key, count in known_waits.items()"
+          ],
+          "new": [
+            "        max(0, count - current_waits.get(key, 0)) for key, count in known_waits.items()"
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "            violations.append(",
+            "                f\"{_rel(path)}:{node.lineno}\\t{cls.name}.{target.attr}\"",
+            "            )"
+          ],
+          "new": [
+            "            violations.append(f\"{_rel(path)}:{node.lineno}\\t{cls.name}.{target.attr}\")"
+          ]
+        },
+        {
+          "old": [
+            "            handler.type.elts",
+            "            if isinstance(handler.type, ast.Tuple)",
+            "            else [handler.type]"
+          ],
+          "new": [
+            "            handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]"
+          ]
+        },
+        {
+          "old": [
+            "        self.aliases: list[",
+            "            tuple[str, _Ref, str | None, _Function | None, bool]",
+            "        ] = []"
+          ],
+          "new": [
+            "        self.aliases: list[tuple[str, _Ref, str | None, _Function | None, bool]] = []"
+          ]
+        },
+        {
+          "old": [
+            "        tuple[",
+            "            ast.AST, str | None, _Function | None, _Function | None, _Function | None",
+            "        ]"
+          ],
+          "new": [
+            "        tuple[ast.AST, str | None, _Function | None, _Function | None, _Function | None]"
+          ]
+        },
+        {
+          "old": [
+            "            new.live = id(node) not in dead and (",
+            "                enclosing is None or enclosing.live",
+            "            )"
+          ],
+          "new": [
+            "            new.live = id(node) not in dead and (enclosing is None or enclosing.live)"
+          ]
+        },
+        {
+          "old": [
+            "        foreign = {",
+            "            name[5:] for name in names - fn.futures if name.startswith(\"self.\")",
+            "        }"
+          ],
+          "new": [
+            "        foreign = {name[5:] for name in names - fn.futures if name.startswith(\"self.\")}"
+          ]
+        },
+        {
+          "old": [
+            "                    return self._follow(body, module, cls, None, (module.rel, cls, name), seen)"
+          ],
+          "new": [
+            "                    return self._follow(",
+            "                        body, module, cls, None, (module.rel, cls, name), seen",
+            "                    )"
+          ]
+        },
+        {
+          "old": [
+            "                        scope.local_aliases[name], module, cls, scope, (id(scope), name), seen"
+          ],
+          "new": [
+            "                        scope.local_aliases[name],",
+            "                        module,",
+            "                        cls,",
+            "                        scope,",
+            "                        (id(scope), name),",
+            "                        seen,"
+          ]
+        },
+        {
+          "old": [
+            "                            candidates.append((method, 1 if method.is_classmethod else 0))"
+          ],
+          "new": [
+            "                            candidates.append(",
+            "                                (method, 1 if method.is_classmethod else 0)",
+            "                            )"
+          ]
+        },
+        {
+          "old": [
+            "            return (",
+            "                name in self.waiting_bare_aliases or name in self.waiting_func_names",
+            "            )"
+          ],
+          "new": [
+            "            return name in self.waiting_bare_aliases or name in self.waiting_func_names"
+          ]
+        },
+        {
+          "old": [
+            "        \"#\\n\"",
+            "        + _NOTE_HEADER",
+            "        + \"#\\n\""
+          ],
+          "new": [
+            "        \"#\\n\" + _NOTE_HEADER + \"#\\n\""
+          ]
+        },
+        {
+          "old": [
+            "        \"#\\n\"",
+            "        + _NOTE_HEADER",
+            "        + \"#\\n\""
+          ],
+          "new": [
+            "        \"#\\n\" + _NOTE_HEADER + \"#\\n\""
+          ]
+        },
+        {
+          "old": [
+            "    resolved = sum(",
+            "        max(0, count - current.get(key, 0)) for key, count in known.items()",
+            "    )"
+          ],
+          "new": [
+            "    resolved = sum(max(0, count - current.get(key, 0)) for key, count in known.items())"
+          ]
+        },
+        {
+          "old": [
+            "        max(0, count - current_waits.get(key, 0))",
+            "        for key, count in known_waits.items()"
+          ],
+          "new": [
+            "        max(0, count - current_waits.get(key, 0)) for key, count in known_waits.items()"
+          ]
+        }
+      ]
+    },
+    "head_hunks": 14,
+    "unmatched": []
+  },
+  "tldw_chatbook/Agents/local_tool_provider.py": {
+    "hunks": {
+      "base": [],
+      "dev": [
+        {
+          "old": [
+            "    \"This run has ended and its isolated worktree was released; \"",
+            "    \"the tool was not run.\""
+          ],
+          "new": [
+            "    \"This run has ended and its isolated worktree was released; the tool was not run.\""
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "    \"This run has ended and its isolated worktree was released; \"",
+            "    \"the tool was not run.\""
+          ],
+          "new": [
+            "    \"This run has ended and its isolated worktree was released; the tool was not run.\""
+          ]
+        }
+      ]
+    },
+    "head_hunks": 1,
+    "unmatched": []
+  },
+  "tldw_chatbook/Chat/console_agent_bridge.py": {
+    "hunks": {
+      "base": [
+        {
+          "old": [
+            "    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity",
+            "    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage"
+          ],
+          "new": [
+            "    from tldw_chatbook.Agents.execution_capacity import (",
+            "        ExecutionOwner,",
+            "        OwnedOperation,",
+            "        RuntimeCapacity,",
+            "    )",
+            "    from tldw_chatbook.Agents.fleet_messages import (",
+            "        MessageStore,",
+            "        MessageInbox,",
+            "        ProgressMessage,",
+            "    )"
+          ]
+        },
+        {
+          "old": [
+            "def intersect_console_run_budget(",
+            "    maximum: RunBudget, live: RunBudget",
+            ") -> RunBudget:"
+          ],
+          "new": [
+            "def intersect_console_run_budget(maximum: RunBudget, live: RunBudget) -> RunBudget:"
+          ]
+        },
+        {
+          "old": [
+            "    return MappingProxyType({",
+            "        MCP_USER_DENY_REFUSAL: \"denied\",",
+            "        _BUILTIN_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "        # Also reachable ERROR:-wrapped, not just as a direct pre-dispatch",
+            "        # verdict -- `_direct_controller_block_status` only sees the raw form.",
+            "        CONTROLLER_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "        LOCAL_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "        MCP_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "        # Qodo #7: that follow-up landed. `LOCAL_DENY_REFUSAL` used to be",
+            "        # returned for BOTH a configured Off and an explicit card Deny, so",
+            "        # it could claim neither authority and rendered the generic",
+            "        # \"blocked\"; the local provider now has its own user-deny string and",
+            "        # the row splits into `denied` + `blocked_off` like the MCP pair.",
+            "        LOCAL_USER_DENY_REFUSAL: \"denied\",",
+            "        LOCAL_DENY_REFUSAL: \"blocked_off\",",
+            "        MCP_DENY_REFUSAL: \"blocked_off\",",
+            "        # Qodo #3: the raw-shell provider's Off refusal names the same fact",
+            "        # MCP's does (\"set to Off\"), so it renders the same way -- it used to",
+            "        # fall through to the generic `blocked` and hide the cause.",
+            "        RAW_SHELL_DENY_REFUSAL: \"blocked_off\",",
+            "        LOCAL_TIMEOUT_REFUSAL: \"blocked\",",
+            "        LOCAL_GATE_ERROR_REFUSAL: \"blocked\",",
+            "        LOCAL_ROOT_CHANGED_REFUSAL: \"blocked\",",
+            "        LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: \"blocked\",",
+            "        LOCAL_WORKER_FAILED_REFUSAL: \"blocked\",",
+            "        MCP_UNRESOLVED_REFUSAL: \"blocked\",",
+            "        MCP_TIMEOUT_REFUSAL: \"blocked\",",
+            "    })"
+          ],
+          "new": [
+            "    return MappingProxyType(",
+            "        {",
+            "            MCP_USER_DENY_REFUSAL: \"denied\",",
+            "            _BUILTIN_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "            # Also reachable ERROR:-wrapped, not just as a direct pre-dispatch",
+            "            # verdict -- `_direct_controller_block_status` only sees the raw form.",
+            "            CONTROLLER_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "            LOCAL_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "            MCP_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "            # Qodo #7: that follow-up landed. `LOCAL_DENY_REFUSAL` used to be",
+            "            # returned for BOTH a configured Off and an explicit card Deny, so",
+            "            # it could claim neither authority and rendered the generic",
+            "            # \"blocked\"; the local provider now has its own user-deny string and",
+            "            # the row splits into `denied` + `blocked_off` like the MCP pair.",
+            "            LOCAL_USER_DENY_REFUSAL: \"denied\",",
+            "            LOCAL_DENY_REFUSAL: \"blocked_off\",",
+            "            MCP_DENY_REFUSAL: \"blocked_off\",",
+            "            # Qodo #3: the raw-shell provider's Off refusal names the same fact",
+            "            # MCP's does (\"set to Off\"), so it renders the same way -- it used to",
+            "            # fall through to the generic `blocked` and hide the cause.",
+            "            RAW_SHELL_DENY_REFUSAL: \"blocked_off\",",
+            "            LOCAL_TIMEOUT_REFUSAL: \"blocked\",",
+            "            LOCAL_GATE_ERROR_REFUSAL: \"blocked\",",
+            "            LOCAL_ROOT_CHANGED_REFUSAL: \"blocked\",",
+            "            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: \"blocked\",",
+            "            LOCAL_WORKER_FAILED_REFUSAL: \"blocked\",",
+            "            MCP_UNRESOLVED_REFUSAL: \"blocked\",",
+            "            MCP_TIMEOUT_REFUSAL: \"blocked\",",
+            "        }",
+            "    )"
+          ]
+        },
+        {
+          "old": [
+            "    def register(",
+            "        self, name: str, consumer: Callable[[FleetDrained], None]",
+            "    ) -> None:"
+          ],
+          "new": [
+            "    def register(self, name: str, consumer: Callable[[FleetDrained], None]) -> None:"
+          ]
+        },
+        {
+          "old": [],
+          "new": [
+            ""
+          ]
+        },
+        {
+          "old": [
+            "        parent_execution_key = str(",
+            "            getattr(self._resolution, \"execution_key\", \"\") or \"\"",
+            "        )"
+          ],
+          "new": [
+            "        parent_execution_key = str(getattr(self._resolution, \"execution_key\", \"\") or \"\")"
+          ]
+        },
+        {
+          "old": [
+            "            and requested_endpoint",
+            "            not in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS"
+          ],
+          "new": [
+            "            and requested_endpoint not in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS"
+          ]
+        },
+        {
+          "old": [
+            "                effective_resolution = dataclass_replace(",
+            "                    call_resolution, **overlays",
+            "                )"
+          ],
+          "new": [
+            "                effective_resolution = dataclass_replace(call_resolution, **overlays)"
+          ]
+        },
+        {
+          "old": [
+            "            nonlocal any_streamed, terminal_metadata, effective_resolution, live_provider_usage_enabled"
+          ],
+          "new": [
+            "            nonlocal \\",
+            "                any_streamed, \\",
+            "                terminal_metadata, \\",
+            "                effective_resolution, \\",
+            "                live_provider_usage_enabled"
+          ]
+        },
+        {
+          "old": [
+            "        if not getattr(resolved, \"ready\", False) or not getattr(resolved, \"model\", None):"
+          ],
+          "new": [
+            "        if not getattr(resolved, \"ready\", False) or not getattr(",
+            "            resolved, \"model\", None",
+            "        ):"
+          ]
+        },
+        {
+          "old": [
+            "            canvas_guidance = build_canvas_runtime_guidance(disclosed_schemas, messages=messages)"
+          ],
+          "new": [
+            "            canvas_guidance = build_canvas_runtime_guidance(",
+            "                disclosed_schemas, messages=messages",
+            "            )"
+          ]
+        },
+        {
+          "old": [
+            "        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(self._db, run_budget)"
+          ],
+          "new": [
+            "        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(",
+            "            self._db, run_budget",
+            "        )"
+          ]
+        },
+        {
+          "old": [
+            "            _spawn_routing_cfg is not None",
+            "            and _spawn_routing_cfg.spawn_override_enabled"
+          ],
+          "new": [
+            "            _spawn_routing_cfg is not None and _spawn_routing_cfg.spawn_override_enabled"
+          ]
+        },
+        {
+          "old": [
+            "            if local_skills is None and hasattr(",
+            "                self._skills_service, \"trust_service\"",
+            "            ):"
+          ],
+          "new": [
+            "            if local_skills is None and hasattr(self._skills_service, \"trust_service\"):"
+          ]
+        },
+        {
+          "old": [
+            "                    buddy_sink.tool_step(buddy_run_id, step.index, step.kind, session_id=session_id)"
+          ],
+          "new": [
+            "                    buddy_sink.tool_step(",
+            "                        buddy_run_id, step.index, step.kind, session_id=session_id",
+            "                    )"
+          ]
+        },
+        {
+          "old": [
+            "                    buddy_sink.tool_step(buddy_run_id, sequence, step.kind, session_id=session_id)"
+          ],
+          "new": [
+            "                    buddy_sink.tool_step(",
+            "                        buddy_run_id, sequence, step.kind, session_id=session_id",
+            "                    )"
+          ]
+        },
+        {
+          "old": [
+            "            run_hooks_engine.wrap_review(lambda calls, run_id: {}, session_id=session_id)",
+            "            if run_hooks_engine is not None else None"
+          ],
+          "new": [
+            "            run_hooks_engine.wrap_review(",
+            "                lambda calls, run_id: {}, session_id=session_id",
+            "            )",
+            "            if run_hooks_engine is not None",
+            "            else None"
+          ]
+        },
+        {
+          "old": [
+            "                        \"SubagentStop\", session_id=session_id, run_id=run_id,"
+          ],
+          "new": [
+            "                        \"SubagentStop\",",
+            "                        session_id=session_id,",
+            "                        run_id=run_id,"
+          ]
+        },
+        {
+          "old": [
+            "    def on_fleet_activity(",
+            "        self, name: str, consumer: Callable[[str], None]",
+            "    ) -> None:"
+          ],
+          "new": [
+            "    def on_fleet_activity(self, name: str, consumer: Callable[[str], None]) -> None:"
+          ]
+        },
+        {
+          "old": [
+            "            self._fleet_terminal_waiters.setdefault(conversation_id, []).append(",
+            "                waiter",
+            "            )"
+          ],
+          "new": [
+            "            self._fleet_terminal_waiters.setdefault(conversation_id, []).append(waiter)"
+          ]
+        },
+        {
+          "old": [
+            "                self._message_store.get_inbox(owner_id) if owner_id is not None else None"
+          ],
+          "new": [
+            "                self._message_store.get_inbox(owner_id)",
+            "                if owner_id is not None",
+            "                else None"
+          ]
+        },
+        {
+          "old": [
+            "                    message_inbox=self.message_store.open_inbox(progress_owner_id or conversation_id),"
+          ],
+          "new": [
+            "                    message_inbox=self.message_store.open_inbox(",
+            "                        progress_owner_id or conversation_id",
+            "                    ),"
+          ]
+        },
+        {
+          "old": [
+            "    def abort_fleet_fence(",
+            "        self, conversation_id: str, *, generation: int",
+            "    ) -> bool:"
+          ],
+          "new": [
+            "    def abort_fleet_fence(self, conversation_id: str, *, generation: int) -> bool:"
+          ]
+        },
+        {
+          "old": [
+            "    def release_fleet_fence(",
+            "        self, conversation_id: str, *, generation: int",
+            "    ) -> bool:"
+          ],
+          "new": [
+            "    def release_fleet_fence(self, conversation_id: str, *, generation: int) -> bool:"
+          ]
+        }
+      ],
+      "dev": [
+        {
+          "old": [
+            "    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity",
+            "    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage"
+          ],
+          "new": [
+            "    from tldw_chatbook.Agents.execution_capacity import (",
+            "        ExecutionOwner,",
+            "        OwnedOperation,",
+            "        RuntimeCapacity,",
+            "    )",
+            "    from tldw_chatbook.Agents.fleet_messages import (",
+            "        MessageStore,",
+            "        MessageInbox,",
+            "        ProgressMessage,",
+            "    )"
+          ]
+        },
+        {
+          "old": [
+            "def intersect_console_run_budget(",
+            "    maximum: RunBudget, live: RunBudget",
+            ") -> RunBudget:"
+          ],
+          "new": [
+            "def intersect_console_run_budget(maximum: RunBudget, live: RunBudget) -> RunBudget:"
+          ]
+        },
+        {
+          "old": [
+            "    return MappingProxyType({",
+            "        MCP_USER_DENY_REFUSAL: \"denied\",",
+            "        _BUILTIN_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "        # Also reachable ERROR:-wrapped, not just as a direct pre-dispatch",
+            "        # verdict -- `_direct_controller_block_status` only sees the raw form.",
+            "        CONTROLLER_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "        LOCAL_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "        MCP_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "        # Qodo #7: that follow-up landed. `LOCAL_DENY_REFUSAL` used to be",
+            "        # returned for BOTH a configured Off and an explicit card Deny, so",
+            "        # it could claim neither authority and rendered the generic",
+            "        # \"blocked\"; the local provider now has its own user-deny string and",
+            "        # the row splits into `denied` + `blocked_off` like the MCP pair.",
+            "        LOCAL_USER_DENY_REFUSAL: \"denied\",",
+            "        LOCAL_DENY_REFUSAL: \"blocked_off\",",
+            "        MCP_DENY_REFUSAL: \"blocked_off\",",
+            "        # Qodo #3: the raw-shell provider's Off refusal names the same fact",
+            "        # MCP's does (\"set to Off\"), so it renders the same way -- it used to",
+            "        # fall through to the generic `blocked` and hide the cause.",
+            "        RAW_SHELL_DENY_REFUSAL: \"blocked_off\",",
+            "        LOCAL_TIMEOUT_REFUSAL: \"blocked\",",
+            "        LOCAL_GATE_ERROR_REFUSAL: \"blocked\",",
+            "        LOCAL_ROOT_CHANGED_REFUSAL: \"blocked\",",
+            "        LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: \"blocked\",",
+            "        LOCAL_WORKER_FAILED_REFUSAL: \"blocked\",",
+            "        LOCAL_RUN_WORKTREE_RELEASED_REFUSAL: \"blocked\",",
+            "        MCP_UNRESOLVED_REFUSAL: \"blocked\",",
+            "        MCP_TIMEOUT_REFUSAL: \"blocked\",",
+            "    })"
+          ],
+          "new": [
+            "    return MappingProxyType(",
+            "        {",
+            "            MCP_USER_DENY_REFUSAL: \"denied\",",
+            "            _BUILTIN_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "            # Also reachable ERROR:-wrapped, not just as a direct pre-dispatch",
+            "            # verdict -- `_direct_controller_block_status` only sees the raw form.",
+            "            CONTROLLER_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "            LOCAL_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "            MCP_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "            # Qodo #7: that follow-up landed. `LOCAL_DENY_REFUSAL` used to be",
+            "            # returned for BOTH a configured Off and an explicit card Deny, so",
+            "            # it could claim neither authority and rendered the generic",
+            "            # \"blocked\"; the local provider now has its own user-deny string and",
+            "            # the row splits into `denied` + `blocked_off` like the MCP pair.",
+            "            LOCAL_USER_DENY_REFUSAL: \"denied\",",
+            "            LOCAL_DENY_REFUSAL: \"blocked_off\",",
+            "            MCP_DENY_REFUSAL: \"blocked_off\",",
+            "            # Qodo #3: the raw-shell provider's Off refusal names the same fact",
+            "            # MCP's does (\"set to Off\"), so it renders the same way -- it used to",
+            "            # fall through to the generic `blocked` and hide the cause.",
+            "            RAW_SHELL_DENY_REFUSAL: \"blocked_off\",",
+            "            LOCAL_TIMEOUT_REFUSAL: \"blocked\",",
+            "            LOCAL_GATE_ERROR_REFUSAL: \"blocked\",",
+            "            LOCAL_ROOT_CHANGED_REFUSAL: \"blocked\",",
+            "            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: \"blocked\",",
+            "            LOCAL_WORKER_FAILED_REFUSAL: \"blocked\",",
+            "            LOCAL_RUN_WORKTREE_RELEASED_REFUSAL: \"blocked\",",
+            "            MCP_UNRESOLVED_REFUSAL: \"blocked\",",
+            "            MCP_TIMEOUT_REFUSAL: \"blocked\",",
+            "        }",
+            "    )"
+          ]
+        },
+        {
+          "old": [
+            "    def register(",
+            "        self, name: str, consumer: Callable[[FleetDrained], None]",
+            "    ) -> None:"
+          ],
+          "new": [
+            "    def register(self, name: str, consumer: Callable[[FleetDrained], None]) -> None:"
+          ]
+        },
+        {
+          "old": [],
+          "new": [
+            ""
+          ]
+        },
+        {
+          "old": [
+            "        parent_execution_key = str(",
+            "            getattr(self._resolution, \"execution_key\", \"\") or \"\"",
+            "        )"
+          ],
+          "new": [
+            "        parent_execution_key = str(getattr(self._resolution, \"execution_key\", \"\") or \"\")"
+          ]
+        },
+        {
+          "old": [
+            "            and requested_endpoint",
+            "            not in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS"
+          ],
+          "new": [
+            "            and requested_endpoint not in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS"
+          ]
+        },
+        {
+          "old": [
+            "                effective_resolution = dataclass_replace(",
+            "                    call_resolution, **overlays",
+            "                )"
+          ],
+          "new": [
+            "                effective_resolution = dataclass_replace(call_resolution, **overlays)"
+          ]
+        },
+        {
+          "old": [
+            "            nonlocal any_streamed, terminal_metadata, effective_resolution, live_provider_usage_enabled"
+          ],
+          "new": [
+            "            nonlocal \\",
+            "                any_streamed, \\",
+            "                terminal_metadata, \\",
+            "                effective_resolution, \\",
+            "                live_provider_usage_enabled"
+          ]
+        },
+        {
+          "old": [
+            "        if not getattr(resolved, \"ready\", False) or not getattr(resolved, \"model\", None):"
+          ],
+          "new": [
+            "        if not getattr(resolved, \"ready\", False) or not getattr(",
+            "            resolved, \"model\", None",
+            "        ):"
+          ]
+        },
+        {
+          "old": [
+            "            canvas_guidance = build_canvas_runtime_guidance(disclosed_schemas, messages=messages)"
+          ],
+          "new": [
+            "            canvas_guidance = build_canvas_runtime_guidance(",
+            "                disclosed_schemas, messages=messages",
+            "            )"
+          ]
+        },
+        {
+          "old": [
+            "        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(self._db, run_budget)"
+          ],
+          "new": [
+            "        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(",
+            "            self._db, run_budget",
+            "        )"
+          ]
+        },
+        {
+          "old": [
+            "            _spawn_routing_cfg is not None",
+            "            and _spawn_routing_cfg.spawn_override_enabled"
+          ],
+          "new": [
+            "            _spawn_routing_cfg is not None and _spawn_routing_cfg.spawn_override_enabled"
+          ]
+        },
+        {
+          "old": [
+            "            if local_skills is None and hasattr(",
+            "                self._skills_service, \"trust_service\"",
+            "            ):"
+          ],
+          "new": [
+            "            if local_skills is None and hasattr(self._skills_service, \"trust_service\"):"
+          ]
+        },
+        {
+          "old": [
+            "                    buddy_sink.tool_step(buddy_run_id, step.index, step.kind, session_id=session_id)"
+          ],
+          "new": [
+            "                    buddy_sink.tool_step(",
+            "                        buddy_run_id, step.index, step.kind, session_id=session_id",
+            "                    )"
+          ]
+        },
+        {
+          "old": [
+            "                    buddy_sink.tool_step(buddy_run_id, sequence, step.kind, session_id=session_id)"
+          ],
+          "new": [
+            "                    buddy_sink.tool_step(",
+            "                        buddy_run_id, sequence, step.kind, session_id=session_id",
+            "                    )"
+          ]
+        },
+        {
+          "old": [
+            "            run_hooks_engine.wrap_review(lambda calls, run_id: {}, session_id=session_id)",
+            "            if run_hooks_engine is not None else None"
+          ],
+          "new": [
+            "            run_hooks_engine.wrap_review(",
+            "                lambda calls, run_id: {}, session_id=session_id",
+            "            )",
+            "            if run_hooks_engine is not None",
+            "            else None"
+          ]
+        },
+        {
+          "old": [
+            "                        \"SubagentStop\", session_id=session_id, run_id=run_id,"
+          ],
+          "new": [
+            "                        \"SubagentStop\",",
+            "                        session_id=session_id,",
+            "                        run_id=run_id,"
+          ]
+        },
+        {
+          "old": [
+            "    def on_fleet_activity(",
+            "        self, name: str, consumer: Callable[[str], None]",
+            "    ) -> None:"
+          ],
+          "new": [
+            "    def on_fleet_activity(self, name: str, consumer: Callable[[str], None]) -> None:"
+          ]
+        },
+        {
+          "old": [
+            "            self._fleet_terminal_waiters.setdefault(conversation_id, []).append(",
+            "                waiter",
+            "            )"
+          ],
+          "new": [
+            "            self._fleet_terminal_waiters.setdefault(conversation_id, []).append(waiter)"
+          ]
+        },
+        {
+          "old": [
+            "                self._message_store.get_inbox(owner_id) if owner_id is not None else None"
+          ],
+          "new": [
+            "                self._message_store.get_inbox(owner_id)",
+            "                if owner_id is not None",
+            "                else None"
+          ]
+        },
+        {
+          "old": [
+            "                    message_inbox=self.message_store.open_inbox(progress_owner_id or conversation_id),"
+          ],
+          "new": [
+            "                    message_inbox=self.message_store.open_inbox(",
+            "                        progress_owner_id or conversation_id",
+            "                    ),"
+          ]
+        },
+        {
+          "old": [
+            "    def abort_fleet_fence(",
+            "        self, conversation_id: str, *, generation: int",
+            "    ) -> bool:"
+          ],
+          "new": [
+            "    def abort_fleet_fence(self, conversation_id: str, *, generation: int) -> bool:"
+          ]
+        },
+        {
+          "old": [
+            "    def release_fleet_fence(",
+            "        self, conversation_id: str, *, generation: int",
+            "    ) -> bool:"
+          ],
+          "new": [
+            "    def release_fleet_fence(self, conversation_id: str, *, generation: int) -> bool:"
+          ]
+        },
+        {
+          "old": [
+            "        if not isinstance(decision, Mapping) or not decision.get(",
+            "            \"allow\", False",
+            "        ):"
+          ],
+          "new": [
+            "        if not isinstance(decision, Mapping) or not decision.get(\"allow\", False):"
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "    from tldw_chatbook.Agents.execution_capacity import ExecutionOwner, OwnedOperation, RuntimeCapacity",
+            "    from tldw_chatbook.Agents.fleet_messages import MessageStore, MessageInbox, ProgressMessage"
+          ],
+          "new": [
+            "    from tldw_chatbook.Agents.execution_capacity import (",
+            "        ExecutionOwner,",
+            "        OwnedOperation,",
+            "        RuntimeCapacity,",
+            "    )",
+            "    from tldw_chatbook.Agents.fleet_messages import (",
+            "        MessageStore,",
+            "        MessageInbox,",
+            "        ProgressMessage,",
+            "    )"
+          ]
+        },
+        {
+          "old": [
+            "def intersect_console_run_budget(",
+            "    maximum: RunBudget, live: RunBudget",
+            ") -> RunBudget:"
+          ],
+          "new": [
+            "def intersect_console_run_budget(maximum: RunBudget, live: RunBudget) -> RunBudget:"
+          ]
+        },
+        {
+          "old": [
+            "    return MappingProxyType({",
+            "        MCP_USER_DENY_REFUSAL: \"denied\",",
+            "        _BUILTIN_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "        # Also reachable ERROR:-wrapped, not just as a direct pre-dispatch",
+            "        # verdict -- `_direct_controller_block_status` only sees the raw form.",
+            "        CONTROLLER_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "        LOCAL_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "        MCP_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "        # Qodo #7: that follow-up landed. `LOCAL_DENY_REFUSAL` used to be",
+            "        # returned for BOTH a configured Off and an explicit card Deny, so",
+            "        # it could claim neither authority and rendered the generic",
+            "        # \"blocked\"; the local provider now has its own user-deny string and",
+            "        # the row splits into `denied` + `blocked_off` like the MCP pair.",
+            "        LOCAL_USER_DENY_REFUSAL: \"denied\",",
+            "        LOCAL_DENY_REFUSAL: \"blocked_off\",",
+            "        MCP_DENY_REFUSAL: \"blocked_off\",",
+            "        # Qodo #3: the raw-shell provider's Off refusal names the same fact",
+            "        # MCP's does (\"set to Off\"), so it renders the same way -- it used to",
+            "        # fall through to the generic `blocked` and hide the cause.",
+            "        RAW_SHELL_DENY_REFUSAL: \"blocked_off\",",
+            "        LOCAL_TIMEOUT_REFUSAL: \"blocked\",",
+            "        LOCAL_GATE_ERROR_REFUSAL: \"blocked\",",
+            "        LOCAL_ROOT_CHANGED_REFUSAL: \"blocked\",",
+            "        LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: \"blocked\",",
+            "        LOCAL_WORKER_FAILED_REFUSAL: \"blocked\",",
+            "        LOCAL_RUN_WORKTREE_RELEASED_REFUSAL: \"blocked\",",
+            "        MCP_UNRESOLVED_REFUSAL: \"blocked\",",
+            "        MCP_TIMEOUT_REFUSAL: \"blocked\",",
+            "    })"
+          ],
+          "new": [
+            "    return MappingProxyType(",
+            "        {",
+            "            MCP_USER_DENY_REFUSAL: \"denied\",",
+            "            _BUILTIN_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "            # Also reachable ERROR:-wrapped, not just as a direct pre-dispatch",
+            "            # verdict -- `_direct_controller_block_status` only sees the raw form.",
+            "            CONTROLLER_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "            LOCAL_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "            MCP_KILL_SWITCH_REFUSAL: \"blocked_kill_switch\",",
+            "            # Qodo #7: that follow-up landed. `LOCAL_DENY_REFUSAL` used to be",
+            "            # returned for BOTH a configured Off and an explicit card Deny, so",
+            "            # it could claim neither authority and rendered the generic",
+            "            # \"blocked\"; the local provider now has its own user-deny string and",
+            "            # the row splits into `denied` + `blocked_off` like the MCP pair.",
+            "            LOCAL_USER_DENY_REFUSAL: \"denied\",",
+            "            LOCAL_DENY_REFUSAL: \"blocked_off\",",
+            "            MCP_DENY_REFUSAL: \"blocked_off\",",
+            "            # Qodo #3: the raw-shell provider's Off refusal names the same fact",
+            "            # MCP's does (\"set to Off\"), so it renders the same way -- it used to",
+            "            # fall through to the generic `blocked` and hide the cause.",
+            "            RAW_SHELL_DENY_REFUSAL: \"blocked_off\",",
+            "            LOCAL_TIMEOUT_REFUSAL: \"blocked\",",
+            "            LOCAL_GATE_ERROR_REFUSAL: \"blocked\",",
+            "            LOCAL_ROOT_CHANGED_REFUSAL: \"blocked\",",
+            "            LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: \"blocked\",",
+            "            LOCAL_WORKER_FAILED_REFUSAL: \"blocked\",",
+            "            LOCAL_RUN_WORKTREE_RELEASED_REFUSAL: \"blocked\",",
+            "            MCP_UNRESOLVED_REFUSAL: \"blocked\",",
+            "            MCP_TIMEOUT_REFUSAL: \"blocked\",",
+            "        }",
+            "    )"
+          ]
+        },
+        {
+          "old": [
+            "    def register(",
+            "        self, name: str, consumer: Callable[[FleetDrained], None]",
+            "    ) -> None:"
+          ],
+          "new": [
+            "    def register(self, name: str, consumer: Callable[[FleetDrained], None]) -> None:"
+          ]
+        },
+        {
+          "old": [],
+          "new": [
+            ""
+          ]
+        },
+        {
+          "old": [
+            "        parent_execution_key = str(",
+            "            getattr(self._resolution, \"execution_key\", \"\") or \"\"",
+            "        )"
+          ],
+          "new": [
+            "        parent_execution_key = str(getattr(self._resolution, \"execution_key\", \"\") or \"\")"
+          ]
+        },
+        {
+          "old": [
+            "            and requested_endpoint",
+            "            not in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS"
+          ],
+          "new": [
+            "            and requested_endpoint not in CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS"
+          ]
+        },
+        {
+          "old": [
+            "                effective_resolution = dataclass_replace(",
+            "                    call_resolution, **overlays",
+            "                )"
+          ],
+          "new": [
+            "                effective_resolution = dataclass_replace(call_resolution, **overlays)"
+          ]
+        },
+        {
+          "old": [
+            "            nonlocal any_streamed, terminal_metadata, effective_resolution, live_provider_usage_enabled"
+          ],
+          "new": [
+            "            nonlocal \\",
+            "                any_streamed, \\",
+            "                terminal_metadata, \\",
+            "                effective_resolution, \\",
+            "                live_provider_usage_enabled"
+          ]
+        },
+        {
+          "old": [
+            "        if not getattr(resolved, \"ready\", False) or not getattr(resolved, \"model\", None):"
+          ],
+          "new": [
+            "        if not getattr(resolved, \"ready\", False) or not getattr(",
+            "            resolved, \"model\", None",
+            "        ):"
+          ]
+        },
+        {
+          "old": [
+            "            canvas_guidance = build_canvas_runtime_guidance(disclosed_schemas, messages=messages)"
+          ],
+          "new": [
+            "            canvas_guidance = build_canvas_runtime_guidance(",
+            "                disclosed_schemas, messages=messages",
+            "            )"
+          ]
+        },
+        {
+          "old": [
+            "        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(self._db, run_budget)"
+          ],
+          "new": [
+            "        runtime_definitions, fleet_max_live = _console_first_request_runtime_context(",
+            "            self._db, run_budget",
+            "        )"
+          ]
+        },
+        {
+          "old": [
+            "            _spawn_routing_cfg is not None",
+            "            and _spawn_routing_cfg.spawn_override_enabled"
+          ],
+          "new": [
+            "            _spawn_routing_cfg is not None and _spawn_routing_cfg.spawn_override_enabled"
+          ]
+        },
+        {
+          "old": [
+            "            if local_skills is None and hasattr(",
+            "                self._skills_service, \"trust_service\"",
+            "            ):"
+          ],
+          "new": [
+            "            if local_skills is None and hasattr(self._skills_service, \"trust_service\"):"
+          ]
+        },
+        {
+          "old": [
+            "                    buddy_sink.tool_step(buddy_run_id, step.index, step.kind, session_id=session_id)"
+          ],
+          "new": [
+            "                    buddy_sink.tool_step(",
+            "                        buddy_run_id, step.index, step.kind, session_id=session_id",
+            "                    )"
+          ]
+        },
+        {
+          "old": [
+            "                    buddy_sink.tool_step(buddy_run_id, sequence, step.kind, session_id=session_id)"
+          ],
+          "new": [
+            "                    buddy_sink.tool_step(",
+            "                        buddy_run_id, sequence, step.kind, session_id=session_id",
+            "                    )"
+          ]
+        },
+        {
+          "old": [
+            "            run_hooks_engine.wrap_review(lambda calls, run_id: {}, session_id=session_id)",
+            "            if run_hooks_engine is not None else None"
+          ],
+          "new": [
+            "            run_hooks_engine.wrap_review(",
+            "                lambda calls, run_id: {}, session_id=session_id",
+            "            )",
+            "            if run_hooks_engine is not None",
+            "            else None"
+          ]
+        },
+        {
+          "old": [
+            "                        \"SubagentStop\", session_id=session_id, run_id=run_id,"
+          ],
+          "new": [
+            "                        \"SubagentStop\",",
+            "                        session_id=session_id,",
+            "                        run_id=run_id,"
+          ]
+        },
+        {
+          "old": [
+            "    def on_fleet_activity(",
+            "        self, name: str, consumer: Callable[[str], None]",
+            "    ) -> None:"
+          ],
+          "new": [
+            "    def on_fleet_activity(self, name: str, consumer: Callable[[str], None]) -> None:"
+          ]
+        },
+        {
+          "old": [
+            "            self._fleet_terminal_waiters.setdefault(conversation_id, []).append(",
+            "                waiter",
+            "            )"
+          ],
+          "new": [
+            "            self._fleet_terminal_waiters.setdefault(conversation_id, []).append(waiter)"
+          ]
+        },
+        {
+          "old": [
+            "                self._message_store.get_inbox(owner_id) if owner_id is not None else None"
+          ],
+          "new": [
+            "                self._message_store.get_inbox(owner_id)",
+            "                if owner_id is not None",
+            "                else None"
+          ]
+        },
+        {
+          "old": [
+            "                    message_inbox=self.message_store.open_inbox(progress_owner_id or conversation_id),"
+          ],
+          "new": [
+            "                    message_inbox=self.message_store.open_inbox(",
+            "                        progress_owner_id or conversation_id",
+            "                    ),"
+          ]
+        },
+        {
+          "old": [
+            "    def abort_fleet_fence(",
+            "        self, conversation_id: str, *, generation: int",
+            "    ) -> bool:"
+          ],
+          "new": [
+            "    def abort_fleet_fence(self, conversation_id: str, *, generation: int) -> bool:"
+          ]
+        },
+        {
+          "old": [
+            "    def release_fleet_fence(",
+            "        self, conversation_id: str, *, generation: int",
+            "    ) -> bool:"
+          ],
+          "new": [
+            "    def release_fleet_fence(self, conversation_id: str, *, generation: int) -> bool:"
+          ]
+        }
+      ]
+    },
+    "head_hunks": 24,
+    "unmatched": []
+  },
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "hunks": {
+      "base": [],
+      "dev": [
+        {
+          "old": [
+            "            and preparation.pause_kind",
+            "            is ConsolePreparationPauseKind.CONTEXT_COMPACTION"
+          ],
+          "new": [
+            "            and preparation.pause_kind is ConsolePreparationPauseKind.CONTEXT_COMPACTION"
+          ]
+        },
+        {
+          "old": [
+            "        if preparation_id is None or preparation_id not in self._compaction_hold_answered:"
+          ],
+          "new": [
+            "        if (",
+            "            preparation_id is None",
+            "            or preparation_id not in self._compaction_hold_answered",
+            "        ):"
+          ]
+        },
+        {
+          "old": [
+            "        compacted, visible_copy = await self.compact_context_now(",
+            "            preparation.session_id",
+            "        )"
+          ],
+          "new": [
+            "        compacted, visible_copy = await self.compact_context_now(preparation.session_id)"
+          ]
+        },
+        {
+          "old": [
+            "    async def send_without_compacting(",
+            "        self, preparation_id: str",
+            "    ) -> ConsoleSubmitResult:"
+          ],
+          "new": [
+            "    async def send_without_compacting(self, preparation_id: str) -> ConsoleSubmitResult:"
+          ]
+        },
+        {
+          "old": [
+            "    async def _resume_compaction_hold(",
+            "        self, preparation_id: str",
+            "    ) -> ConsoleSubmitResult:"
+          ],
+          "new": [
+            "    async def _resume_compaction_hold(self, preparation_id: str) -> ConsoleSubmitResult:"
+          ]
+        },
+        {
+          "old": [
+            "                \"Console compaction hold assessment unavailable; \"",
+            "                \"exception_type={}\","
+          ],
+          "new": [
+            "                \"Console compaction hold assessment unavailable; exception_type={}\","
+          ]
+        },
+        {
+          "old": [
+            "",
+            "",
+            ""
+          ],
+          "new": []
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "            and preparation.pause_kind",
+            "            is ConsolePreparationPauseKind.CONTEXT_COMPACTION"
+          ],
+          "new": [
+            "            and preparation.pause_kind is ConsolePreparationPauseKind.CONTEXT_COMPACTION"
+          ]
+        },
+        {
+          "old": [
+            "        if preparation_id is None or preparation_id not in self._compaction_hold_answered:"
+          ],
+          "new": [
+            "        if (",
+            "            preparation_id is None",
+            "            or preparation_id not in self._compaction_hold_answered",
+            "        ):"
+          ]
+        },
+        {
+          "old": [
+            "        compacted, visible_copy = await self.compact_context_now(",
+            "            preparation.session_id",
+            "        )"
+          ],
+          "new": [
+            "        compacted, visible_copy = await self.compact_context_now(preparation.session_id)"
+          ]
+        },
+        {
+          "old": [
+            "    async def send_without_compacting(",
+            "        self, preparation_id: str",
+            "    ) -> ConsoleSubmitResult:"
+          ],
+          "new": [
+            "    async def send_without_compacting(self, preparation_id: str) -> ConsoleSubmitResult:"
+          ]
+        },
+        {
+          "old": [
+            "    async def _resume_compaction_hold(",
+            "        self, preparation_id: str",
+            "    ) -> ConsoleSubmitResult:"
+          ],
+          "new": [
+            "    async def _resume_compaction_hold(self, preparation_id: str) -> ConsoleSubmitResult:"
+          ]
+        },
+        {
+          "old": [
+            "                \"Console compaction hold assessment unavailable; \"",
+            "                \"exception_type={}\","
+          ],
+          "new": [
+            "                \"Console compaction hold assessment unavailable; exception_type={}\","
+          ]
+        },
+        {
+          "old": [
+            "",
+            "",
+            ""
+          ],
+          "new": []
+        }
+      ]
+    },
+    "head_hunks": 7,
+    "unmatched": []
+  },
+  "tldw_chatbook/Chat/console_context_budget_copy.py": {
+    "hunks": {
+      "dev": [],
+      "head": []
+    },
+    "head_hunks": 0,
+    "unmatched": []
+  },
+  "tldw_chatbook/Chat/console_runtime.py": {
+    "hunks": {
+      "base": [
+        {
+          "old": [
+            "    inputs: _ConsoleTurnCustodyInputs = field(default_factory=_ConsoleTurnCustodyInputs, repr=False)"
+          ],
+          "new": [
+            "    inputs: _ConsoleTurnCustodyInputs = field(",
+            "        default_factory=_ConsoleTurnCustodyInputs, repr=False",
+            "    )"
+          ]
+        },
+        {
+          "old": [
+            "        console.get(\"native_tool_calls\", True)",
+            "        if isinstance(console, Mapping)",
+            "        else True"
+          ],
+          "new": [
+            "        console.get(\"native_tool_calls\", True) if isinstance(console, Mapping) else True"
+          ]
+        },
+        {
+          "old": [
+            "            parts = [formatted[key] for key in (\"at_start\", \"before_char\") if formatted.get(key)]"
+          ],
+          "new": [
+            "            parts = [",
+            "                formatted[key]",
+            "                for key in (\"at_start\", \"before_char\")",
+            "                if formatted.get(key)",
+            "            ]"
+          ]
+        },
+        {
+          "old": [
+            "                formatted[key]",
+            "                for key in (\"after_char\", \"at_end\")",
+            "                if formatted.get(key)"
+          ],
+          "new": [
+            "                formatted[key] for key in (\"after_char\", \"at_end\") if formatted.get(key)"
+          ]
+        },
+        {
+          "old": [
+            "            return frozenset(",
+            "                getattr(controller, \"_announced_pending_decision_ids\", ())",
+            "            )"
+          ],
+          "new": [
+            "            return frozenset(getattr(controller, \"_announced_pending_decision_ids\", ()))"
+          ]
+        },
+        {
+          "old": [
+            "                \"Console terminal-attention notice failed \"",
+            "                \"(exception_type={})\","
+          ],
+          "new": [
+            "                \"Console terminal-attention notice failed (exception_type={})\","
+          ]
+        },
+        {
+          "old": [
+            "            view is not attached_view",
+            "            or attachment_generation != attached_generation"
+          ],
+          "new": [
+            "            view is not attached_view or attachment_generation != attached_generation"
+          ]
+        },
+        {
+          "old": [
+            "                    call_from_thread(self._project_pending_project_instruction_decisions)"
+          ],
+          "new": [
+            "                    call_from_thread(",
+            "                        self._project_pending_project_instruction_decisions",
+            "                    )"
+          ]
+        },
+        {
+          "old": [
+            "                if decision is not head",
+            "                and decision.projected_generation == generation"
+          ],
+          "new": [
+            "                if decision is not head and decision.projected_generation == generation"
+          ]
+        },
+        {
+          "old": [
+            "        if coerce_console_first_send_completed(",
+            "            onboarding.get(\"first_send_completed\")",
+            "        ):"
+          ],
+          "new": [
+            "        if coerce_console_first_send_completed(onboarding.get(\"first_send_completed\")):"
+          ]
+        },
+        {
+          "old": [
+            "                \"Failed to persist Console first-send completion \"",
+            "                \"(exception_type={})\","
+          ],
+          "new": [
+            "                \"Failed to persist Console first-send completion (exception_type={})\","
+          ]
+        },
+        {
+          "old": [
+            "                        \"Console runtime terminal callback failed \"",
+            "                        \"(exception_type={})\","
+          ],
+          "new": [
+            "                        \"Console runtime terminal callback failed (exception_type={})\","
+          ]
+        },
+        {
+          "old": [
+            "            if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:"
+          ],
+          "new": [
+            "            if (",
+            "                self._disposed",
+            "                or self._canvas_disabled_latched",
+            "                or self._canvas_maintenance_closed",
+            "            ):"
+          ]
+        },
+        {
+          "old": [
+            "            if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:"
+          ],
+          "new": [
+            "            if (",
+            "                self._disposed",
+            "                or self._canvas_disabled_latched",
+            "                or self._canvas_maintenance_closed",
+            "            ):"
+          ]
+        },
+        {
+          "old": [
+            "            if type(error) is RecoveryRequired and error.args == (\"storage_locally_paused\",):"
+          ],
+          "new": [
+            "            if type(error) is RecoveryRequired and error.args == (",
+            "                \"storage_locally_paused\",",
+            "            ):"
+          ]
+        },
+        {
+          "old": [
+            "        if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:"
+          ],
+          "new": [
+            "        if (",
+            "            self._disposed",
+            "            or self._canvas_disabled_latched",
+            "            or self._canvas_maintenance_closed",
+            "        ):"
+          ]
+        },
+        {
+          "old": [
+            "                    target is not None and not self._disposed"
+          ],
+          "new": [
+            "                    target is not None",
+            "                    and not self._disposed"
+          ]
+        },
+        {
+          "old": [
+            "                    target is not None and not self._disposed"
+          ],
+          "new": [
+            "                    target is not None",
+            "                    and not self._disposed"
+          ]
+        },
+        {
+          "old": [],
+          "new": [
+            ""
+          ]
+        },
+        {
+          "old": [
+            "        completion = asyncio.create_task(cleanup(), name=\"console-canvas-policy-cleanup\")"
+          ],
+          "new": [
+            "        completion = asyncio.create_task(",
+            "            cleanup(), name=\"console-canvas-policy-cleanup\"",
+            "        )"
+          ]
+        },
+        {
+          "old": [
+            "        self.set_chat_store(ConsoleChatStore(",
+            "            persistence=persistence,",
+            "            assistant_defaults_provider=self._resolve_new_console_assistant,",
+            "            on_assistant_default_notice=lambda notice: self._app.notify(",
+            "                notice, severity=\"warning\"",
+            "            ),",
+            "            settle_provider_traces_off_thread=True,",
+            "            trace_projection=(",
+            "                ConsoleTraceProjection(",
+            "                    legacy_reader=db.get_message_exchanges,",
+            "                    normalized_reader=(",
+            "                        read_normalized_calls if legacy_normalization_enabled else None",
+            "                    ),",
+            "                    normalized_reads_enabled=lambda: (",
+            "                        runtime_capture_policy().normalized_reads_enabled",
+            "                    ),",
+            "                    normalized_writes_enabled=lambda: (",
+            "                        runtime_capture_policy().normalized_writes_enabled",
+            "                    ),",
+            "                    compatibility_metrics=self.trace_compatibility_metrics,",
+            "                )",
+            "                if db is not None",
+            "                else None",
+            "            ),",
+            "            workspace_context=workspace_context,",
+            "            on_scope_flushed=on_scope_flushed,",
+            "            library_policy_coordinator=(",
+            "                ConsoleLibraryPolicyCoordinator(",
+            "                    persistence.console_library_policy_repository",
+            "                )",
+            "                if persistence is not None",
+            "                else None",
+            "            ),",
+            "            library_policy_defaults_provider=lambda: _current_library_policy_defaults(",
+            "                self._app",
+            "            ),",
+            "            thinking_history_policy_default_provider=lambda: (",
+            "                _current_thinking_history_policy_default(self._app)",
+            "            ),",
+            "            canvas_promotion_participant=self._canvas_controller,",
+            "            canvas_turn_controller=self._canvas_controller,",
+            "            on_canvas_context_changed=self._sync_canvas_native_context,",
+            "        )"
+          ],
+          "new": [
+            "        self.set_chat_store(",
+            "            ConsoleChatStore(",
+            "                persistence=persistence,",
+            "                assistant_defaults_provider=self._resolve_new_console_assistant,",
+            "                on_assistant_default_notice=lambda notice: self._app.notify(",
+            "                    notice, severity=\"warning\"",
+            "                ),",
+            "                settle_provider_traces_off_thread=True,",
+            "                trace_projection=(",
+            "                    ConsoleTraceProjection(",
+            "                        legacy_reader=db.get_message_exchanges,",
+            "                        normalized_reader=(",
+            "                            read_normalized_calls",
+            "                            if legacy_normalization_enabled",
+            "                            else None",
+            "                        ),",
+            "                        normalized_reads_enabled=lambda: (",
+            "                            runtime_capture_policy().normalized_reads_enabled",
+            "                        ),",
+            "                        normalized_writes_enabled=lambda: (",
+            "                            runtime_capture_policy().normalized_writes_enabled",
+            "                        ),",
+            "                        compatibility_metrics=self.trace_compatibility_metrics,",
+            "                    )",
+            "                    if db is not None",
+            "                    else None",
+            "                ),",
+            "                workspace_context=workspace_context,",
+            "                on_scope_flushed=on_scope_flushed,",
+            "                library_policy_coordinator=(",
+            "                    ConsoleLibraryPolicyCoordinator(",
+            "                        persistence.console_library_policy_repository",
+            "                    )",
+            "                    if persistence is not None",
+            "                    else None",
+            "                ),",
+            "                library_policy_defaults_provider=lambda: (",
+            "                    _current_library_policy_defaults(self._app)",
+            "                ),",
+            "                thinking_history_policy_default_provider=lambda: (",
+            "                    _current_thinking_history_policy_default(self._app)",
+            "                ),",
+            "                canvas_promotion_participant=self._canvas_controller,",
+            "                canvas_turn_controller=self._canvas_controller,",
+            "                on_canvas_context_changed=self._sync_canvas_native_context,",
+            "            )"
+          ]
+        },
+        {
+          "old": [
+            "                        current_epoch = await run_owned_db_call(database,",
+            "                            collector.current_graph_epoch"
+          ],
+          "new": [
+            "                        current_epoch = await run_owned_db_call(",
+            "                            database, collector.current_graph_epoch"
+          ]
+        },
+        {
+          "old": [
+            "                            pending_gc_result = await run_owned_db_call(database,"
+          ],
+          "new": [
+            "                            pending_gc_result = await run_owned_db_call(",
+            "                                database,"
+          ]
+        },
+        {
+          "old": [
+            "                        outcome = await run_owned_db_call(database,"
+          ],
+          "new": [
+            "                        outcome = await run_owned_db_call(",
+            "                            database,"
+          ]
+        },
+        {
+          "old": [
+            "                config_provider=functools.partial(",
+            "                    _provider_config_for_app, self._app",
+            "                ),"
+          ],
+          "new": [
+            "                config_provider=functools.partial(_provider_config_for_app, self._app),"
+          ]
+        },
+        {
+          "old": [
+            "            world_info_applier=functools.partial(",
+            "                _apply_world_info_for_app, self._app",
+            "            ),"
+          ],
+          "new": [
+            "            world_info_applier=functools.partial(_apply_world_info_for_app, self._app),"
+          ]
+        },
+        {
+          "old": [
+            "            finishing = isinstance(payload, Mapping) and payload.get(\"phase\") == \"finishing\""
+          ],
+          "new": [
+            "            finishing = (",
+            "                isinstance(payload, Mapping) and payload.get(\"phase\") == \"finishing\"",
+            "            )"
+          ]
+        },
+        {
+          "old": [
+            "                    \"Pending-decision projection raised at attach \"",
+            "                    \"(exception_type={})\","
+          ],
+          "new": [
+            "                    \"Pending-decision projection raised at attach (exception_type={})\","
+          ]
+        },
+        {
+          "old": [
+            "                    \"Pending-decision remount raised at attach \"",
+            "                    \"(exception_type={})\","
+          ],
+          "new": [
+            "                    \"Pending-decision remount raised at attach (exception_type={})\","
+          ]
+        },
+        {
+          "old": [],
+          "new": [
+            ""
+          ]
+        }
+      ],
+      "dev": [
+        {
+          "old": [
+            "    inputs: _ConsoleTurnCustodyInputs = field(default_factory=_ConsoleTurnCustodyInputs, repr=False)"
+          ],
+          "new": [
+            "    inputs: _ConsoleTurnCustodyInputs = field(",
+            "        default_factory=_ConsoleTurnCustodyInputs, repr=False",
+            "    )"
+          ]
+        },
+        {
+          "old": [
+            "        console.get(\"native_tool_calls\", True)",
+            "        if isinstance(console, Mapping)",
+            "        else True"
+          ],
+          "new": [
+            "        console.get(\"native_tool_calls\", True) if isinstance(console, Mapping) else True"
+          ]
+        },
+        {
+          "old": [
+            "            parts = [formatted[key] for key in (\"at_start\", \"before_char\") if formatted.get(key)]"
+          ],
+          "new": [
+            "            parts = [",
+            "                formatted[key]",
+            "                for key in (\"at_start\", \"before_char\")",
+            "                if formatted.get(key)",
+            "            ]"
+          ]
+        },
+        {
+          "old": [
+            "                formatted[key]",
+            "                for key in (\"after_char\", \"at_end\")",
+            "                if formatted.get(key)"
+          ],
+          "new": [
+            "                formatted[key] for key in (\"after_char\", \"at_end\") if formatted.get(key)"
+          ]
+        },
+        {
+          "old": [
+            "            return frozenset(",
+            "                getattr(controller, \"_announced_pending_decision_ids\", ())",
+            "            )"
+          ],
+          "new": [
+            "            return frozenset(getattr(controller, \"_announced_pending_decision_ids\", ()))"
+          ]
+        },
+        {
+          "old": [
+            "                \"Console terminal-attention notice failed \"",
+            "                \"(exception_type={})\","
+          ],
+          "new": [
+            "                \"Console terminal-attention notice failed (exception_type={})\","
+          ]
+        },
+        {
+          "old": [
+            "            view is not attached_view",
+            "            or attachment_generation != attached_generation"
+          ],
+          "new": [
+            "            view is not attached_view or attachment_generation != attached_generation"
+          ]
+        },
+        {
+          "old": [
+            "                    call_from_thread(self._project_pending_project_instruction_decisions)"
+          ],
+          "new": [
+            "                    call_from_thread(",
+            "                        self._project_pending_project_instruction_decisions",
+            "                    )"
+          ]
+        },
+        {
+          "old": [
+            "                if decision is not head",
+            "                and decision.projected_generation == generation"
+          ],
+          "new": [
+            "                if decision is not head and decision.projected_generation == generation"
+          ]
+        },
+        {
+          "old": [
+            "                and controller.context_compaction_hold(held_preparation_id)",
+            "                is not None"
+          ],
+          "new": [
+            "                and controller.context_compaction_hold(held_preparation_id) is not None"
+          ]
+        },
+        {
+          "old": [
+            "        if coerce_console_first_send_completed(",
+            "            onboarding.get(\"first_send_completed\")",
+            "        ):"
+          ],
+          "new": [
+            "        if coerce_console_first_send_completed(onboarding.get(\"first_send_completed\")):"
+          ]
+        },
+        {
+          "old": [
+            "                \"Failed to persist Console first-send completion \"",
+            "                \"(exception_type={})\","
+          ],
+          "new": [
+            "                \"Failed to persist Console first-send completion (exception_type={})\","
+          ]
+        },
+        {
+          "old": [
+            "                        \"Console runtime terminal callback failed \"",
+            "                        \"(exception_type={})\","
+          ],
+          "new": [
+            "                        \"Console runtime terminal callback failed (exception_type={})\","
+          ]
+        },
+        {
+          "old": [
+            "            if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:"
+          ],
+          "new": [
+            "            if (",
+            "                self._disposed",
+            "                or self._canvas_disabled_latched",
+            "                or self._canvas_maintenance_closed",
+            "            ):"
+          ]
+        },
+        {
+          "old": [
+            "            if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:"
+          ],
+          "new": [
+            "            if (",
+            "                self._disposed",
+            "                or self._canvas_disabled_latched",
+            "                or self._canvas_maintenance_closed",
+            "            ):"
+          ]
+        },
+        {
+          "old": [
+            "            if type(error) is RecoveryRequired and error.args == (\"storage_locally_paused\",):"
+          ],
+          "new": [
+            "            if type(error) is RecoveryRequired and error.args == (",
+            "                \"storage_locally_paused\",",
+            "            ):"
+          ]
+        },
+        {
+          "old": [
+            "        if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:"
+          ],
+          "new": [
+            "        if (",
+            "            self._disposed",
+            "            or self._canvas_disabled_latched",
+            "            or self._canvas_maintenance_closed",
+            "        ):"
+          ]
+        },
+        {
+          "old": [
+            "                    target is not None and not self._disposed"
+          ],
+          "new": [
+            "                    target is not None",
+            "                    and not self._disposed"
+          ]
+        },
+        {
+          "old": [
+            "                    target is not None and not self._disposed"
+          ],
+          "new": [
+            "                    target is not None",
+            "                    and not self._disposed"
+          ]
+        },
+        {
+          "old": [],
+          "new": [
+            ""
+          ]
+        },
+        {
+          "old": [
+            "        completion = asyncio.create_task(cleanup(), name=\"console-canvas-policy-cleanup\")"
+          ],
+          "new": [
+            "        completion = asyncio.create_task(",
+            "            cleanup(), name=\"console-canvas-policy-cleanup\"",
+            "        )"
+          ]
+        },
+        {
+          "old": [
+            "        self.set_chat_store(ConsoleChatStore(",
+            "            persistence=persistence,",
+            "            assistant_defaults_provider=self._resolve_new_console_assistant,",
+            "            on_assistant_default_notice=lambda notice: self._app.notify(",
+            "                notice, severity=\"warning\"",
+            "            ),",
+            "            settle_provider_traces_off_thread=True,",
+            "            trace_projection=(",
+            "                ConsoleTraceProjection(",
+            "                    legacy_reader=db.get_message_exchanges,",
+            "                    normalized_reader=(",
+            "                        read_normalized_calls if legacy_normalization_enabled else None",
+            "                    ),",
+            "                    normalized_reads_enabled=lambda: (",
+            "                        runtime_capture_policy().normalized_reads_enabled",
+            "                    ),",
+            "                    normalized_writes_enabled=lambda: (",
+            "                        runtime_capture_policy().normalized_writes_enabled",
+            "                    ),",
+            "                    compatibility_metrics=self.trace_compatibility_metrics,",
+            "                )",
+            "                if db is not None",
+            "                else None",
+            "            ),",
+            "            workspace_context=workspace_context,",
+            "            on_scope_flushed=on_scope_flushed,",
+            "            library_policy_coordinator=(",
+            "                ConsoleLibraryPolicyCoordinator(",
+            "                    persistence.console_library_policy_repository",
+            "                )",
+            "                if persistence is not None",
+            "                else None",
+            "            ),",
+            "            library_policy_defaults_provider=lambda: _current_library_policy_defaults(",
+            "                self._app",
+            "            ),",
+            "            thinking_history_policy_default_provider=lambda: (",
+            "                _current_thinking_history_policy_default(self._app)",
+            "            ),",
+            "            canvas_promotion_participant=self._canvas_controller,",
+            "            canvas_turn_controller=self._canvas_controller,",
+            "            on_canvas_context_changed=self._sync_canvas_native_context,",
+            "        )"
+          ],
+          "new": [
+            "        self.set_chat_store(",
+            "            ConsoleChatStore(",
+            "                persistence=persistence,",
+            "                assistant_defaults_provider=self._resolve_new_console_assistant,",
+            "                on_assistant_default_notice=lambda notice: self._app.notify(",
+            "                    notice, severity=\"warning\"",
+            "                ),",
+            "                settle_provider_traces_off_thread=True,",
+            "                trace_projection=(",
+            "                    ConsoleTraceProjection(",
+            "                        legacy_reader=db.get_message_exchanges,",
+            "                        normalized_reader=(",
+            "                            read_normalized_calls",
+            "                            if legacy_normalization_enabled",
+            "                            else None",
+            "                        ),",
+            "                        normalized_reads_enabled=lambda: (",
+            "                            runtime_capture_policy().normalized_reads_enabled",
+            "                        ),",
+            "                        normalized_writes_enabled=lambda: (",
+            "                            runtime_capture_policy().normalized_writes_enabled",
+            "                        ),",
+            "                        compatibility_metrics=self.trace_compatibility_metrics,",
+            "                    )",
+            "                    if db is not None",
+            "                    else None",
+            "                ),",
+            "                workspace_context=workspace_context,",
+            "                on_scope_flushed=on_scope_flushed,",
+            "                library_policy_coordinator=(",
+            "                    ConsoleLibraryPolicyCoordinator(",
+            "                        persistence.console_library_policy_repository",
+            "                    )",
+            "                    if persistence is not None",
+            "                    else None",
+            "                ),",
+            "                library_policy_defaults_provider=lambda: (",
+            "                    _current_library_policy_defaults(self._app)",
+            "                ),",
+            "                thinking_history_policy_default_provider=lambda: (",
+            "                    _current_thinking_history_policy_default(self._app)",
+            "                ),",
+            "                canvas_promotion_participant=self._canvas_controller,",
+            "                canvas_turn_controller=self._canvas_controller,",
+            "                on_canvas_context_changed=self._sync_canvas_native_context,",
+            "            )"
+          ]
+        },
+        {
+          "old": [
+            "                        current_epoch = await run_owned_db_call(database,",
+            "                            collector.current_graph_epoch"
+          ],
+          "new": [
+            "                        current_epoch = await run_owned_db_call(",
+            "                            database, collector.current_graph_epoch"
+          ]
+        },
+        {
+          "old": [
+            "                            pending_gc_result = await run_owned_db_call(database,"
+          ],
+          "new": [
+            "                            pending_gc_result = await run_owned_db_call(",
+            "                                database,"
+          ]
+        },
+        {
+          "old": [
+            "                        outcome = await run_owned_db_call(database,"
+          ],
+          "new": [
+            "                        outcome = await run_owned_db_call(",
+            "                            database,"
+          ]
+        },
+        {
+          "old": [
+            "                config_provider=functools.partial(",
+            "                    _provider_config_for_app, self._app",
+            "                ),"
+          ],
+          "new": [
+            "                config_provider=functools.partial(_provider_config_for_app, self._app),"
+          ]
+        },
+        {
+          "old": [
+            "            world_info_applier=functools.partial(",
+            "                _apply_world_info_for_app, self._app",
+            "            ),"
+          ],
+          "new": [
+            "            world_info_applier=functools.partial(_apply_world_info_for_app, self._app),"
+          ]
+        },
+        {
+          "old": [
+            "            finishing = isinstance(payload, Mapping) and payload.get(\"phase\") == \"finishing\""
+          ],
+          "new": [
+            "            finishing = (",
+            "                isinstance(payload, Mapping) and payload.get(\"phase\") == \"finishing\"",
+            "            )"
+          ]
+        },
+        {
+          "old": [
+            "                    \"Pending-decision projection raised at attach \"",
+            "                    \"(exception_type={})\","
+          ],
+          "new": [
+            "                    \"Pending-decision projection raised at attach (exception_type={})\","
+          ]
+        },
+        {
+          "old": [
+            "                    \"Pending-decision remount raised at attach \"",
+            "                    \"(exception_type={})\","
+          ],
+          "new": [
+            "                    \"Pending-decision remount raised at attach (exception_type={})\","
+          ]
+        },
+        {
+          "old": [],
+          "new": [
+            ""
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "    inputs: _ConsoleTurnCustodyInputs = field(default_factory=_ConsoleTurnCustodyInputs, repr=False)"
+          ],
+          "new": [
+            "    inputs: _ConsoleTurnCustodyInputs = field(",
+            "        default_factory=_ConsoleTurnCustodyInputs, repr=False",
+            "    )"
+          ]
+        },
+        {
+          "old": [
+            "        console.get(\"native_tool_calls\", True)",
+            "        if isinstance(console, Mapping)",
+            "        else True"
+          ],
+          "new": [
+            "        console.get(\"native_tool_calls\", True) if isinstance(console, Mapping) else True"
+          ]
+        },
+        {
+          "old": [
+            "            parts = [formatted[key] for key in (\"at_start\", \"before_char\") if formatted.get(key)]"
+          ],
+          "new": [
+            "            parts = [",
+            "                formatted[key]",
+            "                for key in (\"at_start\", \"before_char\")",
+            "                if formatted.get(key)",
+            "            ]"
+          ]
+        },
+        {
+          "old": [
+            "                formatted[key]",
+            "                for key in (\"after_char\", \"at_end\")",
+            "                if formatted.get(key)"
+          ],
+          "new": [
+            "                formatted[key] for key in (\"after_char\", \"at_end\") if formatted.get(key)"
+          ]
+        },
+        {
+          "old": [
+            "            return frozenset(",
+            "                getattr(controller, \"_announced_pending_decision_ids\", ())",
+            "            )"
+          ],
+          "new": [
+            "            return frozenset(getattr(controller, \"_announced_pending_decision_ids\", ()))"
+          ]
+        },
+        {
+          "old": [
+            "                \"Console terminal-attention notice failed \"",
+            "                \"(exception_type={})\","
+          ],
+          "new": [
+            "                \"Console terminal-attention notice failed (exception_type={})\","
+          ]
+        },
+        {
+          "old": [
+            "            view is not attached_view",
+            "            or attachment_generation != attached_generation"
+          ],
+          "new": [
+            "            view is not attached_view or attachment_generation != attached_generation"
+          ]
+        },
+        {
+          "old": [
+            "                    call_from_thread(self._project_pending_project_instruction_decisions)"
+          ],
+          "new": [
+            "                    call_from_thread(",
+            "                        self._project_pending_project_instruction_decisions",
+            "                    )"
+          ]
+        },
+        {
+          "old": [
+            "                if decision is not head",
+            "                and decision.projected_generation == generation"
+          ],
+          "new": [
+            "                if decision is not head and decision.projected_generation == generation"
+          ]
+        },
+        {
+          "old": [
+            "                and controller.context_compaction_hold(held_preparation_id)",
+            "                is not None"
+          ],
+          "new": [
+            "                and controller.context_compaction_hold(held_preparation_id) is not None"
+          ]
+        },
+        {
+          "old": [
+            "        if coerce_console_first_send_completed(",
+            "            onboarding.get(\"first_send_completed\")",
+            "        ):"
+          ],
+          "new": [
+            "        if coerce_console_first_send_completed(onboarding.get(\"first_send_completed\")):"
+          ]
+        },
+        {
+          "old": [
+            "                \"Failed to persist Console first-send completion \"",
+            "                \"(exception_type={})\","
+          ],
+          "new": [
+            "                \"Failed to persist Console first-send completion (exception_type={})\","
+          ]
+        },
+        {
+          "old": [
+            "                        \"Console runtime terminal callback failed \"",
+            "                        \"(exception_type={})\","
+          ],
+          "new": [
+            "                        \"Console runtime terminal callback failed (exception_type={})\","
+          ]
+        },
+        {
+          "old": [
+            "            if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:"
+          ],
+          "new": [
+            "            if (",
+            "                self._disposed",
+            "                or self._canvas_disabled_latched",
+            "                or self._canvas_maintenance_closed",
+            "            ):"
+          ]
+        },
+        {
+          "old": [
+            "            if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:"
+          ],
+          "new": [
+            "            if (",
+            "                self._disposed",
+            "                or self._canvas_disabled_latched",
+            "                or self._canvas_maintenance_closed",
+            "            ):"
+          ]
+        },
+        {
+          "old": [
+            "            if type(error) is RecoveryRequired and error.args == (\"storage_locally_paused\",):"
+          ],
+          "new": [
+            "            if type(error) is RecoveryRequired and error.args == (",
+            "                \"storage_locally_paused\",",
+            "            ):"
+          ]
+        },
+        {
+          "old": [
+            "        if self._disposed or self._canvas_disabled_latched or self._canvas_maintenance_closed:"
+          ],
+          "new": [
+            "        if (",
+            "            self._disposed",
+            "            or self._canvas_disabled_latched",
+            "            or self._canvas_maintenance_closed",
+            "        ):"
+          ]
+        },
+        {
+          "old": [
+            "                    target is not None and not self._disposed"
+          ],
+          "new": [
+            "                    target is not None",
+            "                    and not self._disposed"
+          ]
+        },
+        {
+          "old": [
+            "                    target is not None and not self._disposed"
+          ],
+          "new": [
+            "                    target is not None",
+            "                    and not self._disposed"
+          ]
+        },
+        {
+          "old": [],
+          "new": [
+            ""
+          ]
+        },
+        {
+          "old": [
+            "        completion = asyncio.create_task(cleanup(), name=\"console-canvas-policy-cleanup\")"
+          ],
+          "new": [
+            "        completion = asyncio.create_task(",
+            "            cleanup(), name=\"console-canvas-policy-cleanup\"",
+            "        )"
+          ]
+        },
+        {
+          "old": [
+            "        self.set_chat_store(ConsoleChatStore(",
+            "            persistence=persistence,",
+            "            assistant_defaults_provider=self._resolve_new_console_assistant,",
+            "            on_assistant_default_notice=lambda notice: self._app.notify(",
+            "                notice, severity=\"warning\"",
+            "            ),",
+            "            settle_provider_traces_off_thread=True,",
+            "            trace_projection=(",
+            "                ConsoleTraceProjection(",
+            "                    legacy_reader=db.get_message_exchanges,",
+            "                    normalized_reader=(",
+            "                        read_normalized_calls if legacy_normalization_enabled else None",
+            "                    ),",
+            "                    normalized_reads_enabled=lambda: (",
+            "                        runtime_capture_policy().normalized_reads_enabled",
+            "                    ),",
+            "                    normalized_writes_enabled=lambda: (",
+            "                        runtime_capture_policy().normalized_writes_enabled",
+            "                    ),",
+            "                    compatibility_metrics=self.trace_compatibility_metrics,",
+            "                )",
+            "                if db is not None",
+            "                else None",
+            "            ),",
+            "            workspace_context=workspace_context,",
+            "            on_scope_flushed=on_scope_flushed,",
+            "            library_policy_coordinator=(",
+            "                ConsoleLibraryPolicyCoordinator(",
+            "                    persistence.console_library_policy_repository",
+            "                )",
+            "                if persistence is not None",
+            "                else None",
+            "            ),",
+            "            library_policy_defaults_provider=lambda: _current_library_policy_defaults(",
+            "                self._app",
+            "            ),",
+            "            thinking_history_policy_default_provider=lambda: (",
+            "                _current_thinking_history_policy_default(self._app)",
+            "            ),",
+            "            canvas_promotion_participant=self._canvas_controller,",
+            "            canvas_turn_controller=self._canvas_controller,",
+            "            on_canvas_context_changed=self._sync_canvas_native_context,",
+            "        )"
+          ],
+          "new": [
+            "        self.set_chat_store(",
+            "            ConsoleChatStore(",
+            "                persistence=persistence,",
+            "                assistant_defaults_provider=self._resolve_new_console_assistant,",
+            "                on_assistant_default_notice=lambda notice: self._app.notify(",
+            "                    notice, severity=\"warning\"",
+            "                ),",
+            "                settle_provider_traces_off_thread=True,",
+            "                trace_projection=(",
+            "                    ConsoleTraceProjection(",
+            "                        legacy_reader=db.get_message_exchanges,",
+            "                        normalized_reader=(",
+            "                            read_normalized_calls",
+            "                            if legacy_normalization_enabled",
+            "                            else None",
+            "                        ),",
+            "                        normalized_reads_enabled=lambda: (",
+            "                            runtime_capture_policy().normalized_reads_enabled",
+            "                        ),",
+            "                        normalized_writes_enabled=lambda: (",
+            "                            runtime_capture_policy().normalized_writes_enabled",
+            "                        ),",
+            "                        compatibility_metrics=self.trace_compatibility_metrics,",
+            "                    )",
+            "                    if db is not None",
+            "                    else None",
+            "                ),",
+            "                workspace_context=workspace_context,",
+            "                on_scope_flushed=on_scope_flushed,",
+            "                library_policy_coordinator=(",
+            "                    ConsoleLibraryPolicyCoordinator(",
+            "                        persistence.console_library_policy_repository",
+            "                    )",
+            "                    if persistence is not None",
+            "                    else None",
+            "                ),",
+            "                library_policy_defaults_provider=lambda: (",
+            "                    _current_library_policy_defaults(self._app)",
+            "                ),",
+            "                thinking_history_policy_default_provider=lambda: (",
+            "                    _current_thinking_history_policy_default(self._app)",
+            "                ),",
+            "                canvas_promotion_participant=self._canvas_controller,",
+            "                canvas_turn_controller=self._canvas_controller,",
+            "                on_canvas_context_changed=self._sync_canvas_native_context,",
+            "            )"
+          ]
+        },
+        {
+          "old": [
+            "                        current_epoch = await run_owned_db_call(database,",
+            "                            collector.current_graph_epoch"
+          ],
+          "new": [
+            "                        current_epoch = await run_owned_db_call(",
+            "                            database, collector.current_graph_epoch"
+          ]
+        },
+        {
+          "old": [
+            "                            pending_gc_result = await run_owned_db_call(database,"
+          ],
+          "new": [
+            "                            pending_gc_result = await run_owned_db_call(",
+            "                                database,"
+          ]
+        },
+        {
+          "old": [
+            "                        outcome = await run_owned_db_call(database,"
+          ],
+          "new": [
+            "                        outcome = await run_owned_db_call(",
+            "                            database,"
+          ]
+        },
+        {
+          "old": [
+            "                config_provider=functools.partial(",
+            "                    _provider_config_for_app, self._app",
+            "                ),"
+          ],
+          "new": [
+            "                config_provider=functools.partial(_provider_config_for_app, self._app),"
+          ]
+        },
+        {
+          "old": [
+            "            world_info_applier=functools.partial(",
+            "                _apply_world_info_for_app, self._app",
+            "            ),"
+          ],
+          "new": [
+            "            world_info_applier=functools.partial(_apply_world_info_for_app, self._app),"
+          ]
+        },
+        {
+          "old": [
+            "            finishing = isinstance(payload, Mapping) and payload.get(\"phase\") == \"finishing\""
+          ],
+          "new": [
+            "            finishing = (",
+            "                isinstance(payload, Mapping) and payload.get(\"phase\") == \"finishing\"",
+            "            )"
+          ]
+        },
+        {
+          "old": [
+            "                    \"Pending-decision projection raised at attach \"",
+            "                    \"(exception_type={})\","
+          ],
+          "new": [
+            "                    \"Pending-decision projection raised at attach (exception_type={})\","
+          ]
+        },
+        {
+          "old": [
+            "                    \"Pending-decision remount raised at attach \"",
+            "                    \"(exception_type={})\","
+          ],
+          "new": [
+            "                    \"Pending-decision remount raised at attach (exception_type={})\","
+          ]
+        },
+        {
+          "old": [],
+          "new": [
+            ""
+          ]
+        }
+      ]
+    },
+    "head_hunks": 31,
+    "unmatched": []
+  },
+  "tldw_chatbook/Chat/console_turn_preparation.py": {
+    "hunks": {
+      "base": [
+        {
+          "old": [
+            "            if preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON else None"
+          ],
+          "new": [
+            "            if preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON",
+            "            else None"
+          ]
+        }
+      ],
+      "dev": [
+        {
+          "old": [
+            "            if preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON else None"
+          ],
+          "new": [
+            "            if preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON",
+            "            else None"
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "            if preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON else None"
+          ],
+          "new": [
+            "            if preparation.capture_mode is ConsoleTraceCaptureMode.CAPTURE_ON",
+            "            else None"
+          ]
+        }
+      ]
+    },
+    "head_hunks": 1,
+    "unmatched": []
+  },
+  "tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py": {
+    "hunks": {
+      "base": [],
+      "dev": [
+        {
+          "old": [
+            "        self.query_one(\"#console-trace-compact-send\", Button).display = (",
+            "            hold is not None",
+            "        )"
+          ],
+          "new": [
+            "        self.query_one(\"#console-trace-compact-send\", Button).display = hold is not None"
+          ]
+        }
+      ],
+      "head": [
+        {
+          "old": [
+            "        self.query_one(\"#console-trace-compact-send\", Button).display = (",
+            "            hold is not None",
+            "        )"
+          ],
+          "new": [
+            "        self.query_one(\"#console-trace-compact-send\", Button).display = hold is not None"
+          ]
+        }
+      ]
+    },
+    "head_hunks": 1,
+    "unmatched": []
+  },
+  "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "hunks": {
+      "base": [],
+      "dev": [],
+      "head": []
+    },
+    "head_hunks": 0,
+    "unmatched": []
+  }
+}

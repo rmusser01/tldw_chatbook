@@ -1,0 +1,211 @@
+........F...............................                                 [100%]
+=================================== FAILURES ===================================
+_ test_vllm_console_handoff_restores_projections_when_rollback_sync_fails[_sync_console_chat_core_state] _
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:158: in wrapped
+    pytest.fail(
+E   Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-functional-adoption-green-profile-tfeukmu0/pytest/test_vllm_console_handoff_rest0/private-profile-process/pytest.log
+E   --- child failure: assert 1 == 2
+E   request = <FixtureRequest for <Coroutine test_vllm_console_handoff_restores_projections_when_rollback_sync_fails[_sync_console_chat_core_state]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x115d45880>
+E   failing_sync = '_sync_console_chat_core_state'
+E   
+E       @private_profile_test
+E       @pytest.mark.asyncio
+E       @pytest.mark.parametrize(
+E           "failing_sync",
+E           ("_sync_console_chat_core_state", "_sync_console_settings_summary"),
+E       )
+E       async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fails(
+E           request,
+E           monkeypatch,
+E           failing_sync,
+E       ) -> None:
+E           """Released retries must not leave any forward vLLM projection visible."""
+E       
+E           from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
+E           from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
+E       
+E           app = _console_app()
+E           _, target = _install_ready_vllm_target(app)
+E           harness = _ConsoleFlowHarness(app)
+E       
+E           async with harness.run_test(size=(120, 42)) as pilot:
+E               console = harness.screen_stack[-1]
+E               assert isinstance(console, ChatScreen)
+E               await _wait_for_selector(console, pilot, "#console-settings-summary")
+E               session_store = console._ensure_console_chat_store()
+E               before = console._session._active_console_session_settings()
+E               session_id = session_store.active_session_id
+E               assert before is not None and session_id is not None
+E               controller = console._ensure_console_chat_controller()
+E               controller_before = (
+E                   controller.provider,
+E                   controller.model,
+E                   controller.base_url,
+E               )
+E               summary_widget = console.query_one(
+E                   "#console-settings-summary",
+E                   ConsoleSettingsSummary,
+E               )
+E               summary_before = summary_widget.state
+E               original_sync = getattr(console, failing_sync)
+E               calls = 0
+E       
+E               def apply_forward_then_fail_rollback():
+E                   nonlocal calls
+E                   calls += 1
+E                   if calls == 1:
+E                       original_sync()
+E                   raise RuntimeError("controlled forward and rollback sync failure")
+E       
+E               monkeypatch.setattr(console, failing_sync, apply_forward_then_fail_rollback)
+E               app.pending_handoffs.stage(
+E                   HandoffChannel.VLLM_CONSOLE,
+E                   VllmConsoleIntent.from_target(target),
+E               )
+E       
+E               assert console.consume_pending_vllm_console_intent() is False
+E               monkeypatch.setattr(console, failing_sync, original_sync)
+E   >           assert calls == 2
+E   E           assert 1 == 2
+E   
+E   Tests/UI/test_console_provider_apply_defaults_flow.py:2034: AssertionError
+E   --- child log tail ---
+E   es_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.182 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.215 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.216 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.224 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 3 on thread 8494865792.
+E   2026-10-04 03:02:11.224 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 3 on thread 8494865792.
+E   2026-10-04 03:02:11.225 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.230 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.271 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.274 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.276 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.289 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.309 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.310 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.320 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.322 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.323 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 03:02:11.358 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8286 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 77.
+E   2026-10-04 03:02:11.358 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 03:02:11.358 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2908 - CharactersRAGDB initialization completed successfully db_sha256=memory
+E   2026-10-04 03:02:11.434 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+E   2026-10-04 03:02:11.499 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 03:02:11.499 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 03:02:11.529 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+E   2026-10-04 03:02:11.743 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic
+E   2026-10-04 03:02:11.743 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai
+E   2026-10-04 03:02:11.743 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere
+E   2026-10-04 03:02:11.743 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google
+E   2026-10-04 03:02:11.744 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral
+E   2026-10-04 03:02:11.744 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai
+E   2026-10-04 03:02:11.744 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek
+E   2026-10-04 03:02:11.744 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E   2026-10-04 03:02:11.751 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable
+E   2026-10-04 03:02:11.751 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14155 - No Console workspace context tray available for sync
+E   2026-10-04 03:02:11.758 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E   2026-10-04 03:02:12.262 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14155 - No Console workspace context tray available for sync
+E   2026-10-04 03:02:12.397 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6145568768
+E   2026-10-04 03:02:12.402 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6145568768.
+E   2026-10-04 03:02:12.406 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6145568768.
+E   2026-10-04 03:02:12.456 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E   2026-10-04 03:02:12.479 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-functional-adoption-green-profile-tfeukmu0/pytest/test_vllm_console_handoff_rest0/private-profile-process/profile/config/config.toml
+E   2026-10-04 03:02:12.484 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 03:02:12.484 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 03:02:12.485 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-10-04 03:02:12.486 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-10-04 03:02:12.560 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-functional-adoption-green-profile-tfeukmu0/pytest/test_vllm_console_handoff_rest0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-10-04 03:02:12.560 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E   2026-10-04 03:02:12.562 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+E   2026-10-04 03:02:12.668 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6128742400
+E   2026-10-04 03:02:12.668 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6128742400.
+E   2026-10-04 03:02:12.668 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6128742400.
+E   2026-10-04 03:02:12.669 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+E   2026-10-04 03:02:12.745 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted
+E   2026-10-04 03:02:12.746 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 03:02:12.747 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 03:02:12.748 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23743 - Chat screen resuming
+E   2026-10-04 03:02:13.174 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6162968576
+E   2026-10-04 03:02:13.174 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6162968576.
+E   2026-10-04 03:02:13.174 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6162968576.
+E   2026-10-04 03:02:13.189 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6128742400.
+E   2026-10-04 03:02:13.195 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6128742400.
+E   2026-10-04 03:02:13.548 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 03:02:13.549 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 03:02:13.549 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23743 - Chat screen resuming
+E   2026-10-04 03:02:13.629 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10882 - Listing all active conversations: limit=1000, offset=0
+E   2026-10-04 03:02:13.629 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (test-client, 1000, 0)
+E   2026-10-04 03:02:13.629 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3632 - Query execution failed: 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Error: exception_type=OperationalError
+E   2026-10-04 03:02:13.629 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10940 - Database error listing all active conversations: exception_type=CharactersRAGDBError
+E   2026-10-04 03:02:13.629 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_prune_console_rail_preferences:13190 - Console rail preference prune skipped: Query execution failed: no such table: conversations
+E   2026-10-04 03:02:13.629 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6145568768.
+E   2026-10-04 03:02:13.630 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6145568768.
+E   2026-10-04 03:02:13.705 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6179794944
+E   2026-10-04 03:02:13.722 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6179794944.
+E   2026-10-04 03:02:13.722 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6179794944.
+E   2026-10-04 03:02:13.915 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6128742400.
+E   2026-10-04 03:02:13.915 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6128742400.
+E   2026-10-04 03:02:13.930 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25360 - No collapsible states to restore
+E   2026-10-04 03:02:13.943 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6128742400.
+E   2026-10-04 03:02:13.944 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6128742400.
+E   2026-10-04 03:02:14.286 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_consume_verified_console_intent:8170 - vLLM Console handoff will retry (channel=vllm_console, revision=1, exception_category=RuntimeError)
+E   2026-10-04 03:02:14.342 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 03:02:14.342 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 03:02:14.343 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/model-a, using defaults
+E   - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-functional-adoption-green-profile-tfeukmu0/pytest/test_vllm_console_handoff_rest0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   5.01s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_handoff_restores_projections_when_rollback_sync_fails[_sync_console_chat_core_state]
+E   
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_handoff_restores_projections_when_rollback_sync_fails[_sync_console_chat_core_state]
+E   1 failed in 8.55s
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-functional-adoption-green.xml -
+============================= slowest 25 durations =============================
+16.25s call     Tests/UI/test_llamacpp_setup_view.py::test_real_models_pane_preserves_sources_snapshots_and_navigates_to_console
+14.79s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_handoff_blocks_endpoint_when_durable_rollback_fails
+13.73s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[rollback-vllm]
+13.44s call     Tests/UI/test_llamacpp_consumers.py::test_stale_llamacpp_target_cannot_change_console_or_settings
+13.32s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_dispatches_on_real_resume[llama_cpp]
+13.25s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_real_metadata_conflict_blocks_detached_send
+12.35s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[wrong_owner-llama_cpp]
+12.24s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_handoff_restores_projections_when_rollback_sync_fails[_sync_console_chat_core_state]
+12.17s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_handoff_replaces_only_active_session_without_config_write
+12.09s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[success-llama_cpp]
+11.95s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_defaults
+11.79s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[cancel-vllm]
+11.78s call     Tests/UI/test_llamacpp_consumers.py::test_console_adopts_verified_llamacpp_for_active_session_only
+11.76s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[cancel-llama_cpp]
+11.71s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy
+11.70s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay
+11.67s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[stale-llama_cpp]
+11.67s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[wrong_owner-vllm]
+11.65s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[rollback-llama_cpp]
+11.51s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_uses_canonical_target_defaults[True-vllm]
+11.51s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_dispatches_on_real_resume[vllm]
+11.48s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure
+11.28s call     Tests/UI/test_llamacpp_consumers.py::test_llamacpp_console_adoption_failure_restores_session_and_requeues
+11.28s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_failed_release_survives_for_later_readoption[false]
+11.28s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[success-vllm]
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_handoff_restores_projections_when_rollback_sync_fails[_sync_console_chat_core_state]
+1 failed, 39 passed in 458.95s (0:07:38)

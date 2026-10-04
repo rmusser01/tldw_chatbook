@@ -1,0 +1,33 @@
+{
+  "selection": {
+    "Tests/UI/test_console_provider_apply_defaults_flow.py": [
+      "test_vllm_console_handoff_replaces_only_active_session_without_config_write",
+      "test_vllm_console_session_endpoint_never_enters_conversation_metadata",
+      "test_vllm_console_unsaved_session_first_persistence_excludes_endpoint",
+      "test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_defaults",
+      "test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy",
+      "test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure",
+      "test_vllm_console_handoff_blocks_endpoint_when_durable_rollback_fails",
+      "test_vllm_console_real_metadata_conflict_blocks_detached_send",
+      "test_vllm_console_handoff_restores_projections_when_rollback_sync_fails",
+      "test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay",
+      "test_vllm_console_failed_release_survives_for_later_readoption"
+    ],
+    "Tests/UI/test_llamacpp_consumers.py": [
+      "test_console_adopts_verified_llamacpp_for_active_session_only",
+      "test_stale_llamacpp_target_cannot_change_console_or_settings",
+      "test_llamacpp_console_adoption_failure_restores_session_and_requeues"
+    ],
+    "Tests/UI/test_llamacpp_setup_view.py": [
+      "test_real_models_pane_preserves_sources_snapshots_and_navigates_to_console"
+    ]
+  },
+  "functions": 15,
+  "vllm_parametrized_cases": 13,
+  "before_sha256": {
+    "Tests/UI/test_console_provider_apply_defaults_flow.py": "9c688ff6ed2ae513e2a705fff980d5431c49288cc156666d21ba10c4fd5d44f7",
+    "Tests/UI/test_llamacpp_consumers.py": "9a5ab0448aad72ba30b62ceef20fc8f346f39fce9b9fb4c79e1418451f1c3ce7",
+    "Tests/UI/test_llamacpp_setup_view.py": "a7b76c358b39acfdded4373e5d18b94e3d283e8e727478deb8c439adec9c00f1"
+  },
+  "scope": "Only existing private_profile_test import/decorator/request prologue. Original body/assertions/all other functions remain AST-exact. Planned added rollback-entry control is a separately mapped strengthening."
+}

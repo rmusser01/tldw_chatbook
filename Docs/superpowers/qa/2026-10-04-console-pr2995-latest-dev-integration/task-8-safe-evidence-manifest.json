@@ -1,0 +1,702 @@
+{
+  "head": "40b9aacaa21f7e8c6f2b1989efbb8e8021a1fe77",
+  "files": [
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-red-deadlock.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-red-deadlock.xml",
+      "sha256": "5edd38f956dc4c0c82d5949f01f23817e4097c22c17b17785bff4acf9d2d7693",
+      "bytes": 1065
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-formatter-ratchet.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-formatter-ratchet.log",
+      "sha256": "10262a87544e01848281c4ee56f18e39985283ca4e96fff9f30f97a8480a4c4c",
+      "bytes": 762
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fetch.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-fetch.log",
+      "sha256": "78a08c4b8831acc082656bfcbe563264d6554a557113b317a943d36375419586",
+      "bytes": 152
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-immutable-whitespace.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-immutable-whitespace.json",
+      "sha256": "8f1a68f3281cb766597555dc5d323862807daafe09cf8cbcd26cdd21e670f971",
+      "bytes": 197
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-immutable-confirm.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-immutable-confirm.xml",
+      "sha256": "97d58855b8cade659c20cea3f831f63526190d28dc30bd69451f2add68f2d3d5",
+      "bytes": 451
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-external-gate-shape.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-external-gate-shape.json",
+      "sha256": "b56e61de21d5fbe584c12d720b961654bb8d2e3881c6a0128235c9d4a1664ce1",
+      "bytes": 1254
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-fatal.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-final-fatal.log",
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "bytes": 19
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-integration.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-integration.json",
+      "sha256": "f457d0de59489ab8c9437c0eec3ced3acbc2889aef5e48efa815374caff2f157",
+      "bytes": 2357
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-formatter-ratchet.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-final-formatter-ratchet.json",
+      "sha256": "b3e17c7e65db6f034cffab6e1fdfa016d19d8e527e3885b1c0237647cc7a498b",
+      "bytes": 231
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-diagnostic-safe-pins-three-way.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-diagnostic-safe-pins-three-way.json",
+      "sha256": "826d65396c38f0e0ae434fc93cd66d9a965b670cd9e4801da74d81f7046d7453",
+      "bytes": 75086
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-green-phases.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-green-phases.xml",
+      "sha256": "801c392be39920d23085a6e7fabe23b481ff0adef9aeb85733b8ef2d1f4d09ab",
+      "bytes": 2737
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-red-real-phases.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-red-real-phases.xml",
+      "sha256": "709631a30e94b4972c575c345c4474c92ab6367c51a0b0818c35e1c71f09d04b",
+      "bytes": 5424
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-rebase-union.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-rebase-union.json",
+      "sha256": "9f79cb85d41ccd1f2b49a01f5963e3655ff0174300ec011939c7f58a350e3b3c",
+      "bytes": 4799707
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-affected.json",
+      "sha256": "79638e247593a306461292cc5f89a9ec5f52904596ecea233c9ea8f1ad19fb08",
+      "bytes": 8378
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-newdev-5e0341-classification.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-newdev-5e0341-classification.json",
+      "sha256": "10cadfff7d4498f218903a30f173c2642fa436a51ca4c05e3a30e6b0e471349f",
+      "bytes": 2310365
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-integration.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-integration.xml",
+      "sha256": "d084afb7fb3b42e19168284d61525275ef848860672e39d462455ac0c5f716bf",
+      "bytes": 2125
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-affected.log",
+      "sha256": "3cf0cf27d18c667917e20ccd332f34cbebaae9c54af9bafe508301239500471d",
+      "bytes": 22753
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-diagnostic-safe-pins-union.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-diagnostic-safe-pins-union.json",
+      "sha256": "e1d4ef8687ad2dcd18beeb0d8bc8c6306a98fec234322800f54846802a156542",
+      "bytes": 77364
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-ui-census.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-ui-census.log",
+      "sha256": "71dfff7428907245ef2e442ab5f1d06d01dcfe4eb1dc5297dffd5585e89e564b",
+      "bytes": 77
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-rebase-continue-05.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-rebase-continue-05.log",
+      "sha256": "8f5dc114ea7f44c83f887857df621f9837d42d25d4b9c625df55f21e343171c1",
+      "bytes": 1300
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-formatter-baseline.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-formatter-baseline.json",
+      "sha256": "6e6239e59ec9a1cc21d90c81643c1e0ac6fdce598c9c8360aef3ee67629af970",
+      "bytes": 4518
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-startup-navigation.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-final-startup-navigation.log",
+      "sha256": "62996f1af4dc041a96d184f4d25142bba9f983f6e81eb6758c5a40079113d385",
+      "bytes": 1573
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-whitespace.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-final-whitespace.log",
+      "sha256": "2d0117f93457c787246f55eff7a7f6c42ca4329cb77e86517b6254fa34801e74",
+      "bytes": 512493
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-css-rebuild.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-css-rebuild.json",
+      "sha256": "000252c8665f72ac414ccd5583ab879607f74415650e99557ec02854444d6d8b",
+      "bytes": 176
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-red-phases.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-red-phases.json",
+      "sha256": "5b91de171d2408ad41765d181421589892a638da4d8b6ed8509f76ba0667c17c",
+      "bytes": 2211
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-rebase-resolution-02.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-rebase-resolution-02.json",
+      "sha256": "25cb81683c4bba8b92291e5d986793ec0a473ca97f72548387267ff887908b4b",
+      "bytes": 436
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-diagnostics-before.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-diagnostics-before.log",
+      "sha256": "574d2d4ec1d435373e1797893792a3e7c148fd738cb7341fd30af3c83676236a",
+      "bytes": 183
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-conflict-22-production-diagnostic-inventory.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-conflict-22-production-diagnostic-inventory.log",
+      "sha256": "e4da2f6b49bd1f609d16f1b71f32b48228f5e53f4e665739dac86722cbf020ea",
+      "bytes": 365507
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fixture-followup-final.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-fixture-followup-final.json",
+      "sha256": "b2448f55fa27997518081330fee1377b4fbb5f215294f0535c3fe002e36af790",
+      "bytes": 2449
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-source-whitespace.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-source-whitespace.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-red-real-phases.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-red-real-phases.json",
+      "sha256": "ccd66ebc8079bc598786a29a354dafcbc50f94331ec321b444e31dd055bd65ad",
+      "bytes": 2220
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-surviving-child.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-surviving-child.log",
+      "sha256": "3d3ac487b0224a6f319c1dfb30146058ef3c0c13473824478ae5025c15a486f9",
+      "bytes": 290
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-conflict-02-agent-runs-and-tools.md.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-conflict-02-agent-runs-and-tools.md.log",
+      "sha256": "09f0aad6982ceb3a0d4c718c79c3f3e76983d98948eab776726fc7b9e489b1ad",
+      "bytes": 180955
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-format-proof.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-format-proof.json",
+      "sha256": "93acf555f986416c826c2a25ee6395dba4fe1d32b7719efaa0e9a47726091b60",
+      "bytes": 3426
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-surviving-child-fixture-proposal.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-surviving-child-fixture-proposal.json",
+      "sha256": "7454111936a2e20cd431b458c51d3d33f186656c9efcfa5950f3dfd6a59957c7",
+      "bytes": 2073
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-prior-dev-tree.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-prior-dev-tree.json",
+      "sha256": "625968e42d9a885c99613c75543a26abbbe4fdad271ae3e5a0f540c5ad9a8add",
+      "bytes": 5357318
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fixture-followup.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-fixture-followup.log",
+      "sha256": "71376f56a775ca1995eccdb04fe55333bbe0244ae2c9c79392498e4b1236993e",
+      "bytes": 22315
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-wizard-dev-classification-a1571e86db.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-wizard-dev-classification-a1571e86db.json",
+      "sha256": "2cee9968235dd9c2e6ad6b64bd059c6391a481e52811c942b42ca56ee66d01f3",
+      "bytes": 8287
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-rebase-range-diff.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-rebase-range-diff.log",
+      "sha256": "b39a1ff2beb4a3348357f1b7b042b0ccfe5f338cc795580dce1c30a0b4568015",
+      "bytes": 23792
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-preflight.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-preflight.json",
+      "sha256": "7cd8b3c06034a77d2ce94964c085628b1559bdf574f0170d67b0654250016c7e",
+      "bytes": 17395
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-formatter-ratchet.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-formatter-ratchet.json",
+      "sha256": "0ceed4c9b82f02bf9abd1e877c162e7251c89a6e335aaa184d6000673c03b3be",
+      "bytes": 231
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-source-whitespace.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-source-whitespace.json",
+      "sha256": "0cf3c80a094ef91db5f2dfa3fe24b2ca06d6ec549c96f2659ae18120e753dc96",
+      "bytes": 7153
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-diagnostic-union-proof.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-diagnostic-union-proof.json",
+      "sha256": "b21ce41c2e7c867d36cebe6b5fe0bbf9eda28d6f28ebfe139309209d4ced89a8",
+      "bytes": 876599
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-base-tree.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-base-tree.json",
+      "sha256": "a8c5c863c409d87e6c1bbb371d1a00bd89cf71a69d201f263d84a40aed9b07ff",
+      "bytes": 5783458
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-red-phases.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-red-phases.xml",
+      "sha256": "60068d0d34855664a67984d338154a76f90999e7a6d03fba1ae33e324295ed4c",
+      "bytes": 10313
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-whitespace.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-final-whitespace.json",
+      "sha256": "b3190b5646e7f1b4b71bb0a7d42cb00b183cbc422cdaa6f2e767f1ae11335989",
+      "bytes": 178
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-conflict-02-test_console_chat_create_integration.py.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-conflict-02-test_console_chat_create_integration.py.log",
+      "sha256": "e691968834bc2c8007846897677164ddb09c0a4f017df05e00ef9f804c375f8c",
+      "bytes": 48910
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-checkpoint-recovery.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-checkpoint-recovery.json",
+      "sha256": "5645a3e51bd9c6c88773ebb424e119ca07dafd09d943c211384ba1a573e30812",
+      "bytes": 738
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-original-commits.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-original-commits.log",
+      "sha256": "daed14501634768dfaf3e71c286bb1c835acc61f2d39c0fe96b378544dd45a04",
+      "bytes": 4421
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-conflict-02-test_console_chat_create_confirm.py.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-conflict-02-test_console_chat_create_confirm.py.log",
+      "sha256": "83cfad9b73882636b92adaa9c874a526f3759ad8cc885b9c3256194eaf942e23",
+      "bytes": 22363
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-surviving-child.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-surviving-child.xml",
+      "sha256": "ccc6e452c8bf6898e62904a843793348b1ed3e79017c5328df58277e2333f3d1",
+      "bytes": 400
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-red-deadlock.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-red-deadlock.json",
+      "sha256": "27ec63134038f38e6d84f135040719f78c0e5d6dcb49d6cb0192d27146786223",
+      "bytes": 1958
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-immutable-whitespace.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-immutable-whitespace.log",
+      "sha256": "2d0117f93457c787246f55eff7a7f6c42ca4329cb77e86517b6254fa34801e74",
+      "bytes": 512493
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-recovery.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-recovery.json",
+      "sha256": "3747d5315ad2f89c85d2abb3f11a2415b09d9faf9bc45a965d1d05f59cb3fb4a",
+      "bytes": 817
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-whitespace-attribution.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-whitespace-attribution.json",
+      "sha256": "e7042953f99f7bce5956ffe29fbedd5a82be21296ef506394d153a605f445bdc",
+      "bytes": 12505
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fixture-followup.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-fixture-followup.xml",
+      "sha256": "bbe7429a7e6588863df158becb913d14fb7c055df52dc884ea1c8ffb4c8692ce",
+      "bytes": 43399
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-newdev-5e0341-proposal.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-newdev-5e0341-proposal.json",
+      "sha256": "58a93dbe4a17259fa997d033ca56233da895438f3ed87c337ed9d7cbbcc623fa",
+      "bytes": 4489795
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-commit.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-commit.log",
+      "sha256": "20d1067672e821f86b83540ad325a671cf4fedc0f5492d0976d701fec20a0fcf",
+      "bytes": 156
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-startup-navigation.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-final-startup-navigation.json",
+      "sha256": "96bd9d497ceba3b5bd0743917aa233478f8f7f3a77f96ab14b6e3fa44097e974",
+      "bytes": 8726
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-conflict-02-lessons-testing-evidence.md.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-conflict-02-lessons-testing-evidence.md.log",
+      "sha256": "4bb294a19479fbdaf8072824376d6b8afccf21cb5b395dfaa8659b12cef0acf0",
+      "bytes": 1146606
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-css-reproduction.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-css-reproduction.json",
+      "sha256": "b0c166644b688525d6952322f324e75e2f8dca63474ed688e9ac7d80298227bf",
+      "bytes": 18891
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-green-phases.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-green-phases.json",
+      "sha256": "7ecb3d48a103630c15c7b2eb41cf2d039ef6b6e536a0f40294326ec94f69568c",
+      "bytes": 2283
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-format-proof.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-final-format-proof.json",
+      "sha256": "45c41c6c44123c3acd20ab7c291105cf4beb0045399fb999a801b66991c3b8bf",
+      "bytes": 562
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fixture-followup-final.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-fixture-followup-final.log",
+      "sha256": "90ee9fe2808042e12a399a35a163cefabb6f663dae6155a16534c5bfe5fb5f75",
+      "bytes": 9296
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-root-checkpoint.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-root-checkpoint.json",
+      "sha256": "21c1c614d4e046b41b9535e74b11d2f9366ecc4a63b444d023102e72b283f18e",
+      "bytes": 558
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-formatter-ratchet.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-final-formatter-ratchet.log",
+      "sha256": "a79a88a6c93d37a6d1fe27cdd5185b3223468505c7d16e62f965735989b6a67c",
+      "bytes": 88
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-worker-contract.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-worker-contract.json",
+      "sha256": "d74639bdd1231cd1081efdc92b5c5e032c86b0d709a5a3763dd0e8aa3b7825d9",
+      "bytes": 187
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-red-phases.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-red-phases.log",
+      "sha256": "7237e85203f2844d38dd2967599215550c2a2ec8de9c89ba772f6f58fde1bbc2",
+      "bytes": 291772
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-preservation.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-final-preservation.json",
+      "sha256": "d3abc4d007f3be8a7f3de5ea9795562fdaf36ed7b3379305c1d3999a9e42cde8",
+      "bytes": 2795625
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fetch.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-fetch.json",
+      "sha256": "7499682f2bad2c7da7eabf2db273a730f3f6f7dbcd4e41b83fb7938a441abd0e",
+      "bytes": 224
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-ui-census.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-ui-census.json",
+      "sha256": "7ef091a017bf577b0657bbff079018a479de4fae8b7e15700b4b8a4e0d2490f1",
+      "bytes": 182
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-whitespace-attribution-final.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-whitespace-attribution-final.json",
+      "sha256": "6cc2cc5758ab08b468265161239801035ab80441d48c6ed53ac657f3c571988e",
+      "bytes": 11203
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-immutable-confirm.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-immutable-confirm.json",
+      "sha256": "6e23ae8da6d521f3e6f7986fbd0b5eb3710603859975421e989d8396463d33d6",
+      "bytes": 2122
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-conflict-05-console_chat_controller.py.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-conflict-05-console_chat_controller.py.log",
+      "sha256": "865e4b4179b834acd91fe167079f71523ebcbad6fdeada25f3a1eba381442e1d",
+      "bytes": 1489153
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-css-rebuild.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-css-rebuild.log",
+      "sha256": "0802a8769d52e3fba135b0417b77c640b20f8f946e25a9a23f0c06a3974cf1b6",
+      "bytes": 2901
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-red-deadlock.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-red-deadlock.log",
+      "sha256": "701b4f2b2c32d16f12536191c713871275fa009847182d01f3a23e9b956b9cc3",
+      "bytes": 34664
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-freeze-map.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-final-freeze-map.json",
+      "sha256": "0556d31b52765ae7ea8cce4a64426d187a0ca1179655a451a9e04c0bdca5a5f4",
+      "bytes": 6697757
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-immutable-confirm.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-immutable-confirm.log",
+      "sha256": "9b9280360737705a61c4371ecb3baca8cc5b3fa0ce52c478345dda2cb3aa345b",
+      "bytes": 790
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-derived-helper-initial.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-derived-helper-initial.json",
+      "sha256": "436106ef53677508e8046c9cf39e5ddf122fef7ccb40caf2c9c9c5d7d9455412",
+      "bytes": 130
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-rebase-continue-22.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-rebase-continue-22.log",
+      "sha256": "48ab1957cb63f6024b91c0819ed11481b4c2c9e564184fa0c308ea855e4af03e",
+      "bytes": 726
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-diagnostics-before.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-diagnostics-before.json",
+      "sha256": "c637afa1e6fa890df0dd96543de9b7cd6b99701b1c69e500ae0530417c9d13c1",
+      "bytes": 209
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-red-real-phases.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-red-real-phases.log",
+      "sha256": "944920ac015c0b1bf6212396a3ee03a385348b68635d86d556f733fbccac79b2",
+      "bytes": 221569
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-preliminary-preservation.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-preliminary-preservation.json",
+      "sha256": "96185b4eedcab9428143c7b6a8dea8fb6dc97feeb05793eceff458e43e96a218",
+      "bytes": 1949175
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-green-phases.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-green-phases.log",
+      "sha256": "95f0ddfd86d8df54b9dd7e2bd409d6becc4eb9d545560a6aca79165d974981c6",
+      "bytes": 278
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-review-package-40b9aacaa21f.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-review-package-40b9aacaa21f.json",
+      "sha256": "5e3fbcc8afc482e79396a256b2127f24698b2239f35265f04b9183081060cee3",
+      "bytes": 4055
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-conflict-05-test_console_chat_create_confirm.py.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-conflict-05-test_console_chat_create_confirm.py.log",
+      "sha256": "590815b20a4995caa9c2505f00e888db820e8d0068279edebd88138d8702ea7a",
+      "bytes": 27518
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-worker-contract.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-worker-contract.log",
+      "sha256": "530e415dc3dcc4f50463747bffb3a9dee9d23f3faf0e2b921278106db6f4bd9d",
+      "bytes": 203
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fixture-followup.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-fixture-followup.json",
+      "sha256": "ad624865eba67b18663305b909a0b518760d0a636e8be3311b3b04f73b557a00",
+      "bytes": 2334
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-surviving-child.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-surviving-child.json",
+      "sha256": "0b078ef10c137da7620559358eef701fcaf5279b533efcb5853a33145c8d1374",
+      "bytes": 1974
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-integration.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-integration.log",
+      "sha256": "4ab1dc17e8749239ae086fd0c2d961efdeaef7b4455f508080246337fbd84690",
+      "bytes": 276
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-affected.xml",
+      "sha256": "5542e9776fca478df0dc418359b413e82327550cbe78f4d69edca01fade47003",
+      "bytes": 54537
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-upstream-tree.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-upstream-tree.json",
+      "sha256": "47b815fc92bc796ffe3236267763289c0b8df7fcaa313e92c8b492912244131f",
+      "bytes": 5370487
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-fatal.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-final-fatal.json",
+      "sha256": "5b8a1345cf4133dc27fb21f09da0733f83521ad2b327a6d9246d524258274169",
+      "bytes": 533
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-prepared-close-phase-proposal.json",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-prepared-close-phase-proposal.json",
+      "sha256": "fa16bb20300f9758f2996a3df99ae6de4aa444da9ee42f81d1c6967c04438b27",
+      "bytes": 5129
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-startup-navigation.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-final-startup-navigation.xml",
+      "sha256": "e7a95aeaa9588932d8ad6b9a088e76cee586fdf4e34cdb479ab5c8eb1d836265",
+      "bytes": 9171
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-conflict-02-console_chat_controller.py.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/task-8-conflict-02-console_chat_controller.py.log",
+      "sha256": "30a9c351e46b384fa9d8168345330f63dbe91f5052ccad8808161387607d40f5",
+      "bytes": 1485700
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected-v7sf5zvm/pytest/test_session_close_navigation_0/private-profile-process/pytest.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/1bba28bb1028362d-pytest.log",
+      "sha256": "1bba28bb1028362dc9415250a38f01bf5085b8e179ebd9767fb5e50e3fc9e8f8",
+      "bytes": 560
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected-v7sf5zvm/pytest/test_session_owned_pending_pro0/private-profile-process/pytest.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/907b89d38dec3bf3-pytest.log",
+      "sha256": "907b89d38dec3bf3d1719c6b70978c6bbd6509c2e3308e70e5f2d4af37347d0f",
+      "bytes": 2419
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected-v7sf5zvm/pytest/test_session_close_pending_rac0/private-profile-process/pytest.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/35ea6f9bffb66e9f-pytest.log",
+      "sha256": "35ea6f9bffb66e9f0337255457415acf291a8ee8221d6a12ef54357cddc51635",
+      "bytes": 24402
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected-v7sf5zvm/pytest/test_compact_approval_layout_j0/private-profile-process/pytest.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/d7463fded967a750-pytest.log",
+      "sha256": "d7463fded967a7508af65f1e7b3fc0a793bbcd2523931ed0e35daf57bab6632a",
+      "bytes": 565
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected-v7sf5zvm/pytest/test_session_close_failure_and0/private-profile-process/pytest.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/b278ed45372a6812-pytest.log",
+      "sha256": "b278ed45372a6812018a53b5312fb45cca185da58b1b128580a329e778a518bc",
+      "bytes": 567
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected-v7sf5zvm/pytest/test_session_close_navigation_0/private-profile-process/pytest.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/ccc5a9ff4735316a-pytest.xml",
+      "sha256": "ccc5a9ff4735316a625bb1f06e38370a242b42bd1fa363794ecd1fb66081bb2a",
+      "bytes": 388
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected-v7sf5zvm/pytest/test_session_owned_pending_pro0/private-profile-process/pytest.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/559b832a03e99573-pytest.xml",
+      "sha256": "559b832a03e99573e9872aaca7683e5b4cb680cccddfadab9b05942707e32cb7",
+      "bytes": 407
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected-v7sf5zvm/pytest/test_session_close_pending_rac0/private-profile-process/pytest.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/fe2364a1a9a9dc68-pytest.xml",
+      "sha256": "fe2364a1a9a9dc68e2d8c305110ffbf14717e3289a5e578a7a1732ff2731e55b",
+      "bytes": 4334
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected-v7sf5zvm/pytest/test_compact_approval_layout_j0/private-profile-process/pytest.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/03303683b72b3614-pytest.xml",
+      "sha256": "03303683b72b36140a260b5eafa8ee440742cc1c5f4f435e108329ff8ae8a35e",
+      "bytes": 393
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected-v7sf5zvm/pytest/test_session_close_failure_and0/private-profile-process/pytest.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/95163e85ac6fe15e-pytest.xml",
+      "sha256": "95163e85ac6fe15ee9b0fcec3c4bed766b134d09153949cd31c1466a271adf7a",
+      "bytes": 395
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fixture-followup-uukh3i4r/pytest/test_session_close_pending_rac0/private-profile-process/pytest.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/389be4cf03993b1e-pytest.log",
+      "sha256": "389be4cf03993b1ebf5af84aa9df9a9e0aff075e05d623187fc5790ffdc48f04",
+      "bytes": 285906
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fixture-followup-uukh3i4r/pytest/test_session_close_pending_rac0/private-profile-process/pytest.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/3bb82a140dfef7de-pytest.xml",
+      "sha256": "3bb82a140dfef7de99c7be1cdbfbcb72d8daa4afd142d9791d51623e067c55fe",
+      "bytes": 4337
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fixture-followup-final-u11wq0je/pytest/test_session_close_pending_rac0/private-profile-process/pytest.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/b28425f80311f161-pytest.log",
+      "sha256": "b28425f80311f16114b3f2c74129be4294f6d654e8ff55d4de2c7ba624052462",
+      "bytes": 371290
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fixture-followup-final-u11wq0je/pytest/test_session_close_pending_rac0/private-profile-process/pytest.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/cd84c42d2bf258f4-pytest.xml",
+      "sha256": "cd84c42d2bf258f4fc66ca3b4a16391e7a8dc9867563872391dec8408becf07c",
+      "bytes": 7622
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-surviving-child-hvhsq26a/pytest/test_session_close_pending_rac0/private-profile-process/pytest.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/4ecf6a78f65b90b5-pytest.log",
+      "sha256": "4ecf6a78f65b90b56bd8c88007c6b078adc2a4938e59d3deb0183c715b9c66c8",
+      "bytes": 1208
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-surviving-child-hvhsq26a/pytest/test_session_close_pending_rac0/private-profile-process/pytest.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/7eacbcd4416cf82e-pytest.xml",
+      "sha256": "7eacbcd4416cf82e67353c1de0b3cf89347453c6de96ca0ce85b8cfa955efca5",
+      "bytes": 400
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-startup-navigation-ec2p6p3b/pytest/test_session_identity_survives0/private-profile-process/pytest.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/2af09d930fac6788-pytest.log",
+      "sha256": "2af09d930fac678852621790465fea7a796902ced231abd4861cd05371c6f9d6",
+      "bytes": 772
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-startup-navigation-ec2p6p3b/pytest/test_boot_parsed_css_bytes_sta0/private-profile-process/pytest.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/8b41f902bd13a12a-pytest.log",
+      "sha256": "8b41f902bd13a12aebc29874b0eee87a886c652e2ccb45060510980c14da637f",
+      "bytes": 950
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-startup-navigation-ec2p6p3b/pytest/test_session_identity_survives0/private-profile-process/pytest.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/929db63231b4e094-pytest.xml",
+      "sha256": "929db63231b4e094ee673e6559c0ec14fdf726ab6fbf82ac923076a25fbe8090",
+      "bytes": 412
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-startup-navigation-ec2p6p3b/pytest/test_boot_parsed_css_bytes_sta0/private-profile-process/pytest.xml",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/e38b52282cbadd14-pytest.xml",
+      "sha256": "e38b52282cbadd14f0699429b7ce68f3da71e489c19d977c7e244bd9c27e3836",
+      "bytes": 397
+    }
+  ],
+  "excludes": "No profiles/config/database/cache files; only direct Task8 JSON/log/XML receipts and explicitly selected nested pytest logs/XML."
+}

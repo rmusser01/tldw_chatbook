@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="31" time="109.335" timestamp="2026-10-04T10:18:09.731646-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_switch_session_promotes_parked_round_and_fires_once" time="0.237" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_default_chat_local_provider_uses_scratch_not_config_or_cwd" time="0.087" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per_call" time="2.217" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_wires_transactional_watchlists_commands" time="2.826" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_routes_long_watchlists_work_to_app_coordinator" time="2.139" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_console_watchlists_real_reads_leave_app_owned_state_unchanged" time="1.990" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_wires_the_sessions_exact_todo_store" time="0.080" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_without_bridge_registers_no_todo_spec" time="0.074" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_pretooluse_hook_denies_before_permission_store" time="0.109" /><testcase classname="Tests.Chat.test_console_video_actions" name="test_handle_console_message_action_routes_video_play_with_persisted_storage_id" time="0.103"><failure message="AssertionError: assert [] == [('persisted-...-neon-tokyo')]&#10;  &#10;  Right contains one more item: ('persisted-video-message', 'dusk-over-neon-tokyo')&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/task9-native-green/test_handle_console_message_ac0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x1109d2ff0&gt;
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_handle_console_message_action_routes_video_play_with_persisted_storage_id(
+        tmp_path, monkeypatch
+    ):
+        screen, message, stored_path, resolve_calls, pushed, _pending = (
+            _video_action_screen(tmp_path)
+        )
+    
+        class FakeVideoPlayerScreen:
+            def __init__(self, path, *, title):
+                self.path = path
+                self.title = title
+    
+        from tldw_chatbook.Media_Playback import player_pipeline
+        from tldw_chatbook.UI.Screens import video_player_screen
+    
+        monkeypatch.setattr(player_pipeline, "playback_tools_available", lambda: (True, ""))
+        monkeypatch.setattr(video_player_screen, "VideoPlayerScreen", FakeVideoPlayerScreen)
+        button = Button("play", id=f"console-message-action-video-play-{message.id}")
+    
+        handled = await screen.handle_console_message_action(Button.Pressed(button))
+    
+        assert handled is True
+        assert message.id == "native-video-message"
+&gt;       assert [call[:2] for call in resolve_calls] == [
+            (message.persisted_message_id, message.video_metadata.name)
+        ]
+E       AssertionError: assert [] == [('persisted-...-neon-tokyo')]
+E         
+E         Right contains one more item: ('persisted-video-message', 'dusk-over-neon-tokyo')
+E         Use -v to get more diff
+
+Tests/Chat/test_console_video_actions.py:211: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_video_actions" name="test_handle_console_message_action_routes_video_save_with_persisted_storage_id" time="0.098"><failure message="AssertionError: assert [] == [('persisted-...-neon-tokyo')]&#10;  &#10;  Right contains one more item: ('persisted-video-message', 'dusk-over-neon-tokyo')&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/task9-native-green/test_handle_console_message_ac1')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x112d65520&gt;
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_handle_console_message_action_routes_video_save_with_persisted_storage_id(
+        tmp_path, monkeypatch
+    ):
+        screen, message, _stored_path, resolve_calls, _pushed, pending_workers = (
+            _video_action_screen(tmp_path)
+        )
+        export_root = tmp_path / "exports"
+        monkeypatch.setattr(
+            video_controller_module,
+            "get_cli_setting",
+            lambda *_args, **_kwargs: str(export_root),
+        )
+        button = Button("save", id=f"console-message-action-video-save-copy-{message.id}")
+    
+        handled = await screen.handle_console_message_action(Button.Pressed(button))
+        assert len(pending_workers) == 1
+        await pending_workers[0]
+    
+        assert handled is True
+        assert message.id == "native-video-message"
+&gt;       assert [call[:2] for call in resolve_calls] == [
+            (message.persisted_message_id, message.video_metadata.name)
+        ]
+E       AssertionError: assert [] == [('persisted-...-neon-tokyo')]
+E         
+E         Right contains one more item: ('persisted-video-message', 'dusk-over-neon-tokyo')
+E         Use -v to get more diff
+
+Tests/Chat/test_console_video_actions.py:240: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_video_actions" name="test_video_play_resolves_webm_from_metadata" time="0.090"><failure message="AssertionError: assert [] == [('persisted-...kyo', 'webm')]&#10;  &#10;  Right contains one more item: ('persisted-video-message', 'dusk-over-neon-tokyo', 'webm')&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/task9-native-green/test_video_play_resolves_webm_0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x1109f4590&gt;
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_video_play_resolves_webm_from_metadata(tmp_path, monkeypatch):
+        screen, message, stored_path, resolve_calls, pushed, _pending = (
+            _video_action_screen(tmp_path, container="webm")
+        )
+    
+        class FakeVideoPlayerScreen:
+            def __init__(self, path, *, title):
+                self.path = path
+                self.title = title
+    
+        from tldw_chatbook.Media_Playback import player_pipeline
+        from tldw_chatbook.UI.Screens import video_player_screen
+    
+        monkeypatch.setattr(player_pipeline, "playback_tools_available", lambda: (True, ""))
+        monkeypatch.setattr(video_player_screen, "VideoPlayerScreen", FakeVideoPlayerScreen)
+    
+        handled = await screen.handle_console_message_action(
+            Button.Pressed(
+                Button("play", id=f"console-message-action-video-play-{message.id}")
+            )
+        )
+    
+        assert handled is True
+&gt;       assert resolve_calls == [
+            (message.persisted_message_id, message.video_metadata.name, "webm")
+        ]
+E       AssertionError: assert [] == [('persisted-...kyo', 'webm')]
+E         
+E         Right contains one more item: ('persisted-video-message', 'dusk-over-neon-tokyo', 'webm')
+E         Use -v to get more diff
+
+Tests/Chat/test_console_video_actions.py:271: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_video_actions" name="test_video_save_copy_preserves_webm_extension_and_collision_names" time="0.105"><failure message="AssertionError: assert [] == [('persisted-...kyo', 'webm')]&#10;  &#10;  Right contains 2 more items, first extra item: ('persisted-video-message', 'dusk-over-neon-tokyo', 'webm')&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/task9-native-green/test_video_save_copy_preserves0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x112d3cbf0&gt;
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_video_save_copy_preserves_webm_extension_and_collision_names(
+        tmp_path, monkeypatch
+    ):
+        screen, message, _stored_path, resolve_calls, _pushed, pending_workers = (
+            _video_action_screen(tmp_path, container="webm")
+        )
+        export_root = tmp_path / "exports"
+        monkeypatch.setattr(
+            video_controller_module,
+            "get_cli_setting",
+            lambda *_args, **_kwargs: str(export_root),
+        )
+        button = Button("save", id=f"console-message-action-video-save-copy-{message.id}")
+    
+        assert await screen.handle_console_message_action(Button.Pressed(button)) is True
+        await pending_workers.pop(0)
+        assert (export_root / "dusk-over-neon-tokyo.webm").read_bytes() == b"video"
+    
+        assert await screen.handle_console_message_action(Button.Pressed(button)) is True
+        await pending_workers.pop(0)
+    
+&gt;       assert resolve_calls == [
+            (message.persisted_message_id, message.video_metadata.name, "webm"),
+            (message.persisted_message_id, message.video_metadata.name, "webm"),
+        ]
+E       AssertionError: assert [] == [('persisted-...kyo', 'webm')]
+E         
+E         Right contains 2 more items, first extra item: ('persisted-video-message', 'dusk-over-neon-tokyo', 'webm')
+E         Use -v to get more diff
+
+Tests/Chat/test_console_video_actions.py:301: AssertionError</failure></testcase><testcase classname="Tests.UI.test_console_parallel_runs" name="test_background_approval_parks_with_badge_and_single_toast" time="9.379" /><testcase classname="Tests.UI.test_console_parallel_runs" name="test_needs_approval_tab_marker_click_routes_to_review_action" time="8.492" /><testcase classname="Tests.UI.test_console_parallel_runs" name="test_park_toast_survives_a_viewed_run_completion_re_invocation" time="11.020" /><testcase classname="Tests.UI.test_console_parallel_runs" name="test_mounted_round_survives_switch_away_and_switch_back" time="22.565" /><testcase classname="Tests.UI.test_console_parallel_runs" name="test_new_session_clears_a_mounted_card_from_the_session_being_left" time="9.784" /><testcase classname="Tests.UI.test_console_parallel_runs" name="test_background_skill_install_confirm_parks_badges_toasts_and_mounts_on_visit" time="9.335" /><testcase classname="Tests.UI.test_console_parallel_runs" name="test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on_visit" time="9.444" /><testcase classname="Tests.UI.test_console_parallel_runs" name="test_skill_install_park_toast_survives_a_re_invocation_for_the_same_round" time="7.909" /><testcase classname="Tests.UI.test_console_parallel_runs" name="test_skill_script_park_toast_survives_a_re_invocation_for_the_same_round" time="8.591" /><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_legacy_session_reprojection_fires_summary_once_for_same_payload" time="0.081" /><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_legacy_session_reprojection_clears_no_payload_without_summary" time="0.082" /><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_unified_session_reprojection_returns_before_legacy_summary" time="0.073" /><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_consumed_flag_prevents_refire_on_attach_remount" time="0.070" /><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_parked_round_fires_once_on_attach_remount" time="0.065" /><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_remount_head_helper_fires_promoted_sibling_once" time="0.070" /><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_remount_head_helper_skips_non_mcp_payloads" time="0.060" /><testcase classname="Tests.Architecture.test_module_size_ratchet" name="test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_interrupt_rounds.py]" time="0.002" /><testcase classname="Tests.Architecture.test_module_size_ratchet" name="test_budget_is_not_left_slack[tldw_chatbook/Chat/console_interrupt_rounds.py]" time="0.001" /></testsuite></testsuites>

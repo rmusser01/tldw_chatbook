@@ -1,0 +1,1385 @@
+{
+  "status": "proposed; no test/collection/production execution in this preflight",
+  "actual_source": "a6887fdb8931adb9d1b99a376d63d9b9b66a5bb5",
+  "old_dev": "7d155170dc95557736a239a1ce7427981f4d50ec",
+  "new_dev": "8f83422dde2a5b95da648882b8f7e09da5b41f08",
+  "behavior_groups": [
+    {
+      "selectors": [
+        "Tests/Chat/test_console_capture_send_triggers.py"
+      ],
+      "reason": "All seven incoming real-controller trigger/log-category tests; captures remain enabled and real SQLite/boundary factory stays in route."
+    },
+    {
+      "selectors": [
+        "Tests/Chat/test_console_trace_row_sources.py"
+      ],
+      "reason": "All13 incoming aggregate source/media admission cases; catches row position, memory/tool categories, omitted/fully-sent media and unsaved identity."
+    },
+    {
+      "selectors": [
+        "Tests/UI/test_console_blocked_send_recovery.py"
+      ],
+      "reason": "All12 incoming installed real-screen cases: six send triggers, two painted sizes with refused second send, three actual recovery actions and archived-chat refusal shelf. Preserve upstream per-test maintenance deferral and existing assertions."
+    },
+    {
+      "selectors": [
+        "Tests/UI/test_console_prompt_queue.py::test_every_shelf_button_paints_its_whole_label",
+        "Tests/UI/test_console_prompt_queue.py::test_painted_label_walk_covers_every_shelf_projection_input"
+      ],
+      "reason": "12existing width cases plus one input-coverage guard execute the changed upstream shelf walk including empty/full refused reasons; no entire queue suite."
+    },
+    {
+      "selectors": [
+        "Tests/Chat/test_console_voice_capture.py::test_speculative_voice_capture_request_has_complete_frozen_provenance"
+      ],
+      "reason": "One unchanged actual voice-builder consumer directly verifies relocation of the role-label helper and frozen saved/system/active provenance."
+    },
+    {
+      "selectors": [
+        "Tests/UI/test_console_runtime_ownership.py::test_runtime_owned_custody_tracks_only_lifetime_handles"
+      ],
+      "reason": "One actual custody contract control: refusal copy must travel on terminal exception/recovery entry, never expand the lifetime-only record."
+    },
+    {
+      "selectors": [
+        "Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request",
+        "Tests/Chat/test_console_chat_start.py::test_manual_send_withdraws_prepared_start_before_busy_gate",
+        "Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send",
+        "Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target"
+      ],
+      "reason": "Four direct combined-method controls retain literal machine input/dual receipts, manual withdrawal, mounted prepared Send and active accepted target/Stop across shared draft/queue/wiring/workbench methods. Do not repeat native feature suite or final35 loading cohort."
+    }
+  ],
+  "static_groups": [
+    {
+      "selectors": [
+        "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_controller.py]",
+        "Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Chat/console_chat_controller.py]"
+      ],
+      "reason": "Lower only controller row to actual incoming-only formatted final count (private candidate29301); old29367 has66lines excess slack. No threshold increase/whole-owner formatter cleanup."
+    },
+    {
+      "selectors": [
+        "Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]",
+        "Tests/Architecture/test_screen_size_ratchet.py::test_budget_is_not_left_slack_after_a_wave[tldw_chatbook/UI/Screens/chat_screen.py]"
+      ],
+      "reason": "Shared screen source changes; actual private candidate stays25192/759 against unchanged25218/759."
+    }
+  ],
+  "boot_requalification_proposal": {
+    "pytest_selectors": [],
+    "reason": "No changed eager project-module identity, CSS, screen route, app import/startup, worker construction or preimport marginal payload. New helper module is imported only within actual trace-request builders; all its dependencies are existing controller closure modules. Header/recovery startup projections change method bytes but do not invoke a new lazy service/import. Incoming real-screen tests provide necessary installed UI requalification. Preserve35 passed at a688 as historical and prove unchanged import/constructor/route/callback guards against integrated tree; do not assert a new loading pass. If actual source differs from this import placement or qualification exposes first-use loading into ready phase, root scopes the specific affected loading node then."
+  },
+  "implementer_handoff_requirements": [
+    "Pin final source and exact upstream patches; retain both reviewed Task9/Task12 bodies and all original final-loading receipts.",
+    "Preserve four overlapping actual-method feature blocks; refresh scoped exact body/AST/import/source carry, not broad tree census.",
+    "Apply only incoming formatter corrections; controller private candidate29301 corrects rows = tuple and wraps one saved_message_id call while retaining all preexisting formatting drift. Lower row after final actual measurement.",
+    "New keyed record_send_stage call uses existing content-free sink: qualify incoming log-category test, retain exception_type-only warning/attempt identity and refresh targeted existing diagnostic inventory only if its actual scanner projection changes. No speculative new diagnostic rule.",
+    "Existing post-mount trace GC race, voice media limitation and Temporary shelf duplicate recovery are upstream recorded residuals; do not expand this integration to fix them.",
+    "No fixture repair is demonstrated necessary by this source-only preflight; retain existing original new-test assertions and canonical profile setup. Attribute any actual failure before proposing a repair."
+  ],
+  "private_source_map": [
+    {
+      "path": "Docs/User_Guide/console/chat-basics.md",
+      "status": "modified",
+      "new_blob": "5e4c970cdc7215c64f62c4ebcb8c83b5a54a5803",
+      "blobs": {
+        "base": {
+          "bytes": 48285,
+          "lines": 804,
+          "sha256": "ec223fb0a4f149c8bc199a65e4bba4cf31c7e4e1ae22678d4bf2c320a4c35212"
+        },
+        "dev": {
+          "bytes": 48489,
+          "lines": 807,
+          "sha256": "a51355010e00dfb3126723e3cedd7f630c78dd86398649d12c2e3442435b7d36"
+        },
+        "actual": {
+          "bytes": 48285,
+          "lines": 804,
+          "sha256": "ec223fb0a4f149c8bc199a65e4bba4cf31c7e4e1ae22678d4bf2c320a4c35212"
+        }
+      }
+    },
+    {
+      "path": "Docs/User_Guide/console/semantic-trace-capture.md",
+      "status": "modified",
+      "new_blob": "3e87a0c0998327fb1563ae6319e788dd0227c796",
+      "blobs": {
+        "base": {
+          "bytes": 12752,
+          "lines": 238,
+          "sha256": "3e88254d48f821b572d51d0d8721620dd6535a8e9764e0ba4b93eb02df936f0a"
+        },
+        "dev": {
+          "bytes": 13499,
+          "lines": 249,
+          "sha256": "b8345d256e659ec03f5ae61e2d2008c0388025c21e077ecf735c47f1cc33b942"
+        },
+        "actual": {
+          "bytes": 12752,
+          "lines": 238,
+          "sha256": "3e88254d48f821b572d51d0d8721620dd6535a8e9764e0ba4b93eb02df936f0a"
+        }
+      }
+    },
+    {
+      "path": "Tests/Chat/test_console_capture_send_triggers.py",
+      "status": "added",
+      "new_blob": "bb7650aa513725253ae529bb45c21d2e374696a2",
+      "blobs": {
+        "dev": {
+          "bytes": 10064,
+          "lines": 276,
+          "sha256": "2ef528df2585f39c2dcdde86d9d6402fc95efd083bbbb7e74e1a499ff01a32b1"
+        }
+      }
+    },
+    {
+      "path": "Tests/Chat/test_console_trace_row_sources.py",
+      "status": "added",
+      "new_blob": "2c3502eb2199a156c60282ab486696e845550829",
+      "blobs": {
+        "dev": {
+          "bytes": 7138,
+          "lines": 226,
+          "sha256": "cd6d6b913830f66c347072f5f9aee74f385c5c327cb1c756e678b5b412741f4c"
+        }
+      }
+    },
+    {
+      "path": "Tests/UI/test_console_blocked_send_recovery.py",
+      "status": "added",
+      "new_blob": "42aac70a06158517ec77f013f647e95a42f66a79",
+      "blobs": {
+        "dev": {
+          "bytes": 20798,
+          "lines": 552,
+          "sha256": "62a724e95d7760c6c1dfbafb2b80a32d814fb93f66c23c9c3ea94e8892668d48"
+        }
+      }
+    },
+    {
+      "path": "Tests/UI/test_console_prompt_queue.py",
+      "status": "modified",
+      "new_blob": "1d375c0a7786f3f6998830ebc0362214310f5d17",
+      "blobs": {
+        "base": {
+          "bytes": 75637,
+          "lines": 1984,
+          "sha256": "09ab482ba46c89f23b81e552bdd5ee2aabf4a007d3f7fb3d5d0822e0f9a90ea4"
+        },
+        "dev": {
+          "bytes": 76313,
+          "lines": 2002,
+          "sha256": "80f73bd6ad1cce8a075b68b95ae3747c3a676df18a397e12bbddaaca41c9f40b"
+        },
+        "actual": {
+          "bytes": 75919,
+          "lines": 1992,
+          "sha256": "0ee9c8cd0842be2f994e1d82a8fffcd7d528f93809fdfc60be455924e5ec9b41"
+        }
+      }
+    },
+    {
+      "path": "backlog/tasks/task-33621.2 - Console-any-chat-with-a-system-prompt-a-character-or-a-generate-image-turn-silently-refuses-every-send.md",
+      "status": "modified",
+      "new_blob": "1e7cbeb22fc2b430daca3bb54f2865f314ba192c",
+      "blobs": {
+        "base": {
+          "bytes": 6128,
+          "lines": 73,
+          "sha256": "e81b4d0688e748cf4b5be2362ecc4a6b4174c0b2da2e330a2e84c1fff9009530"
+        },
+        "dev": {
+          "bytes": 21158,
+          "lines": 161,
+          "sha256": "4953ebf5eaa1537a29f6d22168fd257047d3861e24978befa66037e0132014aa"
+        },
+        "actual": {
+          "bytes": 6128,
+          "lines": 73,
+          "sha256": "e81b4d0688e748cf4b5be2362ecc4a6b4174c0b2da2e330a2e84c1fff9009530"
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "status": "modified",
+      "new_blob": "c54a9985b990c2b00eaeabb2a7d0fe161867eaff",
+      "blobs": {
+        "base": {
+          "bytes": 1479974,
+          "lines": 32688,
+          "sha256": "0ad2430278dfad880949b1934ce244f8dae653d4f4ce0e6e85b926e6866d4656"
+        },
+        "dev": {
+          "bytes": 1479247,
+          "lines": 32660,
+          "sha256": "41c32db562c40191d928f37822921ea14c032d50b242ed5cb79096c6a47d4c33"
+        },
+        "actual": {
+          "bytes": 1323664,
+          "lines": 29327,
+          "sha256": "c69f2bfa373098ddcf181282de28fc6b04b7c143a11efed39f1ce586dacd85f8"
+        }
+      },
+      "upstream_definitions": {
+        "ConsoleChatController._build_durable_trace_request": {
+          "base": {
+            "span": [
+              12365,
+              12646
+            ],
+            "ast": "24fd55629008236401b52f925a17309228f7a5d153af2850780dc0173f3a4ee5"
+          },
+          "dev": {
+            "span": [
+              12338,
+              12615
+            ],
+            "ast": "511fef77d63d2bbc494ebe0104f149325b152b0d8a33701309c9a718b6939a09"
+          },
+          "actual": {
+            "span": [
+              11799,
+              12080
+            ],
+            "ast": "24fd55629008236401b52f925a17309228f7a5d153af2850780dc0173f3a4ee5"
+          }
+        },
+        "ConsoleChatController._handle_durable_trace_provenance_failure": {
+          "base": {
+            "span": [
+              12698,
+              12806
+            ],
+            "ast": "92624d23c83b4aebb067e700b4534b6096118b4ff679e57dc96801c367bbdb94"
+          },
+          "dev": {
+            "span": [
+              12667,
+              12778
+            ],
+            "ast": "54c94a18c170cc3754731f1e069492dac1e6905d1bc2c4db5aa567b02e0691ea"
+          },
+          "actual": {
+            "span": [
+              12132,
+              12240
+            ],
+            "ast": "92624d23c83b4aebb067e700b4534b6096118b4ff679e57dc96801c367bbdb94"
+          }
+        },
+        "ConsoleChatController._submit_draft_body": {
+          "base": {
+            "span": [
+              10392,
+              12235
+            ],
+            "ast": "9c0be00d18664184c878918944baf44be3f5cf7ce3717d5868c86dff68a3d147"
+          },
+          "dev": {
+            "span": [
+              10363,
+              12208
+            ],
+            "ast": "6b216f79b80047f089a34f8623ac43427b9cf288e949fc6331eea5db1e415e6e"
+          },
+          "actual": {
+            "span": [
+              9757,
+              11669
+            ],
+            "ast": "0f03c8bb8b29b177a551478b3db835da1ffdc0fac336f76f9f018d99b00aca14"
+          }
+        },
+        "_build_speculative_voice_capture_request": {
+          "base": {
+            "span": [
+              2763,
+              2808
+            ],
+            "ast": "d13a7e07a2b69011515d58520f9b52606ed8ad200c5818b7854653318d80e77b"
+          },
+          "dev": {
+            "span": [
+              2733,
+              2779
+            ],
+            "ast": "1b44a4929bfaec537cb372e83e18c3fb66f5f54c5165431266b54d795647d24c"
+          },
+          "actual": {
+            "span": [
+              2741,
+              2786
+            ],
+            "ast": "d13a7e07a2b69011515d58520f9b52606ed8ad200c5818b7854653318d80e77b"
+          }
+        },
+        "_unsaved_trace_artifact_source": {
+          "base": {
+            "span": [
+              2733,
+              2760
+            ],
+            "ast": "90cb634d0b2af3878f7e3164f4698c52e6731714d58794b9d78efd0267881120"
+          },
+          "dev": null,
+          "actual": {
+            "span": [
+              2711,
+              2738
+            ],
+            "ast": "90cb634d0b2af3878f7e3164f4698c52e6731714d58794b9d78efd0267881120"
+          }
+        }
+      },
+      "method_intersection": [
+        "ConsoleChatController._submit_draft_body"
+      ],
+      "private_patch_exit": 0,
+      "private_patch_log": "patching file '/private/tmp/task13-preflight/proposal/tldw_chatbook/Chat/console_chat_controller.py'\n",
+      "proposal_lines": 29299,
+      "proposal_sha256": "6916797605ad73df47947be61842ff90e0170f8f81dde2ad2a7290834ab5a6b2",
+      "incoming_changed_defs_AST_equal": true,
+      "additional_changed_definitions": []
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_display_state.py",
+      "status": "modified",
+      "new_blob": "93b6cda0a7dc3545090d690d6d4db3ff6f941ca4",
+      "blobs": {
+        "base": {
+          "bytes": 100750,
+          "lines": 2330,
+          "sha256": "fe1d1a847998ab853648b74ec3f54c4aa1ef850c4466f5d297197b4d84121e72"
+        },
+        "dev": {
+          "bytes": 101132,
+          "lines": 2337,
+          "sha256": "86c47b536c78cc1ffdfcda032fa3a504418d8b2e82c280c824ded334d7bc9e7d"
+        },
+        "actual": {
+          "bytes": 100750,
+          "lines": 2330,
+          "sha256": "fe1d1a847998ab853648b74ec3f54c4aa1ef850c4466f5d297197b4d84121e72"
+        }
+      },
+      "upstream_definitions": {
+        "ConsoleInspectorState.from_values": {
+          "base": {
+            "span": [
+              1427,
+              1650
+            ],
+            "ast": "18bc841efc1f2a75eac0e167a12be6bc4a06e975e23efcdce77078a6b86e3f18"
+          },
+          "dev": {
+            "span": [
+              1430,
+              1657
+            ],
+            "ast": "f075234218ed1dd7f039510bdc6da5f624237e6acac0a06f553e107b1d133824"
+          },
+          "actual": {
+            "span": [
+              1427,
+              1650
+            ],
+            "ast": "18bc841efc1f2a75eac0e167a12be6bc4a06e975e23efcdce77078a6b86e3f18"
+          }
+        }
+      },
+      "method_intersection": [],
+      "private_patch_exit": 0,
+      "private_patch_log": "patching file '/private/tmp/task13-preflight/proposal/tldw_chatbook/Chat/console_display_state.py'\n",
+      "proposal_lines": 2337,
+      "proposal_sha256": "86c47b536c78cc1ffdfcda032fa3a504418d8b2e82c280c824ded334d7bc9e7d",
+      "incoming_changed_defs_AST_equal": true,
+      "additional_changed_definitions": []
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_runtime.py",
+      "status": "modified",
+      "new_blob": "95f82664760c8c5129100c8530674bb624762be3",
+      "blobs": {
+        "base": {
+          "bytes": 235374,
+          "lines": 5448,
+          "sha256": "6650c3b4a9a77a037c8854cf4d409d98533421d49758aee8f30ac3b19cadc5a1"
+        },
+        "dev": {
+          "bytes": 236977,
+          "lines": 5485,
+          "sha256": "320906c8ff98a25ac2047062c674ca7f49c08734a31dd509930738c5df5722bc"
+        },
+        "actual": {
+          "bytes": 235936,
+          "lines": 5460,
+          "sha256": "54f8e4d5e4c9582f7bc39e1556e50ed4e504ac487e62f22b1937bc01b9c8c289"
+        }
+      },
+      "upstream_definitions": {
+        "ConsoleRuntime._finish_custodied_turn": {
+          "base": {
+            "span": [
+              2680,
+              2734
+            ],
+            "ast": "eb773b723c773fd89dc67835553bcf0944ff21706dbbd09ffc298f2242d212b8"
+          },
+          "dev": {
+            "span": [
+              2710,
+              2771
+            ],
+            "ast": "7eab92501a9c2b7bf2f4264cf85eec7fd60990fc7a222ccf8f7a7affd64510d7"
+          },
+          "actual": {
+            "span": [
+              2687,
+              2741
+            ],
+            "ast": "eb773b723c773fd89dc67835553bcf0944ff21706dbbd09ffc298f2242d212b8"
+          }
+        },
+        "ConsoleRuntime._record_turn_recovery": {
+          "base": {
+            "span": [
+              2658,
+              2678
+            ],
+            "ast": "83c4262ef40b54da88fb075f371d56be55dc01dc4390988c975a26bdb7361aaa"
+          },
+          "dev": {
+            "span": [
+              2685,
+              2708
+            ],
+            "ast": "081d1ab02e095a434163896dd7240e8bcc033fdea85e61ad8e749ec0e6061beb"
+          },
+          "actual": {
+            "span": [
+              2665,
+              2685
+            ],
+            "ast": "83c4262ef40b54da88fb075f371d56be55dc01dc4390988c975a26bdb7361aaa"
+          }
+        },
+        "ConsoleRuntime._run_custodied_turn": {
+          "base": {
+            "span": [
+              2441,
+              2539
+            ],
+            "ast": "e677d334e663321ae2cc0c2ce1d71056c04d3ec262d4fd9760f653e0e1807e33"
+          },
+          "dev": {
+            "span": [
+              2462,
+              2566
+            ],
+            "ast": "124fdae3f4c1c5ac6f1a145b9e591af841da56db82c843a9ea2c65b65de0d2a0"
+          },
+          "actual": {
+            "span": [
+              2448,
+              2546
+            ],
+            "ast": "e677d334e663321ae2cc0c2ce1d71056c04d3ec262d4fd9760f653e0e1807e33"
+          }
+        },
+        "ConsoleTurnRecoveryEntry": {
+          "base": {
+            "span": [
+              392,
+              400
+            ],
+            "ast": "d3376b96192dea2d4748dc7d0f1beeb1c40df430a28c3ffa0ca374446cd1f03a"
+          },
+          "dev": {
+            "span": [
+              410,
+              421
+            ],
+            "ast": "01a118410f09a7e75b1f51032682f4c476fcecf3b5ca40fe6ec42dba10e39ba2"
+          },
+          "actual": {
+            "span": [
+              392,
+              400
+            ],
+            "ast": "d3376b96192dea2d4748dc7d0f1beeb1c40df430a28c3ffa0ca374446cd1f03a"
+          }
+        },
+        "_ConsoleTurnRefusedError.__init__": {
+          "base": null,
+          "dev": {
+            "span": [
+              404,
+              407
+            ],
+            "ast": "0ac895c71222ad003c4036cac471aaaa5a7d57389ade52f56ca5cb32a09442cb"
+          },
+          "actual": null
+        }
+      },
+      "method_intersection": [],
+      "private_patch_exit": 0,
+      "private_patch_log": "patching file '/private/tmp/task13-preflight/proposal/tldw_chatbook/Chat/console_runtime.py'\n",
+      "proposal_lines": 5497,
+      "proposal_sha256": "baf3b1bd1c0f048e4045e7753e18ffd7a297a1ce3e1834458074ecff727ecf35",
+      "incoming_changed_defs_AST_equal": true,
+      "additional_changed_definitions": []
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_trace_row_sources.py",
+      "status": "added",
+      "new_blob": "9746256bcf03fc166dd7b7e61d07bed2f092309a",
+      "blobs": {
+        "dev": {
+          "bytes": 4879,
+          "lines": 129,
+          "sha256": "31815c7717ec9a842b00b9317faf089501d01c97f06aac27cf02048dfba6e3dc"
+        }
+      },
+      "upstream_definitions": {
+        "saved_message_id": {
+          "base": null,
+          "dev": {
+            "span": [
+              93,
+              122
+            ],
+            "ast": "35014ca626c431f4e7ad379dc2867f814321c560ac25359786fc487bfb8941a0"
+          },
+          "actual": null
+        },
+        "unsaved_row_sources": {
+          "base": null,
+          "dev": {
+            "span": [
+              59,
+              90
+            ],
+            "ast": "69d1985629560c2547a72c5a2d3177f2df5949a942201f0dc3a86ff82b7c793b"
+          },
+          "actual": null
+        },
+        "unsaved_trace_artifact_source": {
+          "base": null,
+          "dev": {
+            "span": [
+              31,
+              56
+            ],
+            "ast": "3f4a9b5c5d02cfac048e31e59b4885e936f2d6b7958c8958252d594e96e9a01d"
+          },
+          "actual": null
+        }
+      },
+      "method_intersection": [],
+      "private_patch_exit": 0,
+      "private_patch_log": "new file exact incoming bytes",
+      "proposal_lines": 129,
+      "proposal_sha256": "31815c7717ec9a842b00b9317faf089501d01c97f06aac27cf02048dfba6e3dc",
+      "incoming_changed_defs_AST_equal": true,
+      "additional_changed_definitions": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+      "status": "modified",
+      "new_blob": "1e235834c57db170e741d82a1688b528c6f94113",
+      "blobs": {
+        "base": {
+          "bytes": 44894,
+          "lines": 1143,
+          "sha256": "1978799e5197a4f8d9d58036077ac00529c63307bbc8ecce4a60f64f5e77d008"
+        },
+        "dev": {
+          "bytes": 46541,
+          "lines": 1181,
+          "sha256": "7c8c47c2de17de476bded04c95c3d8b15a1fcde3fef15d7b053da9cd4781d330"
+        },
+        "actual": {
+          "bytes": 45699,
+          "lines": 1161,
+          "sha256": "fe741aa7edfe72f9095b1120da55e2abb03774b76c687d53d84f2a69d35d7a7f"
+        }
+      },
+      "upstream_definitions": {
+        "ConsolePromptQueueRegion.sync_presentation": {
+          "base": {
+            "span": [
+              405,
+              455
+            ],
+            "ast": "74503c7064fdc4710def152fe31c7c5f5c60e1cd74c3fd5607d3976845db697d"
+          },
+          "dev": {
+            "span": [
+              436,
+              488
+            ],
+            "ast": "f51ee0e51377bc117de79171a46b9d33507cf6cf0950d5cd37e5f9e137e176ca"
+          },
+          "actual": {
+            "span": [
+              405,
+              455
+            ],
+            "ast": "74503c7064fdc4710def152fe31c7c5f5c60e1cd74c3fd5607d3976845db697d"
+          }
+        },
+        "ConsolePromptQueueUIController.__init__": {
+          "base": {
+            "span": [
+              518,
+              557
+            ],
+            "ast": "38553f1226a4289c1fd7fdf9d38594a09ea00cc6e839f238394926b03196b43e"
+          },
+          "dev": {
+            "span": [
+              551,
+              592
+            ],
+            "ast": "79302393a79ab78bcfd5b9dfab4e336477791b80887152be9463af2aa5f57e0b"
+          },
+          "actual": {
+            "span": [
+              518,
+              557
+            ],
+            "ast": "38553f1226a4289c1fd7fdf9d38594a09ea00cc6e839f238394926b03196b43e"
+          }
+        },
+        "ConsolePromptQueueUIController.presentation_for": {
+          "base": {
+            "span": [
+              709,
+              738
+            ],
+            "ast": "c2f14a83a80246e4fa891a87709110e2f5842a235ca8595566fa457d521a866b"
+          },
+          "dev": {
+            "span": [
+              744,
+              776
+            ],
+            "ast": "e2c1e57459dee96391ec5f29aab7a62a5e1a0585edac77658e31fe928c2ff637"
+          },
+          "actual": {
+            "span": [
+              709,
+              751
+            ],
+            "ast": "0eecce7e5047f27dac53fe7e737ab2676ac3afbbe0be77f061d472e2bb52a4fa"
+          }
+        },
+        "derive_prompt_queue_presentation": {
+          "base": {
+            "span": [
+              148,
+              295
+            ],
+            "ast": "73d25dba3479c684888c102b011ae27daf21085121c5892c81a6469089e1a13b"
+          },
+          "dev": {
+            "span": [
+              172,
+              326
+            ],
+            "ast": "85d7559dc6a2c250dde6443d3517256ebfb254ef0cd64f3cdbec054ecf2d1711"
+          },
+          "actual": {
+            "span": [
+              148,
+              295
+            ],
+            "ast": "73d25dba3479c684888c102b011ae27daf21085121c5892c81a6469089e1a13b"
+          }
+        },
+        "turn_recovery_label": {
+          "base": null,
+          "dev": {
+            "span": [
+              153,
+              169
+            ],
+            "ast": "40fc484620491cb2b52f6f74eedad73927e638e31534a61bb6fa3483cbc8db0b"
+          },
+          "actual": null
+        }
+      },
+      "method_intersection": [
+        "ConsolePromptQueueUIController.presentation_for"
+      ],
+      "private_patch_exit": 0,
+      "private_patch_log": "patching file '/private/tmp/task13-preflight/proposal/tldw_chatbook/UI/Console_Modules/prompt_queue.py'\n",
+      "proposal_lines": 1199,
+      "proposal_sha256": "490df2ec18a665906fb5babd4e0a85e6563d12ed407bd5d34a413192ac685fc2",
+      "incoming_changed_defs_AST_equal": true,
+      "additional_changed_definitions": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py",
+      "status": "modified",
+      "new_blob": "597912d2ddd381b0984b061f7558bbcf16d213d9",
+      "blobs": {
+        "base": {
+          "bytes": 27544,
+          "lines": 742,
+          "sha256": "e26c570e8fe3d40e87817ccd26adf4c3aaf5b15d52d0e10520ede7ceee574b6e"
+        },
+        "dev": {
+          "bytes": 29673,
+          "lines": 790,
+          "sha256": "9559f1a1b4ec3b82a0f7576daa9ccaf4be77324d4093671b2a18a5a45ee7b555"
+        },
+        "actual": {
+          "bytes": 27544,
+          "lines": 742,
+          "sha256": "e26c570e8fe3d40e87817ccd26adf4c3aaf5b15d52d0e10520ede7ceee574b6e"
+        }
+      },
+      "upstream_definitions": {
+        "TraceCallRecoveryCallout.sync_recovery": {
+          "base": {
+            "span": [
+              242,
+              308
+            ],
+            "ast": "9d3ee3b57c0fe454875c3f2120b8f8f6cfcd32ce010d59fcf843b469e67b931e"
+          },
+          "dev": {
+            "span": [
+              288,
+              356
+            ],
+            "ast": "11720345eae981a888b84b9386fe1e34d7c3a057198a28f3ea52075bab21a4b8"
+          },
+          "actual": {
+            "span": [
+              242,
+              308
+            ],
+            "ast": "9d3ee3b57c0fe454875c3f2120b8f8f6cfcd32ce010d59fcf843b469e67b931e"
+          }
+        },
+        "TraceCallRecoveryState": {
+          "base": {
+            "span": [
+              28,
+              36
+            ],
+            "ast": "05162180129839976017183d57daf71115e495fdc0b9a22980e5ea9eb30ab87f"
+          },
+          "dev": {
+            "span": [
+              31,
+              42
+            ],
+            "ast": "946ea64f781826da6e123e19450b2f5d0e9c44cb97b4cc838efde16a98bc0fdd"
+          },
+          "actual": {
+            "span": [
+              28,
+              36
+            ],
+            "ast": "05162180129839976017183d57daf71115e495fdc0b9a22980e5ea9eb30ab87f"
+          }
+        },
+        "blocked_turn_reason": {
+          "base": null,
+          "dev": {
+            "span": [
+              114,
+              139
+            ],
+            "ast": "3372e4b79d793e2753f8f7c5d45eac13df17ef7f6cb2884eae925d457b37b464"
+          },
+          "actual": null
+        },
+        "trace_call_recovery_state": {
+          "base": {
+            "span": [
+              47,
+              93
+            ],
+            "ast": "83b18ecdf3170e6c1b5105caeb3a462e4e4a6ffbc09dd4a8a6aac8d58fd091a8"
+          },
+          "dev": {
+            "span": [
+              53,
+              102
+            ],
+            "ast": "5f35c25f20cf6efb343b5ff75c4a8c0ef5df301ff211a48eab1d495d712bdeb7"
+          },
+          "actual": {
+            "span": [
+              47,
+              93
+            ],
+            "ast": "83b18ecdf3170e6c1b5105caeb3a462e4e4a6ffbc09dd4a8a6aac8d58fd091a8"
+          }
+        }
+      },
+      "method_intersection": [],
+      "private_patch_exit": 0,
+      "private_patch_log": "patching file '/private/tmp/task13-preflight/proposal/tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py'\n",
+      "proposal_lines": 790,
+      "proposal_sha256": "9559f1a1b4ec3b82a0f7576daa9ccaf4be77324d4093671b2a18a5a45ee7b555",
+      "incoming_changed_defs_AST_equal": true,
+      "additional_changed_definitions": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/wiring.py",
+      "status": "modified",
+      "new_blob": "d7d99fb21b0a20085763ea1ce50c0f4e6ef9d5bb",
+      "blobs": {
+        "base": {
+          "bytes": 101240,
+          "lines": 2385,
+          "sha256": "35338d458a68e82d062950fd09e02629ac052b70ed48641cb454154642313e07"
+        },
+        "dev": {
+          "bytes": 101638,
+          "lines": 2397,
+          "sha256": "f9cb1b5d5c1b1bb5b9fd0ea09a5edb0deacccd17c1c0edb5bc0e58e4d3dd1586"
+        },
+        "actual": {
+          "bytes": 102930,
+          "lines": 2430,
+          "sha256": "88a25da0056ebb5ee4bcefc7037426216979b6b8db79ea2019f5a2f13f73b56d"
+        }
+      },
+      "upstream_definitions": {
+        "build_console_controllers": {
+          "base": {
+            "span": [
+              741,
+              2385
+            ],
+            "ast": "73efc8a50bba990bd7ae3cfcba352268232bd9ac3e25cca998d964b03766acad"
+          },
+          "dev": {
+            "span": [
+              741,
+              2397
+            ],
+            "ast": "b229abaeccf7dd24452ad1a87b2799a8dbd51b2c931ce467fd6ff722230dafc8"
+          },
+          "actual": {
+            "span": [
+              762,
+              2430
+            ],
+            "ast": "e55ca8ebe59bf9a96a8f9fcdec821fc732e9a1cfcfce318f157c8d63255f7771"
+          }
+        }
+      },
+      "method_intersection": [
+        "build_console_controllers"
+      ],
+      "private_patch_exit": 0,
+      "private_patch_log": "patching file '/private/tmp/task13-preflight/proposal/tldw_chatbook/UI/Console_Modules/wiring.py'\n",
+      "proposal_lines": 2442,
+      "proposal_sha256": "f1d3181b255e0e8ff74dcb48a2563e25824da0c71c5da1c39d8920f4b94539a2",
+      "incoming_changed_defs_AST_equal": true,
+      "additional_changed_definitions": []
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "status": "modified",
+      "new_blob": "5b5f31b596ec8796807ee9a6c4efbda5ebdacf33",
+      "blobs": {
+        "base": {
+          "bytes": 1169209,
+          "lines": 25442,
+          "sha256": "c69854a471c0c59d2b3dd843d528dde057077c7eaa9856305718f22e5bc2664d"
+        },
+        "dev": {
+          "bytes": 1169249,
+          "lines": 25442,
+          "sha256": "b2334a0c9fbd0b5a71f878cb7486dc95e2d452690db5ec39679674138cab2233"
+        },
+        "actual": {
+          "bytes": 1158632,
+          "lines": 25192,
+          "sha256": "614d8d266f6c69a7d7b0e59d682800b5709f4f45f3095c1c1d7ccaa32f8a5de8"
+        }
+      },
+      "upstream_definitions": {
+        "ChatScreen._build_console_inspector_state": {
+          "base": {
+            "span": [
+              14279,
+              14415
+            ],
+            "ast": "d83419abf47f3c437b3e50d2da10f1c7ac7079c51005415c34b9f14f1db15601"
+          },
+          "dev": {
+            "span": [
+              14280,
+              14415
+            ],
+            "ast": "8a549202faa970d4a86fd23a7ff8a8328500d61102c63b9a7b15b5c17b438d50"
+          },
+          "actual": {
+            "span": [
+              14054,
+              14190
+            ],
+            "ast": "d83419abf47f3c437b3e50d2da10f1c7ac7079c51005415c34b9f14f1db15601"
+          }
+        },
+        "ChatScreen._build_console_workbench_state": {
+          "base": {
+            "span": [
+              15018,
+              15064
+            ],
+            "ast": "9c0431ccee92d9e244dba4ed33693e9609bc4d4ad9c26cdcade5f1cce55b1ba9"
+          },
+          "dev": {
+            "span": [
+              15018,
+              15063
+            ],
+            "ast": "39ccfdab6850c5c65e9c6a2d02ef9c68358ab50cc128a0449fcc841f463bd77a"
+          },
+          "actual": {
+            "span": [
+              14793,
+              14845
+            ],
+            "ast": "c5116d575d36ad17a53060faad4ad08dbdc1802ed5ee1158d6710b8948460db4"
+          }
+        },
+        "ChatScreen._console_active_run_copy": {
+          "base": {
+            "span": [
+              18556,
+              18593
+            ],
+            "ast": "d53c764328c74d256a6516efd212956b6aba1b0cc084c3ef19ca713144a1f650"
+          },
+          "dev": {
+            "span": [
+              18555,
+              18593
+            ],
+            "ast": "4259de2e52b575c74ecd72aafe4d07e3e2eeb244d4b73eb0c1fbe89889ba5e10"
+          },
+          "actual": {
+            "span": [
+              18292,
+              18329
+            ],
+            "ast": "d53c764328c74d256a6516efd212956b6aba1b0cc084c3ef19ca713144a1f650"
+          }
+        }
+      },
+      "method_intersection": [
+        "ChatScreen._build_console_workbench_state"
+      ],
+      "private_patch_exit": 0,
+      "private_patch_log": "patching file '/private/tmp/task13-preflight/proposal/tldw_chatbook/UI/Screens/chat_screen.py'\n",
+      "proposal_lines": 25192,
+      "proposal_sha256": "056ecad8b39f7c9d5e3869768884b336f02120269779297fd5f5a39492762be2",
+      "incoming_changed_defs_AST_equal": true,
+      "additional_changed_definitions": []
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_send_authority_summary.py",
+      "status": "modified",
+      "new_blob": "45ae9bbad4c9d5d83dcf1e8f799c9760b769090f",
+      "blobs": {
+        "base": {
+          "bytes": 14549,
+          "lines": 374,
+          "sha256": "5282bc29d9c4ac03f9e1cc140a9056a61e66a2c173925dcc8841c71c7ffb3b6e"
+        },
+        "dev": {
+          "bytes": 14790,
+          "lines": 378,
+          "sha256": "3c494b4005d218ae5daf9a10c54c2a4dbada99c28fd67105ac193930e8fe7270"
+        },
+        "actual": {
+          "bytes": 14549,
+          "lines": 374,
+          "sha256": "5282bc29d9c4ac03f9e1cc140a9056a61e66a2c173925dcc8841c71c7ffb3b6e"
+        }
+      },
+      "upstream_definitions": {
+        "project_console_send_authority": {
+          "base": {
+            "span": [
+              89,
+              178
+            ],
+            "ast": "2df6a4fcce6b3ed568495d025fe6d4975751c77716ffcf5d154dcace300099f1"
+          },
+          "dev": {
+            "span": [
+              89,
+              182
+            ],
+            "ast": "0839aa350564e0c7e8bca498165d4e27c521563a3a0e5542ee82e57a4bf02363"
+          },
+          "actual": {
+            "span": [
+              89,
+              178
+            ],
+            "ast": "2df6a4fcce6b3ed568495d025fe6d4975751c77716ffcf5d154dcace300099f1"
+          }
+        }
+      },
+      "method_intersection": [],
+      "private_patch_exit": 0,
+      "private_patch_log": "patching file '/private/tmp/task13-preflight/proposal/tldw_chatbook/Widgets/Console/console_send_authority_summary.py'\n",
+      "proposal_lines": 378,
+      "proposal_sha256": "3c494b4005d218ae5daf9a10c54c2a4dbada99c28fd67105ac193930e8fe7270",
+      "incoming_changed_defs_AST_equal": true,
+      "additional_changed_definitions": []
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_workbench_state.py",
+      "status": "modified",
+      "new_blob": "6c119ea7217b6fe3175dfefdd311895e4e5d7dce",
+      "blobs": {
+        "base": {
+          "bytes": 7046,
+          "lines": 169,
+          "sha256": "d751054638de19f2cc2480efb5e60f601845d315294040aa26ee7b2215658793"
+        },
+        "dev": {
+          "bytes": 7343,
+          "lines": 177,
+          "sha256": "2580469058127c7689b8d34c529cfcd746ffef41410fa997ec2206902bb1efc4"
+        },
+        "actual": {
+          "bytes": 7046,
+          "lines": 169,
+          "sha256": "d751054638de19f2cc2480efb5e60f601845d315294040aa26ee7b2215658793"
+        }
+      },
+      "upstream_definitions": {
+        "build_console_workbench_state": {
+          "base": {
+            "span": [
+              18,
+              169
+            ],
+            "ast": "db2274caca2dd2a263fdbe44691e6a09a42685be7a1b63b66c0eb29eb91d1021"
+          },
+          "dev": {
+            "span": [
+              18,
+              177
+            ],
+            "ast": "f5923b213219c2d77cda14dfb707f6686360587cdd8dfd5c4dcc7eb0d1c1953b"
+          },
+          "actual": {
+            "span": [
+              18,
+              169
+            ],
+            "ast": "db2274caca2dd2a263fdbe44691e6a09a42685be7a1b63b66c0eb29eb91d1021"
+          }
+        }
+      },
+      "method_intersection": [],
+      "private_patch_exit": 0,
+      "private_patch_log": "patching file '/private/tmp/task13-preflight/proposal/tldw_chatbook/Widgets/Console/console_workbench_state.py'\n",
+      "proposal_lines": 177,
+      "proposal_sha256": "2580469058127c7689b8d34c529cfcd746ffef41410fa997ec2206902bb1efc4",
+      "incoming_changed_defs_AST_equal": true,
+      "additional_changed_definitions": []
+    }
+  ],
+  "private_format_map": [
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "versions": {
+        "base": {
+          "raw_lines": 32688,
+          "formatted_lines": 32680,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "actual": {
+          "raw_lines": 29327,
+          "formatted_lines": 29320,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "dev": {
+          "raw_lines": 32660,
+          "formatted_lines": 32654,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "proposal": {
+          "raw_lines": 29299,
+          "formatted_lines": 29294,
+          "format_unchanged": false,
+          "ast_identical": true
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_display_state.py",
+      "versions": {
+        "base": {
+          "raw_lines": 2330,
+          "formatted_lines": 2337,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "actual": {
+          "raw_lines": 2330,
+          "formatted_lines": 2337,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "dev": {
+          "raw_lines": 2337,
+          "formatted_lines": 2344,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "proposal": {
+          "raw_lines": 2337,
+          "formatted_lines": 2344,
+          "format_unchanged": false,
+          "ast_identical": true
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_runtime.py",
+      "versions": {
+        "base": {
+          "raw_lines": 5448,
+          "formatted_lines": 5463,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "actual": {
+          "raw_lines": 5460,
+          "formatted_lines": 5475,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "dev": {
+          "raw_lines": 5485,
+          "formatted_lines": 5498,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "proposal": {
+          "raw_lines": 5497,
+          "formatted_lines": 5510,
+          "format_unchanged": false,
+          "ast_identical": true
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_trace_row_sources.py",
+      "versions": {
+        "dev": {
+          "raw_lines": 129,
+          "formatted_lines": 129,
+          "format_unchanged": true,
+          "ast_identical": true
+        },
+        "proposal": {
+          "raw_lines": 129,
+          "formatted_lines": 129,
+          "format_unchanged": true,
+          "ast_identical": true
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+      "versions": {
+        "base": {
+          "raw_lines": 1143,
+          "formatted_lines": 1145,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "actual": {
+          "raw_lines": 1161,
+          "formatted_lines": 1161,
+          "format_unchanged": true,
+          "ast_identical": true
+        },
+        "dev": {
+          "raw_lines": 1181,
+          "formatted_lines": 1183,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "proposal": {
+          "raw_lines": 1199,
+          "formatted_lines": 1199,
+          "format_unchanged": true,
+          "ast_identical": true
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py",
+      "versions": {
+        "base": {
+          "raw_lines": 742,
+          "formatted_lines": 740,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "actual": {
+          "raw_lines": 742,
+          "formatted_lines": 740,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "dev": {
+          "raw_lines": 790,
+          "formatted_lines": 788,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "proposal": {
+          "raw_lines": 790,
+          "formatted_lines": 788,
+          "format_unchanged": false,
+          "ast_identical": true
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Console_Modules/wiring.py",
+      "versions": {
+        "base": {
+          "raw_lines": 2385,
+          "formatted_lines": 2391,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "actual": {
+          "raw_lines": 2430,
+          "formatted_lines": 2430,
+          "format_unchanged": true,
+          "ast_identical": true
+        },
+        "dev": {
+          "raw_lines": 2397,
+          "formatted_lines": 2403,
+          "format_unchanged": false,
+          "ast_identical": true
+        },
+        "proposal": {
+          "raw_lines": 2442,
+          "formatted_lines": 2442,
+          "format_unchanged": true,
+          "ast_identical": true
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "versions": {
+        "base": {
+          "raw_lines": 25442,
+          "formatted_lines": 25442,
+          "format_unchanged": true,
+          "ast_identical": true
+        },
+        "actual": {
+          "raw_lines": 25192,
+          "formatted_lines": 25192,
+          "format_unchanged": true,
+          "ast_identical": true
+        },
+        "dev": {
+          "raw_lines": 25442,
+          "formatted_lines": 25442,
+          "format_unchanged": true,
+          "ast_identical": true
+        },
+        "proposal": {
+          "raw_lines": 25192,
+          "formatted_lines": 25192,
+          "format_unchanged": true,
+          "ast_identical": true
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_send_authority_summary.py",
+      "versions": {
+        "base": {
+          "raw_lines": 374,
+          "formatted_lines": 374,
+          "format_unchanged": true,
+          "ast_identical": true
+        },
+        "actual": {
+          "raw_lines": 374,
+          "formatted_lines": 374,
+          "format_unchanged": true,
+          "ast_identical": true
+        },
+        "dev": {
+          "raw_lines": 378,
+          "formatted_lines": 378,
+          "format_unchanged": true,
+          "ast_identical": true
+        },
+        "proposal": {
+          "raw_lines": 378,
+          "formatted_lines": 378,
+          "format_unchanged": true,
+          "ast_identical": true
+        }
+      }
+    },
+    {
+      "path": "tldw_chatbook/Widgets/Console/console_workbench_state.py",
+      "versions": {
+        "base": {
+          "raw_lines": 169,
+          "formatted_lines": 169,
+          "format_unchanged": true,
+          "ast_identical": true
+        },
+        "actual": {
+          "raw_lines": 169,
+          "formatted_lines": 169,
+          "format_unchanged": true,
+          "ast_identical": true
+        },
+        "dev": {
+          "raw_lines": 177,
+          "formatted_lines": 177,
+          "format_unchanged": true,
+          "ast_identical": true
+        },
+        "proposal": {
+          "raw_lines": 177,
+          "formatted_lines": 177,
+          "format_unchanged": true,
+          "ast_identical": true
+        }
+      }
+    }
+  ]
+}

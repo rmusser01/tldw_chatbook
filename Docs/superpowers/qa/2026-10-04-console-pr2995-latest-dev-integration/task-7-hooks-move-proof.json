@@ -1,0 +1,9 @@
+{
+  "old_methods": {
+    "_request_console_hooks_review": "    async def _request_console_hooks_review(self, snapshot, waiting, cancel):\n        from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (\n            request_hook_review,\n        )\n\n        return await request_hook_review(\n            self,\n            self._console_runtime().ensure_hook_permissions(),\n            snapshot,\n            waiting,\n            cancel,\n        )\n",
+    "_open_console_hooks_review": "    async def _open_console_hooks_review(self) -> None:\n        await self._hooks.review_current()\n"
+  },
+  "new_adapter": "async def request_console_hooks_review(\n    screen: \"ChatScreen\", snapshot: \"HookReviewSnapshot\", waiting: bool, cancel: Callable[[], None]\n) -> \"HookReviewResult\":\n    \"\"\"Open the existing modal with the current screen and permission owner.\"\"\"\n    from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (\n        request_hook_review,\n    )\n\n    return await request_hook_review(\n        screen,\n        screen._console_runtime().ensure_hook_permissions(),\n        snapshot,\n        waiting,\n        cancel,\n    )\n",
+  "worker": "Local async callable in the hooks branch reads self._hooks only at execution. group/exclusive unchanged.",
+  "direct_test_retarget": "console._request_console_hooks_review -> console._hooks._review; every existing assertion/body otherwise unchanged."
+}

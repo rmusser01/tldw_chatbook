@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "ruff",
+    "format",
+    "Tests/Chat/test_console_provider_gateway.py",
+    "Tests/UI/test_console_native_chat_flow.py"
+  ],
+  "exit": 0,
+  "stdout": "2 files reformatted\n",
+  "stderr": "",
+  "paths": [
+    {
+      "path": "Tests/Chat/test_console_provider_gateway.py",
+      "before_sha256": "31133f666dfa08daf998c3259bb7c297f1ea988f57d2df28af157fb42e178a5b",
+      "after_sha256": "eda82579a453368eacb80765163de08eacfa67bf2621c2e31aa92cea63a6a6c7",
+      "strict_ast_equal": true
+    },
+    {
+      "path": "Tests/UI/test_console_native_chat_flow.py",
+      "before_sha256": "79bbf9bf6de926365e2263d6896a18f444aa41d965f3a85aead4cfd97dd26258",
+      "after_sha256": "d5f2231c87c8a4dc5d476d15ad47c35467b1c82ee15bb2f0119ebc3b069822a7",
+      "strict_ast_equal": true
+    }
+  ],
+  "native_flow_complete_helper_reversal_AST_exact": true
+}

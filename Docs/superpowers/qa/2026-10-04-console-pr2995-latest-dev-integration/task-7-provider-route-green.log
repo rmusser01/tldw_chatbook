@@ -1,0 +1,11 @@
+.......                                                                  [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-provider-route-green.xml -
+============================= slowest 25 durations =============================
+14.04s call     Tests/UI/test_llamacpp_setup_view.py::test_real_models_pane_preserves_sources_snapshots_and_navigates_to_console
+11.93s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[rollback-llama_cpp]
+11.84s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[success-llama_cpp]
+11.67s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[cancel-llama_cpp]
+10.09s call     Tests/UI/test_llamacpp_consumers.py::test_llamacpp_console_adoption_failure_restores_session_and_requeues
+
+(16 durations < 1s hidden.)
+7 passed in 64.77s (0:01:04)

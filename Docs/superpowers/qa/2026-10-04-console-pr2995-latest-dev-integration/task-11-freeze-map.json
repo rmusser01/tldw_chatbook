@@ -1,0 +1,254 @@
+{
+  "status": "qualified_at_pinned_dev_pending_root_review_structural_and_newer_dev_gates",
+  "SOURCEBASE": "8d1088a5078337534bb700ce16aecd4d65399660",
+  "OLDDEV": "5e0341d1ec701865e019eb2fd8a5e2028ab2d474",
+  "DEV": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+  "REBASENEW": "25c521593602d41cba5a6816ad6aa21f6f448a55",
+  "SOURCEHEAD": "084b5618ded0f144ae01e643a224d09c554abe3d",
+  "metadata_checkpoints": [
+    "be26dcfd002011f64390b1f08f66d890536f059e",
+    "8a3eeb72987376d4e103abc610ab93efddd4df71"
+  ],
+  "source_commits": [
+    "8b367d565ad6b87a6de41c4feeae481ff92ab6c7",
+    "084b5618ded0f144ae01e643a224d09c554abe3d"
+  ],
+  "remote_feature_at_start": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+  "root_observed_newer_dev": "9878fd251a01b9b65138316088af7bcee8c987b6",
+  "newer_dev_integrated": false,
+  "recovery_ref": "refs/recovery/pr2995-task11-base",
+  "bundle_mode": "0o600",
+  "rebase_count": 1,
+  "replayed_feature_commits": 50,
+  "conflicts": [],
+  "ancestry": {
+    "f800952214844c3d41ddbe4b6522c93d4be25b7c": true,
+    "5514c1ec9f97f9d9ff9418103b77c3f5ab62965b": true,
+    "8b367d565ad6b87a6de41c4feeae481ff92ab6c7": true
+  },
+  "upstream_commits_carried": [
+    "6d4a9ec7c156c4c8818bd9ac8874c45cb497c9a4",
+    "a00b89d0d980d29659f1b55064602d41052aa496",
+    "0f564b780738013da5e24ed17b64d47f051e9289",
+    "6a1d465fbdb571f9cf9564854efd3f2148c64f77",
+    "5d8cc45a5efc2fa9b316525a30aeb73f9e4f1367",
+    "bdb79f27b168e7bddecd4255c7db433bbe3afe6e",
+    "5514c1ec9f97f9d9ff9418103b77c3f5ab62965b",
+    "8c2547c2d1968f4433d192ccf1353140e85ddfdd",
+    "b39e16bfa053ff134b4b04657294a9b8c0748207",
+    "7ff98590686d0a2a61a66cae04c56715b1e88153",
+    "697ec015723c91e2a7d98786f807a90917d4ba18",
+    "e5ca612080ffd8ec7301776fd6102b4549d14d01",
+    "3aa48d3ef66d245715367a55c33be80a114f08a0",
+    "09cfdf8dcaed4324256505d4c136a0e092310c38",
+    "c549d6e8bcf73ae0c79a9ad283c348a926ae31da",
+    "d027d00a2c8beb203a9511c80f95c4a47986db51",
+    "37f0c7f9f6cf3071cc45fed3915eda2c7ee378f9",
+    "b0e0c9203ae61e55b75017c418e96310170e9a50",
+    "68d2e4d0ce3321ca482dfb47aa9b598d0f3c9b2f",
+    "68c8a10fa0e2893da1732ca417243435b2a711e9",
+    "a48139dbd07e6dd384f6ae161d39301cf60f041e",
+    "b2325b873adb2219db3cf4c8d822c934d4b125c7",
+    "7e1e118ed2d1734cbc53895d357485cbe99a2ad2",
+    "f9a744f3ad3c34bb3b151fc48f26d8f8ecea0e98",
+    "a812bf560a15353dcb0335c327ab80ec2ea9364c",
+    "84d2f2b6c5b7dbcd82d6f837dfa1ce21620f0a38",
+    "f800952214844c3d41ddbe4b6522c93d4be25b7c"
+  ],
+  "three_way_reconstruction": {
+    "tldw_chatbook/Chat/console_agent_bridge.py": {
+      "exit": 0,
+      "exact_matches_head": true,
+      "sha256": "37a0c12ec6de14b1d949eb2d0f9c2d06f2ca9b0c260f870e71ba60c0bbfeabdf"
+    },
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "exit": 0,
+      "exact_matches_head": true,
+      "sha256": "6803aa4a96e2abe583903298a8d54ac5e2852f227faa8278f11f68767501a7c6"
+    },
+    "tldw_chatbook/Chat/console_runtime.py": {
+      "exit": 0,
+      "exact_matches_head": true,
+      "sha256": "54f8e4d5e4c9582f7bc39e1556e50ed4e504ac487e62f22b1937bc01b9c8c289"
+    },
+    "tldw_chatbook/Chat/console_turn_preparation.py": {
+      "exit": 0,
+      "exact_matches_head": true,
+      "sha256": "4159aed3aaa0b79d856736d6a2cc08627c75f40fbb9b1b1dd6c43d8219c303ae"
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
+      "exit": 0,
+      "exact_matches_head": true,
+      "sha256": "e4941d8ea7077d58889e782315af6e73767f109ae29cb1588d0499aee7eeed42"
+    }
+  },
+  "final_union_paths": 29797,
+  "qa_paths": 12337,
+  "qa_all_exact": true,
+  "original_qa11792_preserved": true,
+  "fixture_overlays": {
+    "Tests/Chat/test_console_automatic_library_preparation.py": {
+      "rebased_blob": "8bd67b8720dbed5e72f287c5469853ba6bd0496a",
+      "final_blob": "c22dbcbc76b8da6c68bd0d1b869fb80f46ff3eb1",
+      "sha256": "a14e5ad4d72808c9df2f4a8c17cd25a4da5e30df4cd5718b1a0af9f39ce58ab5",
+      "approved_functions": [
+        "test_explicit_evidence_lease_cancel_keeps_original_staged",
+        "test_explicit_evidence_lease_never_releases_newer_launch",
+        "test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance",
+        "test_explicit_evidence_lease_survives_preaccept_failure",
+        "test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch",
+        "test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged"
+      ],
+      "prologues": 6,
+      "positive_async_witnesses": 6,
+      "whole_original_module_ast_restored": true,
+      "byte_reversal_chain": [
+        "fixture-source-proof.json",
+        "batch-edit-byte-reversal.json",
+        "batch-final-ast-lint-proof.json"
+      ]
+    },
+    "Tests/Chat/test_console_dispatch_recovery_fix_round3.py": {
+      "rebased_blob": "2eb32710da04653f5ae22a4c40f517352059f0dc",
+      "final_blob": "2ff8e2ee08ba84a0ec050bcee0cea2f1dff1ed86",
+      "sha256": "f422d6e10265f37a941d0fcea9cc2e8182c61a86fabbf92a003ee4c9d3c22164",
+      "approved_functions": [
+        "test_app_disposal_releases_only_its_frozen_evidence_lease",
+        "test_app_disposal_scrubs_content_when_evidence_release_raises",
+        "test_discard_releases_only_exact_frozen_evidence_once"
+      ],
+      "prologues": 3,
+      "positive_async_witnesses": 3,
+      "whole_original_module_ast_restored": true,
+      "byte_reversal_chain": [
+        "fixture-source-proof.json",
+        "batch-edit-byte-reversal.json",
+        "batch-final-ast-lint-proof.json"
+      ]
+    },
+    "Tests/Chat/test_console_dispatch_recovery_fix_round4.py": {
+      "rebased_blob": "a196f4ef26ed424b8de77c329e7ab3931903c4c9",
+      "final_blob": "724c3bb145f7f0fe082add3d458cd3e9ac026413",
+      "sha256": "869b2fbdf6544a3e6eb5625f9eee0b927b44d2658d158a545489132b2814b226",
+      "approved_functions": [
+        "_accepted_evidence_recovery",
+        "test_close_session_release_fault_cannot_skip_owner_cleanup",
+        "test_close_session_releases_exact_evidence_once_and_preserves_replacement"
+      ],
+      "prologues": 2,
+      "positive_async_witnesses": 1,
+      "whole_original_module_ast_restored": true,
+      "byte_reversal_chain": [
+        "fixture-source-proof.json",
+        "batch-edit-byte-reversal.json",
+        "batch-final-ast-lint-proof.json"
+      ]
+    }
+  },
+  "results": {
+    "chat-qualification": {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "1",
+      "skipped": "0",
+      "tests": "23",
+      "time": "358.626",
+      "timestamp": "2026-10-04T07:12:03.237746-07:00",
+      "hostname": "Roberts-MacBook-Pro-2.local"
+    },
+    "remaining-independent-qualification": {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "21",
+      "time": "72.448",
+      "timestamp": "2026-10-04T07:19:50.988427-07:00",
+      "hostname": "Roberts-MacBook-Pro-2.local"
+    },
+    "ui-qualification": {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "7",
+      "time": "133.502",
+      "timestamp": "2026-10-04T07:15:58.770963-07:00",
+      "hostname": "Roberts-MacBook-Pro-2.local"
+    },
+    "combined-seam-qualification": {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "2",
+      "time": "5.523",
+      "timestamp": "2026-10-04T07:15:21.931242-07:00",
+      "hostname": "Roberts-MacBook-Pro-2.local"
+    },
+    "fixture-repair-green": {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "1",
+      "time": "5.708",
+      "timestamp": "2026-10-04T07:28:00.901556-07:00",
+      "hostname": "Roberts-MacBook-Pro-2.local"
+    },
+    "fixture-batch-qualification": {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "0",
+      "tests": "12",
+      "time": "31.692",
+      "timestamp": "2026-10-04T07:44:26.450174-07:00",
+      "hostname": "Roberts-MacBook-Pro-2.local"
+    }
+  },
+  "unique_passing_cases": 65,
+  "initial_caps": {
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "lines": 33695,
+      "line_cap": 29367,
+      "methods": 494,
+      "methods_cap": null
+    },
+    "tldw_chatbook/Chat/console_chat_store.py": {
+      "lines": 22338,
+      "line_cap": 22344,
+      "methods": 564,
+      "methods_cap": null
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
+      "lines": 25239,
+      "line_cap": 25218,
+      "methods": 761,
+      "methods_cap": 759
+    }
+  },
+  "static": {
+    "worker_analyzer": 0,
+    "diagnostic_inventory": 0,
+    "ui_census": 0,
+    "fatal_ruff": 0,
+    "inherited_formatter_exit": 1,
+    "inherited_format_hunks": 97,
+    "inherited_unrestricted_findings": 583,
+    "inherited_whitespace_exit": 2,
+    "new_fixture_format": 0,
+    "new_fixture_fatal": 0,
+    "new_fixture_whitespace": 0,
+    "new_fixture_unrestricted_findings": 6,
+    "new_fixture_unrestricted_baseline_count": 6
+  },
+  "pending": [
+    "Root independent scoped integration review",
+    "Root selected controller/ChatScreen structural changes and cap qualification",
+    "Root newer-dev integration scope and final current-head gates",
+    "One final startup/public-navigation qualification after source settles",
+    "External checks/publication/merge"
+  ],
+  "self_review": "Exact three-way source union, all upstream test bodies except authorized admission overlays, historical QA, fixture whole-module reversals, positive real async admission, receipt identities, static provenance, and clean source status checked; no review/publication performed."
+}

@@ -1,0 +1,12 @@
+{
+  "guarded_initial_attempts": 6,
+  "files_copied_before_final_audit_pass": 0,
+  "path_shape_resolution": "Exact immutable manifests contain nested child log/XML paths and frozen Markdown reports, plus Task12/13 overlay patches. Export admits only named reports under listed safe roots, rejects traversal/absolute paths/symlinks, verifies hashes and explicit text suffixes; it does not walk profiles.",
+  "credential_candidate_resolution": "All candidates are exact public source constants: project TLDW_API_PLACEHOLDER_AUTH_TOKEN and two deterministic PLAINTEXT_KEY cipher-test fixtures. AST name/value provenance and source hashes classify only those exact literals. Actual known credentials and other recognized token/private-key matches still fail before copy. No credential bodies were printed or raw evidence rewritten.",
+  "first_successful_export_files": 2109,
+  "first_successful_export_bytes": 323717448,
+  "actual_credential_findings": 0,
+  "private_profile_config_database_exports": false,
+  "largest_selected_file_bytes": 14763353,
+  "original_reports_receipts_bytes_preserved": true
+}

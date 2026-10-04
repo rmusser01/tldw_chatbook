@@ -1,0 +1,9 @@
+....                                                                     [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-9-remaining-fixture-safe-evidence/unexecuted-safe4.xml -
+============================= slowest 25 durations =============================
+9.14s call     Tests/UI/test_console_parallel_runs.py::test_park_toast_fires_again_for_a_genuinely_new_round_same_session
+9.02s call     Tests/UI/test_console_parallel_runs.py::test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_round
+8.60s call     Tests/UI/test_console_parallel_runs.py::test_park_toast_fires_once_for_a_new_round_arriving_after_teardown
+
+(9 durations < 1s hidden.)
+4 passed in 29.14s

@@ -1,0 +1,122 @@
+[
+  {
+    "ref": "ca2992cb10b24307fbae050643472ffb0a4388e7",
+    "lines": 25392,
+    "methods": 764,
+    "subject": "Merge pull request #2993 from rmusser01/chore/credit-program-2026-10"
+  },
+  {
+    "ref": "d294c4871ff5b7585ad746bd6991c0934f61c639",
+    "lines": 25294,
+    "methods": 764,
+    "subject": "Merge pull request #2981 from rmusser01/feat/task-28229-rate-limit-telemetry"
+  },
+  {
+    "ref": "185c845fe836bf452e4beaaf8853162ce49b1e8d",
+    "lines": 25293,
+    "methods": 764,
+    "subject": "Merge pull request #2958 from rmusser01/feat/model-config-p5-readiness"
+  },
+  {
+    "ref": "bb865f5cfeae4c9d8c068f588ee0d85ff28a0e13",
+    "lines": 25309,
+    "methods": 764,
+    "subject": "Merge pull request #2956 from rmusser01/feat/task-33661-console-resend"
+  },
+  {
+    "ref": "e92b01515f9547aab2cfb14cd4d93a7a07419775",
+    "lines": 25309,
+    "methods": 764,
+    "subject": "Merge pull request #2946 from rmusser01/codex/expanded-hooks"
+  },
+  {
+    "ref": "30ca4552b3b881bee6c077db08c44233e5e97e6a",
+    "lines": 25309,
+    "methods": 764,
+    "subject": "Merge pull request #2945 from rmusser01/fix/task-33621.28-hook-review-send-freeze"
+  },
+  {
+    "ref": "eba4305d8389a2112c99ac19fa804e9abea394ba",
+    "lines": 25311,
+    "methods": 764,
+    "subject": "Merge pull request #2941 from rmusser01/fix/task-33628.2-delete-scope-undo"
+  },
+  {
+    "ref": "ee1c1e7365c232a184e129bef1dec15afd85b24f",
+    "lines": 25311,
+    "methods": 764,
+    "subject": "Merge pull request #2943 from rmusser01/fix/task-33621.19-queue-false-turn-failed"
+  },
+  {
+    "ref": "84247cb8435fcf59b6d8e2d97c6b2f0913934dd0",
+    "lines": 25311,
+    "methods": 764,
+    "subject": "Merge pull request #2948 from rmusser01/fix/task-33620.4-healthy-run-not-blocked"
+  },
+  {
+    "ref": "31d4f9b76492120706ba8e3ad7d355f1aa4e0273",
+    "lines": 25311,
+    "methods": 764,
+    "subject": "Merge pull request #2947 from rmusser01/feat/model-config-p4-switcher"
+  },
+  {
+    "ref": "89a350e6466d224e9bac66297d88765eedd18876",
+    "lines": 25447,
+    "methods": 764,
+    "subject": "Merge pull request #2934 from rmusser01/fix/task-33625.1-console-stop-reachable"
+  },
+  {
+    "ref": "dd2f1589b7a4282bed58f61ee0d27dcac0ae4975",
+    "lines": 25466,
+    "methods": 764,
+    "subject": "Merge pull request #2932 from rmusser01/fix/task-33621.12-save-md-crash"
+  },
+  {
+    "ref": "e2bfe3cbae1efdc94ebb146692546dbf394cb2be",
+    "lines": 25496,
+    "methods": 766,
+    "subject": "Merge pull request #2937 from rmusser01/feat/model-config-p3-density"
+  },
+  {
+    "ref": "75c06af39a07154560ab1db49561a620a9689e72",
+    "lines": 25496,
+    "methods": 766,
+    "subject": "Merge pull request #2922 from rmusser01/codex/hook-review-current"
+  },
+  {
+    "ref": "4eac1fd0182884531c0b1a77f1e63e2419a15e93",
+    "lines": 25435,
+    "methods": 762,
+    "subject": "Merge pull request #2878 from rmusser01/feat/model-config-p2-field-table"
+  },
+  {
+    "ref": "a4f545d9dd4fbcd7a4929bec0f04bb8b71997f0b",
+    "lines": 25435,
+    "methods": 762,
+    "subject": "Merge pull request #2869 from rmusser01/feat/llamacpp-milestone-and-docs"
+  },
+  {
+    "ref": "bcd788524bb65030175e631b91c8b57d345d9144",
+    "lines": 25406,
+    "methods": 760,
+    "subject": "Merge pull request #2196 from rmusser01/perf/burndown-0828"
+  },
+  {
+    "ref": "aa9024af5141d5e7053ab7c83b97894d7ccdfe11",
+    "lines": 25257,
+    "methods": 759,
+    "subject": "Merge pull request #2857 from rmusser01/fix/task-32904-stalls-dev"
+  },
+  {
+    "ref": "9b307147cc2cdc976ea76dc364f55f5dfdd86737",
+    "lines": 25220,
+    "methods": 759,
+    "subject": "Merge pull request #2861 from rmusser01/codex/console-tool-lifecycle"
+  },
+  {
+    "ref": "74965f694f435c590366ec66d671d3506d440ebc",
+    "lines": 25218,
+    "methods": 759,
+    "subject": "Merge pull request #2846 from rmusser01/feat/model-config-p1-root-fixes"
+  }
+]

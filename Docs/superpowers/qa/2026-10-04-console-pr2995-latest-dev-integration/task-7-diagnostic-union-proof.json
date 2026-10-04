@@ -1,0 +1,57 @@
+{
+  "base": "223c4db6d15f0ca9e9e3da844cc81cd1f2a68aa1",
+  "head": "1ce569523be10db32d07976e694ead217f6f562b",
+  "paths": [
+    "tldw_chatbook/UI/Screens/chat_screen.py",
+    "tldw_chatbook/UI/Console_Modules/session.py",
+    "tldw_chatbook/UI/Console_Modules/wiring.py"
+  ],
+  "all_other_diagnostic_AST_multisets_exact": true,
+  "review_required_four_fixed_provider_labels": [
+    {
+      "before_path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "before_line": 8143,
+      "before_statement": "logger.warning(\n                \"vLLM Console handoff will retry \"\n                \"(channel={}, revision={}, exception_category={})\",\n                claim.channel.value,\n                claim.revision,\n                type(error).__name__,\n            )",
+      "after_path": "tldw_chatbook/UI/Console_Modules/session.py",
+      "after_line": 3830,
+      "after_statement": "logger.warning(\n                f\"{provider_name} Console handoff will retry \"\n                \"(channel={}, revision={}, exception_category={})\",\n                claim.channel.value,\n                claim.revision,\n                type(error).__name__,\n            )",
+      "arguments_AST_exact": true,
+      "label_source": "provider_name = \"vLLM\" if provider == \"vllm\" else \"llama.cpp\"; provider supplied by two fixed trusted route wrappers"
+    },
+    {
+      "before_path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "before_line": 8112,
+      "before_statement": "logger.warning(\n                    \"vLLM Console handoff claim release failed \"\n                    \"(revision={}, exception_category={})\",\n                    claim.revision,\n                    type(release_error).__name__,\n                )",
+      "after_path": "tldw_chatbook/UI/Console_Modules/session.py",
+      "after_line": 3799,
+      "after_statement": "logger.warning(\n                    f\"{provider_name} Console handoff claim release failed \"\n                    \"(revision={}, exception_category={})\",\n                    claim.revision,\n                    type(release_error).__name__,\n                )",
+      "arguments_AST_exact": true,
+      "label_source": "provider_name = \"vLLM\" if provider == \"vllm\" else \"llama.cpp\"; provider supplied by two fixed trusted route wrappers"
+    },
+    {
+      "before_path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "before_line": 8095,
+      "before_statement": "logger.warning(\n                        \"vLLM Console handoff rollback failed \"\n                        \"(revision={}, exception_category={})\",\n                        claim.revision,\n                        type(rollback_error).__name__,\n                    )",
+      "after_path": "tldw_chatbook/UI/Console_Modules/session.py",
+      "after_line": 3782,
+      "after_statement": "logger.warning(\n                        f\"{provider_name} Console handoff rollback failed \"\n                        \"(revision={}, exception_category={})\",\n                        claim.revision,\n                        type(rollback_error).__name__,\n                    )",
+      "arguments_AST_exact": true,
+      "label_source": "provider_name = \"vLLM\" if provider == \"vllm\" else \"llama.cpp\"; provider supplied by two fixed trusted route wrappers"
+    },
+    {
+      "before_path": "tldw_chatbook/UI/Screens/chat_screen.py",
+      "before_line": 8127,
+      "before_statement": "logger.warning(\n                        \"vLLM Console handoff cleanup ownership transfer failed \"\n                        \"(revision={}, exception_category={})\",\n                        claim.revision,\n                        type(retention_error).__name__,\n                    )",
+      "after_path": "tldw_chatbook/UI/Console_Modules/session.py",
+      "after_line": 3814,
+      "after_statement": "logger.warning(\n                        f\"{provider_name} Console handoff cleanup ownership transfer failed \"\n                        \"(revision={}, exception_category={})\",\n                        claim.revision,\n                        type(retention_error).__name__,\n                    )",
+      "arguments_AST_exact": true,
+      "label_source": "provider_name = \"vLLM\" if provider == \"vllm\" else \"llama.cpp\"; provider supplied by two fixed trusted route wrappers"
+    }
+  ],
+  "source_hashes": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "0d03c9fe48659de8cad668dd31232b32c657a53c83253147c5ebda25607a6c1f",
+    "tldw_chatbook/UI/Console_Modules/session.py": "87704148cf54df1e5a5a580bbbd96c251a0dedbc5c53af1d55a53112fd70c3e9",
+    "tldw_chatbook/UI/Console_Modules/wiring.py": "739c99681fd8da3dbddeff63e3df51ec27c130143602b708370666697df31063"
+  }
+}

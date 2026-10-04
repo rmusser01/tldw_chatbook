@@ -1,0 +1,164 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="340.851" timestamp="2026-10-04T04:25:17.259824-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.UI.test_console_session_tab_close" name="test_session_close_pending_race_and_fleet_journeys" time="339.512"><failure message="TimeoutError">fut = &lt;Task cancelled name='Task-20405' coro=&lt;to_thread() done, defined at /Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/threads.py:12&gt;&gt;
+timeout = 5
+
+    async def wait_for(fut, timeout):
+        """Wait for the single Future or coroutine to complete, with timeout.
+    
+        Coroutine will be wrapped in Task.
+    
+        Returns result of the Future or coroutine.  When a timeout occurs,
+        it cancels the task and raises TimeoutError.  To avoid the task
+        cancellation, wrap it in shield().
+    
+        If the wait is cancelled, the task is also cancelled.
+    
+        If the task suppresses the cancellation and returns a value instead,
+        that value is returned.
+    
+        This function is a coroutine.
+        """
+        # The special case for timeout &lt;= 0 is for the following case:
+        #
+        # async def test_waitfor():
+        #     func_started = False
+        #
+        #     async def func():
+        #         nonlocal func_started
+        #         func_started = True
+        #
+        #     try:
+        #         await asyncio.wait_for(func(), 0)
+        #     except asyncio.TimeoutError:
+        #         assert not func_started
+        #     else:
+        #         assert False
+        #
+        # asyncio.run(test_waitfor())
+    
+    
+        if timeout is not None and timeout &lt;= 0:
+            fut = ensure_future(fut)
+    
+            if fut.done():
+                return fut.result()
+    
+            await _cancel_and_wait(fut)
+            try:
+                return fut.result()
+            except exceptions.CancelledError as exc:
+                raise TimeoutError from exc
+    
+        async with timeouts.timeout(timeout):
+&gt;           return await fut
+                   ^^^^^^^^^
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:520: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+func = &lt;function _arm_pending_round.&lt;locals&gt;.request at 0x12693b100&gt;, args = ()
+kwargs = {}
+loop = &lt;_UnixSelectorEventLoop running=False closed=False debug=False&gt;
+ctx = &lt;_contextvars.Context object at 0x124a55700&gt;
+func_call = functools.partial(&lt;built-in method run of _contextvars.Context object at 0x124a55700&gt;, &lt;function _arm_pending_round.&lt;locals&gt;.request at 0x12693b100&gt;)
+
+    async def to_thread(func, /, *args, **kwargs):
+        """Asynchronously run function *func* in a separate thread.
+    
+        Any *args and **kwargs supplied for this function are directly passed
+        to *func*. Also, the current :class:`contextvars.Context` is propagated,
+        allowing context variables from the main thread to be accessed in the
+        separate thread.
+    
+        Return a coroutine that can be awaited to get the eventual result of *func*.
+        """
+        loop = events.get_running_loop()
+        ctx = contextvars.copy_context()
+        func_call = functools.partial(ctx.run, func, *args, **kwargs)
+&gt;       return await loop.run_in_executor(None, func_call)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       asyncio.exceptions.CancelledError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/threads.py:25: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+request = &lt;FixtureRequest for &lt;Coroutine test_session_close_pending_race_and_fleet_journeys&gt;&gt;
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...-final-u11wq0je/pytest/test_session_close_pending_rac0/private-profile-process/pytest/test_session_close_pending_rac0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11185e2d0&gt;
+
+    @pytest.mark.asyncio
+    @private_profile_test
+    async def test_session_close_pending_race_and_fleet_journeys(
+        request: pytest.FixtureRequest,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -&gt; None:
+        """Run pending, race, geometry and fleet scenarios with fresh owners.
+    
+        Args:
+            request: Pytest request selecting the isolated private-profile child.
+            tmp_path: Parent directory for the fleet scenarios' private databases.
+            monkeypatch: Fixture providing a separate patch context per scenario.
+        """
+        fleet_dir = tmp_path / "fleet-close"
+        fleet_dir.mkdir()
+        for verify, kwargs in (
+            (
+                _verify_background_pending_close_names_consequences_and_cancels_only_its_owner,
+                {},
+            ),
+            (_verify_background_pending_close_releases_round_without_an_active_turn, {}),
+            (
+                _verify_chat_create_enrichment_cannot_arm_after_its_session_closes,
+                {"monkeypatch": monkeypatch},
+            ),
+            (
+                _verify_all_close_consequences_keep_named_title_and_actions_painted_at_80x24,
+                {},
+            ),
+            (
+                _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry,
+                {"tmp_path": fleet_dir, "monkeypatch": monkeypatch},
+            ),
+        ):
+            try:
+                with monkeypatch.context() as patch:
+                    if "monkeypatch" in kwargs:
+                        kwargs["monkeypatch"] = patch
+&gt;                   await verify(request, **kwargs)
+
+Tests/UI/test_console_session_tab_close.py:1619: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/test_console_session_tab_close.py:1042: in _verify_chat_create_enrichment_cannot_arm_after_its_session_closes
+    await asyncio.wait_for(pending, 5)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py:519: in wait_for
+    async with timeouts.timeout(timeout):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;Timeout [expired]&gt;
+exc_type = &lt;class 'asyncio.exceptions.CancelledError'&gt;
+exc_val = CancelledError(), exc_tb = &lt;traceback object at 0x126576d00&gt;
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -&gt; Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() &lt;= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+&gt;               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError</failure></testcase></testsuite></testsuites>

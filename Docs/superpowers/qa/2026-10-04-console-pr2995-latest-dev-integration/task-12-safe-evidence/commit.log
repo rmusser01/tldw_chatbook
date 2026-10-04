@@ -1,0 +1,10 @@
+[codex/console-chat-starts-dev bda1dbf34b] test(console): adapt latest dev timeout policy to native interrupt host
+ 3 files changed, 10 insertions(+), 1 deletion(-)
+Auto packing the repository in background for optimum performance.
+See "git help gc" for manual housekeeping.
+warning: The last gc run reported the following. Please correct the root cause
+and remove /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.git/worktrees/tldw_chatbook1/gc.log
+Automatic cleanup will not be performed until the file is removed.
+
+warning: There are too many unreachable loose objects; run 'git prune' to remove them.
+

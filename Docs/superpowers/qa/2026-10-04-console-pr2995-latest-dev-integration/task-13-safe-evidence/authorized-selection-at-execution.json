@@ -1,0 +1,21 @@
+{
+  "selectors": [
+    "Tests/Chat/test_console_capture_send_triggers.py",
+    "Tests/Chat/test_console_trace_row_sources.py",
+    "Tests/UI/test_console_blocked_send_recovery.py",
+    "Tests/UI/test_console_prompt_queue.py::test_every_shelf_button_paints_its_whole_label",
+    "Tests/UI/test_console_prompt_queue.py::test_painted_label_walk_covers_every_shelf_projection_input",
+    "Tests/Chat/test_console_voice_capture.py::test_speculative_voice_capture_request_has_complete_frozen_provenance",
+    "Tests/UI/test_console_runtime_ownership.py::test_runtime_owned_custody_tracks_only_lifetime_handles",
+    "Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request",
+    "Tests/Chat/test_console_chat_start.py::test_manual_send_withdraws_prepared_start_before_busy_gate",
+    "Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send",
+    "Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target",
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_controller.py]",
+    "Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Chat/console_chat_controller.py]",
+    "Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]",
+    "Tests/Architecture/test_screen_size_ratchet.py::test_budget_is_not_left_slack_after_a_wave[tldw_chatbook/UI/Screens/chat_screen.py]"
+  ],
+  "proposed_case_count": 55,
+  "selection_source_sha256": "1ed8948185a8035f848cac92ebb7d1289e5ded1db04e1064d695a3f5e290f1a7"
+}

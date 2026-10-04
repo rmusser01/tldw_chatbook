@@ -1,0 +1,74 @@
+[
+  {
+    "receipt": "baseline-attribution.xml",
+    "cases": 9,
+    "passed": 1,
+    "failed": 7,
+    "errors": 1,
+    "skipped": 0
+  },
+  {
+    "receipt": "baseline-fixed-refusal.xml",
+    "cases": 2,
+    "passed": 2,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "receipt": "characterization-2.xml",
+    "cases": 14,
+    "passed": 10,
+    "failed": 4,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "receipt": "characterization-ui-3.xml",
+    "cases": 4,
+    "passed": 4,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "receipt": "characterization.xml",
+    "cases": 14,
+    "passed": 1,
+    "failed": 9,
+    "errors": 4,
+    "skipped": 0
+  },
+  {
+    "receipt": "moved-gaps.xml",
+    "cases": 14,
+    "passed": 14,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "receipt": "qualification-1_interrupt_confirmation.xml",
+    "cases": 165,
+    "passed": 127,
+    "failed": 37,
+    "errors": 1,
+    "skipped": 0
+  },
+  {
+    "receipt": "qualification-3_I1_moved_confirmation_route.xml",
+    "cases": 16,
+    "passed": 16,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  {
+    "receipt": "qualification-6_existing_static_guards.xml",
+    "cases": 14,
+    "passed": 13,
+    "failed": 1,
+    "errors": 0,
+    "skipped": 0
+  }
+]

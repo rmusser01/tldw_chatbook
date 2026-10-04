@@ -1,0 +1,107 @@
+[
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 2,
+      "row": 59
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_fork.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nimport hashlib\nimport json\nimport math\nimport warnings\nfrom collections.abc import Callable, Mapping, Sequence\nfrom dataclasses import dataclass\nfrom io import BytesIO\nfrom typing import TYPE_CHECKING, Literal\n\nfrom PIL import Image as PILImage\n\nfrom tldw_chatbook.Chat.attachment_core import MAX_ATTACHMENT_BYTES, MAX_IMAGE_BYTES\nfrom tldw_chatbook.Chat.console_chat_models import (\n    ConsoleChatMessage,\n    ConsoleMessageRole,\n    ConsoleMessageStatus,\n    GenerationVariantMeta,\n    MessageAttachment,\n)\nfrom tldw_chatbook.Chat.console_context_policy import (\n    CompactionFailureBehavior,\n    ConsoleContextPolicyOverrides,\n    ContextBudgetMode,\n    ContextCarryForwardMode,\n    ContextCompactionMode,\n    ContextCompactionRepresentation,\n)\nfrom tldw_chatbook.Chat.console_library_policy import (\n    ConsoleAssistantLibraryAccess,\n    ConsoleAutoRetrieve,\n    ConsoleLibraryPolicyCandidate,\n)\nfrom tldw_chatbook.Chat.console_project_instructions import (\n    ProjectInstructionControlState,\n    sanitize_fork_project_instruction_state,\n)\nfrom tldw_chatbook.Chat.console_session_endpoint_policy import (\n    ConsoleEndpointPolicyState,\n    ConsoleEphemeralEndpointPolicy,\n)\nfrom tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings\nfrom tldw_chatbook.Chat.console_speech_preferences import ConsoleSpeechPreferences\nfrom tldw_chatbook.Chat.rag_scope import RagScope, ScopeItem\nfrom tldw_chatbook.Chat.thinking_blocks import (\n    ThinkingHistoryPolicy,\n    normalize_thinking_history_policy,\n)\nfrom tldw_chatbook.Event_Handlers.Chat_Events.chat_image_events import (\n    PAYLOAD_FORMAT_MIME,\n)\nfrom tldw_chatbook.Utils.input_validation import (\n    CONSOLE_FORK_TITLE_MAX_LENGTH as CONSOLE_FORK_TITLE_MAX_LENGTH,\n)\nfrom tldw_chatbook.Utils.input_validation import (\n    escape_markup,\n    validate_console_fork_title,\n)\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 61
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "PLC0414",
+    "end_location": {
+      "column": 67,
+      "row": 56
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_fork.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "CONSOLE_FORK_TITLE_MAX_LENGTH",
+          "end_location": {
+            "column": 67,
+            "row": 56
+          },
+          "location": {
+            "column": 5,
+            "row": 56
+          }
+        }
+      ],
+      "message": "Remove import alias"
+    },
+    "location": {
+      "column": 5,
+      "row": 56
+    },
+    "message": "Import alias does not rename original package",
+    "name": "useless-import-alias",
+    "noqa_row": 56,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/useless-import-alias"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 78,
+      "row": 63
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_fork.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "    from tldw_chatbook.Chat.console_trace_repository import TraceForkBoundary\n    from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata\n",
+          "end_location": {
+            "column": 1,
+            "row": 64
+          },
+          "location": {
+            "column": 1,
+            "row": 62
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 5,
+      "row": 62
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 62,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  }
+]

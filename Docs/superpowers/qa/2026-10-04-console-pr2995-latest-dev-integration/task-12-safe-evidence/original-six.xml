@@ -1,0 +1,265 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="6" skipped="0" tests="6" time="2.118" timestamp="2026-10-04T10:49:47.667383-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.MCP.test_approval_timeout_policy" name="test_console_and_service_share_approval_timeout_policy[missing-0.0]" time="0.264"><failure message="AttributeError: 'ConsoleChatController' object has no attribute '_interrupt_host'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x1107e14f0&gt;
+configured = 'missing', expected = 0.0
+
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [("missing", 0.0), (None, 0.0), ("bad", 0.0), (0, 0.0), (-1, -1.0), (30, 30.0)],
+    )
+    def test_console_and_service_share_approval_timeout_policy(
+        monkeypatch, configured, expected
+    ):
+        """Pin the one approval ceiling policy in both synchronous consumers.
+    
+        Args:
+            monkeypatch: Substitute only the configuration-read boundary.
+            configured: Missing, invalid, nonpositive or positive setting value.
+            expected: Policy value both consumers must resolve.
+        """
+    
+        def setting(section, key, default=None):
+            assert (section, key) == ("mcp", "approval_timeout_seconds")
+            return default if configured == "missing" else configured
+    
+        monkeypatch.setattr(controller_module, "get_cli_setting", setting)
+        monkeypatch.setattr(service_module, "get_cli_setting", setting)
+        controller = controller_module.ConsoleChatController.__new__(
+            controller_module.ConsoleChatController
+        )
+        controller.mcp_approval_timeout_seconds = None
+        service = service_module.UnifiedMCPControlPlaneService(
+            target_store=None, context_store=None, local_service=None, server_service=None
+        )
+&gt;       assert controller._resolve_mcp_approval_timeout_seconds() == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/MCP/test_approval_timeout_policy.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x110d69dc0&gt;
+
+    def _resolve_mcp_approval_timeout_seconds(self) -&gt; float:
+&gt;       return self._interrupt_host._resolve_mcp_approval_timeout_seconds()
+               ^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute '_interrupt_host'
+
+tldw_chatbook/Chat/console_chat_controller.py:15511: AttributeError</failure></testcase><testcase classname="Tests.MCP.test_approval_timeout_policy" name="test_console_and_service_share_approval_timeout_policy[None-0.0]" time="0.002"><failure message="AttributeError: 'ConsoleChatController' object has no attribute '_interrupt_host'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x110d14f20&gt;
+configured = None, expected = 0.0
+
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [("missing", 0.0), (None, 0.0), ("bad", 0.0), (0, 0.0), (-1, -1.0), (30, 30.0)],
+    )
+    def test_console_and_service_share_approval_timeout_policy(
+        monkeypatch, configured, expected
+    ):
+        """Pin the one approval ceiling policy in both synchronous consumers.
+    
+        Args:
+            monkeypatch: Substitute only the configuration-read boundary.
+            configured: Missing, invalid, nonpositive or positive setting value.
+            expected: Policy value both consumers must resolve.
+        """
+    
+        def setting(section, key, default=None):
+            assert (section, key) == ("mcp", "approval_timeout_seconds")
+            return default if configured == "missing" else configured
+    
+        monkeypatch.setattr(controller_module, "get_cli_setting", setting)
+        monkeypatch.setattr(service_module, "get_cli_setting", setting)
+        controller = controller_module.ConsoleChatController.__new__(
+            controller_module.ConsoleChatController
+        )
+        controller.mcp_approval_timeout_seconds = None
+        service = service_module.UnifiedMCPControlPlaneService(
+            target_store=None, context_store=None, local_service=None, server_service=None
+        )
+&gt;       assert controller._resolve_mcp_approval_timeout_seconds() == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/MCP/test_approval_timeout_policy.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x110e19130&gt;
+
+    def _resolve_mcp_approval_timeout_seconds(self) -&gt; float:
+&gt;       return self._interrupt_host._resolve_mcp_approval_timeout_seconds()
+               ^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute '_interrupt_host'
+
+tldw_chatbook/Chat/console_chat_controller.py:15511: AttributeError</failure></testcase><testcase classname="Tests.MCP.test_approval_timeout_policy" name="test_console_and_service_share_approval_timeout_policy[bad-0.0]" time="0.001"><failure message="AttributeError: 'ConsoleChatController' object has no attribute '_interrupt_host'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x110e1aed0&gt;
+configured = 'bad', expected = 0.0
+
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [("missing", 0.0), (None, 0.0), ("bad", 0.0), (0, 0.0), (-1, -1.0), (30, 30.0)],
+    )
+    def test_console_and_service_share_approval_timeout_policy(
+        monkeypatch, configured, expected
+    ):
+        """Pin the one approval ceiling policy in both synchronous consumers.
+    
+        Args:
+            monkeypatch: Substitute only the configuration-read boundary.
+            configured: Missing, invalid, nonpositive or positive setting value.
+            expected: Policy value both consumers must resolve.
+        """
+    
+        def setting(section, key, default=None):
+            assert (section, key) == ("mcp", "approval_timeout_seconds")
+            return default if configured == "missing" else configured
+    
+        monkeypatch.setattr(controller_module, "get_cli_setting", setting)
+        monkeypatch.setattr(service_module, "get_cli_setting", setting)
+        controller = controller_module.ConsoleChatController.__new__(
+            controller_module.ConsoleChatController
+        )
+        controller.mcp_approval_timeout_seconds = None
+        service = service_module.UnifiedMCPControlPlaneService(
+            target_store=None, context_store=None, local_service=None, server_service=None
+        )
+&gt;       assert controller._resolve_mcp_approval_timeout_seconds() == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/MCP/test_approval_timeout_policy.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x110e19a60&gt;
+
+    def _resolve_mcp_approval_timeout_seconds(self) -&gt; float:
+&gt;       return self._interrupt_host._resolve_mcp_approval_timeout_seconds()
+               ^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute '_interrupt_host'
+
+tldw_chatbook/Chat/console_chat_controller.py:15511: AttributeError</failure></testcase><testcase classname="Tests.MCP.test_approval_timeout_policy" name="test_console_and_service_share_approval_timeout_policy[0-0.0]" time="0.001"><failure message="AttributeError: 'ConsoleChatController' object has no attribute '_interrupt_host'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x110e19a90&gt;
+configured = 0, expected = 0.0
+
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [("missing", 0.0), (None, 0.0), ("bad", 0.0), (0, 0.0), (-1, -1.0), (30, 30.0)],
+    )
+    def test_console_and_service_share_approval_timeout_policy(
+        monkeypatch, configured, expected
+    ):
+        """Pin the one approval ceiling policy in both synchronous consumers.
+    
+        Args:
+            monkeypatch: Substitute only the configuration-read boundary.
+            configured: Missing, invalid, nonpositive or positive setting value.
+            expected: Policy value both consumers must resolve.
+        """
+    
+        def setting(section, key, default=None):
+            assert (section, key) == ("mcp", "approval_timeout_seconds")
+            return default if configured == "missing" else configured
+    
+        monkeypatch.setattr(controller_module, "get_cli_setting", setting)
+        monkeypatch.setattr(service_module, "get_cli_setting", setting)
+        controller = controller_module.ConsoleChatController.__new__(
+            controller_module.ConsoleChatController
+        )
+        controller.mcp_approval_timeout_seconds = None
+        service = service_module.UnifiedMCPControlPlaneService(
+            target_store=None, context_store=None, local_service=None, server_service=None
+        )
+&gt;       assert controller._resolve_mcp_approval_timeout_seconds() == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/MCP/test_approval_timeout_policy.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x110e1a6f0&gt;
+
+    def _resolve_mcp_approval_timeout_seconds(self) -&gt; float:
+&gt;       return self._interrupt_host._resolve_mcp_approval_timeout_seconds()
+               ^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute '_interrupt_host'
+
+tldw_chatbook/Chat/console_chat_controller.py:15511: AttributeError</failure></testcase><testcase classname="Tests.MCP.test_approval_timeout_policy" name="test_console_and_service_share_approval_timeout_policy[-1--1.0]" time="0.001"><failure message="AttributeError: 'ConsoleChatController' object has no attribute '_interrupt_host'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x110d69eb0&gt;
+configured = -1, expected = -1.0
+
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [("missing", 0.0), (None, 0.0), ("bad", 0.0), (0, 0.0), (-1, -1.0), (30, 30.0)],
+    )
+    def test_console_and_service_share_approval_timeout_policy(
+        monkeypatch, configured, expected
+    ):
+        """Pin the one approval ceiling policy in both synchronous consumers.
+    
+        Args:
+            monkeypatch: Substitute only the configuration-read boundary.
+            configured: Missing, invalid, nonpositive or positive setting value.
+            expected: Policy value both consumers must resolve.
+        """
+    
+        def setting(section, key, default=None):
+            assert (section, key) == ("mcp", "approval_timeout_seconds")
+            return default if configured == "missing" else configured
+    
+        monkeypatch.setattr(controller_module, "get_cli_setting", setting)
+        monkeypatch.setattr(service_module, "get_cli_setting", setting)
+        controller = controller_module.ConsoleChatController.__new__(
+            controller_module.ConsoleChatController
+        )
+        controller.mcp_approval_timeout_seconds = None
+        service = service_module.UnifiedMCPControlPlaneService(
+            target_store=None, context_store=None, local_service=None, server_service=None
+        )
+&gt;       assert controller._resolve_mcp_approval_timeout_seconds() == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/MCP/test_approval_timeout_policy.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x110d6a3c0&gt;
+
+    def _resolve_mcp_approval_timeout_seconds(self) -&gt; float:
+&gt;       return self._interrupt_host._resolve_mcp_approval_timeout_seconds()
+               ^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute '_interrupt_host'
+
+tldw_chatbook/Chat/console_chat_controller.py:15511: AttributeError</failure></testcase><testcase classname="Tests.MCP.test_approval_timeout_policy" name="test_console_and_service_share_approval_timeout_policy[30-30.0]" time="0.001"><failure message="AttributeError: 'ConsoleChatController' object has no attribute '_interrupt_host'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x110d6a210&gt;
+configured = 30, expected = 30.0
+
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [("missing", 0.0), (None, 0.0), ("bad", 0.0), (0, 0.0), (-1, -1.0), (30, 30.0)],
+    )
+    def test_console_and_service_share_approval_timeout_policy(
+        monkeypatch, configured, expected
+    ):
+        """Pin the one approval ceiling policy in both synchronous consumers.
+    
+        Args:
+            monkeypatch: Substitute only the configuration-read boundary.
+            configured: Missing, invalid, nonpositive or positive setting value.
+            expected: Policy value both consumers must resolve.
+        """
+    
+        def setting(section, key, default=None):
+            assert (section, key) == ("mcp", "approval_timeout_seconds")
+            return default if configured == "missing" else configured
+    
+        monkeypatch.setattr(controller_module, "get_cli_setting", setting)
+        monkeypatch.setattr(service_module, "get_cli_setting", setting)
+        controller = controller_module.ConsoleChatController.__new__(
+            controller_module.ConsoleChatController
+        )
+        controller.mcp_approval_timeout_seconds = None
+        service = service_module.UnifiedMCPControlPlaneService(
+            target_store=None, context_store=None, local_service=None, server_service=None
+        )
+&gt;       assert controller._resolve_mcp_approval_timeout_seconds() == expected
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/MCP/test_approval_timeout_policy.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x110e1b260&gt;
+
+    def _resolve_mcp_approval_timeout_seconds(self) -&gt; float:
+&gt;       return self._interrupt_host._resolve_mcp_approval_timeout_seconds()
+               ^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute '_interrupt_host'
+
+tldw_chatbook/Chat/console_chat_controller.py:15511: AttributeError</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,14 @@
+{
+  "head": "d0aba50877540427ff00492b2afcde7c073e63ed",
+  "commit_argv": [
+    "git",
+    "commit",
+    "-m",
+    "refactor(console): place decision and compaction coordination with explicit owners"
+  ],
+  "git_status_porcelain": "",
+  "commit_warnings": [
+    "Existing gc.log reported too many unreachable loose objects; automatic cleanup not performed. No cleanup attempted."
+  ],
+  "source_index_head_writer_released": true
+}

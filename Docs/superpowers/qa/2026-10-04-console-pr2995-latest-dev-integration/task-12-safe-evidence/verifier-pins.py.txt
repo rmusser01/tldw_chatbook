@@ -1,0 +1,19 @@
+import sys,json,hashlib
+sys.path.insert(0,'/private/tmp/pr2995-task12');from run import S,O,dump
+def sha(b):return hashlib.sha256(b).hexdigest()
+pins=json.loads((O/'initial-task9-pins.json').read_text());allpins=dict(pins);groups={'Task9':len(pins)}
+for fn in ['task-10-safe-evidence-map.json','task-11-safe-evidence-manifest.json','task-11-newest-dev-safe-evidence-manifest.json']:
+ v=json.loads((S/fn).read_text());group={}
+ for field in ['files','top_level','preserved_preflight_originals']:
+  for name,row in v.get(field,{}).items():
+   p=row.get('path',name) if isinstance(row,dict) else name;h=row['sha256'] if isinstance(row,dict) else row
+   assert (S/p).is_file(),p
+   assert sha((S/p).read_bytes())==h,p
+   group[p]=h
+ if fn.startswith('task-10'):
+  for key,p in [('freeze_map_sha256','task-10-freeze-map.json'),('report_sha256','task-10-report.md')]:
+   assert sha((S/p).read_bytes())==v[key],p
+   group[p]=v[key]
+ allpins.update(group);allpins[fn]=sha((S/fn).read_bytes());groups[fn]=len(group)
+for p,h in allpins.items():assert sha((S/p).read_bytes())==h,p
+dump('prior-safe-artifact-carry.json',{'groups':groups,'count':len(allpins),'all_exact':True,'pins':allpins});print(groups,len(allpins))

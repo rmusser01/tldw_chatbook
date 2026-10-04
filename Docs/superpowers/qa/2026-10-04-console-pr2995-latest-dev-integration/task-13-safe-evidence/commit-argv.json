@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "git",
+    "-c",
+    "gc.auto=0",
+    "commit",
+    "-m",
+    "style(console): normalize incoming trace-row calls and bank controller headroom"
+  ],
+  "staged_paths": [
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "Tests/Architecture/test_module_size_ratchet.py"
+  ]
+}

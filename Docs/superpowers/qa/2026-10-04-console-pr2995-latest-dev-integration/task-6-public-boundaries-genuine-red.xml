@@ -1,0 +1,578 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="11" skipped="0" tests="18" time="2.247" timestamp="2026-10-03T23:46:41.817698-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-publish-persisted_conversation_id]" time="0.623" /><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-rebind-persisted_conversation_id]" time="0.064" /><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-settings-context_policy_overrides]" time="0.070"><failure message="AssertionError: assert True is False&#10; +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible&#10; +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('2967758e-016a-4896-af1a-723ff7205a18')&#10; +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b709130&gt;.fork_eligibility&#10; +      and   '2967758e-016a-4896-af1a-723ff7205a18' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='2967758e-016a-4896...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b7083e0&gt;
+route = 'settings', field = 'context_policy_overrides', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "new-id")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+&gt;           assert store.fork_eligibility(selected.id).eligible is False
+E           AssertionError: assert True is False
+E            +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible
+E            +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('2967758e-016a-4896-af1a-723ff7205a18')
+E            +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b709130&gt;.fork_eligibility
+E            +      and   '2967758e-016a-4896-af1a-723ff7205a18' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='2967758e-016a-4896...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:71: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-display_name-user_display_name_override]" time="0.059"><failure message="AssertionError: assert True is False&#10; +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible&#10; +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('8d7aa1ac-8362-4a3d-a9d6-15045a56f733')&#10; +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b711130&gt;.fork_eligibility&#10; +      and   '8d7aa1ac-8362-4a3d-a9d6-15045a56f733' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='8d7aa1ac-8362-4a3d...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b70a870&gt;
+route = 'display_name', field = 'user_display_name_override', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "new-id")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+&gt;           assert store.fork_eligibility(selected.id).eligible is False
+E           AssertionError: assert True is False
+E            +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible
+E            +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('8d7aa1ac-8362-4a3d-a9d6-15045a56f733')
+E            +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b711130&gt;.fork_eligibility
+E            +      and   '8d7aa1ac-8362-4a3d-a9d6-15045a56f733' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='8d7aa1ac-8362-4a3d...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:71: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-persona-persona_system_template]" time="0.055"><failure message="AssertionError: assert True is False&#10; +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible&#10; +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('163fe704-a670-44d1-b1a3-bd23854f4331')&#10; +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b7090d0&gt;.fork_eligibility&#10; +      and   '163fe704-a670-44d1-b1a3-bd23854f4331' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='163fe704-a670-44d1...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b708a40&gt;
+route = 'persona', field = 'persona_system_template', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "new-id")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+&gt;           assert store.fork_eligibility(selected.id).eligible is False
+E           AssertionError: assert True is False
+E            +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible
+E            +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('163fe704-a670-44d1-b1a3-bd23854f4331')
+E            +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b7090d0&gt;.fork_eligibility
+E            +      and   '163fe704-a670-44d1-b1a3-bd23854f4331' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='163fe704-a670-44d1...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:71: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-assistant-assistant_name]" time="0.057"><failure message="AssertionError: assert True is False&#10; +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible&#10; +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('3fea8688-bad2-43f0-9a7f-1476918bdf4b')&#10; +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b712d50&gt;.fork_eligibility&#10; +      and   '3fea8688-bad2-43f0-9a7f-1476918bdf4b' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='3fea8688-bad2-43f0...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b70b6b0&gt;
+route = 'assistant', field = 'assistant_name', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "new-id")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+&gt;           assert store.fork_eligibility(selected.id).eligible is False
+E           AssertionError: assert True is False
+E            +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible
+E            +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('3fea8688-bad2-43f0-9a7f-1476918bdf4b')
+E            +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b712d50&gt;.fork_eligibility
+E            +      and   '3fea8688-bad2-43f0-9a7f-1476918bdf4b' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='3fea8688-bad2-43f0...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:71: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-publish-persisted_conversation_id]" time="0.056" /><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-rebind-persisted_conversation_id]" time="0.054" /><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-settings-context_policy_overrides]" time="0.057"><failure message="AssertionError: assert True is False&#10; +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible&#10; +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('eee2e211-42c4-4cdd-9b45-b825b24ddae1')&#10; +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b70a8d0&gt;.fork_eligibility&#10; +      and   'eee2e211-42c4-4cdd-9b45-b825b24ddae1' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='eee2e211-42c4-4cdd...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b709370&gt;
+route = 'settings', field = 'context_policy_overrides', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "new-id")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+&gt;           assert store.fork_eligibility(selected.id).eligible is False
+E           AssertionError: assert True is False
+E            +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible
+E            +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('eee2e211-42c4-4cdd-9b45-b825b24ddae1')
+E            +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b70a8d0&gt;.fork_eligibility
+E            +      and   'eee2e211-42c4-4cdd-9b45-b825b24ddae1' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='eee2e211-42c4-4cdd...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:71: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-display_name-user_display_name_override]" time="0.056"><failure message="AssertionError: assert True is False&#10; +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible&#10; +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('b37281c6-6120-4cae-ac67-885af0e4a1e0')&#10; +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b713320&gt;.fork_eligibility&#10; +      and   'b37281c6-6120-4cae-ac67-885af0e4a1e0' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='b37281c6-6120-4cae...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b70a990&gt;
+route = 'display_name', field = 'user_display_name_override', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "new-id")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+&gt;           assert store.fork_eligibility(selected.id).eligible is False
+E           AssertionError: assert True is False
+E            +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible
+E            +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('b37281c6-6120-4cae-ac67-885af0e4a1e0')
+E            +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b713320&gt;.fork_eligibility
+E            +      and   'b37281c6-6120-4cae-ac67-885af0e4a1e0' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='b37281c6-6120-4cae...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:71: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-persona-persona_system_template]" time="0.060"><failure message="AssertionError: assert True is False&#10; +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible&#10; +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('a3f23090-25f6-4018-ab57-8a0f69fac640')&#10; +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b709490&gt;.fork_eligibility&#10; +      and   'a3f23090-25f6-4018-ab57-8a0f69fac640' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='a3f23090-25f6-4018...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b70a240&gt;
+route = 'persona', field = 'persona_system_template', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "new-id")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+&gt;           assert store.fork_eligibility(selected.id).eligible is False
+E           AssertionError: assert True is False
+E            +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible
+E            +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('a3f23090-25f6-4018-ab57-8a0f69fac640')
+E            +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b709490&gt;.fork_eligibility
+E            +      and   'a3f23090-25f6-4018-ab57-8a0f69fac640' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='a3f23090-25f6-4018...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:71: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-assistant-assistant_name]" time="0.066"><failure message="AssertionError: assert True is False&#10; +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible&#10; +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('269e2c0c-bf08-4c8b-a621-1a5dc89a9350')&#10; +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b713d70&gt;.fork_eligibility&#10; +      and   '269e2c0c-bf08-4c8b-a621-1a5dc89a9350' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='269e2c0c-bf08-4c8b...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b710320&gt;
+route = 'assistant', field = 'assistant_name', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "new-id")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+&gt;           assert store.fork_eligibility(selected.id).eligible is False
+E           AssertionError: assert True is False
+E            +  where True = ConsoleForkEligibility(eligible=True, reason='').eligible
+E            +    where ConsoleForkEligibility(eligible=True, reason='') = fork_eligibility('269e2c0c-bf08-4c8b-a621-1a5dc89a9350')
+E            +      where fork_eligibility = &lt;tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10b713d70&gt;.fork_eligibility
+E            +      and   '269e2c0c-bf08-4c8b-a621-1a5dc89a9350' = ConsoleChatMessage(role=&lt;ConsoleMessageRole.ASSISTANT: 'assistant'&gt;, content='Selected answer', id='269e2c0c-bf08-4c8b...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:71: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_display_name_plan_exact_lease_lifetime[accept]" time="0.063"><failure message="AssertionError: assert (ConsoleRoleplayProjectionPersistencePlan(session_id='68130263-d77a-4bd9-8911-c9488bde10f3', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None) is not None and None is not None)&#10; +  where None = ConsoleRoleplayProjectionPersistencePlan(session_id='68130263-d77a-4bd9-8911-c9488bde10f3', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None).fork_transition_token">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b708a40&gt;
+outcome = 'accept'
+
+    @pytest.mark.parametrize("outcome", ("accept", "abandon", "noop", "stale", "materialize_none", "materialize_error"))
+    def test_display_name_plan_exact_lease_lifetime(monkeypatch, outcome):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        commit = store.commit_console_settings_live(_submission(store, session.id, submission_id="name", model="new"))
+        if outcome == "stale":
+            commit = replace(commit, conversation_binding_revision=-1)
+        if outcome.startswith("materialize_"):
+            def materialize(*args, **kwargs):
+                if outcome == "materialize_error":
+                    raise RuntimeError("projection failed")
+                return None
+            monkeypatch.setattr(store, "_materialize_roleplay_projections_live", materialize)
+        if outcome == "materialize_error":
+            with pytest.raises(RuntimeError, match="projection failed"):
+                store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+        else:
+            _, plan = store.prepare_session_user_display_name_override_for_commit(commit, "Riley" if outcome == "noop" else "Taylor", global_default="Riley")
+            if outcome in {"noop", "stale"}:
+                assert plan is None
+            else:
+&gt;               assert plan is not None and plan.fork_transition_token is not None
+E               AssertionError: assert (ConsoleRoleplayProjectionPersistencePlan(session_id='68130263-d77a-4bd9-8911-c9488bde10f3', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None) is not None and None is not None)
+E                +  where None = ConsoleRoleplayProjectionPersistencePlan(session_id='68130263-d77a-4bd9-8911-c9488bde10f3', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None).fork_transition_token
+
+Tests/Chat/test_console_fork_public_boundaries.py:111: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_display_name_plan_exact_lease_lifetime[abandon]" time="0.063"><failure message="AssertionError: assert (ConsoleRoleplayProjectionPersistencePlan(session_id='0e3c2d33-3383-4255-a138-fded8d6d455a', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None) is not None and None is not None)&#10; +  where None = ConsoleRoleplayProjectionPersistencePlan(session_id='0e3c2d33-3383-4255-a138-fded8d6d455a', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None).fork_transition_token">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b70a540&gt;
+outcome = 'abandon'
+
+    @pytest.mark.parametrize("outcome", ("accept", "abandon", "noop", "stale", "materialize_none", "materialize_error"))
+    def test_display_name_plan_exact_lease_lifetime(monkeypatch, outcome):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        commit = store.commit_console_settings_live(_submission(store, session.id, submission_id="name", model="new"))
+        if outcome == "stale":
+            commit = replace(commit, conversation_binding_revision=-1)
+        if outcome.startswith("materialize_"):
+            def materialize(*args, **kwargs):
+                if outcome == "materialize_error":
+                    raise RuntimeError("projection failed")
+                return None
+            monkeypatch.setattr(store, "_materialize_roleplay_projections_live", materialize)
+        if outcome == "materialize_error":
+            with pytest.raises(RuntimeError, match="projection failed"):
+                store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+        else:
+            _, plan = store.prepare_session_user_display_name_override_for_commit(commit, "Riley" if outcome == "noop" else "Taylor", global_default="Riley")
+            if outcome in {"noop", "stale"}:
+                assert plan is None
+            else:
+&gt;               assert plan is not None and plan.fork_transition_token is not None
+E               AssertionError: assert (ConsoleRoleplayProjectionPersistencePlan(session_id='0e3c2d33-3383-4255-a138-fded8d6d455a', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None) is not None and None is not None)
+E                +  where None = ConsoleRoleplayProjectionPersistencePlan(session_id='0e3c2d33-3383-4255-a138-fded8d6d455a', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None).fork_transition_token
+
+Tests/Chat/test_console_fork_public_boundaries.py:111: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_display_name_plan_exact_lease_lifetime[noop]" time="0.069" /><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_display_name_plan_exact_lease_lifetime[stale]" time="0.066" /><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_display_name_plan_exact_lease_lifetime[materialize_none]" time="0.063"><failure message="AssertionError: assert (ConsoleRoleplayProjectionPersistencePlan(session_id='b5f2e55b-866c-4664-9f89-5ba7a82e283b', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None) is not None and None is not None)&#10; +  where None = ConsoleRoleplayProjectionPersistencePlan(session_id='b5f2e55b-866c-4664-9f89-5ba7a82e283b', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None).fork_transition_token">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10b710230&gt;
+outcome = 'materialize_none'
+
+    @pytest.mark.parametrize("outcome", ("accept", "abandon", "noop", "stale", "materialize_none", "materialize_error"))
+    def test_display_name_plan_exact_lease_lifetime(monkeypatch, outcome):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        commit = store.commit_console_settings_live(_submission(store, session.id, submission_id="name", model="new"))
+        if outcome == "stale":
+            commit = replace(commit, conversation_binding_revision=-1)
+        if outcome.startswith("materialize_"):
+            def materialize(*args, **kwargs):
+                if outcome == "materialize_error":
+                    raise RuntimeError("projection failed")
+                return None
+            monkeypatch.setattr(store, "_materialize_roleplay_projections_live", materialize)
+        if outcome == "materialize_error":
+            with pytest.raises(RuntimeError, match="projection failed"):
+                store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+        else:
+            _, plan = store.prepare_session_user_display_name_override_for_commit(commit, "Riley" if outcome == "noop" else "Taylor", global_default="Riley")
+            if outcome in {"noop", "stale"}:
+                assert plan is None
+            else:
+&gt;               assert plan is not None and plan.fork_transition_token is not None
+E               AssertionError: assert (ConsoleRoleplayProjectionPersistencePlan(session_id='b5f2e55b-866c-4664-9f89-5ba7a82e283b', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None) is not None and None is not None)
+E                +  where None = ConsoleRoleplayProjectionPersistencePlan(session_id='b5f2e55b-866c-4664-9f89-5ba7a82e283b', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None).fork_transition_token
+
+Tests/Chat/test_console_fork_public_boundaries.py:111: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_fork_public_boundaries" name="test_display_name_plan_exact_lease_lifetime[materialize_error]" time="0.066" /></testsuite></testsuites>

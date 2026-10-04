@@ -1,0 +1,8 @@
+{
+  "command": [
+    "python3",
+    "/private/tmp/pr2995-task12/carry.py"
+  ],
+  "result": "Existing worker collector reached ast.TryStar unavailable in system Python; no source/test failure. Retry uses repository .venv Python already used for every pytest and guard invocation.",
+  "source_changed": false
+}

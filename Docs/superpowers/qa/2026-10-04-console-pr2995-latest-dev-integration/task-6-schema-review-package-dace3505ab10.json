@@ -1,0 +1,40 @@
+{
+  "pre_rebase": "392655567f7754a394ea1e7aba8d75e81d2cadb2",
+  "rebase": "07740acdbc4954c594fc6130bb20d0e3730a7207",
+  "old_dev": "f1f80847a410525ce1b00d27ea0e8be824a98422",
+  "dev": "057e62eaec5343ffce9445cfb32881e756dd7634",
+  "source": "dace3505ab10ce1663a59f0e6edb12d42d0ad5e6",
+  "incoming_surface": [
+    "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "tldw_chatbook/DB/recovery_core_schema.py",
+    "tldw_chatbook/DB/recovery_operations.py",
+    "tldw_chatbook/Backup_Recovery/sqlite_validation.py",
+    "tldw_chatbook/DB/migrations/chachanotes_v75_to_v76_notes_fts_undelete_guard.sql",
+    "tldw_chatbook/Evals/recovery.py",
+    "tldw_chatbook/app_entry.py",
+    "tldw_chatbook/cli.py",
+    "tldw_chatbook/Utils/config_encryption.py",
+    "tldw_chatbook/config.py",
+    "tldw_chatbook/Chat/console_session_settings.py",
+    "Tests/Backup_Recovery/test_startup_unlock.py",
+    "Tests/test_config_encryption_lifecycle.py",
+    "Tests/Chat/test_encrypted_api_key_never_sent.py"
+  ],
+  "final_surface": [
+    "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "tldw_chatbook/DB/recovery_core.py",
+    "tldw_chatbook/DB/recovery_core_schema.py",
+    "tldw_chatbook/DB/recovery_operations.py",
+    "tldw_chatbook/Backup_Recovery/sqlite_validation.py",
+    "tldw_chatbook/DB/migrations/chachanotes_v76_to_v77_agent_chat_starts.sql",
+    "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py",
+    "Tests/Backup_Recovery/test_core_owners.py",
+    "Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py",
+    "Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py",
+    "Tests/ChaChaNotesDB/expected_table_columns.py",
+    "backlog/decisions/219-console-chat-destinations-and-bounded-starts.md"
+  ],
+  "package": "task-6-schema-startup-review-dace3505ab10.diff",
+  "bytes": 761245,
+  "sha256": "7fbe1e135d53e97484ba43a7d270dcf9b8a496e2c8f33c28e5a0457fc85b0aa8"
+}

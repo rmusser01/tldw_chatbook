@@ -1,0 +1,7 @@
+...                                                                      [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-session-move-wiring-final.xml -
+============================= slowest 25 durations =============================
+8.85s call     Tests/UI/test_console_controller_wiring.py::test_session_verified_adoption_edges_are_late_bound
+
+(8 durations < 1s hidden.)
+3 passed in 12.78s

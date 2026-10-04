@@ -1,0 +1,6 @@
+import sys,json
+sys.path.insert(0,'/private/tmp/pr2995-task12');from run import W,S,O,PYTHON,run
+m=json.loads((S/'task-12-preflight-overlap-map.json').read_text());paths=[r['path'] for r in m['paths'] if r['path'].endswith('.py') and r['status']!='removed']
+commands=[('index-pins',[PYTHON,'scripts/check_index_plan_pins.py']),('ui-census',[PYTHON,'scripts/check_ui_pr_gate_census.py']),('fatal-ruff',['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff','check','--select','E9,F63,F7,F82',*paths]),('overlay-format',['/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff','format','--check','Tests/MCP/test_approval_timeout_policy.py','tldw_chatbook/Chat/console_chat_store.py','tldw_chatbook/Chat/console_legacy_flat_roots.py']),('source-whitespace',['git','diff','--check','99bd5b13db620435a8824b7599708e85ca8009d9','--',*paths])]
+for name,argv in commands:
+ if run(name,argv):sys.exit(1)

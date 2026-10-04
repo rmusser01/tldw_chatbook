@@ -1,0 +1,40 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-p",
+    "pytest_asyncio.plugin",
+    "-p",
+    "pytest_timeout",
+    "-p",
+    "pytest_mock",
+    "-o",
+    "addopts=",
+    "--timeout=300",
+    "--timeout-method=thread",
+    "-q",
+    "--tb=short",
+    "--basetemp=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fix1-final-cap-giwm60gs/pytest",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fix1-final-cap.xml",
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_controller.py]",
+    "Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Chat/console_chat_controller.py]"
+  ],
+  "exit": 1,
+  "terminated": false,
+  "seconds": 2.6521404159720987,
+  "source_before": {
+    "Tests/Architecture/test_module_size_ratchet.py": "a1a9167e84c25bd2a79b46ef2307498f0b9c2c70424833e18efec41f572bce1a",
+    "Tests/conftest.py": "a065da11e2d3d6b6a5bda42f52e537c7619dc0bee509bf2d5669491c143fa148",
+    "Tests/private_profile.py": "ebf5502df17040c96ca88ff0dc0dd1a166a8870975de760600d9f5aa7af45539",
+    "Tests/real_profile_guard.py": "d27a4023f5c058c417536a693ff1a18892518986ffc99b93d7099f93142b92f1",
+    "tldw_chatbook/Chat/console_chat_controller.py": "8a9b447cdebd826ea310745f84370c0fe5dcade79b8cbdfa9acb4b081186a9e0"
+  },
+  "source_after": {
+    "Tests/Architecture/test_module_size_ratchet.py": "a1a9167e84c25bd2a79b46ef2307498f0b9c2c70424833e18efec41f572bce1a",
+    "Tests/conftest.py": "a065da11e2d3d6b6a5bda42f52e537c7619dc0bee509bf2d5669491c143fa148",
+    "Tests/private_profile.py": "ebf5502df17040c96ca88ff0dc0dd1a166a8870975de760600d9f5aa7af45539",
+    "Tests/real_profile_guard.py": "d27a4023f5c058c417536a693ff1a18892518986ffc99b93d7099f93142b92f1",
+    "tldw_chatbook/Chat/console_chat_controller.py": "8a9b447cdebd826ea310745f84370c0fe5dcade79b8cbdfa9acb4b081186a9e0"
+  }
+}

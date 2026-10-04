@@ -1,0 +1,199 @@
+{
+  "head": "1f315e989d9d9ce164e650381e125096fcecac84",
+  "files": {
+    "task-9-summary-native-qualification-safe-evidence/authorized-edit-overlay.json": {
+      "sha256": "04ffbd864120949dddc255fb90968b67843ee7a5dda88558cd136acce5fca498",
+      "bytes": 361636
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_background_approval_parks_with_badge_and_single_toast.log": {
+      "sha256": "69b6ea1bba4b236d9f3d6cbc28699760858d7562fdf6b50a0d4dabd0c6aaf2b4",
+      "bytes": 444
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_background_approval_parks_with_badge_and_single_toast.xml": {
+      "sha256": "c293ae2f37613e6d062d72d24b0e663bf9afe4def80f596b755b800a66c3b8cc",
+      "bytes": 402
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_background_skill_install_confirm_parks_badges_toasts_and_mounts_on_visit.log": {
+      "sha256": "65a6d24e91d7c546ed7b047e2dc99d105325962d8293d4837255b98e27f6e444",
+      "bytes": 463
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_background_skill_install_confirm_parks_badges_toasts_and_mounts_on_visit.xml": {
+      "sha256": "0770359d3c2ae562d6c9fa9cc639bd2fc74a614af685a2241f1c554e0af46485",
+      "bytes": 421
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on_visit.log": {
+      "sha256": "4ef1c0ba8da9eccefab175ff8a8015befcc9cde77d213bf1f8cbceda0a177fcb",
+      "bytes": 462
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on_visit.xml": {
+      "sha256": "9b2f7ade4de4ef473c93e6a98b1bc23d801050ad20e24906e218670d4140b102",
+      "bytes": 420
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per_call.log": {
+      "sha256": "8505fbd638121cae573d9bd970295c8f234715fa6300add20dcf86cc3f90e2fb",
+      "bytes": 330
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per_call.xml": {
+      "sha256": "3eb6181a23f9664aad5037069f6b1e8ef7bf2a243e0efeae65197738cd97bfee",
+      "bytes": 431
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_compose_local_provider_routes_long_watchlists_work_to_app_coordinator.log": {
+      "sha256": "d407960ee00c9ae00e56a03063ab51cd2a17597c5c3a08af3057793f189e2941",
+      "bytes": 330
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_compose_local_provider_routes_long_watchlists_work_to_app_coordinator.xml": {
+      "sha256": "c9118342cef7c1dd3e8599b67c91aff0407431d9ef8b7f8d241f3d89aa39ebc2",
+      "bytes": 424
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_compose_local_provider_wires_transactional_watchlists_commands.log": {
+      "sha256": "cd641b3ea649d5564bc9a464ffd17c8e26bf25a5f5f60556203c980dd1f6c5c5",
+      "bytes": 330
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_compose_local_provider_wires_transactional_watchlists_commands.xml": {
+      "sha256": "ae1bb637dfb37ff6b12d76afa7988db5e49612794af4b8e5241b95fafa735359",
+      "bytes": 417
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_console_watchlists_real_reads_leave_app_owned_state_unchanged.log": {
+      "sha256": "448744910dd58b7a4c7661d6d64cf564f1f61d47aa336d2ef2b0461606aa4b9e",
+      "bytes": 330
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_console_watchlists_real_reads_leave_app_owned_state_unchanged.xml": {
+      "sha256": "9f9bef643ee5333e978550aba21420fb12b3568e8cd4959cd47c6d27cbfc128e",
+      "bytes": 416
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_mounted_round_survives_switch_away_and_switch_back.log": {
+      "sha256": "cf038ca3f6ed61733990748bed4e5c9f6f6c3ae9e8202aeb59cfc44d7614f848",
+      "bytes": 443
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_mounted_round_survives_switch_away_and_switch_back.xml": {
+      "sha256": "7fe9022ad56a61c8c2d4507a60d8394bee19a99f1bc6ee8728a9563f74d32aba",
+      "bytes": 401
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_needs_approval_tab_marker_click_routes_to_review_action.log": {
+      "sha256": "e1430014490a1ac842cadb537a02cd6583071a14013e7df084ad0a21a8037334",
+      "bytes": 446
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_needs_approval_tab_marker_click_routes_to_review_action.xml": {
+      "sha256": "f25e396feb499c13f3c89917060a8c103a9aeb85016e7a7eb0df1def6ddf8fdc",
+      "bytes": 404
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_new_session_clears_a_mounted_card_from_the_session_being_left.log": {
+      "sha256": "423852845dbfe215bf066e2a92e07703088c48de601a3ecb13a88559ac5e71db",
+      "bytes": 452
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_new_session_clears_a_mounted_card_from_the_session_being_left.xml": {
+      "sha256": "98cca7e19b8f76767c6a720d7c8d1c3b105697023c1d376279631654bfa01b4a",
+      "bytes": 410
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_park_toast_survives_a_viewed_run_completion_re_invocation.log": {
+      "sha256": "dc23dace0d8e942ffafa96715b9baa8cd4d5f8a4c26f04f43119c9180deaff36",
+      "bytes": 448
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_park_toast_survives_a_viewed_run_completion_re_invocation.xml": {
+      "sha256": "ab77de4c59f18f06c3278e70008fb4fe39cba3277a974e8c16d80aab99fecfd2",
+      "bytes": 406
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_skill_install_park_toast_survives_a_re_invocation_for_the_same_round.log": {
+      "sha256": "03691ca7dcbe76580bdd30f659f2ba8d8760d3df698e398bd7d68c9feb978862",
+      "bytes": 459
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_skill_install_park_toast_survives_a_re_invocation_for_the_same_round.xml": {
+      "sha256": "9393dffa9c0a3f6ab95d5c7c8e5d2955dfcdb050175608c3e0d7f42e971dcf0b",
+      "bytes": 417
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_skill_script_park_toast_survives_a_re_invocation_for_the_same_round.log": {
+      "sha256": "7bb223f66e541467f634b7730c914158257e0b6ed1aad724ce7fb9b8d45a63df",
+      "bytes": 458
+    },
+    "task-9-summary-native-qualification-safe-evidence/child-test_skill_script_park_toast_survives_a_re_invocation_for_the_same_round.xml": {
+      "sha256": "55d0425b231ec6986d0ee878e1829421c4adc6ea186522b735b5a0ba5f1a6a46",
+      "bytes": 416
+    },
+    "task-9-summary-native-qualification-safe-evidence/closed-owned-processes.json": {
+      "sha256": "1870f37e9e0891baa52dab9b5cf2c17dcbdc08011f0926efa49dbbdbcd6ad6cd",
+      "bytes": 207
+    },
+    "task-9-summary-native-qualification-safe-evidence/commit-and-clean-status.json": {
+      "sha256": "02396338d3557a5389a073d5b5555c308c05e3e173b045f280ae2aa1a5fa7b8b",
+      "bytes": 735
+    },
+    "task-9-summary-native-qualification-safe-evidence/exact-outcomes.json": {
+      "sha256": "f3d22346686ca4937e9f5e7cf63726c462719a21becea2acd23c5cb89d6a69f6",
+      "bytes": 9597
+    },
+    "task-9-summary-native-qualification-safe-evidence/exact-preservation-map.json": {
+      "sha256": "b1324ce68400eecc06c783bdc310659210810df32e18d0b21a942875c513f875",
+      "bytes": 73138
+    },
+    "task-9-summary-native-qualification-safe-evidence/fatal-ruff-argv.json": {
+      "sha256": "da4bd063be863e2465f43d64c1703271118d1f45d731714a4ea2393dafcee5d2",
+      "bytes": 530
+    },
+    "task-9-summary-native-qualification-safe-evidence/fatal-ruff.log": {
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "bytes": 19
+    },
+    "task-9-summary-native-qualification-safe-evidence/formatter-inheritance.json": {
+      "sha256": "50384e597a99c18f5269ae1ae7d5ab7fae0675c6b09f85e676fd220f658ed4b0",
+      "bytes": 735
+    },
+    "task-9-summary-native-qualification-safe-evidence/green-argv.json": {
+      "sha256": "98d73616041c263a4897d43f504b2445358fbc10cc3900a0b5bb92c2b9ee8316",
+      "bytes": 5012
+    },
+    "task-9-summary-native-qualification-safe-evidence/green-result.json": {
+      "sha256": "2baa91b7a3658694d75b1f398da63ec1658bb2b8545bcffd2bfc22455f65d485",
+      "bytes": 63
+    },
+    "task-9-summary-native-qualification-safe-evidence/green.log": {
+      "sha256": "0a99a87013f33612c3ea5a1b87bc582796e4633b0acf1ddba881339e2a7c23b8",
+      "bytes": 9324
+    },
+    "task-9-summary-native-qualification-safe-evidence/green.xml": {
+      "sha256": "1816439c80b06d6aab572f5dd3dd3da280b26e851e3d48499dba5cdf05060e3f",
+      "bytes": 12145
+    },
+    "task-9-summary-native-qualification-safe-evidence/initial-pins.json": {
+      "sha256": "025f1be0cb017269d3d9a899ad7c5ce9e9364c9a212214ebec91fa46588d0c63",
+      "bytes": 24772
+    },
+    "task-9-summary-native-qualification-safe-evidence/prior-pins-verification.json": {
+      "sha256": "9fa863c0a13630c6d6427ffaa8f4fcca946d2e446b94328334bb615add9c72a5",
+      "bytes": 25173
+    },
+    "task-9-summary-native-qualification-safe-evidence/receipt-notes.json": {
+      "sha256": "92f227cdf45242c976ed0a94963fd3e9249063e04fb8751f048a675e95a68f45",
+      "bytes": 531
+    },
+    "task-9-summary-native-qualification-safe-evidence/red-argv.json": {
+      "sha256": "ac7ff7b5720b506c5dff542858de540ad0f0e197296b03dc45dc92587d34589b",
+      "bytes": 1264
+    },
+    "task-9-summary-native-qualification-safe-evidence/red-result.json": {
+      "sha256": "308a7436f3720a56c4f4a8280c155dc1ea7c744ed70f3b95ea73eba5ff779ecc",
+      "bytes": 63
+    },
+    "task-9-summary-native-qualification-safe-evidence/red.log": {
+      "sha256": "6d0afc719d49a3a70d9c0195389eacaf6a9a05e5dd2cce114197a4468f1cd464",
+      "bytes": 2281
+    },
+    "task-9-summary-native-qualification-safe-evidence/red.xml": {
+      "sha256": "4b509cf479643ca14b02fcf1fd45e78ceb5047a0707c00aa41e5edba263b5b31",
+      "bytes": 1710
+    },
+    "task-9-summary-native-qualification-safe-evidence/video-failure-proposal.json": {
+      "sha256": "9f6090100baa0471780d8a42ef8f5fcceb682345670a5a4b0ddd72f8a1d5e029",
+      "bytes": 2158
+    },
+    "task-9-summary-native-qualification-safe-evidence/whitespace-argv.json": {
+      "sha256": "24bafd2aad6e453f6be1102f16f850aa196d4972934d58638a735242aa09da45",
+      "bytes": 176
+    },
+    "task-9-summary-native-qualification-safe-evidence/whitespace.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  },
+  "original181_pins_unchanged": true,
+  "qualification_complete": false
+}

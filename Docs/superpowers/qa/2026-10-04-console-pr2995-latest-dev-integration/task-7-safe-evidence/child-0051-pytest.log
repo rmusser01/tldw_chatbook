@@ -1,0 +1,394 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_verified_console_adoption_exact_authority_and_compensation[rollback-llama_cpp] _
+
+request = <FixtureRequest for <Coroutine test_verified_console_adoption_exact_authority_and_compensation[rollback-llama_cpp]>>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1137b9e50>
+provider = 'llama_cpp', outcome = 'rollback'
+
+    @pytest.mark.asyncio
+    @private_profile_test
+    @pytest.mark.parametrize("provider", ("llama_cpp", "vllm"))
+    @pytest.mark.parametrize("outcome", ("success", "rollback", "cancel", "stale", "wrong_owner", "wrong_type"))
+    async def test_verified_console_adoption_exact_authority_and_compensation(
+        request, monkeypatch, provider, outcome
+    ):
+        """Reach the real mutation, or prove exact authority rejects it first."""
+        import asyncio
+    
+        app = _console_app()
+        owner, target, channel, intent_type = _verified_console_target(app, provider)
+        config_path = get_cli_config_path()
+        config_before = config_path.read_bytes()
+        async with _ConsoleFlowHarness(app).run_test(size=(120, 42)) as pilot:
+            console = pilot.app.screen
+            await _wait_for_selector(console, pilot, "#console-settings-summary")
+            await pilot.pause(0.3)
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            before = store.session_settings(session_id)
+            conversation_id = store.persist_session_if_needed(session_id)
+            row_before = app.chachanotes_db.get_conversation_by_id(conversation_id)
+            metadata_before = row_before.get("metadata")
+            entered = []
+            original_sync = console._sync_console_chat_core_state
+            cancellation = asyncio.CancelledError("controlled after adoption")
+    
+            def sync_after_adoption():
+                entered.append(store.effective_session_settings(session_id))
+                original_sync()
+                if len(entered) == 1 and outcome == "rollback":
+                    raise RuntimeError("controlled after adoption")
+                if len(entered) == 1 and outcome == "cancel":
+                    raise cancellation
+    
+            monkeypatch.setattr(console, "_sync_console_chat_core_state", sync_after_adoption)
+            app.pending_handoffs.stage(channel, intent_type.from_target(target))
+            if outcome == "stale":
+                owner.invalidate("target_changed")
+            elif outcome == "wrong_owner":
+                other = "vllm" if provider == "llama_cpp" else "llama_cpp"
+                wrong_owner, _, _, _ = _verified_console_target(app, other)
+                attribute = "_llamacpp_connection_owner" if provider == "llama_cpp" else "_vllm_connection_owner"
+                monkeypatch.setattr(app, attribute, wrong_owner)
+            elif outcome == "wrong_type":
+                claim = app.pending_handoffs.claim(channel)
+                # Corrupt only the detached payload, retaining the exact real token
+                # so the production release still proves claim ownership.
+                object.__setattr__(claim, "value", object())
+                monkeypatch.setattr(app.pending_handoffs, "claim", lambda selected: claim if selected is channel else None)
+            consume = (console.consume_pending_llamacpp_console_intent
+                       if provider == "llama_cpp" else console.consume_pending_vllm_console_intent)
+            if outcome == "cancel":
+                with pytest.raises(asyncio.CancelledError) as caught:
+                    consume()
+                assert caught.value is cancellation
+            else:
+                assert consume() is (outcome == "success")
+            target_url = target.base_url if provider == "llama_cpp" else target.api_url
+            if outcome in {"success", "rollback", "cancel"}:
+>               assert entered, "the injected post-adoption boundary was not reached"
+E               AssertionError: the injected post-adoption boundary was not reached
+E               assert []
+
+Tests/UI/test_llamacpp_consumers.py:371: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-04 02:44:39.437 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-04 02:44:39.443 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-04 02:44:39.488 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-04 02:44:39.489 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+----------------------------- Captured stderr call -----------------------------
+2026-10-04 02:44:39.560 | INFO     | tldw_chatbook.app:__init__:1256 - Loaded app_config - strip_thinking_tags: True
+2026-10-04 02:44:39.570 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'notes_service' completed in 0.000s
+2026-10-04 02:44:39.570 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'prompts_service' completed in 0.000s
+2026-10-04 02:44:39.570 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'providers_models' completed in 0.000s
+2026-10-04 02:44:39.570 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'media_db' completed in 0.000s
+2026-10-04 02:44:39.615 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fqzmy2mb/library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-04 02:44:39.661 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fqzmy2mb/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-04 02:44:39.720 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fqzmy2mb/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+2026-10-04 02:44:39.722 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+2026-10-04 02:44:39.722 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fqzmy2mb/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-04 02:44:39.722 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fqzmy2mb/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+2026-10-04 02:44:39.842 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+2026-10-04 02:44:39.881 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+2026-10-04 02:44:39.922 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+2026-10-04 02:44:39.962 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+2026-10-04 02:44:40.002 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+2026-10-04 02:44:40.036 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+2026-10-04 02:44:40.036 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-fqzmy2mb/scheduled_tasks.sqlite [Client: default]
+2026-10-04 02:44:40.058 | DEBUG    | tldw_chatbook.app:__init__:1435 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+2026-10-04 02:44:40.058 | DEBUG    | tldw_chatbook.app:__init__:1438 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+2026-10-04 02:44:40.063 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml
+2026-10-04 02:44:40.109 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:595 - Created EvalsDB schema version 6
+2026-10-04 02:44:40.109 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:232 - EvalsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-resume-red-profile-xcmj72bz/pytest/test_verified_console_adoption2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+2026-10-04 02:44:40.109 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+2026-10-04 02:44:40.123 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+2026-10-04 02:44:40.123 | INFO     | tldw_chatbook.app:_init_worker_handlers:2176 - Worker handler registry initialized with all handlers
+2026-10-04 02:44:40.123 | INFO     | tldw_chatbook.app:__init__:1618 - === STARTUP TIMING SUMMARY ===
+2026-10-04 02:44:40.124 | INFO     | tldw_chatbook.app:__init__:1619 - Total initialization time: 0.595 seconds
+2026-10-04 02:44:40.124 | INFO     | tldw_chatbook.app:__init__:1625 -   basic_init: 0.039s (6.5%)
+2026-10-04 02:44:40.124 | INFO     | tldw_chatbook.app:__init__:1625 -   attribute_init: 0.000s (0.0%)
+2026-10-04 02:44:40.124 | INFO     | tldw_chatbook.app:__init__:1625 -   parallel_init: 0.001s (0.1%)
+2026-10-04 02:44:40.124 | INFO     | tldw_chatbook.app:__init__:1638 -     - notes_service: 0.000s (0.4% of parallel_init)
+2026-10-04 02:44:40.124 | INFO     | tldw_chatbook.app:__init__:1638 -     - media_db: 0.000s (0.3% of parallel_init)
+2026-10-04 02:44:40.124 | INFO     | tldw_chatbook.app:__init__:1638 -     - providers_models: 0.000s (0.2% of parallel_init)
+2026-10-04 02:44:40.124 | INFO     | tldw_chatbook.app:__init__:1638 -     - prompts_service: 0.000s (0.1% of parallel_init)
+2026-10-04 02:44:40.124 | INFO     | tldw_chatbook.app:__init__:1642 - ==============================
+2026-10-04 02:44:40.144 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('chat_defaults',)": ['rag_auto_retrieve_on_send', 'user_display_name', 'provider', 'model', 'system_prompt', 'temperature', 'top_p', 'min_p', 'top_k', 'strip_thinking_tags', 'prune_high_watermark', 'prune_low_watermark', 'transcript_window_lines', 'transcript_scrollback_lines', 'assistant_markdown'], "('api_settings', 'llama_cpp')": ['api_key_env_var', 'api_url', 'model', 'temperature', 'top_p', 'top_k', 'min_p', 'max_tokens', 'timeout', 'retries', 'retry_delay', 'streaming', 'system_prompt'], "('api_settings', 'vllm')": ['api_key_env_var', 'api_url', 'model', 'temperature', 'top_p', 'top_k', 'min_p', 'max_tokens', 'timeout', 'retries', 'retry_delay', 'streaming', 'system_prompt']}, deletes={"('chat_defaults',)": [], "('api_settings', 'llama_cpp')": [], "('api_settings', 'vllm')": []}
+2026-10-04 02:44:40.156 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-resume-red-profile-xcmj72bz/pytest/test_verified_console_adoption2/private-profile-process/profile/config/config.toml
+2026-10-04 02:44:40.158 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+2026-10-04 02:44:40.158 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+2026-10-04 02:44:40.159 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-04 02:44:40.159 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-04 02:44:40.190 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-resume-red-profile-xcmj72bz/pytest/test_verified_console_adoption2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-04 02:44:40.190 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+2026-10-04 02:44:40.191 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+2026-10-04 02:44:40.192 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2885 - Initializing CharactersRAGDB db_sha256=memory [Client ID: test-client]
+2026-10-04 02:44:40.192 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=8494865792
+2026-10-04 02:44:40.192 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+2026-10-04 02:44:40.192 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8152 - Checking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 77
+2026-10-04 02:44:40.192 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:3947 - Applying schema Version 4 for 'rag_char_chat_schema' to DB: db_sha256=memory...
+2026-10-04 02:44:40.192 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.198 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:3988 - [rag_char_chat_schema V4] Full schema script executed.
+2026-10-04 02:44:40.198 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:3995 - [rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: db_sha256=memory.
+2026-10-04 02:44:40.198 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4259 - [task-2451] Default Assistant enrichment UPDATE affected 1 row(s) in DB: db_sha256=memory.
+2026-10-04 02:44:40.198 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4280 - Migrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.198 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.207 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4290 - [rag_char_chat_schema V4→V5] Migration script executed.
+2026-10-04 02:44:40.207 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4299 - [rag_char_chat_schema V4→V5] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.207 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4333 - Migrating schema from V5 to V6 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.207 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.208 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4341 - [rag_char_chat_schema V5→V6] Migration script executed.
+2026-10-04 02:44:40.208 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4350 - [rag_char_chat_schema V5→V6] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.208 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4384 - Migrating schema from V6 to V7 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.208 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.209 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4392 - [rag_char_chat_schema V6→V7] Migration script executed.
+2026-10-04 02:44:40.209 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4401 - [rag_char_chat_schema V6→V7] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.209 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8066 - Migrating schema from V7 to V8 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.209 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.211 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8074 - [rag_char_chat_schema V7→V8] Migration script executed.
+2026-10-04 02:44:40.211 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8083 - [rag_char_chat_schema V7→V8] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.211 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4435 - Migrating schema from V8 to V9 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.211 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.213 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4443 - [rag_char_chat_schema V8→V9] Migration script executed.
+2026-10-04 02:44:40.213 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4452 - [rag_char_chat_schema V8→V9] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.213 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4486 - Migrating schema from V9 to V10 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.213 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.213 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4494 - [rag_char_chat_schema V9→V10] Migration script executed.
+2026-10-04 02:44:40.213 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4503 - [rag_char_chat_schema V9→V10] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.213 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4537 - Migrating schema from V10 to V11 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.213 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.215 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4545 - [rag_char_chat_schema V10→V11] Migration script executed.
+2026-10-04 02:44:40.215 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4554 - [rag_char_chat_schema V10→V11] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.215 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4588 - Migrating schema from V11 to V12 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.215 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.222 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4596 - [rag_char_chat_schema V11→V12] Migration script executed.
+2026-10-04 02:44:40.222 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4605 - [rag_char_chat_schema V11→V12] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.222 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4631 - Migrating schema from V12 to V13 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.222 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.242 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4639 - [rag_char_chat_schema V12→V13] Migration script executed.
+2026-10-04 02:44:40.242 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4647 - [rag_char_chat_schema V12→V13] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.243 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4672 - Migrating schema from V13 to V14 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.243 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.249 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4680 - [rag_char_chat_schema V13→V14] Migration script executed.
+2026-10-04 02:44:40.249 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4688 - [rag_char_chat_schema V13→V14] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.249 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4713 - Migrating schema from V14 to V15 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.249 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.249 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4721 - [rag_char_chat_schema V14→V15] Migration script executed.
+2026-10-04 02:44:40.249 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4729 - [rag_char_chat_schema V14→V15] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.250 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4755 - Migrating schema from V15 to V16 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.250 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.250 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4798 - [rag_char_chat_schema V15→V16] Migration script executed.
+2026-10-04 02:44:40.250 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4808 - [rag_char_chat_schema V15→V16] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.250 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:4834 - Migrating schema from V16 to V17 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.250 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.250 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:4849 - [rag_char_chat_schema V16→V17] Migration script executed.
+2026-10-04 02:44:40.250 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:4857 - [rag_char_chat_schema V16→V17] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.250 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:4885 - Migrating schema from V17 to V18 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.250 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.253 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:4900 - [rag_char_chat_schema V17→V18] Migration script executed.
+2026-10-04 02:44:40.253 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:4908 - [rag_char_chat_schema V17→V18] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.253 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8009 - Migrating schema from V18 to V19 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.253 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.253 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8024 - [rag_char_chat_schema V18→V19] Migration script executed.
+2026-10-04 02:44:40.253 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:8032 - [rag_char_chat_schema V18→V19] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.253 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:4936 - Migrating schema from V19 to V20 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.253 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.256 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:4956 - [rag_char_chat_schema V19→V20] Migration script executed.
+2026-10-04 02:44:40.256 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:4964 - [rag_char_chat_schema V19→V20] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.256 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:4992 - Migrating schema from V20 to V21 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.256 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.256 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_skip_already_applied_add_column:3822 - [rag_char_chat_schema V20→V21] world_book_entries.priority already present; skipping the ADD COLUMN (idempotent replay).
+2026-10-04 02:44:40.256 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5012 - [rag_char_chat_schema V20→V21] Migration script executed.
+2026-10-04 02:44:40.256 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5020 - [rag_char_chat_schema V20→V21] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.256 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5042 - Migrating schema from V21 to V22 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.256 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.257 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_skip_already_applied_add_column:3822 - [rag_char_chat_schema V21→V22] world_book_entries.regex already present; skipping the ADD COLUMN (idempotent replay).
+2026-10-04 02:44:40.257 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5057 - [rag_char_chat_schema V21→V22] Migration script executed.
+2026-10-04 02:44:40.257 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5063 - [rag_char_chat_schema V21→V22] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.257 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5085 - Migrating schema from V22 to V23 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.257 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.257 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5100 - [rag_char_chat_schema V22→V23] Migration script executed.
+2026-10-04 02:44:40.257 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5106 - [rag_char_chat_schema V22→V23] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.257 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5129 - Migrating schema from V23 to V24 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.257 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.259 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5144 - [rag_char_chat_schema V23→V24] Migration script executed.
+2026-10-04 02:44:40.259 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5150 - [rag_char_chat_schema V23→V24] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.259 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5173 - Migrating schema from V24 to V25 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.259 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.259 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5188 - [rag_char_chat_schema V24→V25] Migration script executed.
+2026-10-04 02:44:40.259 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5194 - [rag_char_chat_schema V24→V25] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.259 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5218 - Migrating schema from V25 to V26 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.259 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.263 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5233 - [rag_char_chat_schema V25→V26] Migration script executed.
+2026-10-04 02:44:40.263 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5239 - [rag_char_chat_schema V25→V26] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.263 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.266 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.266 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-04 02:44:40.269 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5426 - Migrating schema from V28 to V29 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.269 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.269 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5441 - [rag_char_chat_schema V28→V29] Migration script executed.
+2026-10-04 02:44:40.269 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5449 - [rag_char_chat_schema V28→V29] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.269 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5476 - Migrating schema from V29 to V30 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.269 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.271 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5496 - [rag_char_chat_schema V29→V30] Migration script executed.
+2026-10-04 02:44:40.271 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5520 - [rag_char_chat_schema V29→V30] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.271 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5547 - Migrating schema from V30 to V31 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.272 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.274 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5567 - [rag_char_chat_schema V30→V31] Migration script executed.
+2026-10-04 02:44:40.274 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5591 - [rag_char_chat_schema V30→V31] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.274 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:5624 - Migrating schema from V31 to V32 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.274 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4259 - [task-2451] Default Assistant enrichment UPDATE affected 0 row(s) in DB: db_sha256=memory.
+2026-10-04 02:44:40.274 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:5650 - [rag_char_chat_schema V31→V32] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.274 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.275 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.278 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.279 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.280 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.283 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.283 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.284 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.284 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.285 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:5970 - Migrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.286 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6034 - [rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.
+2026-10-04 02:44:40.286 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6084 - Migrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.286 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.286 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6223 - [rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.286 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6253 - Migrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.287 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.294 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6293 - [rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.294 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6362 - Actor Pack schema migration started: chachanotes_v44_to_v45
+2026-10-04 02:44:40.295 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.295 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6395 - Actor Pack schema migration completed: chachanotes_v44_to_v45
+2026-10-04 02:44:40.295 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6439 - Migrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.295 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.299 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6485 - [rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=memory. Purged 0 unreachable sync_log row(s) of 1.
+2026-10-04 02:44:40.299 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6527 - Migrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.299 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.299 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6562 - [rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.299 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.304 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:6718 - Migrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.304 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.304 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:6753 - [rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.304 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:6801 - Migrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.304 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.304 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:6835 - [rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=memory.
+2026-10-04 02:44:40.304 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.307 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.315 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:6960 - Migrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=memory...
+2026-10-04 02:44:40.315 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.315 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7025 - [rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=memory (examined 0, compacted 0, skipped 0 unreadable).
+2026-10-04 02:44:40.315 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.319 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.320 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.331 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.332 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.346 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.347 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.348 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.348 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.365 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.369 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.386 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.386 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.390 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-04 02:44:40.390 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-04 02:44:40.391 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.393 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.412 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.413 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.413 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.419 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.431 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.432 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.437 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.438 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.438 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:40.457 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8286 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 77.
+2026-10-04 02:44:40.457 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-04 02:44:40.457 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2908 - CharactersRAGDB initialization completed successfully db_sha256=memory
+2026-10-04 02:44:40.573 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+2026-10-04 02:44:40.603 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+2026-10-04 02:44:40.603 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-04 02:44:40.617 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+2026-10-04 02:44:40.721 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic
+2026-10-04 02:44:40.721 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai
+2026-10-04 02:44:40.721 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere
+2026-10-04 02:44:40.721 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google
+2026-10-04 02:44:40.721 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral
+2026-10-04 02:44:40.721 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai
+2026-10-04 02:44:40.721 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek
+2026-10-04 02:44:40.721 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+2026-10-04 02:44:40.724 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable
+2026-10-04 02:44:40.724 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14128 - No Console workspace context tray available for sync
+2026-10-04 02:44:40.725 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+2026-10-04 02:44:41.011 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6202028032
+2026-10-04 02:44:41.013 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6202028032.
+2026-10-04 02:44:41.023 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6202028032.
+2026-10-04 02:44:41.070 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+2026-10-04 02:44:41.092 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-resume-red-profile-xcmj72bz/pytest/test_verified_console_adoption2/private-profile-process/profile/config/config.toml
+2026-10-04 02:44:41.094 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+2026-10-04 02:44:41.094 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+2026-10-04 02:44:41.095 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-04 02:44:41.096 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-04 02:44:41.134 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-resume-red-profile-xcmj72bz/pytest/test_verified_console_adoption2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-04 02:44:41.134 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+2026-10-04 02:44:41.135 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+2026-10-04 02:44:41.186 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+2026-10-04 02:44:41.199 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6168375296
+2026-10-04 02:44:41.199 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6168375296.
+2026-10-04 02:44:41.208 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6168375296.
+2026-10-04 02:44:41.239 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted
+2026-10-04 02:44:41.240 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+2026-10-04 02:44:41.240 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-04 02:44:41.240 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+2026-10-04 02:44:41.433 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6185201664
+2026-10-04 02:44:41.439 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6185201664.
+2026-10-04 02:44:41.452 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6185201664.
+2026-10-04 02:44:41.455 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6168375296.
+2026-10-04 02:44:41.455 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6168375296.
+2026-10-04 02:44:41.578 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+2026-10-04 02:44:41.578 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-04 02:44:41.579 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+2026-10-04 02:44:41.636 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6185201664.
+2026-10-04 02:44:41.636 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10882 - Listing all active conversations: limit=1000, offset=0
+2026-10-04 02:44:41.637 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): 
+                SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (test-client, 1000, 0)
+2026-10-04 02:44:41.637 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6185201664.
+2026-10-04 02:44:41.637 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3632 - Query execution failed: 
+                SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Error: exception_type=OperationalError
+2026-10-04 02:44:41.637 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10940 - Database error listing all active conversations: exception_type=CharactersRAGDBError
+2026-10-04 02:44:41.637 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_prune_console_rail_preferences:13163 - Console rail preference prune skipped: Query execution failed: no such table: conversations
+2026-10-04 02:44:41.716 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6185201664.
+2026-10-04 02:44:41.723 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6185201664.
+2026-10-04 02:44:41.850 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6202028032.
+2026-10-04 02:44:41.862 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25325 - No collapsible states to restore
+2026-10-04 02:44:41.862 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6202028032.
+2026-10-04 02:44:41.870 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6202028032.
+2026-10-04 02:44:41.871 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6202028032.
+2026-10-04 02:44:42.443 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+2026-10-04 02:44:42.443 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:42.444 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:add_conversation:10681 - Added conversation ID: 6f506e92-35cb-4d64-a31b-c689a396ab5c.
+2026-10-04 02:44:42.444 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 02:44:42.444 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-04 02:44:42.444 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (6f506e92-35cb-4d64-a31b-c689a396ab5c)
+2026-10-04 02:44:42.445 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+2026-10-04 02:44:42.446 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-04 02:44:42.446 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (6f506e92-35cb-4d64-a31b-c689a396ab5c)
+2026-10-04 02:44:42.446 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_consume_verified_console_intent:8143 - vLLM Console handoff will retry (channel=llamacpp_console, revision=1, exception_category=TypeError)
+2026-10-04 02:44:42.469 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+2026-10-04 02:44:42.469 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-04 02:44:42.469 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted
+------------------------------ Captured log call -------------------------------
+INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/model-a, using defaults
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-resume-red-profile-xcmj72bz/pytest/test_verified_console_adoption2/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+2.98s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[rollback-llama_cpp]
+
+(2 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[rollback-llama_cpp]
+1 failed in 4.55s

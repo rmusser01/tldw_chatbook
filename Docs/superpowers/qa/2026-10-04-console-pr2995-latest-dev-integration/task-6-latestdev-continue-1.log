@@ -1,0 +1,260 @@
+Recorded resolution for 'backlog/decisions/README.md'.
+Recorded resolution for 'backlog/docs/lessons-backlog-hygiene.md'.
+[detached HEAD a65799d7aa] Integrate Console bounded chat starts with current dev owners
+ 312 files changed, 36991 insertions(+), 458 deletions(-)
+ create mode 100644 Docs/superpowers/plans/2026-10-02-console-chat-destinations-and-starts.md
+ create mode 100644 Docs/superpowers/plans/2026-10-03-console-baseline-remediation.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/README.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/artifact-source-manifest.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/execution-ledger.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/final-branch-review-full.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/final-branch-review-full.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/final-branch-review.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-approval-receipt.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-baseline-probe.py.txt
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-brief.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-live-case.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-overall-origin.txt
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-report.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-scoped-review.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-static.py.txt
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/final-review-source-manifest.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/fix-approval-review.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/fix-refusal-receipt.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/fix1-recovery-probe.py.txt
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/fix2-recovery-receipt.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baseline-manifest.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/final-fix-format-schema-test.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/final-fix-format.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task1-format-baseline.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-fix1-format-metadata-test.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-fix1-format-queue-ui.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-fix1-format-switcher.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-fix1-format.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-fix2-format.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-format-composer.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-format-extra.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-format-queue-ui.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-format.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/global-constraints.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/initial-review-probes.py.txt
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/live-qualification.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/qualification-receipts.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/rulings.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-branch-review-full.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-branch-review.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-baseline-manifest.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-baseline-probe.py.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-brief.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-live-case.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-overall-origin.txt.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-report.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-scoped-review.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-static.py.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/global-constraints.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/progress.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-1-brief.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-1-report.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-1-review.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-2-brief.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-2-fix1-review.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-2-fix2-review.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-2-report.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-2-review.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/task-1-brief.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/task-1-report.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/task-1-review.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/task-2-brief.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/task-2-fix1-review.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/task-2-fix2-review.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/task-2-initial-review.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/task-2-report.md
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/terminal-captures.txt
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-log-manifest.json
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/baseline-task-1.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/baseline-task-1.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-baseline-manifest.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-baseline-manifest.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-baseline.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-baseline.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-capture-final.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-capture-final.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-capture-green.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-capture-green.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-capture-red.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-capture-red.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-final.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-final.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-fixtures.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-fixtures.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-green.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-green.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-green2.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-green2.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-green3.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-green3.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-overall-base-origin.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-overall-base-origin.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-owners.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-owners.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-red.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-red.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-static-final.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-static-final.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-static-postcommit.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-static-postcommit.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-static.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-static.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task1-final-closure.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task1-final-closure.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-baseline.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-baseline.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-chat-final.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-chat-final.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-final-new-owners.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-final-new-owners.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-final-queue-repair.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-final-queue-repair.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-adapter-barrier.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-adapter-barrier.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-budget-baseline.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-budget-baseline.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-budget-probe.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-budget-probe.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-family-row-green.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-family-row-green.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-final-starts.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-final-starts.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-fixtures-green.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-fixtures-green.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-metadata-green.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-metadata-green.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-mounted-controls-final.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-mounted-controls-final.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-mounted-history-green.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-mounted-history-green.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-no-loop-display-green.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-no-loop-display-green.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-related-owners.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-related-owners.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-static-postcommit.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-static-postcommit.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-final.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-final.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-recovery-green.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-recovery-green.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-recovery-red.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-recovery-red.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-static-final.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-static-final.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-static-postcommit.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-static-postcommit.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-green-human-edit.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-green-human-edit.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-postcommit-ratchets.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-postcommit-ratchets.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-recovery-fixed2.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-recovery-fixed2.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-repaired-ui-clear.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-repaired-ui-clear.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-static-final.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-static-final.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-stop-preview-owners.log
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-stop-preview-owners.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-output.md
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/README.md
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/artifact-source-manifest.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/baseline-node-provenance.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/baseline-nodes.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/format-snapshot-command.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/head-source-match-command.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/owners-green-command.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/ratchet-head-command.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/ratchet-worktree-command.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/recorded-green-command.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/recorded-red-command.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/ruff-head-command.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/ruff-worktree-command.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/whitespace-head-command.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/whitespace-worktree-command.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/controller-static-evidence.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/execution-ledger.md
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/final-review.md
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/format-baseline.json
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/global-constraints.md
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/implementation-sha.txt
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/review-bc2be106f1..1c1a7e3566.diff.txt
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/rulings.md
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/baseline-node-provenance.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/baseline-nodes.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/controller-static-evidence.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/final-review.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/format-baseline.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/format-snapshot-command.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/format-snapshot.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/global-constraints.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/head-source-match-command.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/head-source-match.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/implementation-sha.txt.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/owners-green-command.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/owners-green.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/progress.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ratchet-head-command.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ratchet-head.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ratchet-worktree-command.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ratchet-worktree.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/recorded-green-command.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/recorded-green.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/recorded-red-command.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/recorded-red.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/review-bc2be106f1..1c1a7e3566.diff.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ruff-head-command.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ruff-head.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ruff-worktree-command.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ruff-worktree.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/rulings.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/task-1-brief.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/task-1-report.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/task-1-review.md.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/whitespace-head-command.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/whitespace-head.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/whitespace-worktree-command.json.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/whitespace-worktree.log.gz
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/task-1-brief.md
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/task-1-report.md
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/task-1-review.md
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/format-snapshot.log
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/head-source-match.log
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/owners-green.log
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/ratchet-head.log
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/ratchet-worktree.log
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/recorded-green.log
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/recorded-red.log
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/ruff-head.log
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/ruff-worktree.log
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/whitespace-head.log
+ create mode 100644 Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/whitespace-worktree.log
+ create mode 100644 Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md
+ create mode 100644 Tests/Chat/test_console_chat_start.py
+ create mode 100644 Tests/DB/test_automatic_chat_starts.py
+ create mode 100644 Tests/DB/test_chachanotes_v74_agent_chat_starts_migration.py
+ create mode 100644 Tests/DB/test_chachanotes_v76_agent_chat_starts_migration.py
+ create mode 100644 backlog/decisions/211-console-chat-destinations-and-bounded-starts.md
+ create mode 100644 backlog/tasks/task-33802 - Design-Console-chat-destinations-and-bounded-agent-starts.md
+ create mode 100644 backlog/tasks/task-33804 - Console-shared-automatic-allowances-and-chat-start-attempts.md
+ create mode 100644 backlog/tasks/task-33805 - Console-workspace-or-casual-chats-with-bounded-background-starts.md
+ create mode 100644 backlog/tasks/task-33805.1 - Clear-recorded-Console-baseline-test-failures-before-PR.md
+ create mode 100644 tldw_chatbook/Chat/console_chat_start.py
+ create mode 100644 tldw_chatbook/DB/migrations/agent_runs_v18_to_v19_chat_starts.sql
+ create mode 100644 tldw_chatbook/DB/migrations/agent_runs_v21_to_v22_chat_starts.sql
+ create mode 100644 tldw_chatbook/DB/migrations/chachanotes_v73_to_v74_agent_chat_starts.sql
+ create mode 100644 tldw_chatbook/DB/migrations/chachanotes_v75_to_v76_agent_chat_starts.sql
+Rebasing (3/25)Rebasing (4/25)Rebasing (5/25)Rebasing (6/25)Rebasing (7/25)Rebasing (8/25)Rebasing (9/25)Rebasing (10/25)Rebasing (11/25)Rebasing (12/25)Rebasing (13/25)Rebasing (14/25)Rebasing (15/25)Rebasing (16/25)Rebasing (17/25)Rebasing (18/25)Rebasing (19/25)Rebasing (20/25)Rebasing (21/25)Rebasing (22/25)Rebasing (23/25)Rebasing (24/25)Auto-merging backlog/decisions/README.md
+CONFLICT (content): Merge conflict in backlog/decisions/README.md
+error: could not apply 4a769ebb53... docs(console): allocate ADR219 for bounded chat starts
+hint: Resolve all conflicts manually, mark them as resolved with
+hint: "git add/rm <conflicted_files>", then run "git rebase --continue".
+hint: You can instead skip this commit: run "git rebase --skip".
+hint: To abort and get back to the state before "git rebase", run "git rebase --abort".
+Recorded preimage for 'backlog/decisions/README.md'
+Could not apply 4a769ebb53... docs(console): allocate ADR219 for bounded chat starts

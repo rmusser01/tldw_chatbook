@@ -1,0 +1,25 @@
+{
+  "dev": "f1f80847a410525ce1b00d27ea0e8be824a98422",
+  "files": [
+    {
+      "path": "Tests/UI/test_library_conversation_reader.py",
+      "sha256": "f50371c75237521914637760609e647b44ac979897a0ebe9fb5ae6802efa90c7",
+      "archive_and_current_exact_dev": true
+    },
+    {
+      "path": "Tests/Architecture/test_library_modules_size_ratchet.py",
+      "sha256": "11c189a9403aadc52d906e5385fea7b0ccc22720f9e0c99a91801d3462c74e48",
+      "archive_and_current_exact_dev": true
+    },
+    {
+      "path": "tldw_chatbook/UI/Library_Modules/library_skills_controller.py",
+      "sha256": "d4c5e3c9b64322a983f103a02d3224f0320de9f33f240f56e491a23e291a9f9a",
+      "archive_and_current_exact_dev": true
+    }
+  ],
+  "receipt": "task-6-reader-baseline-red.json",
+  "failures": [
+    "two config raw_source_selection_changed before construction",
+    "Skills3154 versus3142"
+  ]
+}

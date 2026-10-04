@@ -1,0 +1,8 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_textual_worker_contract.py"
+  ],
+  "exit": 0,
+  "seconds": 24.91208183398703
+}

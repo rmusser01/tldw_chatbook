@@ -1,0 +1,24 @@
+{
+  "fix_base": "71cc9db79fd802a0fc1c656f3186c415e2e844a9",
+  "head": "27ee390d57504012c6fb49d5f5256a30abb1609d",
+  "committed_paths": [
+    "Tests/Chat/test_console_fork_transition_census.py"
+  ],
+  "before_sha256": "7ce3f72d56128df2b1de98d57611a15a343c8c2069fdd1e846a616b8c959f7e0",
+  "after_sha256": "b3cdc316c7481385fa0b542a1eb12fad7c14e67df98d25a2affc48b07db9f978",
+  "changed_existing_functions": [
+    "_detached_receiver_before"
+  ],
+  "added_functions": [
+    "test_setattr_on_detached_receiver_still_checks_assigned_message_escape",
+    "test_setattr_publication_invalidates_message_and_alias",
+    "test_setattr_scalar_keeps_unpublished_message_detached"
+  ],
+  "entire_prior_module_AST_exact_after_reversing_declared_changes": true,
+  "all_original_tests_and_route_sets_exact": true,
+  "green_receipt_source_exact_final_commit": true,
+  "review_report_sha256_unchanged": "1aafd3c6c93ae2fc5dc33ed6bbaaa1c9f902918c732c8d8fbca1b061484d0223",
+  "integrated_dev": "f1f80847a410525ce1b00d27ea0e8be824a98422",
+  "observed_shared_dev": "14a14c4a7ab0da85831afb290ab90d75170fbb79",
+  "new_dev_integrated": false
+}

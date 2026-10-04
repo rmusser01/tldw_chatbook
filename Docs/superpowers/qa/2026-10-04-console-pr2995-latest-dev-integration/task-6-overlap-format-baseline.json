@@ -1,0 +1,221 @@
+{
+  "base_ref": "ca2992cb10b24307fbae050643472ffb0a4388e7",
+  "base_sha": "ca2992cb10b24307fbae050643472ffb0a4388e7",
+  "baseline_red_paths": [
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "tldw_chatbook/UI/Console_Modules/prompt_queue.py"
+  ],
+  "files": {
+    "Tests/Architecture/test_persistent_diagnostic_inventory.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "d5589f9e3b67603aa05629c0f0f594741e055d169d6c0b5a211d6d9ceafdcdff"
+    },
+    "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "2349065a2e1e7055a8934e9ff184c57f0df2384588fa5c87e4b7b04e443c7234"
+    },
+    "Tests/Chat/test_message_metadata.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "b81b10e77df2b0d79c5aa9aec0104b75e49cb0973ac461852a99d41bba87321d"
+    },
+    "Tests/DB/test_chachanotes_console_library_policy_migration.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "2329815105198c81cefc2c156816ad9e5e0162272642cd205f19afd81be2181f"
+    },
+    "Tests/DB/test_schema_table_allowlist_guard.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "6bd49d70ce70a2fe99019155f7a5f24a73588375dd08c5036a576f36e1e54102"
+    },
+    "Tests/UI/test_console_launch_wake.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "3a3f622836684ed20acc7e63c89b64c0fb622fcc8d9d20e67fa4de5deed68997"
+    },
+    "Tests/UI/test_console_prompt_queue.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "09ab482ba46c89f23b81e552bdd5ee2aabf4a007d3f7fb3d5d0822e0f9a90ea4"
+    },
+    "Tests/UI/test_console_send_draft_snapshot.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "4b50a3becb9e8ae9445c218d54769f8b30951fde8f7bdd0b018cac4b08129b28"
+    },
+    "Tests/UI/test_console_session_controller.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "2a74b011cf4de33bbc630b0b835c947f9bbd0515bc61014f551e7b614f13a818"
+    },
+    "Tests/UI/test_console_store_continuity.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "49651a2e7796c9b6c37cde396a9284caf0b4a640024d13b5bf753b902398d2cd"
+    },
+    "Tests/Utils/test_egress.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "a8e95a57cdc5835725b099f3e6e06ff807afad2d0c2a24d5853de96e27583886"
+    },
+    "scripts/check_schema_table_allowlist.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "4ac63159ad30997ea27df9cd01a45d5d24479db0c32a257d2f625a0f18ef0fb8"
+    },
+    "tldw_chatbook/Agents/tool_catalog.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "f168b482706b037fe8229b69aba00a43ba21c94cacfb79b4647085c4af9fde8b"
+    },
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "debt_units": 55,
+      "formatter_required": true,
+      "normalized_diff_sha256": "65f157884f784144fa84c58ccb5c5af0255e488a2f198e9dd63881a1a9ae1e4f",
+      "source_hunks": [
+        [
+          12388,
+          12395
+        ],
+        [
+          20686,
+          20696
+        ],
+        [
+          23416,
+          23422
+        ],
+        [
+          23424,
+          23440
+        ],
+        [
+          26820,
+          26831
+        ],
+        [
+          26841,
+          26847
+        ]
+      ],
+      "source_sha256": "fb467f22fdf387ebbe983cb3ed4f990738b602c2199f7f7e7384fdc98c3288ac"
+    },
+    "tldw_chatbook/Chat/console_chat_store.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "522e9a9f641656c5fcaa12300d86abab9fbd07b38324fdec60dd34c34abcd8b1"
+    },
+    "tldw_chatbook/Chat/message_metadata.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "8371345dc430d18603b333cf4a33aba1c01979eb623b0e6cfc9410d5cd516d53"
+    },
+    "tldw_chatbook/DB/AgentRuns_DB.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "af6698ffee95fdf473856161ec56135ea502112b443b01509f8a413faffd8901"
+    },
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "d497b27f5b2a4f6a3aee4a58e4830332407636cc43fcb25ee9369396515d63cc"
+    },
+    "tldw_chatbook/UI/Console_Modules/prompt_queue.py": {
+      "debt_units": 6,
+      "formatter_required": true,
+      "normalized_diff_sha256": "592ebf2c9604c3785bfb2496e6e6d76855859e349d7f3421d642e7302b998c6a",
+      "source_hunks": [
+        [
+          764,
+          771
+        ]
+      ],
+      "source_sha256": "1978799e5197a4f8d9d58036077ac00529c63307bbc8ecce4a60f64f5e77d008"
+    },
+    "tldw_chatbook/UI/Console_Modules/workspace.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "703d4a3a348bd1a446e8c7f224f1ddb7a8b9aa4a8e4bee60331c53bcafc0411d"
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "efa054e475e22bd0d78fa5da88ec7ede2cb7bec65517c326138abe0f5f120b9c"
+    },
+    "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "798d5a8edc486d9c72604393cee563afe7365a3b45448ca2f2b4f2d4afce3a93"
+    }
+  },
+  "generated_at_utc": "2026-10-04T06:07:59.712781+00:00",
+  "paths": [
+    "Tests/Architecture/test_persistent_diagnostic_inventory.py",
+    "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py",
+    "Tests/Chat/test_message_metadata.py",
+    "Tests/DB/test_chachanotes_console_library_policy_migration.py",
+    "Tests/DB/test_schema_table_allowlist_guard.py",
+    "Tests/UI/test_console_launch_wake.py",
+    "Tests/UI/test_console_prompt_queue.py",
+    "Tests/UI/test_console_send_draft_snapshot.py",
+    "Tests/UI/test_console_session_controller.py",
+    "Tests/UI/test_console_store_continuity.py",
+    "Tests/Utils/test_egress.py",
+    "scripts/check_schema_table_allowlist.py",
+    "tldw_chatbook/Agents/tool_catalog.py",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "tldw_chatbook/Chat/console_chat_store.py",
+    "tldw_chatbook/Chat/message_metadata.py",
+    "tldw_chatbook/DB/AgentRuns_DB.py",
+    "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+    "tldw_chatbook/UI/Console_Modules/workspace.py",
+    "tldw_chatbook/UI/Screens/chat_screen.py",
+    "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

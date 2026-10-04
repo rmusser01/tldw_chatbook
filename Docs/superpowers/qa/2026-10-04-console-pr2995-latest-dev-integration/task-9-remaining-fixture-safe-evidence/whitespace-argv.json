@@ -1,0 +1,9 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "argv": [
+    "git",
+    "diff",
+    "--check"
+  ],
+  "recorded_before_execution": true
+}

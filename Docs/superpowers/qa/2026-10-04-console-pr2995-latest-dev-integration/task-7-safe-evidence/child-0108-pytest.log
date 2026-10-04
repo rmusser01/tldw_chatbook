@@ -1,0 +1,7 @@
+.                                                                        [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-final-adoption-profile-u_04joyy/pytest/test_llamacpp_console_adoption0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+4.55s call     Tests/UI/test_llamacpp_consumers.py::test_llamacpp_console_adoption_failure_restores_session_and_requeues
+
+(2 durations < 1s hidden.)
+1 passed in 7.27s

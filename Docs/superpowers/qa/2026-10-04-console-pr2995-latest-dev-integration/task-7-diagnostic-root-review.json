@@ -1,0 +1,18 @@
+{
+  "recorded_head": "1ce569523be10db32d07976e694ead217f6f562b",
+  "qualified_worktree_source_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "0d03c9fe48659de8cad668dd31232b32c657a53c83253147c5ebda25607a6c1f",
+    "tldw_chatbook/UI/Console_Modules/session.py": "87704148cf54df1e5a5a580bbbd96c251a0dedbc5c53af1d55a53112fd70c3e9",
+    "tldw_chatbook/UI/Console_Modules/wiring.py": "739c99681fd8da3dbddeff63e3df51ec27c130143602b708370666697df31063"
+  },
+  "qualification_limit": "Source hashes map exact current worktree bytes; ChatScreen/wiring still differ from recorded HEAD. Initial committed-HEAD hash check refused that misattribution; final commit mapping remains required.",
+  "four_actual_source_statements_checked": true,
+  "all_nonmessage_arguments_AST_equal": true,
+  "logger_warning_owner_and_call_shape_equal": true,
+  "two_fixed_route_literals": {
+    "consume_pending_vllm_console_intent": "vllm",
+    "consume_pending_llamacpp_console_intent": "llama_cpp"
+  },
+  "single_label_assignment": "IfExp(test=Compare(left=Name(id='provider', ctx=Load()), ops=[Eq()], comparators=[Constant(value='vllm')]), body=Constant(value='vLLM'), orelse=Constant(value='llama.cpp'))",
+  "inventory_refresh_scope": "Only declared three owner rows/digests for four moved warnings and wiring format digest; all-other AST multiset proof retained. No sink waiver or arbitrary output field admitted."
+}

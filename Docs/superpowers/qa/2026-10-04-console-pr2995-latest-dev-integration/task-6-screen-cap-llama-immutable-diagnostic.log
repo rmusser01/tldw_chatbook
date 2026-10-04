@@ -1,0 +1,75 @@
+2026-10-04 02:29:08.095 | DEBUG    | tldw_chatbook.config:<module>:116 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-10-04 02:29:08.143 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6933 - Attempting to load CLI config from: /private/tmp/pr2995-task6/modelconfig-df2-baseline/llama-probe-profile-8clorxlz/config/config.toml
+========================================================================
+ Chatbook cannot start: its private storage location is not
+ secure on this machine
+========================================================================
+
+Chatbook stores API keys and other secrets in its config and data
+directories, so it refuses to run from any location that other
+users on this machine could modify. Nothing outside Chatbook's own
+config/data directories was created or changed.
+
+Location it was trying to use: /private/tmp/pr2995-task6/modelconfig-df2-baseline/llama-probe-profile-8clorxlz/config/config.toml
+Blocked by: /private/tmp/pr2995-task6/modelconfig-df2-baseline/llama-probe-profile-8clorxlz
+Reason: missing_parent
+
+HOW TO FIX
+Check the ownership and permissions of every directory on the path
+shown above. On Linux, `namei -l <path>` lists them one line each;
+every directory must belong to root or to you, and must not be
+group- or world-writable (unless it is a sticky directory like /tmp).
+
+ALTERNATIVE
+Keep the directory as it is and point the config elsewhere instead
+(a file inside a directory only you can write):
+
+    TLDW_CONFIG_PATH="$HOME/tldw-config.toml" tldw-cli
+
+If the blocked path above belongs to Chatbook's data storage
+rather than its config, set [paths] data_dir in the config file to
+a private directory instead.
+
+Technical detail for bug reports:
+    unsafe_parent: missing_parent [/private/tmp/pr2995-task6/modelconfig-df2-baseline/llama-probe-profile-8clorxlz]
+Traceback (most recent call last):
+  File "/private/tmp/pr2995-task6/probe-llama-adoption.py", line 5, in <module>
+    from tldw_chatbook.LLM_Management.llamacpp_connection import LlamaCppConnectionOwner,LlamaCppProbeResult
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/LLM_Management/llamacpp_connection.py", line 16, in <module>
+    from tldw_chatbook.Chat.provider_endpoint_contract import resolve_provider_endpoint
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/Chat/__init__.py", line 8, in <module>
+    from .server_chat_conversation_service import ServerChatConversationService
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/Chat/server_chat_conversation_service.py", line 7, in <module>
+    from tldw_chatbook.runtime_policy.bootstrap import (
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/runtime_policy/bootstrap.py", line 12, in <module>
+    from tldw_chatbook.Utils.tls_trust import httpx_verify
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/Utils/tls_trust.py", line 32, in <module>
+    from ..config import get_cli_setting
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/config.py", line 11478, in <module>
+    load_cli_config_and_ensure_existence()
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/config.py", line 7112, in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/Backup_Recovery/config_participants.py", line 422, in wrapped
+    return function(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/config.py", line 7356, in _load_cli_config_bootstrap
+    return _load_cli_config_bootstrap_unlocked(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/Backup_Recovery/config_participants.py", line 422, in wrapped
+    return function(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/config.py", line 6935, in _load_cli_config_bootstrap_unlocked
+    with open_private_binary(config_path) as opened:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py", line 137, in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/Utils/private_paths.py", line 955, in admitted
+    yield from function(path, *args, **kwargs)
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/Utils/private_paths.py", line 1651, in open_private_binary
+    parent_fd, leaf = _open_verified_parent(
+                      ^^^^^^^^^^^^^^^^^^^^^^
+  File "/private/tmp/pr2995-task6/modelconfig-df2-baseline/tldw_chatbook/Utils/private_paths.py", line 495, in _open_verified_parent
+    raise PrivatePathError(
+tldw_chatbook.Utils.private_paths.PrivatePathError: unsafe_parent: missing_parent [/private/tmp/pr2995-task6/modelconfig-df2-baseline/llama-probe-profile-8clorxlz]

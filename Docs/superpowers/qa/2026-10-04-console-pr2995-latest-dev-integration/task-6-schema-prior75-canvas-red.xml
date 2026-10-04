@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="1.110" timestamp="2026-10-04T01:48:08.722307-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Backup_Recovery.test_task6_native76_probe" name="test_prior75_validation_canvas_omission" time="0.981"><failure message="AssertionError: assert ('sqlite_vali...unavailable',) == ()&#10;  &#10;  Left contains one more item: 'sqlite_validation_unavailable'&#10;  Use -v to get more diff">tmp_path = PosixPath('/private/tmp/pr2995-task6/schema-base-392655567f/task-6-schema-prior75-canvas-red/pytest/test_prior75_validation_canvas0')
+
+    def test_prior75_validation_canvas_omission(tmp_path):
+        from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
+        path=tmp_path/"old75.sqlite"
+        with chachanotes_db_at_version(path,75):
+            pass
+        adapter=next(a for a in core_adapters() if a.owner_id=="db.chachanotes.primary")
+        result=validate_candidate(adapter,path,Event(),migrate=False)
+        print(json.dumps({"v75_validation":result}))
+&gt;       assert result==()
+E       AssertionError: assert ('sqlite_vali...unavailable',) == ()
+E         
+E         Left contains one more item: 'sqlite_validation_unavailable'
+E         Use -v to get more diff
+
+Tests/Backup_Recovery/test_task6_native76_probe.py:25: AssertionError</failure></testcase></testsuite></testsuites>

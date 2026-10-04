@@ -1,0 +1,189 @@
+tldw_chatbook/Chat/console_chat_controller.py: 93 -> 71 diagnostic call(s)
+  moved/re-indented only: 0   removed: 22   added: 0
+
+- REMOVED -- these statements no longer exist:
+  - warning 8c47b5404b5f2dbc (was line 3405)
+      | logger.opt(exception=True).warning(
+      |     "build_tool_review_hook: kill-switch read failed; "
+      |     "refusing this turn's tool calls"
+      | )
+  - warning f18e7f897f027535 (was line 4099)
+      | logger.opt(exception=True).warning(
+      |     "combined review_tool_calls: a provider hook raised; "
+      |     "running remaining hooks so their entry clears still fire"
+      | )
+  - debug fc41591ca2512335 (was line 7441)
+      | logger.debug(
+      |     "Console attention refresh failed (exception_type={})",
+      |     type(exc).__name__,
+      | )
+  - warning a12399aeeba97e93 (was line 16319)
+      | logger.warning(
+      |     "Console tool approval display could not be updated ({})",
+      |     type(exc).__name__,
+      | )
+  - debug 173fe19c4dc489ac (was line 16401)
+      | logger.opt(exception=True).debug(
+      |     "Failed to record cancelled MCP approval decision"
+      | )
+  - debug 48767061715ed659 (was line 16496)
+      | logger.debug("permission summary thread spawn failed")
+  - debug 5e780a0fe4bf46f8 (was line 17282)
+      | logger.opt(exception=True).debug("Console attention marshal failed")
+  - debug 26109e6891d94777 (was line 17363)
+      | logger.debug("Detached approval notice could not be delivered")
+  - debug 26109e6891d94777 (was line 17426)
+      | logger.debug("Detached approval notice could not be delivered")
+  - debug 5a2d35d56aa86315 (was line 17365)
+      | logger.debug(
+      |     "Detached approval notice raised (exception_type={})",
+      |     type(exc).__name__,
+      | )
+  - debug 5c9c9b113a4d1f32 (was line 17429)
+      | logger.debug(
+      |     "Detached approval notice raised (exception_type={})",
+      |     type(exc).__name__,
+      | )
+  - info f221c3155d39fcd6 (was line 18881)
+      | logger.info("Revoked pending approval rounds for cancelled run")
+  - debug 0c112784afec1f29 (was line 18928)
+      | logger.debug("Failed to remount after raw shell revocation")
+  - info 0f7b183ff7dd064e (was line 18930)
+      | logger.info("Revoked pending raw shell approval rounds on disarm")
+  - debug b2bdf51c3e71bc35 (was line 19564)
+      | logger.opt(exception=True).debug(
+      |     "chat-create confirm fork enrichment degraded; "
+      |     "card omits the fork line"
+      | )
+  - debug 8e1b6b653389267b (was line 19583)
+      | logger.opt(exception=True).debug(
+      |     "chat-create confirm payload enrichment degraded"
+      | )
+  - debug ebe27efba086daae (was line 20475)
+      | logger.opt(exception=True).debug(
+      |     "Failed to marshal chat-create remount during teardown"
+      | )
+  - warning 5e9a67e088d6ce2c (was line 28205)
+      | logger.warning(
+      |     "Console compaction hold assessment unavailable; "
+      |     "exception_type={}",
+      |     type(exc).__name__,
+      | )
+  - info d4aaf854a53c5ab3 (was line 28503)
+      | logger.info("console_context_policy_decision")
+  - info 069f0d13f6f283e4 (was line 28588)
+      | logger.info("console_visual_compaction_prepared")
+  - info 90dedc9780f25226 (was line 28599)
+      | logger.info("console_visual_compaction_fell_back_to_text")
+  - info 90dedc9780f25226 (was line 28816)
+      | logger.info("console_visual_compaction_fell_back_to_text")
+
+tldw_chatbook/Chat/console_interrupt_rounds.py: 4 -> 21 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 17
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + debug c7f2cd6a18365f10 (now line 1425)
+      | self.read_global_logger().debug(
+      |     "Detached approval notice could not be delivered"
+      | )
+  + debug 341e0e5acd4231ca (now line 1429)
+      | self.read_global_logger().debug(
+      |     "Detached approval notice raised (exception_type={})",
+      |     type(exc).__name__,
+      | )
+  + debug 8d707eb8c403206a (now line 1490)
+      | self.read_global_logger().debug(
+      |     "Detached approval notice could not be delivered"
+      | )
+  + debug 0f3a39b5a948043c (now line 1495)
+      | self.read_global_logger().debug(
+      |     "Detached approval notice raised (exception_type={})",
+      |     type(exc).__name__,
+      | )
+  + debug a44ec204434c5868 (now line 1811)
+      | self.read_global_logger().opt(exception=True).debug(
+      |     "chat-create confirm fork enrichment degraded; "
+      |     "card omits the fork line"
+      | )
+  + debug 684980667cd6bc1e (now line 1830)
+      | self.read_global_logger().opt(exception=True).debug(
+      |     "chat-create confirm payload enrichment degraded"
+      | )
+  + debug fd2b09b22d5cf633 (now line 2141)
+      | self.read_global_logger().debug("permission summary thread spawn failed")
+  + debug 602a9808b1a87298 (now line 2388)
+      | self.read_global_logger().debug(
+      |     "Console attention refresh failed (exception_type={})",
+      |     type(exc).__name__,
+      | )
+  + debug 0ae84015dbc9fb20 (now line 2486)
+      | self.read_global_logger().opt(exception=True).debug(
+      |     "Failed to record cancelled MCP approval decision"
+      | )
+  + debug 6bf8ece0e6f2f996 (now line 3237)
+      | self.read_global_logger().opt(exception=True).debug(
+      |     "Console attention marshal failed"
+      | )
+  + debug acafe0d913688a14 (now line 3788)
+      | self.read_global_logger().opt(exception=True).debug(
+      |     "Failed to marshal chat-create remount during teardown"
+      | )
+  + warning b0bc21b1fadf0fd8 (now line 4124)
+      | self.read_global_logger().warning(
+      |     "Console tool approval display could not be updated ({})",
+      |     type(exc).__name__,
+      | )
+  + info 175bb49e858e8642 (now line 5008)
+      | self.read_global_logger().info(
+      |     "Revoked pending approval rounds for cancelled run"
+      | )
+  + debug 610c8c76980cf8aa (now line 5059)
+      | self.read_global_logger().debug(
+      |     "Failed to remount after raw shell revocation"
+      | )
+  + info 218e56bae3b50cba (now line 5063)
+      | self.read_global_logger().info(
+      |     "Revoked pending raw shell approval rounds on disarm"
+      | )
+  + warning e3735367f9d76319 (now line 5449)
+      | read_global_logger().opt(exception=True).warning(
+      |     "combined review_tool_calls: a provider hook raised; "
+      |     "running remaining hooks so their entry clears still fire"
+      | )
+  + warning dc3e29b6c78b1f44 (now line 6038)
+      | read_global_logger().opt(exception=True).warning(
+      |     "build_tool_review_hook: kill-switch read failed; "
+      |     "refusing this turn's tool calls"
+      | )
+
+tldw_chatbook/Chat/console_context_compaction.py: 16 -> 21 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 5
+
++ ADDED -- read each one: does it interpolate user content, a secret, a path, or a URL?
+  + info a6671772b3487acf (now line 3607)
+      | self.read_global_logger().info("console_context_policy_decision")
+  + info f6d564a697234fce (now line 3700)
+      | self.read_global_logger().info("console_visual_compaction_prepared")
+  + info adeea0a4246859ed (now line 3715)
+      | self.read_global_logger().info(
+      |     "console_visual_compaction_fell_back_to_text"
+      | )
+  + info a59d80d94c77d384 (now line 3945)
+      | self.read_global_logger().info(
+      |     "console_visual_compaction_fell_back_to_text"
+      | )
+  + warning 1ec43fca403f4b04 (now line 4048)
+      | self.read_global_logger().warning(
+      |     "Console compaction hold assessment unavailable; exception_type={}",
+      |     type(exc).__name__,
+      | )
+
+tldw_chatbook/UI/Console_Modules/session.py: 28 -> 28 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 0
+
+no diagnostic statement changed in this file between the two revisions. If the pin still lists it, the pin was already stale when it was committed -- widen the base revision.
+
+tldw_chatbook/UI/Screens/chat_screen.py: 122 -> 122 diagnostic call(s)
+  moved/re-indented only: 0   removed: 0   added: 0
+
+no diagnostic statement changed in this file between the two revisions. If the pin still lists it, the pin was already stale when it was committed -- widen the base revision.

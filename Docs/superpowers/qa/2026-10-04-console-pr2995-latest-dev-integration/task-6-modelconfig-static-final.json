@@ -1,0 +1,51 @@
+{
+  "head": "6323ff208b523496dd29341fccb49e023a2ca1b5",
+  "source_hashes": {
+    "Tests/Chat/test_console_provider_gateway.py": "eda82579a453368eacb80765163de08eacfa67bf2621c2e31aa92cea63a6a6c7",
+    "Tests/UI/test_console_native_chat_flow.py": "d5f2231c87c8a4dc5d476d15ad47c35467b1c82ee15bb2f0119ebc3b069822a7"
+  },
+  "results": [
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "Tests/Chat/test_console_provider_gateway.py",
+        "Tests/UI/test_console_native_chat_flow.py"
+      ],
+      "exit": 0,
+      "stdout": "All checks passed!\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "Tests/Chat/test_console_provider_gateway.py",
+        "Tests/UI/test_console_native_chat_flow.py"
+      ],
+      "exit": 0,
+      "stdout": "2 files already formatted\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "--",
+        "Tests/Chat/test_console_provider_gateway.py",
+        "Tests/UI/test_console_native_chat_flow.py"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ]
+}

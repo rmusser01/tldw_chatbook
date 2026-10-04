@@ -1,0 +1,22 @@
+[
+  {
+    "file": "Docs/User_Guide/console/agent-runs-and-tools.md",
+    "chunks": 1
+  },
+  {
+    "file": "Tests/Chat/test_console_chat_create_confirm.py",
+    "chunks": 1
+  },
+  {
+    "file": "Tests/Chat/test_console_chat_create_integration.py",
+    "chunks": 1
+  },
+  {
+    "file": "backlog/docs/lessons-testing-evidence.md",
+    "chunks": 1
+  },
+  {
+    "file": "tldw_chatbook/Chat/console_chat_controller.py",
+    "chunks": 2
+  }
+]

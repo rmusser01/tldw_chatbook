@@ -1,0 +1,19 @@
+from common import *
+O.mkdir(exist_ok=False)
+assert not git('status','--porcelain').strip()
+head=git('rev-parse','HEAD').decode().strip();assert head.startswith(BASE)
+pins=dict(json.loads((S/'task-12-root-handoff-verification.json').read_text())['pins'])
+for name in ['task-12-safe-evidence-manifest.json','task-9-root-final-loading-safe-evidence-manifest.json']:
+ d=json.loads((S/name).read_text())
+ for field in ['files','top_level']:
+  for p,h in d.get(field,{}).items():pins[p]=h['sha256'] if isinstance(h,dict) else h
+for name in ['task-12-root-handoff-verification.json','task-12-safe-evidence-manifest.json','task-12-report.md','task-9-root-final-loading-safe-evidence-manifest.json','task-9-root-final-loading-report.md','task-9-root-final-loading-authorized-selection.json','task-13-brief.md','task-13-preflight-report.md','task-13-preflight-selection.json']:pins[name]=sha((S/name).read_bytes())
+for p,h in pins.items():assert sha((S/p).read_bytes())==h,p
+dump('initial-safe-artifact-pins.json',pins)
+dump('initial-tree-map.json',{'head':head,'old':OLD,'new':NEW,'source':SOURCE,'trees':{r:tree(r) for r in [head,OLD,NEW,SOURCE]}})
+ref='refs/heads/codex/pr2995-task13-recovery-862c2eaa80';git('update-ref',ref,head)
+bundle='/private/tmp/pr2995-task13/recovery-862c2eaa80.bundle';git('bundle','create',bundle,ref,'^'+OLD)
+r=subprocess.run(['git','-c','gc.auto=0','bundle','verify',bundle],cwd=W,capture_output=True,text=True);assert r.returncode==0
+(O/'recovery-verify.log').write_text(r.stdout+r.stderr)
+dump('recovery.json',{'head':head,'ref':ref,'bundle':bundle,'sha256':sha(pathlib.Path(bundle).read_bytes()),'safe_pin_count':len(pins)})
+print('Pinned',head,'safe artifacts',len(pins))

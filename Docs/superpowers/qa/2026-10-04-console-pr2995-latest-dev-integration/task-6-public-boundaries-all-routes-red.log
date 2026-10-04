@@ -1,0 +1,829 @@
+FFFFFFFFFFFF                                                             [100%]
+=================================== FAILURES ===================================
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-publish-persisted_conversation_id] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c561070>
+route = 'publish', field = 'persisted_conversation_id', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, persistence, session, _, _, _, selected, _ = _fork_store(durable=route in {"publish", "rebind"})
+        if route == "publish":
+            session.persisted_conversation_id = None
+        if route == "rebind":
+            persistence.active_leaf_by_conversation["new-id"] = persistence.active_leaf_by_conversation["conversation-1"]
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "conversation-1")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+>           assert store.fork_eligibility(selected.id).reason == "Console fork source is changing; retry after the update finishes."
+E           AssertionError: assert '' == 'Console fork...ate finishes.'
+E             
+E             - Console fork source is changing; retry after the update finishes.
+
+Tests/Chat/test_console_fork_public_boundaries.py:75: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 23:48:51.811 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-03 23:48:51.885 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-03 23:48:51.963 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-03 23:48:51.965 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-rebind-persisted_conversation_id] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c579820>
+route = 'rebind', field = 'persisted_conversation_id', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, persistence, session, _, _, _, selected, _ = _fork_store(durable=route in {"publish", "rebind"})
+        if route == "publish":
+            session.persisted_conversation_id = None
+        if route == "rebind":
+            persistence.active_leaf_by_conversation["new-id"] = persistence.active_leaf_by_conversation["conversation-1"]
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "conversation-1")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+>           assert store.fork_eligibility(selected.id).reason == "Console fork source is changing; retry after the update finishes."
+E           AssertionError: assert '' == 'Console fork...ate finishes.'
+E             
+E             - Console fork source is changing; retry after the update finishes.
+
+Tests/Chat/test_console_fork_public_boundaries.py:75: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-settings-context_policy_overrides] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c368f20>
+route = 'settings', field = 'context_policy_overrides', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, persistence, session, _, _, _, selected, _ = _fork_store(durable=route in {"publish", "rebind"})
+        if route == "publish":
+            session.persisted_conversation_id = None
+        if route == "rebind":
+            persistence.active_leaf_by_conversation["new-id"] = persistence.active_leaf_by_conversation["conversation-1"]
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "conversation-1")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+>           assert store.fork_eligibility(selected.id).reason == "Console fork source is changing; retry after the update finishes."
+E           AssertionError: assert '' == 'Console fork...ate finishes.'
+E             
+E             - Console fork source is changing; retry after the update finishes.
+
+Tests/Chat/test_console_fork_public_boundaries.py:75: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-display_name-user_display_name_override] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c36a420>
+route = 'display_name', field = 'user_display_name_override', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, persistence, session, _, _, _, selected, _ = _fork_store(durable=route in {"publish", "rebind"})
+        if route == "publish":
+            session.persisted_conversation_id = None
+        if route == "rebind":
+            persistence.active_leaf_by_conversation["new-id"] = persistence.active_leaf_by_conversation["conversation-1"]
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "conversation-1")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+>           assert store.fork_eligibility(selected.id).reason == "Console fork source is changing; retry after the update finishes."
+E           AssertionError: assert '' == 'Console fork...ate finishes.'
+E             
+E             - Console fork source is changing; retry after the update finishes.
+
+Tests/Chat/test_console_fork_public_boundaries.py:75: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-persona-persona_system_template] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c3698b0>
+route = 'persona', field = 'persona_system_template', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, persistence, session, _, _, _, selected, _ = _fork_store(durable=route in {"publish", "rebind"})
+        if route == "publish":
+            session.persisted_conversation_id = None
+        if route == "rebind":
+            persistence.active_leaf_by_conversation["new-id"] = persistence.active_leaf_by_conversation["conversation-1"]
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "conversation-1")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+>           assert store.fork_eligibility(selected.id).reason == "Console fork source is changing; retry after the update finishes."
+E           AssertionError: assert '' == 'Console fork...ate finishes.'
+E             
+E             - Console fork source is changing; retry after the update finishes.
+
+Tests/Chat/test_console_fork_public_boundaries.py:75: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-assistant-assistant_name] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c497530>
+route = 'assistant', field = 'assistant_name', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, persistence, session, _, _, _, selected, _ = _fork_store(durable=route in {"publish", "rebind"})
+        if route == "publish":
+            session.persisted_conversation_id = None
+        if route == "rebind":
+            persistence.active_leaf_by_conversation["new-id"] = persistence.active_leaf_by_conversation["conversation-1"]
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "conversation-1")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+>           assert store.fork_eligibility(selected.id).reason == "Console fork source is changing; retry after the update finishes."
+E           AssertionError: assert '' == 'Console fork...ate finishes.'
+E             
+E             - Console fork source is changing; retry after the update finishes.
+
+Tests/Chat/test_console_fork_public_boundaries.py:75: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-publish-persisted_conversation_id] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c36c650>
+route = 'publish', field = 'persisted_conversation_id', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, persistence, session, _, _, _, selected, _ = _fork_store(durable=route in {"publish", "rebind"})
+        if route == "publish":
+            session.persisted_conversation_id = None
+        if route == "rebind":
+            persistence.active_leaf_by_conversation["new-id"] = persistence.active_leaf_by_conversation["conversation-1"]
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "conversation-1")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+>           assert store.fork_eligibility(selected.id).reason == "Console fork source is changing; retry after the update finishes."
+E           AssertionError: assert '' == 'Console fork...ate finishes.'
+E             
+E             - Console fork source is changing; retry after the update finishes.
+
+Tests/Chat/test_console_fork_public_boundaries.py:75: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-rebind-persisted_conversation_id] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cbab6e0>
+route = 'rebind', field = 'persisted_conversation_id', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, persistence, session, _, _, _, selected, _ = _fork_store(durable=route in {"publish", "rebind"})
+        if route == "publish":
+            session.persisted_conversation_id = None
+        if route == "rebind":
+            persistence.active_leaf_by_conversation["new-id"] = persistence.active_leaf_by_conversation["conversation-1"]
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "conversation-1")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+>           assert store.fork_eligibility(selected.id).reason == "Console fork source is changing; retry after the update finishes."
+E           AssertionError: assert '' == 'Console fork...ate finishes.'
+E             
+E             - Console fork source is changing; retry after the update finishes.
+
+Tests/Chat/test_console_fork_public_boundaries.py:75: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-settings-context_policy_overrides] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cbab110>
+route = 'settings', field = 'context_policy_overrides', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, persistence, session, _, _, _, selected, _ = _fork_store(durable=route in {"publish", "rebind"})
+        if route == "publish":
+            session.persisted_conversation_id = None
+        if route == "rebind":
+            persistence.active_leaf_by_conversation["new-id"] = persistence.active_leaf_by_conversation["conversation-1"]
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "conversation-1")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+>           assert store.fork_eligibility(selected.id).reason == "Console fork source is changing; retry after the update finishes."
+E           AssertionError: assert '' == 'Console fork...ate finishes.'
+E             
+E             - Console fork source is changing; retry after the update finishes.
+
+Tests/Chat/test_console_fork_public_boundaries.py:75: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-display_name-user_display_name_override] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cbab260>
+route = 'display_name', field = 'user_display_name_override', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, persistence, session, _, _, _, selected, _ = _fork_store(durable=route in {"publish", "rebind"})
+        if route == "publish":
+            session.persisted_conversation_id = None
+        if route == "rebind":
+            persistence.active_leaf_by_conversation["new-id"] = persistence.active_leaf_by_conversation["conversation-1"]
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "conversation-1")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+>           assert store.fork_eligibility(selected.id).reason == "Console fork source is changing; retry after the update finishes."
+E           AssertionError: assert '' == 'Console fork...ate finishes.'
+E             
+E             - Console fork source is changing; retry after the update finishes.
+
+Tests/Chat/test_console_fork_public_boundaries.py:75: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-persona-persona_system_template] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cbab710>
+route = 'persona', field = 'persona_system_template', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, persistence, session, _, _, _, selected, _ = _fork_store(durable=route in {"publish", "rebind"})
+        if route == "publish":
+            session.persisted_conversation_id = None
+        if route == "rebind":
+            persistence.active_leaf_by_conversation["new-id"] = persistence.active_leaf_by_conversation["conversation-1"]
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "conversation-1")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+>           assert store.fork_eligibility(selected.id).reason == "Console fork source is changing; retry after the update finishes."
+E           AssertionError: assert '' == 'Console fork...ate finishes.'
+E             
+E             - Console fork source is changing; retry after the update finishes.
+
+Tests/Chat/test_console_fork_public_boundaries.py:75: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-assistant-assistant_name] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cbaad80>
+route = 'assistant', field = 'assistant_name', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, persistence, session, _, _, _, selected, _ = _fork_store(durable=route in {"publish", "rebind"})
+        if route == "publish":
+            session.persisted_conversation_id = None
+        if route == "rebind":
+            persistence.active_leaf_by_conversation["new-id"] = persistence.active_leaf_by_conversation["conversation-1"]
+        other = _other_selection(store, session.settings)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+        assert store.fork_eligibility(other.id).eligible
+        entered, release = Event(), Event()
+        errors, results = [], []
+        original = type(session).__setattr__
+    
+        def publish_then_pause(target, name, value):
+            original(target, name, value)
+            if target is session and name == field:
+                entered.set()
+                assert release.wait(5), "mutation was not released"
+                if fail:
+                    raise RuntimeError("controlled publication failure")
+    
+        monkeypatch.setattr(type(session), "__setattr__", publish_then_pause)
+    
+        def mutate():
+            try:
+                if route == "publish":
+                    result = store.publish_first_persisted_conversation(session.id, "conversation-1")
+                elif route == "rebind":
+                    result = store.rebind_persisted_conversation(session.id, "new-id")
+                elif route == "settings":
+                    result = store.commit_console_settings_live(submission)
+                elif route == "display_name":
+                    result = store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+                elif route == "persona":
+                    result = store.seed_persona_roleplay(session.id, system_template="Help {{user}}", global_default="Riley")
+                else:
+                    result = store.set_session_assistant_name(session.id, "Nova", global_default="Riley")
+                results.append(result)
+            except BaseException as error:
+                errors.append(error)
+    
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert entered.wait(5), errors
+>           assert store.fork_eligibility(selected.id).reason == "Console fork source is changing; retry after the update finishes."
+E           AssertionError: assert '' == 'Console fork...ate finishes.'
+E             
+E             - Console fork source is changing; retry after the update finishes.
+
+Tests/Chat/test_console_fork_public_boundaries.py:75: AssertionError
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-public-boundaries-all-routes-red.xml -
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-publish-persisted_conversation_id]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-rebind-persisted_conversation_id]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-settings-context_policy_overrides]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-display_name-user_display_name_override]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-persona-persona_system_template]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-assistant-assistant_name]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-publish-persisted_conversation_id]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-rebind-persisted_conversation_id]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-settings-context_policy_overrides]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-display_name-user_display_name_override]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-persona-persona_system_template]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-assistant-assistant_name]
+12 failed, 13 deselected in 1.32s

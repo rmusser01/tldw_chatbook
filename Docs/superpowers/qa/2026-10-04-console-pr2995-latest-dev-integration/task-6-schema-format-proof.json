@@ -1,0 +1,83 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "ruff",
+    "format",
+    "tldw_chatbook/Backup_Recovery/sqlite_validation.py",
+    "tldw_chatbook/DB/ChaChaNotes_DB.py",
+    "tldw_chatbook/DB/recovery_core.py",
+    "tldw_chatbook/DB/recovery_core_schema.py",
+    "tldw_chatbook/DB/recovery_operations.py",
+    "Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py",
+    "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py",
+    "Tests/Backup_Recovery/test_core_owners.py",
+    "Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py",
+    "Tests/ChaChaNotesDB/expected_table_columns.py"
+  ],
+  "exit": 0,
+  "stdout": "9 files reformatted, 1 file left unchanged\n",
+  "stderr": "",
+  "paths": [
+    {
+      "path": "tldw_chatbook/Backup_Recovery/sqlite_validation.py",
+      "before": "eea4b8c2f958403211577033832bef2a97ac063045de5ddd6941a5b234b827c8",
+      "after": "1b9ee82597309ea4aba37994af92c7adf966a50daa2a5af3a442d897422e1603",
+      "ast_equal": true
+    },
+    {
+      "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
+      "before": "e33eec2ae91194513801268ee8177035a2fd329c30214ce9b8f0efa7109969aa",
+      "after": "767340dc64c0cb108bc0f319ceb21af2b35a987700c43a2265648136cf4d8dc2",
+      "ast_equal": true
+    },
+    {
+      "path": "tldw_chatbook/DB/recovery_core.py",
+      "before": "fd16c5e645078a318df5f7ca6b5b8eb0a154d756047e87454d63996d9eaa1992",
+      "after": "1a64c587f4058db9eef15e71e39d565cfc67cf8617544724aef8807b67418f34",
+      "ast_equal": true
+    },
+    {
+      "path": "tldw_chatbook/DB/recovery_core_schema.py",
+      "before": "bdb7f6cbf245d43c423a48ba1739a696796ee079db4fe1643ea12ee6177947a4",
+      "after": "fde105e1e5df9d4789d72f45a2f9ab18ebb76c6d8914a58e08be0f6ff09014f7",
+      "ast_equal": true
+    },
+    {
+      "path": "tldw_chatbook/DB/recovery_operations.py",
+      "before": "dabde70169e5620888001db5fe5ca641ceebd12d2de29ce2c27560156d7ae115",
+      "after": "79bb9b0bb0c852464f483dbdfe669d5efd9719a3a12dc4c5bd36a5b7c6dd9acd",
+      "ast_equal": true
+    },
+    {
+      "path": "Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py",
+      "before": "f8e45b07b05c1170100fae1b386853ae6d3dbaf87646a683d2b18151133d7a90",
+      "after": "190e36b8b715a4b240cfd40d8d9e7328c1331ce907d9768f234f869bcc81bfee",
+      "ast_equal": true
+    },
+    {
+      "path": "Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py",
+      "before": "c662f3244d90370ea146c18e23501ce2efd50d00c56cd686f1b934657457efd1",
+      "after": "017b7a6eacf61b292dfb3d3c74375af6d3f97e498e3db1a9758715728f0b1e02",
+      "ast_equal": true
+    },
+    {
+      "path": "Tests/Backup_Recovery/test_core_owners.py",
+      "before": "4f97a285cee76c6980282513e5b1488533a8fff5a037bb3a780a93b7236b390a",
+      "after": "f203be3fd5df9ea602cbb268528e0c58fe108c802cfd39724e2067d376369006",
+      "ast_equal": true
+    },
+    {
+      "path": "Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py",
+      "before": "6619c555f16b9bff00dfd41f4185b6992fd7434e0294d93271ec403857c782e9",
+      "after": "6619c555f16b9bff00dfd41f4185b6992fd7434e0294d93271ec403857c782e9",
+      "ast_equal": true
+    },
+    {
+      "path": "Tests/ChaChaNotesDB/expected_table_columns.py",
+      "before": "c243cce43d839255912deed4379aaeaffbcdc7d6c6b417da6d0108809d678f10",
+      "after": "0e8cfaed48827e390cc0b6adf5b682cd52ba162d72da770b4819ee0e95a04725",
+      "ast_equal": true
+    }
+  ]
+}

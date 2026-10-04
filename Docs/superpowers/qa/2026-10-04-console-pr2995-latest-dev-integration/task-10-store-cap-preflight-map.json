@@ -1,0 +1,201 @@
+{
+  "status": "proposal_only",
+  "pin": "d3443b9e4297fa20897cf99e77a3ae2c8c562b10",
+  "incoming": "5e0341d1ec701865e019eb2fd8a5e2028ab2d474",
+  "store_original_lines": 22655,
+  "store_projected_lines": 22334,
+  "unchanged_cap": 22344,
+  "owner_original_lines": 1135,
+  "owner_projected_lines": 1563,
+  "maps": [
+    {
+      "original": "ConsoleChatStore._fork_message_state_is_eligible",
+      "span": [
+        7004,
+        7014
+      ],
+      "proposed": "tldw_chatbook/Chat/console_chat_fork.py::console_fork_message_state_is_eligible",
+      "wiring": "    @staticmethod\n    def _fork_message_state_is_eligible(role: object, status: object) -> bool:\n        return console_fork_message_state_is_eligible(role, status)\n"
+    },
+    {
+      "original": "ConsoleChatStore._fork_visible_selection",
+      "span": [
+        7075,
+        7095
+      ],
+      "proposed": "tldw_chatbook/Chat/console_chat_fork.py::console_fork_visible_selection",
+      "wiring": "    @staticmethod\n    def _fork_visible_selection(\n        message: ConsoleChatMessage,\n    ) -> tuple[str, str | None]:\n        return console_fork_visible_selection(message)\n"
+    },
+    {
+      "original": "ConsoleChatStore._fork_attachment_fingerprint",
+      "span": [
+        7097,
+        7187
+      ],
+      "proposed": "tldw_chatbook/Chat/console_chat_fork.py::fingerprint_console_fork_attachments",
+      "wiring": "    @staticmethod\n    def _fork_attachment_fingerprint(\n        attachments: Sequence[MessageAttachment | ConsoleForkProjectedAttachment],\n        generation: Sequence[GenerationVariantMeta | ConsoleForkProjectedGeneration],\n    ) -> str:\n        return fingerprint_console_fork_attachments(attachments, generation)\n"
+    },
+    {
+      "original": "ConsoleChatStore._validate_fork_image_selections",
+      "span": [
+        7189,
+        7230
+      ],
+      "proposed": "tldw_chatbook/Chat/console_chat_fork.py::validate_console_fork_image_selections",
+      "wiring": "    @staticmethod\n    def _validate_fork_image_selections(\n        nodes: Mapping[str, ConsoleChatMessage],\n        prefix: Sequence[str],\n        selections: Sequence[ConsoleForkImageSelectionFence],\n    ) -> bool:\n        return validate_console_fork_image_selections(nodes, prefix, selections)\n"
+    },
+    {
+      "original": "ConsoleChatStore._fork_video_fingerprint",
+      "span": [
+        7232,
+        7260
+      ],
+      "proposed": "tldw_chatbook/Chat/console_chat_fork.py::fingerprint_console_fork_video",
+      "wiring": "    @staticmethod\n    def _fork_video_fingerprint(video: VideoGenerationMetadata) -> str:\n        return fingerprint_console_fork_video(video)\n"
+    },
+    {
+      "original": "ConsoleChatStore._stage_fork_snapshot::message projection",
+      "span": [
+        7761,
+        7872
+      ],
+      "proposed": "tldw_chatbook/Chat/console_chat_fork.py::project_console_fork_message",
+      "wiring": "            selection = selection_by_message.get(source.id)\n            projected_message, message_has_image = project_console_fork_message(\n                source,\n                entry,\n                target_native=target_native,\n                target_persisted=target_persisted,\n                target_turn=target_turn,\n                target_variant=target_variant,\n                previous_native=previous_native,\n                previous_persisted=previous_persisted,\n                durable=durable,\n                selection=selection,\n                projected_image_ids=projected_image_ids,\n                fingerprint_video=lambda video: self._fork_video_fingerprint(video),\n            )\n            projected.append(projected_message)\n"
+    },
+    {
+      "original": "ConsoleChatStore._stage_fork_snapshot::candidate comparison",
+      "span": [
+        7909,
+        7968
+      ],
+      "proposed": "tldw_chatbook/Chat/console_chat_fork.py::console_fork_candidate_matches_fence",
+      "wiring": "        candidate_matches_fence = console_fork_candidate_matches_fence(\n            candidate.messages,\n            fence.lineage,\n            native_ids=native_ids,\n            persisted_ids=persisted_ids,\n            turn_ids=turn_ids,\n            selection_by_message=selection_by_message,\n            durable=durable,\n            fingerprint_attachments=lambda attachments, generation: self._fork_attachment_fingerprint(\n                attachments, generation\n            ),\n        )\n"
+    },
+    {
+      "original": "ConsoleChatStore._validate_video_projection_tuple",
+      "span": [
+        7262,
+        7282
+      ],
+      "proposed": "tldw_chatbook/Chat/console_chat_fork.py::validate_console_fork_video_projection",
+      "wiring": "    @classmethod\n    def _validate_video_projection_tuple(cls, message: ConsoleChatMessage) -> None:\n        \"\"\"Validate the all-or-nothing canonical video owner projection.\"\"\"\n\n        validate_console_fork_video_projection(\n            message, fingerprint_video=lambda video: cls._fork_video_fingerprint(video)\n        )\n"
+    }
+  ],
+  "format_version": "ruff 0.16.6",
+  "format_command": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+    "format",
+    "--no-cache",
+    "--stdin-filename",
+    "<original path>",
+    "-"
+  ],
+  "formatter_baseline_store_lines": 22655,
+  "formatter_baseline_store_AST_identical": true,
+  "cap_headroom": 10,
+  "store_removed_lines": 321,
+  "changed_store_AST_methods": [
+    "_fork_message_state_is_eligible",
+    "_fork_visible_selection",
+    "_fork_attachment_fingerprint",
+    "_validate_fork_image_selections",
+    "_fork_video_fingerprint",
+    "_validate_video_projection_tuple",
+    "_stage_fork_snapshot"
+  ],
+  "store_method_names_preserved": true,
+  "eager_import_delta": {
+    "store_removed_module": "math",
+    "store_existing_fork_import_added_symbols": 8,
+    "owner_added_module": "math",
+    "owner_existing_attachment_core_import_added_symbol": "MAX_ATTACHMENT_BYTES",
+    "new_eager_module_identities": 0,
+    "lazy_video_imports": [
+      "Video_Generation.video_metadata",
+      "Video_Generation.video_store"
+    ],
+    "runtime_census_executed": false
+  },
+  "dependencies": {
+    "console_fork_message_state_is_eligible": [
+      "ConsoleMessageRole; exact enum/type and string-state tests"
+    ],
+    "console_fork_visible_selection": [
+      "ConsoleChatMessage.content/variants.current; no mutation"
+    ],
+    "fingerprint_console_fork_attachments": [
+      "attachment_core.MAX_ATTACHMENT_BYTES (already loaded)",
+      "MessageAttachment/ConsoleForkProjectedAttachment",
+      "GenerationVariantMeta/ConsoleForkProjectedGeneration",
+      "json/hashlib",
+      "validate_console_fork_image_payload (existing owner function)"
+    ],
+    "validate_console_fork_image_selections": [
+      "borrowed nodes/prefix/selections",
+      "ConsoleMessageRole/ConsoleForkImageSelectionFence",
+      "fingerprint_console_fork_selected_image (existing owner function)"
+    ],
+    "fingerprint_console_fork_video": [
+      "math/hashlib; type-exact VideoGenerationMetadata via function-local import; video.to_json()"
+    ],
+    "validate_console_fork_video_projection": [
+      "message fields",
+      "live narrow video fingerprint callback",
+      "function-local video_store marker readers; no file/video-store operations"
+    ],
+    "project_console_fork_message": [
+      "borrowed message and immutable lineage entry",
+      "explicit allocated IDs/parent IDs/durable flag/image selection",
+      "read-only projected-image aliases",
+      "live narrow video fingerprint callback",
+      "existing pure image validator/json; returns immutable projected message and image flag"
+    ],
+    "console_fork_candidate_matches_fence": [
+      "candidate messages/lineage; read-only ID/turn/selection maps",
+      "existing selected-image fingerprint",
+      "live narrow attachment fingerprint callback"
+    ]
+  },
+  "source_import_statement_counts": {
+    "store": {
+      "original_top_level": 67,
+      "projected_top_level": 66,
+      "original_all": 92,
+      "projected_all": 91
+    },
+    "owner": {
+      "original_top_level": 21,
+      "projected_top_level": 22,
+      "original_all": 22,
+      "projected_all": 26
+    }
+  },
+  "startup_cap_carry": {
+    "ready_modules": 1033,
+    "preimport_modules": 557,
+    "new_eager_project_module_identities": 0,
+    "joint_owner_store_LOC_delta": 107,
+    "executed": false,
+    "known_ready_membership_source": "Tests/Performance/boot_budget_snapshots/ui_ready_modules.txt:148,150,868,869"
+  },
+  "lookup_compatibility": {
+    "class_method_names_and_decorators": "retained",
+    "live_callbacks": "lambda invocation re-reads self/cls fingerprint methods",
+    "borrowed_class_methods_external": "none located by bounded literal source/test census",
+    "computed_and_patch_names": "original six names retained; known validate_fork_fence monkeypatch path retained",
+    "global_helper_patch_namespace": "pure image validator/selected-image fingerprint now resolve in existing fork owner; no store-global monkeypatch located; later tests should target owner for those pure globals"
+  },
+  "unchanged_mutation_owners": [
+    "_fork_source_lock and transitions",
+    "validate_fork_fence before/after projection",
+    "all uuid4 allocation and lineage/turn/parent/alias map updates",
+    "configuration snapshot/fingerprint and persistence identity validation",
+    "citation-link resolution, candidate assembly, registration/publication/persistence",
+    "agent handoff revision writer/task/callback and metadata parsing",
+    "durable acceptance fingerprint including machine-start attempt and handoff revision; commit/acceptance cutoff"
+  ],
+  "sketch_sha256": {
+    "task-10-store-cap-store-sketch.py": "3c1218f63307f94ba7c8ca74f4ace824a97174269e0d37df612b4dc03ee22d67",
+    "task-10-store-cap-owner-sketch.py": "212bf98006ebb81eafa94f4eab1f5ae951a2cf4a04244098e7d4e5f761d221d5"
+  }
+}

@@ -1,0 +1,30 @@
+..........................                                               [100%]
+=============================== warnings summary ===============================
+Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Performance/test_app_import_weight.py:325: UserWarning: boot-import-weight: 681/686 modules (headroom 5); snapshot drift +25/-13
+    ratchet.emit_headroom(
+
+Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Performance/test_ui_ready_module_census.py:482: UserWarning: ui-ready-census: 1033/1033 modules (headroom 0); snapshot drift +5/-2
+    ratchet.emit_headroom(
+
+Tests/Performance/test_screen_preimport_payload_budget.py::test_preimport_pass_payload_stays_within_budget
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Performance/test_screen_preimport_payload_budget.py:338: UserWarning: preimport-payload: 557/557 modules (headroom 0); 415298/425347 LOC (headroom 10049); 127527/135111 LOC fattest-route (library) (headroom 7584)
+    ratchet.emit_headroom(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-final-startup-schema-encryption.xml -
+============================= slowest 25 durations =============================
+15.28s call     Tests/Performance/test_ui_ready_module_census.py::test_ui_ready_module_census_stays_at_the_pinned_size
+9.02s call     Tests/Performance/test_boot_worker_census.py::test_boot_worker_and_thread_starts_stay_within_the_allowlist
+3.73s call     Tests/Performance/test_app_import_weight.py::test_ensure_transformers_resolves_real_transformers_when_installed
+3.67s call     Tests/Performance/test_screen_preimport_payload_budget.py::test_preimport_pass_payload_stays_within_budget
+2.82s call     Tests/Performance/test_boot_css_byte_budget.py::test_boot_parsed_css_bytes_stay_within_budget
+1.74s call     Tests/Performance/test_app_import_weight.py::test_app_import_defers_advanced_tool_readiness
+1.60s call     Tests/Performance/test_app_import_weight.py::test_app_import_stays_well_under_pre_fix_baseline
+1.58s call     Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_torch_or_transformers
+1.58s call     Tests/Performance/test_app_import_weight.py::test_app_import_own_module_count_stays_at_the_post_diet_size
+1.54s call     Tests/Performance/test_app_import_weight.py::test_app_import_does_not_load_full_heavy_dependency_set
+
+(15 durations < 1s hidden.)
+26 passed, 3 warnings in 44.12s

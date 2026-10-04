@@ -1,0 +1,16 @@
+{
+  "qualified_catalog_canvas_equality": [
+    {
+      "canvas_entries": 15,
+      "sha256": "c4c01a4d6331928b6ea44c976d118b18a827b57f54c8fb4ab0e72a72fade60b9",
+      "byte_equal": true
+    },
+    {
+      "canvas_entries": 15,
+      "sha256": "c4c01a4d6331928b6ea44c976d118b18a827b57f54c8fb4ab0e72a72fade60b9",
+      "byte_equal": true
+    }
+  ],
+  "baseline_red": "task-6-schema-prior75-canvas-red.json",
+  "scope": "two full installed shipped primary schemas; all pure UDF/trust and unknown catalog gates unchanged"
+}

@@ -1,0 +1,150 @@
+{
+  "functions": [
+    {
+      "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_survives_preaccept_failure",
+      "original_prologue": "@pytest.mark.asyncio\nasync def test_explicit_evidence_lease_survives_preaccept_failure(monkeypatch):",
+      "existing_module_bootstrap_profile": false,
+      "proposed_change": "canonical private_profile_test import/decorator and request argument; preserve original decorators/arguments/body",
+      "controller_construction": [
+        "controller = ConsoleChatController(store=store, provider_gateway=_StreamingFence(), **_retrieval_evidence_owner(retrieval))"
+      ],
+      "positive_witness": "assert await controller.hook_admission_reason() is None",
+      "witness_location": "immediately after real controller construction",
+      "body_and_assertion_preservation": "exact reversal required",
+      "proposed_exact_prologue": "@pytest.mark.asyncio\n@private_profile_test\nasync def test_explicit_evidence_lease_survives_preaccept_failure(monkeypatch, request):"
+    },
+    {
+      "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_never_releases_newer_launch",
+      "original_prologue": "@pytest.mark.asyncio\nasync def test_explicit_evidence_lease_never_releases_newer_launch(monkeypatch):",
+      "existing_module_bootstrap_profile": false,
+      "proposed_change": "canonical private_profile_test import/decorator and request argument; preserve original decorators/arguments/body",
+      "controller_construction": [
+        "controller = ConsoleChatController(store=store, provider_gateway=_StreamingFence(), **_retrieval_evidence_owner(retrieval))"
+      ],
+      "positive_witness": "assert await controller.hook_admission_reason() is None",
+      "witness_location": "immediately after real controller construction",
+      "body_and_assertion_preservation": "exact reversal required",
+      "proposed_exact_prologue": "@pytest.mark.asyncio\n@private_profile_test\nasync def test_explicit_evidence_lease_never_releases_newer_launch(\n    monkeypatch, request\n):"
+    },
+    {
+      "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance",
+      "original_prologue": "@pytest.mark.asyncio\nasync def test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance(\n    monkeypatch,\n):",
+      "existing_module_bootstrap_profile": false,
+      "proposed_change": "canonical private_profile_test import/decorator and request argument; preserve original decorators/arguments/body",
+      "controller_construction": [
+        "controller = ConsoleChatController(store=store, provider_gateway=gateway, **_retrieval_evidence_owner(retrieval))"
+      ],
+      "positive_witness": "assert await controller.hook_admission_reason() is None",
+      "witness_location": "immediately after real controller construction",
+      "body_and_assertion_preservation": "exact reversal required",
+      "proposed_exact_prologue": "@pytest.mark.asyncio\n@private_profile_test\nasync def test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance(\n    monkeypatch, request\n):"
+    },
+    {
+      "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch",
+      "original_prologue": "@pytest.mark.asyncio\nasync def test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch(\n    monkeypatch,\n):",
+      "existing_module_bootstrap_profile": false,
+      "proposed_change": "canonical private_profile_test import/decorator and request argument; preserve original decorators/arguments/body",
+      "controller_construction": [
+        "controller = ConsoleChatController(store=store, provider_gateway=_StreamingFence(), **_retrieval_evidence_owner(retrieval))"
+      ],
+      "positive_witness": "assert await controller.hook_admission_reason() is None",
+      "witness_location": "immediately after real controller construction",
+      "body_and_assertion_preservation": "exact reversal required",
+      "proposed_exact_prologue": "@pytest.mark.asyncio\n@private_profile_test\nasync def test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch(\n    monkeypatch, request\n):"
+    },
+    {
+      "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged",
+      "original_prologue": "@pytest.mark.asyncio\n@pytest.mark.parametrize(\"action\", [\"retry\", \"bypass\"])\nasync def test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged(\n    monkeypatch, action\n):",
+      "existing_module_bootstrap_profile": false,
+      "proposed_change": "canonical private_profile_test import/decorator and request argument; preserve original decorators/arguments/body",
+      "controller_construction": [
+        "controller = ConsoleChatController(store=store, provider_gateway=gateway, **_retrieval_evidence_owner(retrieval, staged_evidence_provider=lambda _session_id: evidence_state['launch'] is not None), model='vision-model')"
+      ],
+      "positive_witness": "assert await controller.hook_admission_reason() is None",
+      "witness_location": "immediately after real controller construction",
+      "body_and_assertion_preservation": "exact reversal required",
+      "proposed_exact_prologue": "@pytest.mark.asyncio\n@pytest.mark.parametrize(\"action\", [\"retry\", \"bypass\"])\n@private_profile_test\nasync def test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged(\n    monkeypatch, action, request\n):"
+    },
+    {
+      "node": "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_releases_only_its_frozen_evidence_lease",
+      "original_prologue": "@pytest.mark.asyncio\nasync def test_app_disposal_releases_only_its_frozen_evidence_lease(\n    tmp_path,\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:",
+      "existing_module_bootstrap_profile": false,
+      "proposed_change": "canonical private_profile_test import/decorator and request argument; preserve original decorators/arguments/body",
+      "controller_construction": [
+        "(db, store, controller, gateway) = _controller(tmp_path)"
+      ],
+      "positive_witness": "assert await controller.hook_admission_reason() is None",
+      "witness_location": "immediately after real controller construction",
+      "body_and_assertion_preservation": "exact reversal required",
+      "proposed_exact_prologue": "@pytest.mark.asyncio\n@private_profile_test\nasync def test_app_disposal_releases_only_its_frozen_evidence_lease(\n    tmp_path, monkeypatch: pytest.MonkeyPatch, request\n) -> None:"
+    },
+    {
+      "node": "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_scrubs_content_when_evidence_release_raises",
+      "original_prologue": "@pytest.mark.asyncio\nasync def test_app_disposal_scrubs_content_when_evidence_release_raises(\n    tmp_path,\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:",
+      "existing_module_bootstrap_profile": false,
+      "proposed_change": "canonical private_profile_test import/decorator and request argument; preserve original decorators/arguments/body",
+      "controller_construction": [
+        "(db, store, controller, gateway) = _controller(tmp_path)"
+      ],
+      "positive_witness": "assert await controller.hook_admission_reason() is None",
+      "witness_location": "immediately after real controller construction",
+      "body_and_assertion_preservation": "exact reversal required",
+      "proposed_exact_prologue": "@pytest.mark.asyncio\n@private_profile_test\nasync def test_app_disposal_scrubs_content_when_evidence_release_raises(\n    tmp_path, monkeypatch: pytest.MonkeyPatch, request\n) -> None:"
+    },
+    {
+      "node": "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_discard_releases_only_exact_frozen_evidence_once",
+      "original_prologue": "@pytest.mark.asyncio\nasync def test_discard_releases_only_exact_frozen_evidence_once(\n    tmp_path,\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:",
+      "existing_module_bootstrap_profile": false,
+      "proposed_change": "canonical private_profile_test import/decorator and request argument; preserve original decorators/arguments/body",
+      "controller_construction": [
+        "(db, store, controller, gateway) = _controller(tmp_path)"
+      ],
+      "positive_witness": "assert await controller.hook_admission_reason() is None",
+      "witness_location": "immediately after real controller construction",
+      "body_and_assertion_preservation": "exact reversal required",
+      "proposed_exact_prologue": "@pytest.mark.asyncio\n@private_profile_test\nasync def test_discard_releases_only_exact_frozen_evidence_once(\n    tmp_path, monkeypatch: pytest.MonkeyPatch, request\n) -> None:"
+    },
+    {
+      "node": "Tests/Chat/test_console_durable_turn_fix_round1.py::test_explicit_frozen_evidence_makes_checkpoint_unreconstructable",
+      "original_prologue": "@pytest.mark.asyncio\nasync def test_explicit_frozen_evidence_makes_checkpoint_unreconstructable(\n    tmp_path,\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:",
+      "existing_module_bootstrap_profile": true,
+      "proposed_change": "none; qualify unchanged existing admitted-profile owner",
+      "controller_construction": [
+        "controller = ConsoleChatController(store=store, provider_gateway=gateway, **_retrieval_evidence_owner(retrieval, staged_evidence_provider=lambda _session_id: state['launch'] is not None))"
+      ],
+      "positive_witness": "none added",
+      "witness_location": "existing admitted-profile setup",
+      "body_and_assertion_preservation": "exact reversal required"
+    },
+    {
+      "node": "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_release_fault_cannot_skip_owner_cleanup",
+      "original_prologue": "@pytest.mark.asyncio\nasync def test_close_session_release_fault_cannot_skip_owner_cleanup(\n    tmp_path,\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:",
+      "existing_module_bootstrap_profile": false,
+      "proposed_change": "canonical private_profile_test import/decorator and request argument; preserve original decorators/arguments/body",
+      "controller_construction": [
+        "via _accepted_evidence_recovery: db, store, controller, gateway = _controller(tmp_path)"
+      ],
+      "positive_witness": "assert await controller.hook_admission_reason() is None",
+      "witness_location": "_accepted_evidence_recovery helper, immediately after its first db, store, controller, gateway = _controller(tmp_path) assignment, before its original setup/submit; no separate late caller witness",
+      "body_and_assertion_preservation": "exact reversal required",
+      "proposed_exact_prologue": "@pytest.mark.asyncio\n@private_profile_test\nasync def test_close_session_release_fault_cannot_skip_owner_cleanup(\n    tmp_path, monkeypatch: pytest.MonkeyPatch, request\n) -> None:"
+    },
+    {
+      "node": "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_releases_exact_evidence_once_and_preserves_replacement",
+      "original_prologue": "@pytest.mark.asyncio\nasync def test_close_session_releases_exact_evidence_once_and_preserves_replacement(\n    tmp_path,\n    monkeypatch: pytest.MonkeyPatch,\n) -> None:",
+      "existing_module_bootstrap_profile": false,
+      "proposed_change": "canonical private_profile_test import/decorator and request argument; preserve original decorators/arguments/body",
+      "controller_construction": [
+        "via _accepted_evidence_recovery: db, store, controller, gateway = _controller(tmp_path)"
+      ],
+      "positive_witness": "assert await controller.hook_admission_reason() is None",
+      "witness_location": "_accepted_evidence_recovery helper, immediately after its first db, store, controller, gateway = _controller(tmp_path) assignment, before its original setup/submit; no separate late caller witness",
+      "body_and_assertion_preservation": "exact reversal required",
+      "proposed_exact_prologue": "@pytest.mark.asyncio\n@private_profile_test\nasync def test_close_session_releases_exact_evidence_once_and_preserves_replacement(\n    tmp_path, monkeypatch: pytest.MonkeyPatch, request\n) -> None:"
+    }
+  ],
+  "proposed_test_function_count": 10,
+  "unchanged_existing_bootstrap_function_count": 1,
+  "proposed_shared_helper": "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::_accepted_evidence_recovery",
+  "shared_helper_change": "Only positive async admission assertion immediately after _controller(tmp_path), original body and all other helpers unchanged. The two selected callers receive canonical prologues."
+}

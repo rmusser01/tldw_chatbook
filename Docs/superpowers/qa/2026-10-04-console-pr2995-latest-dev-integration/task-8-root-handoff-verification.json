@@ -1,0 +1,107 @@
+{
+  "head": "40b9aacaa21f7e8c6f2b1989efbb8e8021a1fe77",
+  "clean_before_root_metadata": true,
+  "final_tree_exact": 29788,
+  "contemporaneous_selected_final_hashes_verified": 155,
+  "task7_changed_functions_verified": 34,
+  "required_historical_qa_exact": 11572,
+  "all_checkpoint_qa_exact": 11750,
+  "incoming_qa_exact": 42,
+  "safe_explicit_copies_verified": 116,
+  "safe_bytes": 47990626,
+  "final_qualification_source_before_after_exact": true,
+  "final_qualification_format_chains": [
+    {
+      "path": "Tests/Architecture/test_module_size_ratchet.py",
+      "final_sha256": "a1a9167e84c25bd2a79b46ef2307498f0b9c2c70424833e18efec41f572bce1a",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/Architecture/test_persistent_diagnostic_inventory.py",
+      "final_sha256": "56889d6b480016ffd1032475c0edb709587fbeea780482baaffc6819a878f64e",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/Architecture/test_screen_size_ratchet.py",
+      "final_sha256": "3a5eab2d853c7e21a079fdb271f964d9ade977ec572f16219968a2a33d4b2bfb",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/Architecture/test_wizard_lifecycle_guards.py",
+      "final_sha256": "65a058fe292646e41df521a537eca16fe2dd4691298a71704787b5090526e0f5",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/Chat/test_console_chat_start.py",
+      "final_sha256": "63f1eb28fc8c30d3d8fa7fee99e393fab2f212fed8c2b7af72ce777a1a158511",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/Packaging/test_conversation_settings_boot_closure.py",
+      "final_sha256": "f539866edbc60d4009e221d7dd8888d3715f0c413329fbe3002aa715104db185",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/Performance/test_app_import_weight.py",
+      "final_sha256": "c98f0e9378897ceea76b77547925737e377904f7d0bb4650fc7f069ce3378219",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/Performance/test_boot_budget_ratchet_messages.py",
+      "final_sha256": "b67bcae2b2d3bfcfcc4403abf610da59fb7b6ba8fdc2faf497a220d5fb92f353",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/Performance/test_boot_css_byte_budget.py",
+      "final_sha256": "f02d7f710ae102d4032238373439caa7e1e3e5771716b49e248af9662dbb0080",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/Performance/test_boot_worker_census.py",
+      "final_sha256": "e545699169ba9c57291110f97e3e4154ddef6d7db9f05394d6496e0de1b57e67",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/Performance/test_screen_preimport_payload_budget.py",
+      "final_sha256": "27f92d64015b5d598ed5b204d6443820c2e0316c1ae2205db189060d3bddba4c",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/Performance/test_ui_ready_module_census.py",
+      "final_sha256": "08bb8725611f069fd42d87f11fed813969fa44ac154fedf803cbd04d66ff6117",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/UI/test_console_store_continuity.py",
+      "final_sha256": "d83adebdcb70ad4cb5285950f2778d0efd100474021312d68fa8e60fc5a38a9f",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/conftest.py",
+      "final_sha256": "a065da11e2d3d6b6a5bda42f52e537c7619dc0bee509bf2d5669491c143fa148",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/private_profile.py",
+      "final_sha256": "ebf5502df17040c96ca88ff0dc0dd1a166a8870975de760600d9f5aa7af45539",
+      "format_carry": []
+    },
+    {
+      "path": "Tests/real_profile_guard.py",
+      "final_sha256": "d27a4023f5c058c417536a693ff1a18892518986ffc99b93d7099f93142b92f1",
+      "format_carry": []
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "final_sha256": "9248aea9d9b464e96c9f17db9890fa5bbb851fdeaaf5ab8d48f66f16aa4233a6",
+      "format_carry": [
+        {
+          "before": "75912586578aa0c0933b7a19a7d78514325dc08440bc7acd6d80a044dc5eeddf",
+          "after": "9248aea9d9b464e96c9f17db9890fa5bbb851fdeaaf5ab8d48f66f16aa4233a6"
+        }
+      ]
+    }
+  ],
+  "tests_replayed": false,
+  "limits": "Format carry uses explicit contemporaneous before/after hashes and recorded full-module AST equality; raw qualified preformat preimages are not claimed present in Git."
+}

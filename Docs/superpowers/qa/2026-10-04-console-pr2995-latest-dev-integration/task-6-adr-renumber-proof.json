@@ -1,0 +1,55 @@
+[
+  {
+    "old_path": "Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md",
+    "new_path": "Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md",
+    "before": "f4a06da12354e5055efbb303e4a3e4ef35a7e1356bb9b0c1fb5bda6c9d4459a1",
+    "after": "d7ce71589692b032a19d1cb56ce44a9dfc19d12eb0408d47c68096e9cf31444a"
+  },
+  {
+    "old_path": "backlog/decisions/211-console-chat-destinations-and-bounded-starts.md",
+    "new_path": "backlog/decisions/219-console-chat-destinations-and-bounded-starts.md",
+    "before": "24c8823c36bb3f1bad0c05100ebc97019962891423d76f695aba0addb3934462",
+    "after": "92049c1e2c8cd15b066b69e0d83fa1d7f4d620d21c3f54d42efb4fa4b7937ed4"
+  },
+  {
+    "old_path": "backlog/decisions/README.md",
+    "new_path": "backlog/decisions/README.md",
+    "before": "430125b02b4c7be554676613228463007ee5e154d1c7cb897fc188f76638e62f",
+    "after": "c8ab3542a3355fcb21141e16755d8a6504af3806bd8cf44e6b477b003b3e4dea"
+  },
+  {
+    "old_path": "tldw_chatbook/Backup_Recovery/sqlite_validation.py",
+    "new_path": "tldw_chatbook/Backup_Recovery/sqlite_validation.py",
+    "before": "062f7695437335ef2f51aa78d06431e3d0b198b02ad697fbfdb8242f3f5f4f43",
+    "after": "5d41cf548fe27f5ff8ce30cc9afb9dc32e0625e7479f1e1ddd7f6c1027d35046",
+    "strict_ast_equal": true
+  },
+  {
+    "old_path": "tldw_chatbook/DB/AgentRuns_DB.py",
+    "new_path": "tldw_chatbook/DB/AgentRuns_DB.py",
+    "before": "df860f7449ac2199863a711fdec3ab9df115aca08cc936bfda28da534acc49dc",
+    "after": "85602f3c9b7f90a1e82d3180f3a0a371b866a01cb0be3abef62df8573ca4e222",
+    "strict_ast_equal": true
+  },
+  {
+    "old_path": "tldw_chatbook/DB/recovery_core_schema.py",
+    "new_path": "tldw_chatbook/DB/recovery_core_schema.py",
+    "before": "7c3bca91a5721c4221a4fe761b7df5bf57a676cf0a20ba438516e6815488dd06",
+    "after": "ce0015f5daa0152a881af1b197b9293baf2d68d4d17566d7534e75236d47b049",
+    "strict_ast_equal": true
+  },
+  {
+    "old_path": "tldw_chatbook/DB/recovery_operations.py",
+    "new_path": "tldw_chatbook/DB/recovery_operations.py",
+    "before": "64252bd5840e6166e5edcaea934c30dbff5377a674d0ab1ffda78a195dafddad",
+    "after": "80676d14ac1328b55cb7eb7faf4eda9ebe94e5a8466acc6c30b0bca4fc76bba0",
+    "strict_ast_equal": true
+  },
+  {
+    "old_path": "tldw_chatbook/DB/migrations/agent_runs_v21_to_v22_chat_starts.sql",
+    "new_path": "tldw_chatbook/DB/migrations/agent_runs_v21_to_v22_chat_starts.sql",
+    "before": "88c03c07e7d541b827030bfc31264deb14da1176a1bf20a79861e14444ab7270",
+    "after": "f50f21fc444beba7306637549ad6113473c0eed07a85a07065c6fe04812aa4b0",
+    "noncomment_lines_equal": true
+  }
+]

@@ -1,0 +1,26 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:randomly",
+    "--basetemp=/private/tmp/task9-video-observer",
+    "Tests/Chat/test_console_video_actions.py::test_handle_console_message_action_routes_video_play_with_persisted_storage_id",
+    "Tests/Chat/test_console_video_actions.py::test_handle_console_message_action_routes_video_save_with_persisted_storage_id",
+    "Tests/Chat/test_console_video_actions.py::test_video_play_resolves_webm_from_metadata",
+    "Tests/Chat/test_console_video_actions.py::test_video_save_copy_preserves_webm_extension_and_collision_names",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-9-video-observer-safe-evidence/video4.xml"
+  ],
+  "environment_override": {
+    "PYTHONPATH": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook"
+  },
+  "recorded_before_execution": true,
+  "source_hashes": {
+    "Tests/Chat/test_console_video_actions.py": "b226d1489d9248de9fe8976a599f8d7fea67185c05eacb1cf5397410b7b1fa3d",
+    "tldw_chatbook/UI/Console_Modules/video.py": "b3c7d99716742eff37e0e4b99fcf72801da4b8941fd81f2057fd24cb274e85ad",
+    "tldw_chatbook/Video_Generation/video_store.py": "06482370d6fd7dcb03e1420f62acb35cc277887a0fc7e2ad556e32c00a45c867"
+  }
+}

@@ -1,0 +1,44 @@
+[
+  {
+    "method": "compact_context_now",
+    "body_inverse_binding_ast_equal": true,
+    "args_equal": true,
+    "docstring_raw_equal": true,
+    "owner_decorators": [],
+    "controller_original_decorators": [
+      "_maintenance_boundary('compact')"
+    ]
+  },
+  {
+    "method": "_apply_conversation_memory_preflight",
+    "body_inverse_binding_ast_equal": true,
+    "args_equal": true,
+    "docstring_raw_equal": true,
+    "owner_decorators": [],
+    "controller_original_decorators": []
+  },
+  {
+    "method": "_assess_context_compaction",
+    "body_inverse_binding_ast_equal": true,
+    "args_equal": true,
+    "docstring_raw_equal": true,
+    "owner_decorators": [],
+    "controller_original_decorators": []
+  },
+  {
+    "method": "_assess_request_capacity_only",
+    "body_inverse_binding_ast_equal": true,
+    "args_equal": true,
+    "docstring_raw_equal": true,
+    "owner_decorators": [],
+    "controller_original_decorators": []
+  },
+  {
+    "method": "_context_overflow_alert",
+    "body_inverse_binding_ast_equal": true,
+    "args_equal": true,
+    "docstring_raw_equal": true,
+    "owner_decorators": [],
+    "controller_original_decorators": []
+  }
+]

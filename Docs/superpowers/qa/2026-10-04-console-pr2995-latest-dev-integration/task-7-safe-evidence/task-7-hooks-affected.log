@@ -1,0 +1,32 @@
+....................                                                     [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_console_hook_review_send_freeze.py::test_a_console_reached_by_navigation_never_awaits_review_on_its_pump[allow-all-eager-workbench-send]
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/conftest.py:609: UserWarning: open file descriptors grew by 223 over the test session (start=14, end=237, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-hooks-affected.xml -
+============================= slowest 25 durations =============================
+5.87s call     Tests/UI/test_console_hooks_review.py::test_next_send_cancel_keeps_draft_then_allow_resumes_once[True]
+5.83s call     Tests/UI/test_console_hooks_review.py::test_all_hooks_exposes_current_revoke_and_disable_actions
+5.48s call     Tests/UI/test_console_hooks_review.py::test_next_send_cancel_keeps_draft_then_allow_resumes_once[False]
+5.10s call     Tests/UI/test_console_hooks_review.py::test_partial_approval_keeps_review_open_and_settings_cancels_send
+5.00s call     Tests/UI/test_console_hook_review_send_freeze.py::test_a_console_reached_by_navigation_never_awaits_review_on_its_pump[allow-all-lazy-send-button]
+4.88s call     Tests/UI/test_console_hook_review_send_freeze.py::test_a_console_reached_by_navigation_never_awaits_review_on_its_pump[allow-all-eager-send-button]
+4.81s call     Tests/UI/test_console_hook_review_send_freeze.py::test_a_console_reached_by_navigation_never_awaits_review_on_its_pump[escape-lazy-send-button]
+4.81s call     Tests/UI/test_console_hook_review_send_freeze.py::test_a_console_reached_by_navigation_never_awaits_review_on_its_pump[allow-all-eager-workbench-send]
+4.80s call     Tests/UI/test_console_hooks_review.py::test_hooks_action_is_reachable_and_returns_focus[size0]
+4.78s call     Tests/UI/test_console_hook_review_send_freeze.py::test_a_console_reached_by_navigation_never_awaits_review_on_its_pump[allow-all-lazy-workbench-send]
+4.74s call     Tests/UI/test_console_hook_review_send_freeze.py::test_a_console_reached_by_navigation_never_awaits_review_on_its_pump[escape-lazy-workbench-send]
+4.73s call     Tests/UI/test_console_hooks_review.py::test_escape_during_approval_keeps_send_cancelled
+4.67s call     Tests/UI/test_console_hooks_review.py::test_a_review_awaited_off_a_worker_task_is_logged[plain-task-send-waiting]
+4.66s call     Tests/UI/test_console_hooks_review.py::test_dismissal_during_row_refresh_does_not_query_removed_modal
+4.49s call     Tests/UI/test_console_hooks_review.py::test_a_review_awaited_off_a_worker_task_is_logged[plain-task-idle]
+4.24s call     Tests/UI/test_console_hooks_review.py::test_a_review_awaited_off_a_worker_task_is_logged[worker-send-waiting]
+4.18s call     Tests/UI/test_console_hooks_review.py::test_hooks_action_is_reachable_and_returns_focus[size1]
+4.11s call     Tests/UI/test_console_hooks_review.py::test_a_warm_console_refresh_shows_an_unsafe_store_directory
+4.07s call     Tests/UI/test_console_hooks_review.py::test_a_review_awaited_off_a_worker_task_is_logged[worker-idle]
+1.35s call     Tests/UI/test_console_hooks_review.py::test_hooks_button_resolves_current_controller_when_worker_starts
+
+(5 durations < 1s hidden.)
+20 passed, 1 warning in 104.83s (0:01:44)

@@ -1,0 +1,52 @@
+[
+  {
+    "original": ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-provider-green-profile-l9hpm478/pytest/test_guarded_setup_rejects_com3/private-profile-process/pytest.log",
+    "retained": "task-6-private-child-reports/test_guarded_setup_rejects_com3-pytest.log",
+    "sha256": "5b845543ca120bd18e35bb51da3655d4bee1f512cd318c674ca7f2f5ee612d4d"
+  },
+  {
+    "original": ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-provider-green-profile-l9hpm478/pytest/test_guarded_setup_rejects_com3/private-profile-process/pytest.xml",
+    "retained": "task-6-private-child-reports/test_guarded_setup_rejects_com3-pytest.xml",
+    "sha256": "1d6478a44d263ad67151683f18ea0f8649545d4a321de6942aa90ee19984b082"
+  },
+  {
+    "original": ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-provider-green-profile-l9hpm478/pytest/test_guarded_setup_rejects_com2/private-profile-process/pytest.log",
+    "retained": "task-6-private-child-reports/test_guarded_setup_rejects_com2-pytest.log",
+    "sha256": "85225381bdf237f7223e4bd5a5a1fae57affe29865a9aeeb51cf63d84791fb31"
+  },
+  {
+    "original": ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-provider-green-profile-l9hpm478/pytest/test_guarded_setup_rejects_com2/private-profile-process/pytest.xml",
+    "retained": "task-6-private-child-reports/test_guarded_setup_rejects_com2-pytest.xml",
+    "sha256": "2427ff813cc182674361533cdebfcc26674289dd73846f2a990d329fc5233014"
+  },
+  {
+    "original": ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-provider-green-profile-l9hpm478/pytest/test_guarded_setup_allows_unre0/private-profile-process/pytest.log",
+    "retained": "task-6-private-child-reports/test_guarded_setup_allows_unre0-pytest.log",
+    "sha256": "dee4c0bf2066c0f7be5aa0f9d79709d3931e36ceeba781a30d3b44b6b48f74b6"
+  },
+  {
+    "original": ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-provider-green-profile-l9hpm478/pytest/test_guarded_setup_allows_unre0/private-profile-process/pytest.xml",
+    "retained": "task-6-private-child-reports/test_guarded_setup_allows_unre0-pytest.xml",
+    "sha256": "d66c410fd125264c79fe3c1af53bb3aea229c489640cb88baa91b114209ae2e8"
+  },
+  {
+    "original": ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-provider-green-profile-l9hpm478/pytest/test_guarded_setup_rejects_com0/private-profile-process/pytest.log",
+    "retained": "task-6-private-child-reports/test_guarded_setup_rejects_com0-pytest.log",
+    "sha256": "c07bf0403307ad7ac4e0bb8d02ed18db99024881c8f99b9499243de5273c21e8"
+  },
+  {
+    "original": ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-provider-green-profile-l9hpm478/pytest/test_guarded_setup_rejects_com0/private-profile-process/pytest.xml",
+    "retained": "task-6-private-child-reports/test_guarded_setup_rejects_com0-pytest.xml",
+    "sha256": "ef8286f16252d778fadbf37d3b1bfab94ff12803f52fa67ae66d6c91778d037b"
+  },
+  {
+    "original": ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-provider-green-profile-l9hpm478/pytest/test_guarded_setup_rejects_com1/private-profile-process/pytest.log",
+    "retained": "task-6-private-child-reports/test_guarded_setup_rejects_com1-pytest.log",
+    "sha256": "5b6984cca7be1f6795ef4e7978ed9af2385c92a84cb9e09740898ef1d48728cc"
+  },
+  {
+    "original": ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-provider-green-profile-l9hpm478/pytest/test_guarded_setup_rejects_com1/private-profile-process/pytest.xml",
+    "retained": "task-6-private-child-reports/test_guarded_setup_rejects_com1-pytest.xml",
+    "sha256": "34a21362bb831204848dd20d9f5dfd59f39f584c4666b17ffde89589c04f34e9"
+  }
+]

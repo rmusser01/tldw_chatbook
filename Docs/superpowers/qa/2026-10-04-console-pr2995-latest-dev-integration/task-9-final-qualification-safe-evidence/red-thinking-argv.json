@@ -1,0 +1,23 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:randomly",
+    "--basetemp=/private/tmp/task9-final-red-thinking",
+    "Tests/Chat/test_console_context_policy_lifecycle.py::test_effective_thinking_policy_uses_saved_policy_when_gateway_hangs",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-9-final-qualification-safe-evidence/red-thinking.xml"
+  ],
+  "environment_override": {
+    "PYTHONPATH": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook"
+  },
+  "recorded_before_execution": true,
+  "source_hashes": {
+    "tldw_chatbook/Chat/console_chat_controller.py": "4401a2b9a2141eb238e726c6dd6aa9334a3dd825b4024c01133a80a17461e203",
+    "Tests/Chat/test_console_context_policy_lifecycle.py": "6c112be54d77b955e1ed4466673683bc1adf95fc92baa2677023b059782025f9",
+    "Tests/Chat/test_console_personal_context_snapshot.py": "0d5b240cea43c8be8ef8f3cfa528bd93b287547e3eb26b43a6a49431660e1e8f"
+  }
+}

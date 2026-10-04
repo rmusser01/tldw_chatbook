@@ -1,0 +1,1148 @@
+{
+  "Tests/CI/test_ci_queue_pressure_contract.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "Tests/Chat/test_console_conversation_activation.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "Tests/Chat/test_console_message_delete_persistence.py": {
+    "formatted": false,
+    "unapplied_edits": [
+      {
+        "edit": {
+          "before": [
+            "            db.update_message(",
+            "                message_id, {\"content\": \"\"}, 1, preserve_descendants=True",
+            "            )"
+          ],
+          "after": [
+            "            db.update_message(message_id, {\"content\": \"\"}, 1, preserve_descendants=True)"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "            [_flat(\"f0\", \"user\"), _flat(\"f1\", \"assistant\"), _TOOL_ROW,",
+            "             _flat(\"f2\", \"user\"), _flat(\"f3\", \"assistant\")],"
+          ],
+          "after": [
+            "            [",
+            "                _flat(\"f0\", \"user\"),",
+            "                _flat(\"f1\", \"assistant\"),",
+            "                _TOOL_ROW,",
+            "                _flat(\"f2\", \"user\"),",
+            "                _flat(\"f3\", \"assistant\"),",
+            "            ],"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "            [_flat(\"f0\", \"user\"), _flat(\"f1\", \"assistant\"), _EMPTY_ROW,",
+            "             _flat(\"f2\", \"user\"), _flat(\"f3\", \"assistant\")],"
+          ],
+          "after": [
+            "            [",
+            "                _flat(\"f0\", \"user\"),",
+            "                _flat(\"f1\", \"assistant\"),",
+            "                _EMPTY_ROW,",
+            "                _flat(\"f2\", \"user\"),",
+            "                _flat(\"f3\", \"assistant\"),",
+            "            ],"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "            [_flat(\"f0\", \"user\"), _flat(\"f1\", \"assistant\"), _flat(\"f2\", \"user\"),",
+            "             _flat(\"f3\", \"assistant\"), _TOOL_ROW],"
+          ],
+          "after": [
+            "            [",
+            "                _flat(\"f0\", \"user\"),",
+            "                _flat(\"f1\", \"assistant\"),",
+            "                _flat(\"f2\", \"user\"),",
+            "                _flat(\"f3\", \"assistant\"),",
+            "                _TOOL_ROW,",
+            "            ],"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "            [_flat(\"f0\", \"user\"), _TOOL_ROW, _flat(\"f1\", \"assistant\"),",
+            "             _flat(\"f2\", \"user\"), _flat(\"f3\", \"assistant\")],"
+          ],
+          "after": [
+            "            [",
+            "                _flat(\"f0\", \"user\"),",
+            "                _TOOL_ROW,",
+            "                _flat(\"f1\", \"assistant\"),",
+            "                _flat(\"f2\", \"user\"),",
+            "                _flat(\"f3\", \"assistant\"),",
+            "            ],"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "            [_flat(\"f0\", \"user\"), _flat(\"f1\", \"assistant\"), _TOOL_ROW,",
+            "             _flat(\"f2\", \"user\"), _flat(\"f3\", \"assistant\"),",
+            "             (\"e0\", \"user\", None, \"e0 text\"), (\"e1\", \"assistant\", \"e0\", \"e1 text\")],"
+          ],
+          "after": [
+            "            [",
+            "                _flat(\"f0\", \"user\"),",
+            "                _flat(\"f1\", \"assistant\"),",
+            "                _TOOL_ROW,",
+            "                _flat(\"f2\", \"user\"),",
+            "                _flat(\"f3\", \"assistant\"),",
+            "                (\"e0\", \"user\", None, \"e0 text\"),",
+            "                (\"e1\", \"assistant\", \"e0\", \"e1 text\"),",
+            "            ],"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "            [_flat(\"f0\", \"user\"), _flat(\"f1\", \"assistant\"),",
+            "             (\"x1\", \"user\", None, \"\"), _flat(\"f2\", \"user\"),",
+            "             _flat(\"f3\", \"assistant\")],"
+          ],
+          "after": [
+            "            [",
+            "                _flat(\"f0\", \"user\"),",
+            "                _flat(\"f1\", \"assistant\"),",
+            "                (\"x1\", \"user\", None, \"\"),",
+            "                _flat(\"f2\", \"user\"),",
+            "                _flat(\"f3\", \"assistant\"),",
+            "            ],"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    rows = [_flat(\"f0\", \"user\"), _flat(\"f1\", \"assistant\"), _flat(\"f2\", \"user\"),",
+            "            _flat(\"f3\", \"assistant\")]"
+          ],
+          "after": [
+            "    rows = [",
+            "        _flat(\"f0\", \"user\"),",
+            "        _flat(\"f1\", \"assistant\"),",
+            "        _flat(\"f2\", \"user\"),",
+            "        _flat(\"f3\", \"assistant\"),",
+            "    ]"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        \"f1\", \"f2\", \"f3\""
+          ],
+          "after": [
+            "        \"f1\",",
+            "        \"f2\",",
+            "        \"f3\","
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        (f\"c{i}\", \"user\" if i % 2 == 0 else \"assistant\", f\"c{i - 1}\" if i else \"f3\",",
+            "         f\"c{i} text\")"
+          ],
+          "after": [
+            "        (",
+            "            f\"c{i}\",",
+            "            \"user\" if i % 2 == 0 else \"assistant\",",
+            "            f\"c{i - 1}\" if i else \"f3\",",
+            "            f\"c{i} text\",",
+            "        )"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        _flat(\"f0\", \"user\"), _flat(\"f1\", \"assistant\"), _TOOL_ROW,",
+            "        _flat(\"f2\", \"user\"), _flat(\"f3\", \"assistant\"), *threaded,"
+          ],
+          "after": [
+            "        _flat(\"f0\", \"user\"),",
+            "        _flat(\"f1\", \"assistant\"),",
+            "        _TOOL_ROW,",
+            "        _flat(\"f2\", \"user\"),",
+            "        _flat(\"f3\", \"assistant\"),",
+            "        *threaded,"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        \"f0\", \"f1\", \"f2\", \"f3\", *(row[0] for row in threaded)"
+          ],
+          "after": [
+            "        \"f0\",",
+            "        \"f1\",",
+            "        \"f2\",",
+            "        \"f3\",",
+            "        *(row[0] for row in threaded),"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        assert json.loads(row[\"metadata_json\"] or \"{}\").get(\"root_fork\", False) is marked"
+          ],
+          "after": [
+            "        assert (",
+            "            json.loads(row[\"metadata_json\"] or \"{}\").get(\"root_fork\", False) is marked",
+            "        )"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      }
+    ]
+  },
+  "Tests/Chat/test_console_voice_pair_persistence.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "Tests/DB/test_message_root_rows_page.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "Tests/DB/test_message_subtree_delete_bounds.py": {
+    "formatted": false,
+    "unapplied_edits": [
+      {
+        "edit": {
+          "before": [
+            "    return {s for s in statements if s.lstrip().startswith(\"WITH RECURSIVE descendants\")}"
+          ],
+          "after": [
+            "    return {",
+            "        s for s in statements if s.lstrip().startswith(\"WITH RECURSIVE descendants\")",
+            "    }"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      }
+    ]
+  },
+  "Tests/MCP/test_approval_timeout_policy.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "Tests/MCP/test_control_plane_bridge.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "Tests/MCP/test_live_server_request_wiring.py": {
+    "formatted": false,
+    "unapplied_edits": [
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    monkeypatch.setattr(w, \"get_cli_setting\", lambda s, k, d=None: settings.get((s, k), d))"
+          ],
+          "after": [
+            "    monkeypatch.setattr(",
+            "        w, \"get_cli_setting\", lambda s, k, d=None: settings.get((s, k), d)",
+            "    )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    monkeypatch.setattr(w, \"get_cli_setting\", lambda s, k, d=None: settings.get((s, k), d))"
+          ],
+          "after": [
+            "    monkeypatch.setattr(",
+            "        w, \"get_cli_setting\", lambda s, k, d=None: settings.get((s, k), d)",
+            "    )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    text = _run(complete(",
+            "        [{\"role\": \"user\", \"content\": {\"type\": \"text\", \"text\": \"hi\"}}], 128, None",
+            "    ))"
+          ],
+          "after": [
+            "    text = _run(",
+            "        complete(",
+            "            [{\"role\": \"user\", \"content\": {\"type\": \"text\", \"text\": \"hi\"}}], 128, None",
+            "        )",
+            "    )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    monkeypatch.setattr(w, \"chat_api_call\", lambda **k: (captured.update(k), {\"text\": \"x\"})[1])"
+          ],
+          "after": [
+            "    monkeypatch.setattr(",
+            "        w, \"chat_api_call\", lambda **k: (captured.update(k), {\"text\": \"x\"})[1]",
+            "    )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "            pending = [r for r in store.list_approval_requests() if r.status == \"pending\"]"
+          ],
+          "after": [
+            "            pending = [",
+            "                r for r in store.list_approval_requests() if r.status == \"pending\"",
+            "            ]"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "            pending = [r for r in store.list_approval_requests() if r.status == \"pending\"]"
+          ],
+          "after": [
+            "            pending = [",
+            "                r for r in store.list_approval_requests() if r.status == \"pending\"",
+            "            ]"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    assert store.list_approval_requests() == [], \"unsupported schema must not create a request\""
+          ],
+          "after": [
+            "    assert store.list_approval_requests() == [], (",
+            "        \"unsupported schema must not create a request\"",
+            "    )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    monkeypatch.setattr(w, \"get_cli_setting\", lambda s, k, d=None: settings.get((s, k), d))"
+          ],
+          "after": [
+            "    monkeypatch.setattr(",
+            "        w, \"get_cli_setting\", lambda s, k, d=None: settings.get((s, k), d)",
+            "    )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    assert factory(\"a\").sampling_budget is da.sampling_budget, \"budget survives reconnect\""
+          ],
+          "after": [
+            "    assert factory(\"a\").sampling_budget is da.sampling_budget, (",
+            "        \"budget survives reconnect\"",
+            "    )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        _run(elicit(\"confirm?\", {\"properties\": {\"confirm\": {\"type\": \"boolean\"}}, \"required\": [\"confirm\"]}))"
+          ],
+          "after": [
+            "        _run(",
+            "            elicit(",
+            "                \"confirm?\",",
+            "                {",
+            "                    \"properties\": {\"confirm\": {\"type\": \"boolean\"}},",
+            "                    \"required\": [\"confirm\"],",
+            "                },",
+            "            )",
+            "        )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    still = [r for r in store.list_approval_requests() if r.request_id == expired[0].request_id]"
+          ],
+          "after": [
+            "    still = [",
+            "        r",
+            "        for r in store.list_approval_requests()",
+            "        if r.request_id == expired[0].request_id",
+            "    ]"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    monkeypatch.setattr(w, \"chat_api_call\", lambda **k: (_ for _ in ()).throw(AssertionError(\"must not reach provider\")))"
+          ],
+          "after": [
+            "    monkeypatch.setattr(",
+            "        w,",
+            "        \"chat_api_call\",",
+            "        lambda **k: (_ for _ in ()).throw(AssertionError(\"must not reach provider\")),",
+            "    )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    monkeypatch.setattr(w, \"get_cli_setting\", lambda s, k, d=None: settings.get((s, k), d))"
+          ],
+          "after": [
+            "    monkeypatch.setattr(",
+            "        w, \"get_cli_setting\", lambda s, k, d=None: settings.get((s, k), d)",
+            "    )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    result = _run(dispatcher.handle(",
+            "        \"sampling/createMessage\",",
+            "        {",
+            "            \"messages\": [{\"role\": \"user\", \"content\": {\"type\": \"text\", \"text\": \"hi there\"}}],",
+            "            \"maxTokens\": 32,",
+            "        },",
+            "    ))"
+          ],
+          "after": [
+            "    result = _run(",
+            "        dispatcher.handle(",
+            "            \"sampling/createMessage\",",
+            "            {",
+            "                \"messages\": [",
+            "                    {\"role\": \"user\", \"content\": {\"type\": \"text\", \"text\": \"hi there\"}}",
+            "                ],",
+            "                \"maxTokens\": 32,",
+            "            },",
+            "        )",
+            "    )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        w, \"chat_api_call\",",
+            "        lambda **k: (_ for _ in ()).throw(AssertionError(\"provider must not be reached\")),"
+          ],
+          "after": [
+            "        w,",
+            "        \"chat_api_call\",",
+            "        lambda **k: (_ for _ in ()).throw(",
+            "            AssertionError(\"provider must not be reached\")",
+            "        ),"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    result = _run(dispatcher.handle(",
+            "        \"sampling/createMessage\",",
+            "        {\"messages\": [{\"role\": \"user\", \"content\": {\"type\": \"text\", \"text\": \"hi\"}}], \"maxTokens\": 8},",
+            "    ))"
+          ],
+          "after": [
+            "    result = _run(",
+            "        dispatcher.handle(",
+            "            \"sampling/createMessage\",",
+            "            {",
+            "                \"messages\": [",
+            "                    {\"role\": \"user\", \"content\": {\"type\": \"text\", \"text\": \"hi\"}}",
+            "                ],",
+            "                \"maxTokens\": 8,",
+            "            },",
+            "        )",
+            "    )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        task = asyncio.create_task(dispatcher.handle(",
+            "            \"elicitation/create\", {\"message\": \"Proceed?\", \"requestedSchema\": {}}",
+            "        ))"
+          ],
+          "after": [
+            "        task = asyncio.create_task(",
+            "            dispatcher.handle(",
+            "                \"elicitation/create\", {\"message\": \"Proceed?\", \"requestedSchema\": {}}",
+            "            )",
+            "        )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "            pending = [r for r in store.list_approval_requests() if r.status == \"pending\"]"
+          ],
+          "after": [
+            "            pending = [",
+            "                r for r in store.list_approval_requests() if r.status == \"pending\"",
+            "            ]"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      }
+    ]
+  },
+  "Tests/MCP/test_unified_control_plane_service.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "Tests/UI/test_approval_batch_geometry.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "Tests/UI/test_console_character_activation_presentation.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "Tests/UI/test_console_mcp_approval.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "Tests/UI/test_console_switcher_reuse_and_modes.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "scripts/check_ui_pr_gate_census.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "tldw_chatbook/Chat/chat_persistence_service.py": {
+    "formatted": false,
+    "unapplied_edits": [
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "            existing_video = VideoGenerationMetadata.from_json(",
+            "                existing_metadata_json",
+            "            )"
+          ],
+          "after": [
+            "            existing_video = VideoGenerationMetadata.from_json(existing_metadata_json)"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [],
+          "after": [
+            ""
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "            if (",
+            "                existing_message[\"id\"] not in retained_existing_ids",
+            "                and self.db.soft_delete_message(",
+            "                    existing_message[\"id\"], existing_message[\"version\"]",
+            "                )"
+          ],
+          "after": [
+            "            if existing_message[",
+            "                \"id\"",
+            "            ] not in retained_existing_ids and self.db.soft_delete_message(",
+            "                existing_message[\"id\"], existing_message[\"version\"]"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      }
+    ]
+  },
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "formatted": false,
+    "unapplied_edits": [
+      {
+        "edit": {
+          "before": [
+            "            and preparation.pause_kind",
+            "            is ConsolePreparationPauseKind.CONTEXT_COMPACTION"
+          ],
+          "after": [
+            "            and preparation.pause_kind is ConsolePreparationPauseKind.CONTEXT_COMPACTION"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        if preparation_id is None or preparation_id not in self._compaction_hold_answered:"
+          ],
+          "after": [
+            "        if (",
+            "            preparation_id is None",
+            "            or preparation_id not in self._compaction_hold_answered",
+            "        ):"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        compacted, visible_copy = await self.compact_context_now(",
+            "            preparation.session_id",
+            "        )"
+          ],
+          "after": [
+            "        compacted, visible_copy = await self.compact_context_now(preparation.session_id)"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    async def send_without_compacting(",
+            "        self, preparation_id: str",
+            "    ) -> ConsoleSubmitResult:"
+          ],
+          "after": [
+            "    async def send_without_compacting(self, preparation_id: str) -> ConsoleSubmitResult:"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "    async def _resume_compaction_hold(",
+            "        self, preparation_id: str",
+            "    ) -> ConsoleSubmitResult:"
+          ],
+          "after": [
+            "    async def _resume_compaction_hold(self, preparation_id: str) -> ConsoleSubmitResult:"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "",
+            "",
+            ""
+          ],
+          "after": []
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      }
+    ]
+  },
+  "tldw_chatbook/Chat/console_chat_store.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "tldw_chatbook/Chat/console_legacy_flat_roots.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "tldw_chatbook/Chat/console_voice_promotion.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "tldw_chatbook/MCP/client.py": {
+    "formatted": false,
+    "unapplied_edits": [
+      {
+        "edit": {
+          "before": [
+            "                raise TimeoutError(f\"Timed out waiting for MCP response to '{method}'\") from exc"
+          ],
+          "after": [
+            "                raise TimeoutError(",
+            "                    f\"Timed out waiting for MCP response to '{method}'\"",
+            "                ) from exc"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "                or any(not self._maintenance_session_owned(session) for _, session in sessions)"
+          ],
+          "after": [
+            "                or any(",
+            "                    not self._maintenance_session_owned(session)",
+            "                    for _, session in sessions",
+            "                )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        self._server_request_dispatcher_factory: Optional[",
+            "            Callable[[str], Any]",
+            "        ] = None"
+          ],
+          "after": [
+            "        self._server_request_dispatcher_factory: Optional[Callable[[str], Any]] = None"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        from tldw_chatbook.MCP.spawn_guard import screen_spawn_command  # ADR-097 boot ratchet: deferred off the boot path (loads on first use)."
+          ],
+          "after": [
+            "        from tldw_chatbook.MCP.spawn_guard import (",
+            "            screen_spawn_command,",
+            "        )  # ADR-097 boot ratchet: deferred off the boot path (loads on first use)."
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      }
+    ]
+  },
+  "tldw_chatbook/MCP/live_server_request_wiring.py": {
+    "formatted": false,
+    "unapplied_edits": [
+      {
+        "edit": {
+          "before": [
+            "        rpm = int(get_cli_setting(\"mcp\", \"sampling_max_requests_per_minute\", _DEFAULT_RPM))"
+          ],
+          "after": [
+            "        rpm = int(",
+            "            get_cli_setting(\"mcp\", \"sampling_max_requests_per_minute\", _DEFAULT_RPM)",
+            "        )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "        cap = int(get_cli_setting(\"mcp\", \"sampling_max_total_tokens\", _DEFAULT_TOKEN_CAP))"
+          ],
+          "after": [
+            "        cap = int(",
+            "            get_cli_setting(\"mcp\", \"sampling_max_total_tokens\", _DEFAULT_TOKEN_CAP)",
+            "        )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "            message = choices[0].get(\"message\") if isinstance(choices[0], dict) else None"
+          ],
+          "after": [
+            "            message = (",
+            "                choices[0].get(\"message\") if isinstance(choices[0], dict) else None",
+            "            )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      },
+      {
+        "edit": {
+          "before": [
+            "                if deadline is not None and asyncio.get_running_loop().time() >= deadline:"
+          ],
+          "after": [
+            "                if (",
+            "                    deadline is not None",
+            "                    and asyncio.get_running_loop().time() >= deadline",
+            "                ):"
+          ]
+        },
+        "exact_BASE_edit": false,
+        "exact_dev_edit": true
+      }
+    ]
+  },
+  "tldw_chatbook/MCP/unified_control_plane_service.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "tldw_chatbook/UI/Console_Modules/workspace.py": {
+    "formatted": true,
+    "unapplied_edits": []
+  },
+  "tldw_chatbook/config.py": {
+    "formatted": false,
+    "unapplied_edits": [
+      {
+        "edit": {
+          "before": [
+            "    if before is not None and before == after and walked <= set(stamped) and all(",
+            "        stamp is not None and not stat.S_ISLNK(stamp[2])",
+            "        for path, stamp in zip(stamped, after)",
+            "        if path in walked"
+          ],
+          "after": [
+            "    if (",
+            "        before is not None",
+            "        and before == after",
+            "        and walked <= set(stamped)",
+            "        and all(",
+            "            stamp is not None and not stat.S_ISLNK(stamp[2])",
+            "            for path, stamp in zip(stamped, after)",
+            "            if path in walked",
+            "        )"
+          ]
+        },
+        "exact_BASE_edit": true,
+        "exact_dev_edit": true
+      }
+    ]
+  }
+}

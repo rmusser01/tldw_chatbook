@@ -1,0 +1,32 @@
+[
+  {
+    "ordinal": 1,
+    "reports": [
+      {
+        "copy": "task-9-root-final-loading-safe-evidence/private-child-001.xml",
+        "sha256": "c73d147abc5b1c482ee18fc83d3d659edab0fa8bfd5a79e65a276404178b42eb",
+        "bytes": 397
+      },
+      {
+        "copy": "task-9-root-final-loading-safe-evidence/private-child-001.log",
+        "sha256": "a1123f8457d053d652fb4a786a6c26fd6dcdc611d0d86bc7beda11bd92372092",
+        "bytes": 944
+      }
+    ]
+  },
+  {
+    "ordinal": 2,
+    "reports": [
+      {
+        "copy": "task-9-root-final-loading-safe-evidence/private-child-002.xml",
+        "sha256": "6d4a66249feac9d579be5da5c6b5ffd272bfbf4e429864389c8f3eb95daaa241",
+        "bytes": 411
+      },
+      {
+        "copy": "task-9-root-final-loading-safe-evidence/private-child-002.log",
+        "sha256": "435207b2c224c12fd6a3ee3743b20223164cc44e2c3ed2cf2ca5746bd3c9a456",
+        "bytes": 765
+      }
+    ]
+  }
+]

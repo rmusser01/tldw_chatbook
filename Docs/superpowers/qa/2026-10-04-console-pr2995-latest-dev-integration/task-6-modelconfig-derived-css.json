@@ -1,0 +1,83 @@
+{
+  "head": "6323ff208b523496dd29341fccb49e023a2ca1b5",
+  "argv": [
+    "python",
+    "/private/tmp/pr2995-task6/check-modelconfig-css.py"
+  ],
+  "stdout": "Screen-owned split complete (features/_library.tcss + features/_library_panels.tcss + features/_library_artifacts.tcss): library=135,670B\nScreen-owned split complete (features/_settings.tcss): settings=42,583B\nScreen-owned split complete (features/_evals.tcss): evals=41,497B\nScreen-owned split complete (features/_scheduling.tcss): scheduling=10,040B\nScreen-owned split complete (features/_workflows.tcss): workflows=6,324B\nScreen-owned split complete (features/_console.tcss): console_delete_receipt=828B\nScreen-owned split complete (features/_watchlists.tcss): watchlists=54,023B\nProcessing CSS module 1 of 64\nProcessing CSS module 2 of 64\nProcessing CSS module 3 of 64\nProcessing CSS module 4 of 64\nProcessing CSS module 5 of 64\nProcessing CSS module 6 of 64\nProcessing CSS module 7 of 64\nProcessing CSS module 8 of 64\nProcessing CSS module 9 of 64\nProcessing CSS module 10 of 64\nProcessing CSS module 11 of 64\nProcessing CSS module 12 of 64\nProcessing CSS module 13 of 64\nProcessing CSS module 14 of 64\nProcessing CSS module 15 of 64\nProcessing CSS module 16 of 64\nProcessing CSS module 17 of 64\nProcessing CSS module 18 of 64\nProcessing CSS module 19 of 64\nProcessing CSS module 20 of 64\nProcessing CSS module 21 of 64\nProcessing CSS module 22 of 64\nProcessing CSS module 23 of 64\nProcessing CSS module 24 of 64\nProcessing CSS module 25 of 64\nProcessing CSS module 26 of 64\nProcessing CSS module 27 of 64\nProcessing CSS module 28 of 64\nProcessing CSS module 29 of 64\nProcessing CSS module 30 of 64\nProcessing CSS module 31 of 64\nProcessing CSS module 32 of 64\nProcessing CSS module 33 of 64\nProcessing CSS module 34 of 64\nProcessing CSS module 35 of 64\nProcessing CSS module 36 of 64\nProcessing CSS module 37 of 64\nProcessing CSS module 38 of 64\nProcessing CSS module 39 of 64\nProcessing CSS module 40 of 64\nProcessing CSS module 41 of 64\nProcessing CSS module 42 of 64\nProcessing CSS module 43 of 64\nProcessing CSS module 44 of 64\nProcessing CSS module 45 of 64\nProcessing CSS module 46 of 64\nProcessing CSS module 47 of 64\nProcessing CSS module 48 of 64\nProcessing CSS module 49 of 64\nProcessing CSS module 50 of 64\nProcessing CSS module 51 of 64\nProcessing CSS module 52 of 64\nProcessing CSS module 53 of 64\nProcessing CSS module 54 of 64\nProcessing CSS module 55 of 64\nProcessing CSS module 56 of 64\nProcessing CSS module 57 of 64\nProcessing CSS module 58 of 64\nProcessing CSS module 59 of 64\nProcessing CSS module 60 of 64\nProcessing CSS module 61 of 64\nProcessing CSS module 62 of 64\nProcessing CSS module 63 of 64\nProcessing CSS module 64 of 64\nCSS build complete\nTotal size: 423,066 characters\nWidget defaults build complete\nWidget defaults: 136 classes, 88,354 + 80,168 characters\nScreen CSS build complete\nScreen CSS: 10 classes, 2,324 + 13,852 characters\n",
+  "outputs": [
+    {
+      "path": "screen_agentic_library.tcss",
+      "current_sha256": "629aca0e2e1a1af30d81d0b2212c74e5dbd31d0ace1d1957a50641335308038f",
+      "rebuilt_sha256": "629aca0e2e1a1af30d81d0b2212c74e5dbd31d0ace1d1957a50641335308038f",
+      "exact": true
+    },
+    {
+      "path": "screen_agentic_settings.tcss",
+      "current_sha256": "3ec8828978d8f2a3eaef714e4c0fa671f6bdb897d00bed1c02aa622e96c4febd",
+      "rebuilt_sha256": "3ec8828978d8f2a3eaef714e4c0fa671f6bdb897d00bed1c02aa622e96c4febd",
+      "exact": true
+    },
+    {
+      "path": "screen_css_scoped.tcss",
+      "current_sha256": "6dbeb4443e380484da87886e50c08994ab9aef1474c8ab2dca5a65275cdd7ceb",
+      "rebuilt_sha256": "6dbeb4443e380484da87886e50c08994ab9aef1474c8ab2dca5a65275cdd7ceb",
+      "exact": true
+    },
+    {
+      "path": "screen_css_self.tcss",
+      "current_sha256": "ebc3ef103864ce24048ed937831f059207df5e4bee170ffcd1d1ee683f1054c8",
+      "rebuilt_sha256": "ebc3ef103864ce24048ed937831f059207df5e4bee170ffcd1d1ee683f1054c8",
+      "exact": true
+    },
+    {
+      "path": "screen_feature_evals.tcss",
+      "current_sha256": "c76f0febcdddc24d6ea70ba126c572cd7b6d96c26baf963a771ac899fa6ded5b",
+      "rebuilt_sha256": "c76f0febcdddc24d6ea70ba126c572cd7b6d96c26baf963a771ac899fa6ded5b",
+      "exact": true
+    },
+    {
+      "path": "screen_feature_scheduling.tcss",
+      "current_sha256": "24f5949c9c8a75ce40eab0e05c7ff6bb8014fd7b5d599625be0f899fdedc8e7a",
+      "rebuilt_sha256": "24f5949c9c8a75ce40eab0e05c7ff6bb8014fd7b5d599625be0f899fdedc8e7a",
+      "exact": true
+    },
+    {
+      "path": "screen_feature_watchlists.tcss",
+      "current_sha256": "22be32bfcb876746bf663fff8b47cf35d5d4f3e6781d81e5653094583057da92",
+      "rebuilt_sha256": "22be32bfcb876746bf663fff8b47cf35d5d4f3e6781d81e5653094583057da92",
+      "exact": true
+    },
+    {
+      "path": "screen_feature_workflows.tcss",
+      "current_sha256": "81fb9803bcf86e3f02c7609c31cc3f57401ca1702b54ca1f726a3af75b962465",
+      "rebuilt_sha256": "81fb9803bcf86e3f02c7609c31cc3f57401ca1702b54ca1f726a3af75b962465",
+      "exact": true
+    },
+    {
+      "path": "screen_modal_console_delete_receipt.tcss",
+      "current_sha256": "bc547b49f9bc2e1464c30d89ac48426921cc7d8c52468216600f38c4b3ceb289",
+      "rebuilt_sha256": "bc547b49f9bc2e1464c30d89ac48426921cc7d8c52468216600f38c4b3ceb289",
+      "exact": true
+    },
+    {
+      "path": "tldw_cli_modular.tcss",
+      "current_sha256": "fcbaf7ec4a3e3294fec566b45da543b86e7417a8f44400dfe2e551225de47e21",
+      "rebuilt_sha256": "fcbaf7ec4a3e3294fec566b45da543b86e7417a8f44400dfe2e551225de47e21",
+      "exact": true
+    },
+    {
+      "path": "widget_defaults_scoped.tcss",
+      "current_sha256": "cc94c70d59bcaed5f64a25638a269b0113e46e7a81b425fd790888be03b2956e",
+      "rebuilt_sha256": "cc94c70d59bcaed5f64a25638a269b0113e46e7a81b425fd790888be03b2956e",
+      "exact": true
+    },
+    {
+      "path": "widget_defaults_self.tcss",
+      "current_sha256": "69ca6e5ae60475dea5461b75436d27f1637d43875f8ed923c35646d95921982e",
+      "rebuilt_sha256": "69ca6e5ae60475dea5461b75436d27f1637d43875f8ed923c35646d95921982e",
+      "exact": true
+    }
+  ],
+  "exit": 0
+}

@@ -1,0 +1,7 @@
+.                                                                        [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected-v7sf5zvm/pytest/test_compact_approval_layout_j0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+27.21s call     Tests/UI/test_console_approval_compact_layout.py::test_compact_approval_layout_journeys
+
+(2 durations < 1s hidden.)
+1 passed in 29.49s

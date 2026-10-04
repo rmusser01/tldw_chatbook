@@ -1,0 +1,571 @@
+# reconcile_durable_turn_settings line 6754
+async def reconcile_durable_turn_settings(
+        self,
+        session_id: str,
+        commit: ConsoleDurableTurnCommit,
+    ) -> ConsoleSettingsPersistenceOutcome:
+        """Persist settings that advanced while the first turn was committing."""
+
+        session = self._session_or_raise(session_id)
+        if (
+            not commit.first_persist
+            or session.persisted_conversation_id != commit.identity.conversation_id
+        ):
+            return ConsoleSettingsPersistenceOutcome(
+                session_id=session_id,
+                stale_components=frozenset(ConsoleSettingsComponent),
+            )
+        components: set[ConsoleSettingsComponent] = set()
+        lifecycle = self._settings_persistence_lifecycles.setdefault(
+            session_id,
+            _ConsoleSettingsPersistenceLifecycle(),
+        )
+        if (
+            session.generation_settings_revision != commit.generation_revision
+            and lifecycle.component_revisions.get(
+                ConsoleSettingsComponent.GENERATION_SETTINGS
+            )
+            != session.generation_settings_revision
+        ):
+            components.add(ConsoleSettingsComponent.GENERATION_SETTINGS)
+        if (
+            session.context_policy_revision != commit.context_policy_revision
+            and lifecycle.component_revisions.get(
+                ConsoleSettingsComponent.CONTEXT_POLICY
+            )
+            != session.context_policy_revision
+        ):
+            components.add(ConsoleSettingsComponent.CONTEXT_POLICY)
+        if not components:
+            return ConsoleSettingsPersistenceOutcome(
+                session_id=session_id,
+                written_components=frozenset(
+                    component
+                    for component, present in (
+                        (
+                            ConsoleSettingsComponent.GENERATION_SETTINGS,
+                            commit.generation_snapshot is not None,
+                        ),
+                        (
+                            ConsoleSettingsComponent.CONTEXT_POLICY,
+                            commit.context_policy_overrides is not None,
+                        ),
+                    )
+                    if present
+                ),
+            )
+        return await self._join_console_settings_persistence_drain(
+            session_id=session_id,
+            persisted_conversation_id=session.persisted_conversation_id,
+            conversation_binding_revision=session.conversation_binding_revision,
+            generation_revision=session.generation_settings_revision,
+            context_policy_revision=session.context_policy_revision,
+            generation_snapshot=(
+                snapshot_from_session_settings(session.settings)
+                if session.settings is not None
+                else None
+            ),
+            context_policy_overrides=session.context_policy_overrides,
+            policy_failure_label=(
+                session.staged_context_policy_failure_label
+                or commit.policy_failure_label
+                or ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+            ),
+            components=frozenset(components),
+        )
+
+# publish_first_persisted_conversation line 8479
+def publish_first_persisted_conversation(
+        self,
+        session_id: str,
+        conversation_id: str,
+    ) -> ConsoleChatSession:
+        """Publish ordinary first persistence without rebinding the live slot."""
+        if type(conversation_id) is not str or not conversation_id:
+            raise ValueError("conversation_id must be non-empty text")
+        session = self._session_or_raise(session_id)
+        current = session.persisted_conversation_id
+        if current is not None and current != conversation_id:
+            raise RuntimeError("A persisted Console session cannot be rebound.")
+        session.persisted_conversation_id = conversation_id
+        self._record_console_settings_binding_revision(
+            session_id,
+            session.conversation_binding_revision,
+        )
+        return session
+
+# rebind_persisted_conversation line 8498
+def rebind_persisted_conversation(
+        self,
+        session_id: str,
+        conversation_id: str | None,
+    ) -> ConsoleChatSession:
+        """Explicitly bind one live slot to a different durable identity."""
+        if conversation_id is not None and (
+            type(conversation_id) is not str or not conversation_id
+        ):
+            raise ValueError("conversation_id must be non-empty text or None")
+        session = self._session_or_raise(session_id)
+        if session.persisted_conversation_id != conversation_id:
+            session.conversation_binding_revision = (
+                self._advance_console_settings_binding_revision(
+                    session_id,
+                    session.conversation_binding_revision,
+                )
+            )
+            session.persisted_conversation_id = conversation_id
+            session.settings_persistence_failures.clear()
+            session.generation_durable_snapshot = None
+            session.context_policy_durable_revision = None
+            lifecycle = self._settings_persistence_lifecycles.get(session_id)
+            if lifecycle is not None:
+                lifecycle.component_revisions.clear()
+        return session
+
+# commit_console_settings_live line 8616
+def commit_console_settings_live(
+        self,
+        submission: ConsoleSettingsSubmission,
+    ) -> ConsoleSettingsLiveCommit:
+        """Commit both settings components to their exact live origin only."""
+        if not isinstance(submission, ConsoleSettingsSubmission):
+            raise TypeError("submission must be ConsoleSettingsSubmission")
+        session = self._sessions.get(submission.origin.session_id)
+        if session is None or not validate_console_settings_origin(
+            submission.origin,
+            live_session_id=session.id if session is not None else None,
+            live_persisted_conversation_id=(
+                session.persisted_conversation_id if session is not None else None
+            ),
+            live_conversation_binding_revision=(
+                session.conversation_binding_revision if session is not None else -1
+            ),
+        ):
+            raise ValueError("Chat closed; nothing applied.")
+        if submission.submission_id in session.applied_settings_submission_ids:
+            raise ValueError("Console settings submission was already applied.")
+        if not isinstance(submission.draft.settings, ConsoleSessionSettings):
+            raise TypeError("submission settings must be ConsoleSessionSettings")
+        if not isinstance(
+            submission.draft.context_policy_overrides,
+            ConsoleContextPolicyOverrides,
+        ):
+            raise TypeError(
+                "submission context policy must be ConsoleContextPolicyOverrides"
+            )
+
+        current_settings = session.settings
+        settings = replace(
+            submission.draft.settings,
+            source="user",
+            system_prompt=(
+                current_settings.system_prompt if current_settings is not None else None
+            ),
+            pinned_prefill=(
+                current_settings.pinned_prefill
+                if current_settings is not None
+                else None
+            ),
+        )
+        with self._preparation_lock:
+            current = self._sessions.get(submission.origin.session_id)
+            if current is not session or not validate_console_settings_origin(
+                submission.origin,
+                live_session_id=session.id,
+                live_persisted_conversation_id=session.persisted_conversation_id,
+                live_conversation_binding_revision=(
+                    session.conversation_binding_revision
+                ),
+            ):
+                raise ValueError("Chat closed; nothing applied.")
+            if submission.submission_id in session.applied_settings_submission_ids:
+                raise ValueError("Console settings submission was already applied.")
+            session.applied_settings_submission_ids.append(submission.submission_id)
+            self.replace_session_settings(session.id, settings)
+            if current_settings is None or (
+                current_settings.provider,
+                current_settings.model,
+            ) != (settings.provider, settings.model):
+                session.updated_at = _utc_now_iso()  # a new pair is a use (RECENT)
+            self._replace_session_context_policy_live(
+                session,
+                submission.draft.context_policy_overrides,
+            )
+            session.staged_context_policy_failure_label = (
+                self._console_settings_policy_failure_label(submission.surface)
+            )
+            session.staged_context_policy_failure_revision = (
+                session.context_policy_revision
+            )
+            return ConsoleSettingsLiveCommit(
+                submission_id=submission.submission_id,
+                session_id=session.id,
+                persisted_conversation_id=session.persisted_conversation_id,
+                conversation_binding_revision=session.conversation_binding_revision,
+                generation_revision=session.generation_settings_revision,
+                context_policy_revision=session.context_policy_revision,
+                settings=settings,
+                context_policy_overrides=session.context_policy_overrides,
+                accepted_submission=submission,
+            )
+
+# persist_console_settings_commit_serialized line 8790
+async def persist_console_settings_commit_serialized(
+        self,
+        commit: ConsoleSettingsLiveCommit,
+        *,
+        policy_failure_label: ConsoleSettingsPolicyFailureLabel | None = None,
+    ) -> ConsoleSettingsPersistenceOutcome:
+        """Join one session drain that converges durability to newest live state."""
+        if not isinstance(commit, ConsoleSettingsLiveCommit):
+            raise TypeError("commit must be ConsoleSettingsLiveCommit")
+        if policy_failure_label is None:
+            accepted = commit.accepted_submission
+            policy_failure_label = self._console_settings_policy_failure_label(
+                accepted.surface if accepted is not None else None
+            )
+        if not isinstance(policy_failure_label, ConsoleSettingsPolicyFailureLabel):
+            raise TypeError(
+                "policy_failure_label must be ConsoleSettingsPolicyFailureLabel"
+            )
+        return await self._join_console_settings_persistence_drain(
+            session_id=commit.session_id,
+            persisted_conversation_id=commit.persisted_conversation_id,
+            conversation_binding_revision=commit.conversation_binding_revision,
+            generation_revision=commit.generation_revision,
+            context_policy_revision=commit.context_policy_revision,
+            generation_snapshot=snapshot_from_session_settings(commit.settings),
+            context_policy_overrides=commit.context_policy_overrides,
+            policy_failure_label=policy_failure_label,
+            components=frozenset(ConsoleSettingsComponent),
+        )
+
+# retry_console_settings_persistence line 8829
+async def retry_console_settings_persistence(
+        self,
+        *,
+        session_id: str,
+        component: ConsoleSettingsComponent,
+        revision: int,
+    ) -> bool:
+        """Retry one still-current failed component without advancing revisions."""
+        if not isinstance(component, ConsoleSettingsComponent):
+            raise TypeError("component must be ConsoleSettingsComponent")
+        session = self._sessions.get(session_id)
+        failure = (
+            session.settings_persistence_failures.get(component)
+            if session is not None
+            else None
+        )
+        current_revision = (
+            session.generation_settings_revision
+            if session is not None
+            and component is ConsoleSettingsComponent.GENERATION_SETTINGS
+            else session.context_policy_revision
+            if session is not None
+            else None
+        )
+        if (
+            session is None
+            or failure is None
+            or failure.revision != revision
+            or current_revision != revision
+        ):
+            return False
+        outcome = await self._join_console_settings_persistence_drain(
+            session_id=session_id,
+            persisted_conversation_id=failure.persisted_conversation_id,
+            conversation_binding_revision=failure.conversation_binding_revision,
+            generation_revision=(
+                revision
+                if component is ConsoleSettingsComponent.GENERATION_SETTINGS
+                else session.generation_settings_revision
+            ),
+            context_policy_revision=(
+                revision
+                if component is ConsoleSettingsComponent.CONTEXT_POLICY
+                else session.context_policy_revision
+            ),
+            generation_snapshot=failure.generation_snapshot,
+            context_policy_overrides=failure.context_policy_overrides,
+            policy_failure_label=(
+                failure.policy_failure_label
+                or ConsoleSettingsPolicyFailureLabel.CONTEXT_SETTINGS
+            ),
+            components=frozenset({component}),
+            retry_components=frozenset({component}),
+        )
+        return component in outcome.written_components
+
+# set_session_user_display_name_override_for_commit line 12770
+def set_session_user_display_name_override_for_commit(
+        self,
+        commit: ConsoleSettingsLiveCommit,
+        value: object,
+        *,
+        global_default: object,
+    ) -> tuple[ConsoleChatSession | None, bool]:
+        """Apply presentation state only while its committed binding is current."""
+        if not isinstance(commit, ConsoleSettingsLiveCommit):
+            raise TypeError("commit must be ConsoleSettingsLiveCommit")
+        session = self._sessions.get(commit.session_id)
+        if not self._console_settings_identity_matches(
+            session,
+            persisted_conversation_id=commit.persisted_conversation_id,
+            conversation_binding_revision=commit.conversation_binding_revision,
+        ):
+            return session, True
+        return self.set_session_user_display_name_override(
+            commit.session_id,
+            value,
+            global_default=global_default,
+        )
+
+# prepare_session_user_display_name_override_for_commit line 12793
+def prepare_session_user_display_name_override_for_commit(
+        self,
+        commit: ConsoleSettingsLiveCommit,
+        value: object,
+        *,
+        global_default: object,
+    ) -> tuple[
+        ConsoleChatSession | None,
+        ConsoleRoleplayProjectionPersistencePlan | None,
+    ]:
+        """Apply exact-binding live identity and freeze only durable writes.
+
+        This method owns every live store and session mutation and must remain
+        on the event-loop owner thread.  Only the returned immutable plan is
+        safe to consume from a worker thread.
+        """
+        if not isinstance(commit, ConsoleSettingsLiveCommit):
+            raise TypeError("commit must be ConsoleSettingsLiveCommit")
+        session = self._sessions.get(commit.session_id)
+        if not self._console_settings_identity_matches(
+            session,
+            persisted_conversation_id=commit.persisted_conversation_id,
+            conversation_binding_revision=commit.conversation_binding_revision,
+        ):
+            return session, None
+        assert session is not None
+        normalized = normalize_chat_display_name(value, blank_means_none=True)
+        if session.user_display_name_override == normalized:
+            return session, None
+        session.user_display_name_override = normalized
+        self._bump_identity_revision(session.id)
+        context_write = self._snapshot_roleplay_context_write(session)
+        plan = self._materialize_roleplay_projections_live(
+            session.id,
+            global_default=global_default,
+        )
+        if plan is None:
+            plan = ConsoleRoleplayProjectionPersistencePlan(
+                session_id=session.id,
+                generation=session.identity_revision,
+                persisted_conversation_id=session.persisted_conversation_id,
+                conversation_binding_revision=(session.conversation_binding_revision),
+                system_prompt_write=None,
+                message_writes=(),
+                context_write=context_write,
+            )
+        else:
+            plan = replace(plan, context_write=context_write)
+        return session, plan
+
+# seed_persona_roleplay line 12964
+def seed_persona_roleplay(
+        self,
+        session_id: str,
+        *,
+        system_template: str,
+        global_default: object,
+    ) -> None:
+        """Seed the trusted persona system source into a fresh session.
+
+        Persona profiles have no greeting field, so unlike
+        ``seed_character_roleplay`` this never appends a message.
+        """
+        session = self._session_or_raise(session_id)
+        source = (
+            system_template
+            if isinstance(system_template, str) and system_template.strip()
+            else None
+        )
+        source_changed = session.persona_system_template != source
+        session.persona_system_template = source
+        if source_changed:
+            self._bump_identity_revision(session_id)
+        context_persisted = self._persist_roleplay_context(session)
+        self._materialize_roleplay_projections(
+            session_id, global_default=global_default
+        )
+        if not context_persisted:
+            logger.warning("Failed to persist seeded Console persona context.")
+
+# set_session_assistant_name line 13161
+def set_session_assistant_name(
+        self,
+        session_id: str,
+        assistant_name: str | None,
+        *,
+        global_default: object,
+    ) -> tuple[ConsoleChatSession, bool]:
+        """Set persona identity through the projection revision seam.
+
+        Setting a non-blank persona name clears any character name, keeping
+        the one-name-set invariant (ADR-149).
+        """
+        session = self._session_or_raise(session_id)
+        normalized = assistant_name.strip() if isinstance(assistant_name, str) else ""
+        new_name = normalized or None
+        if session.assistant_name == new_name:
+            return session, True
+        session.assistant_name = new_name
+        if new_name is not None:
+            session.character_name = None
+        self._bump_identity_revision(session_id)
+        persisted = self._materialize_roleplay_projections(
+            session_id, global_default=global_default
+        )
+        return session, persisted
+
+# retry_voice_promotion_recovery line 16141
+def retry_voice_promotion_recovery(
+        self, lease: ConsoleVoicePromotionLease
+    ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+        """Retry one failed in-memory projection without contacting a provider."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ConsoleVoicePromotionLease,
+            ConsoleVoicePromotionRecoveryKind,
+            derive_voice_promotion_identities,
+        )
+
+        if type(lease) is not ConsoleVoicePromotionLease:
+            raise TypeError("lease must be a ConsoleVoicePromotionLease")
+        with self._voice_promotion_lock:
+            if lease.session_id in self._voice_promotion_selection_decisions:
+                raise RuntimeError("Voice promotion recovery selection is active.")
+            recovery = self._voice_promotion_recoveries.get(lease.session_id)
+            if recovery is None or recovery.lease != lease:
+                raise RuntimeError("Voice promotion recovery is stale or unavailable.")
+            if recovery.kind is ConsoleVoicePromotionRecoveryKind.VALIDATION_BLOCKED:
+                raise RuntimeError(
+                    "Voice promotion recovery requires explicit discard or correction."
+                )
+            if recovery.kind is ConsoleVoicePromotionRecoveryKind.TEMPORARY_RETRYABLE:
+                return self._publish_voice_pair(
+                    lease=lease,
+                    context=recovery.context,
+                    user_id=derive_voice_promotion_identities(
+                        recovery.context.promotion_id
+                    ).user_message_id,
+                    assistant_id=derive_voice_promotion_identities(
+                        recovery.context.promotion_id
+                    ).assistant_message_id,
+                    persisted=False,
+                    commit=None,
+                )
+            assert recovery.commit is not None
+            return self._publish_voice_pair(
+                lease=lease,
+                context=recovery.context,
+                user_id=recovery.commit.user_message_id,
+                assistant_id=recovery.commit.assistant_message_id,
+                persisted=True,
+                commit=recovery.commit,
+            )
+
+# publish_temporary_voice_pair line 16325
+def publish_temporary_voice_pair(
+        self, lease: ConsoleVoicePromotionLease, context: VoicePromotionContext
+    ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+        """Atomically expose a completed temporary pair without persistence."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            ConsoleVoicePromotionLease,
+            VoicePromotionContext,
+            derive_voice_promotion_identities,
+        )
+
+        if (
+            type(lease) is not ConsoleVoicePromotionLease
+            or type(context) is not VoicePromotionContext
+        ):
+            raise TypeError("lease and context must be voice-promotion values")
+        with self._voice_promotion_lock:
+            try:
+                if lease.destination.persisted_conversation_id is not None:
+                    raise RuntimeError(
+                        "Temporary voice publication requires a temporary lease."
+                    )
+                identities = derive_voice_promotion_identities(context.promotion_id)
+                return self._publish_voice_pair(
+                    lease=lease,
+                    context=context,
+                    user_id=identities.user_message_id,
+                    assistant_id=identities.assistant_message_id,
+                    persisted=False,
+                    commit=None,
+                )
+            except BaseException:
+                recovery = self._voice_promotion_recoveries.get(lease.session_id)
+                if recovery is None or recovery.lease != lease:
+                    self._install_voice_promotion_recovery_for_live_lease(
+                        lease, retryable=False
+                    )
+                raise
+
+# publish_durable_voice_pair line 16363
+def publish_durable_voice_pair(
+        self,
+        lease: ConsoleVoicePromotionLease,
+        commit: CompletedVoicePairCommit,
+        context: VoicePromotionContext,
+    ) -> tuple[ConsoleChatMessage, ConsoleChatMessage]:
+        """Expose an already-committed durable pair without another DB write."""
+        from tldw_chatbook.Chat.console_voice_promotion import (
+            CompletedVoicePairCommit,
+            ConsoleVoicePromotionLease,
+            VoicePromotionContext,
+            derive_voice_promotion_identities,
+        )
+
+        if (
+            type(lease) is not ConsoleVoicePromotionLease
+            or type(commit) is not CompletedVoicePairCommit
+            or type(context) is not VoicePromotionContext
+        ):
+            raise TypeError("lease, commit, and context must be voice-promotion values")
+        with self._voice_promotion_lock:
+            try:
+                if (
+                    lease.destination.persisted_conversation_id
+                    != commit.conversation_id
+                    or commit.active_leaf_message_id != commit.assistant_message_id
+                ):
+                    raise RuntimeError(
+                        "Durable voice commit does not match its claimed destination."
+                    )
+                identities = derive_voice_promotion_identities(context.promotion_id)
+                if (
+                    commit.user_message_id != identities.user_message_id
+                    or commit.assistant_message_id != identities.assistant_message_id
+                    or commit.terminal_receipt_id != identities.terminal_receipt_id
+                ):
+                    raise RuntimeError(
+                        "Durable voice commit does not match its promotion identity."
+                    )
+                return self._publish_voice_pair(
+                    lease=lease,
+                    context=context,
+                    user_id=commit.user_message_id,
+                    assistant_id=commit.assistant_message_id,
+                    persisted=True,
+                    commit=commit,
+                )
+            except BaseException:
+                recovery = self._voice_promotion_recoveries.get(lease.session_id)
+                if recovery is None or recovery.lease != lease:
+                    self._install_voice_promotion_recovery_for_live_lease(
+                        lease, commit=None, retryable=False
+                    )
+                raise

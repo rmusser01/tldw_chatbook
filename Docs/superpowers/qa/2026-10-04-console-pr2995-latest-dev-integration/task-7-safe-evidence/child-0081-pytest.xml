@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="8.393" timestamp="2026-10-04T03:09:14.975553-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.UI.test_llamacpp_consumers" name="test_verified_console_adoption_captures_rollback_after_controller_sync" time="5.690"><failure message="assert [True, True, True, True, True] == [True]&#10;  &#10;  Left contains 4 more items, first extra item: True&#10;  Use -v to get more diff">request = &lt;FixtureRequest for &lt;Coroutine test_verified_console_adoption_captures_rollback_after_controller_sync&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x114041e80&gt;
+
+    @pytest.mark.asyncio
+    @private_profile_test
+    async def test_verified_console_adoption_captures_rollback_after_controller_sync(
+        request, monkeypatch
+    ):
+        from dataclasses import replace
+    
+        app = _console_app()
+        _, target, channel, intent_type = _verified_console_target(app, "llama_cpp")
+        async with _ConsoleFlowHarness(app).run_test(size=(120, 42)) as pilot:
+            console = pilot.app.screen
+            await _wait_for_selector(console, pilot, "#console-settings-summary")
+            await pilot.pause(0.3)
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            synchronized = replace(
+                store.session_settings(session_id), temperature=0.27, source="user"
+            )
+            original_ensure = console._ensure_console_chat_controller
+            original_sync = console._sync_console_chat_core_state
+            original_adopt = store.adopt_session_ephemeral_endpoint
+            entered = []
+            ensured = []
+            controller_slot = type(console)._console_chat_controller
+            missing_read = [True]
+    
+            def initially_absent(screen):
+                if screen is console and missing_read[0]:
+                    missing_read[0] = False
+                    return None
+                return controller_slot.fget(screen)
+    
+            # Exercise only the absent-owner observation; the real initializer
+            # then resolves the existing runtime and performs its normal sync.
+            monkeypatch.setattr(
+                type(console),
+                "_console_chat_controller",
+                property(initially_absent, controller_slot.fset),
+            )
+    
+            def ensure_with_sync():
+                ensured.append(True)
+                controller = original_ensure()
+                store.replace_session_settings(session_id, synchronized)
+                original_sync()
+                return controller
+    
+            def adopt_endpoint(*args, **kwargs):
+                receipt = original_adopt(*args, **kwargs)
+                entered.append(store.effective_session_settings(session_id))
+                return receipt
+    
+            def fail_after_adoption():
+                original_sync()
+                if entered:
+                    raise RuntimeError("controlled post-adoption failure")
+    
+            monkeypatch.setattr(
+                console, "_ensure_console_chat_controller", ensure_with_sync
+            )
+            monkeypatch.setattr(store, "adopt_session_ephemeral_endpoint", adopt_endpoint)
+            monkeypatch.setattr(
+                console, "_sync_console_chat_core_state", fail_after_adoption
+            )
+            app.pending_handoffs.stage(channel, intent_type.from_target(target))
+            assert console.consume_pending_llamacpp_console_intent() is False
+&gt;           assert ensured == [True]
+E           assert [True, True, True, True, True] == [True]
+E             
+E             Left contains 4 more items, first extra item: True
+E             Use -v to get more diff
+
+Tests/UI/test_llamacpp_consumers.py:659: AssertionError</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="4.067" timestamp="2026-10-04T03:18:49.871165-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.UI.test_console_controller_wiring" name="test_session_verified_adoption_edges_are_late_bound" time="1.477"><failure message="AttributeError: 'object' object has no attribute '_hooks_v2_runtime'">request = &lt;FixtureRequest for &lt;Coroutine test_session_verified_adoption_edges_are_late_bound&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x111ddb620&gt;
+
+    @pytest.mark.asyncio
+    @private_profile_test
+    async def test_session_verified_adoption_edges_are_late_bound(request, monkeypatch):
+        screen = _unmounted_console()
+        session = screen._session
+        with monkeypatch.context() as patch:
+            selection, summary, controller, draft = (object() for _ in range(4))
+            calls = []
+&gt;           patch.setattr(screen, "_console_chat_controller", controller)
+
+Tests/UI/test_console_controller_wiring.py:974: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/UI/Screens/chat_screen.py:9574: in _console_chat_controller
+    self._console_runtime().set_chat_controller(value)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_runtime.ConsoleRuntime object at 0x11203b080&gt;
+value = &lt;object object at 0x11122e7c0&gt;
+
+    def set_chat_controller(self, value: Any) -&gt; None:
+        """Replace the chat-controller handle."""
+        self._chat_controller = value
+        if value is not None:
+&gt;           value._hooks_v2_runtime = self
+            ^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'object' object has no attribute '_hooks_v2_runtime'
+
+tldw_chatbook/Chat/console_runtime.py:1745: AttributeError</failure></testcase></testsuite></testsuites>

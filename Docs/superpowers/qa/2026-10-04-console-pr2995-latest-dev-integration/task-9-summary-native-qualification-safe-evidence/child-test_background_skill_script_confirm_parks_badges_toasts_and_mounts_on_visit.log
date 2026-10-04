@@ -1,0 +1,7 @@
+.                                                                        [100%]
+- generated xml file: /private/tmp/task9-native-green/test_background_skill_script_c0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+5.00s call     Tests/UI/test_console_parallel_runs.py::test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on_visit
+
+(2 durations < 1s hidden.)
+1 passed in 6.93s

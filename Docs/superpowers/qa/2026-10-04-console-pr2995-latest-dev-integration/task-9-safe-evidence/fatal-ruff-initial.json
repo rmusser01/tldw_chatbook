@@ -1,0 +1,1636 @@
+[
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 64,
+      "row": 3350
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_context_compaction.py",
+    "fix": null,
+    "location": {
+      "column": 37,
+      "row": 3350
+    },
+    "message": "Undefined name `ProviderContinuationSidecar`",
+    "name": "undefined-name",
+    "noqa_row": 3350,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 55,
+      "row": 3351
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_context_compaction.py",
+    "fix": null,
+    "location": {
+      "column": 30,
+      "row": 3351
+    },
+    "message": "Undefined name `ContinuationRestoreTarget`",
+    "name": "undefined-name",
+    "noqa_row": 3351,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 56,
+      "row": 3352
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_context_compaction.py",
+    "fix": null,
+    "location": {
+      "column": 33,
+      "row": 3352
+    },
+    "message": "Undefined name `ProviderThinkingSidecar`",
+    "name": "undefined-name",
+    "noqa_row": 3352,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 47,
+      "row": 3353
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_context_compaction.py",
+    "fix": null,
+    "location": {
+      "column": 26,
+      "row": 3353
+    },
+    "message": "Undefined name `ThinkingHistoryPolicy`",
+    "name": "undefined-name",
+    "noqa_row": 3353,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 58,
+      "row": 3354
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_context_compaction.py",
+    "fix": null,
+    "location": {
+      "column": 37,
+      "row": 3354
+    },
+    "message": "Undefined name `ContextCompactionHold`",
+    "name": "undefined-name",
+    "noqa_row": 3354,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 57,
+      "row": 3357
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_context_compaction.py",
+    "fix": null,
+    "location": {
+      "column": 38,
+      "row": 3357
+    },
+    "message": "Undefined name `ConsoleSubmitResult`",
+    "name": "undefined-name",
+    "noqa_row": 3357,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 37,
+      "row": 3990
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_context_compaction.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 3990
+    },
+    "message": "Undefined name `ContextCompactionHold`",
+    "name": "undefined-name",
+    "noqa_row": 3990,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 31,
+      "row": 1418
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 1418
+    },
+    "message": "Undefined name `Literal`",
+    "name": "undefined-name",
+    "noqa_row": 1418,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 41,
+      "row": 1418
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 33,
+      "row": 1418
+    },
+    "message": "Undefined name `approval`",
+    "name": "undefined-name",
+    "noqa_row": 1418,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 58,
+      "row": 1418
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 45,
+      "row": 1418
+    },
+    "message": "Undefined name `skill_install`",
+    "name": "undefined-name",
+    "noqa_row": 1418,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 74,
+      "row": 1418
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 62,
+      "row": 1418
+    },
+    "message": "Undefined name `skill_script`",
+    "name": "undefined-name",
+    "noqa_row": 1418,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 31,
+      "row": 1685
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 1685
+    },
+    "message": "Undefined name `Mapping`",
+    "name": "undefined-name",
+    "noqa_row": 1685,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 31,
+      "row": 2380
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 2380
+    },
+    "message": "Undefined name `Literal`",
+    "name": "undefined-name",
+    "noqa_row": 2380,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 41,
+      "row": 2380
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 33,
+      "row": 2380
+    },
+    "message": "Undefined name `approval`",
+    "name": "undefined-name",
+    "noqa_row": 2380,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 58,
+      "row": 2380
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 45,
+      "row": 2380
+    },
+    "message": "Undefined name `skill_install`",
+    "name": "undefined-name",
+    "noqa_row": 2380,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 74,
+      "row": 2380
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 62,
+      "row": 2380
+    },
+    "message": "Undefined name `skill_script`",
+    "name": "undefined-name",
+    "noqa_row": 2380,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 70,
+      "row": 2427
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 56,
+      "row": 2427
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 2427,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 42,
+      "row": 3236
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 10,
+      "row": 3236
+    },
+    "message": "Undefined name `ConsolePendingDecisionProjection`",
+    "name": "undefined-name",
+    "noqa_row": 3236,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 43,
+      "row": 3775
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 29,
+      "row": 3775
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 3775,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 47,
+      "row": 3870
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 33,
+      "row": 3870
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 3870,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 22,
+      "row": 5132
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 6,
+      "row": 5132
+    },
+    "message": "Undefined name `ApprovalDecision`",
+    "name": "undefined-name",
+    "noqa_row": 5132,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 34,
+      "row": 5150
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 5150
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5150,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5202
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 5202
+    },
+    "message": "Undefined name `MCPToolProvider`",
+    "name": "undefined-name",
+    "noqa_row": 5202,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 53,
+      "row": 5202
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 45,
+      "row": 5202
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5202,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 26,
+      "row": 5203
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 5203
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5203,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 34,
+      "row": 5215
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 5215
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5215,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 24,
+      "row": 5229
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 10,
+      "row": 5229
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5229,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 23,
+      "row": 5230
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 5230
+    },
+    "message": "Undefined name `Mapping`",
+    "name": "undefined-name",
+    "noqa_row": 5230,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 24,
+      "row": 5240
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 6,
+      "row": 5240
+    },
+    "message": "Undefined name `ToolReviewDecision`",
+    "name": "undefined-name",
+    "noqa_row": 5240,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 19,
+      "row": 5260
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 11,
+      "row": 5260
+    },
+    "message": "Undefined name `Sequence`",
+    "name": "undefined-name",
+    "noqa_row": 5260,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 34,
+      "row": 5260
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 5260
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5260,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 43,
+      "row": 5261
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 29,
+      "row": 5261
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5261,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 23,
+      "row": 5262
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 5262
+    },
+    "message": "Undefined name `Mapping`",
+    "name": "undefined-name",
+    "noqa_row": 5262,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 43,
+      "row": 5263
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 29,
+      "row": 5263
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5263,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 45,
+      "row": 5264
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 31,
+      "row": 5264
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5264,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 31,
+      "row": 5270
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 5270
+    },
+    "message": "Undefined name `ToolReviewValue`",
+    "name": "undefined-name",
+    "noqa_row": 5270,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 19,
+      "row": 5316
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 11,
+      "row": 5316
+    },
+    "message": "Undefined name `Sequence`",
+    "name": "undefined-name",
+    "noqa_row": 5316,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 34,
+      "row": 5316
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 5316
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5316,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 23,
+      "row": 5317
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 5317
+    },
+    "message": "Undefined name `Mapping`",
+    "name": "undefined-name",
+    "noqa_row": 5317,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 23,
+      "row": 5322
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 6,
+      "row": 5322
+    },
+    "message": "Undefined name `ApprovalDecisions`",
+    "name": "undefined-name",
+    "noqa_row": 5322,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 25,
+      "row": 5359
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 11,
+      "row": 5359
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5359,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 23,
+      "row": 5360
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 5360
+    },
+    "message": "Undefined name `Mapping`",
+    "name": "undefined-name",
+    "noqa_row": 5360,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 41,
+      "row": 5384
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 33,
+      "row": 5384
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5384,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 76,
+      "row": 5384
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 61,
+      "row": 5384
+    },
+    "message": "Undefined name `ToolReviewValue`",
+    "name": "undefined-name",
+    "noqa_row": 5384,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5388
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 5388
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5388,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 65,
+      "row": 5388
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 50,
+      "row": 5388
+    },
+    "message": "Undefined name `ToolReviewValue`",
+    "name": "undefined-name",
+    "noqa_row": 5388,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5423
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 5423
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5423,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 33,
+      "row": 5445
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 5445
+    },
+    "message": "Undefined name `LocalToolProvider`",
+    "name": "undefined-name",
+    "noqa_row": 5445,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 54,
+      "row": 5446
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 40,
+      "row": 5446
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5446,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5456
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 5456
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5456,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 65,
+      "row": 5456
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 50,
+      "row": 5456
+    },
+    "message": "Undefined name `ToolReviewValue`",
+    "name": "undefined-name",
+    "noqa_row": 5456,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5484
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 5484
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5484,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 38,
+      "row": 5490
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 5490
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5490,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 47,
+      "row": 5508
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 33,
+      "row": 5508
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5508,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 36,
+      "row": 5593
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 12,
+      "row": 5593
+    },
+    "message": "Undefined name `ManagedSkillProposalGate`",
+    "name": "undefined-name",
+    "noqa_row": 5593,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 54,
+      "row": 5594
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 40,
+      "row": 5594
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5594,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5599
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 5599
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5599,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 65,
+      "row": 5599
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 50,
+      "row": 5599
+    },
+    "message": "Undefined name `ToolReviewValue`",
+    "name": "undefined-name",
+    "noqa_row": 5599,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5603
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 5603
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5603,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5646
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 15,
+      "row": 5646
+    },
+    "message": "Undefined name `MCPToolProvider`",
+    "name": "undefined-name",
+    "noqa_row": 5646,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 58,
+      "row": 5647
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 44,
+      "row": 5647
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5647,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5652
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 5652
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5652,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 65,
+      "row": 5652
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 50,
+      "row": 5652
+    },
+    "message": "Undefined name `ToolReviewValue`",
+    "name": "undefined-name",
+    "noqa_row": 5652,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5728
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 5728
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5728,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 36,
+      "row": 5765
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 5765
+    },
+    "message": "Undefined name `RawShellToolProvider`",
+    "name": "undefined-name",
+    "noqa_row": 5765,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 54,
+      "row": 5766
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 40,
+      "row": 5766
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5766,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5771
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 5771
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5771,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 65,
+      "row": 5771
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 50,
+      "row": 5771
+    },
+    "message": "Undefined name `ToolReviewValue`",
+    "name": "undefined-name",
+    "noqa_row": 5771,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5775
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 5775
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5775,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 35,
+      "row": 5812
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 20,
+      "row": 5812
+    },
+    "message": "Undefined name `BuiltinToolGate`",
+    "name": "undefined-name",
+    "noqa_row": 5812,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 43,
+      "row": 5813
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 24,
+      "row": 5813
+    },
+    "message": "Undefined name `BuiltinToolProvider`",
+    "name": "undefined-name",
+    "noqa_row": 5813,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 34,
+      "row": 5814
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 19,
+      "row": 5814
+    },
+    "message": "Undefined name `MCPToolProvider`",
+    "name": "undefined-name",
+    "noqa_row": 5814,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 54,
+      "row": 5815
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 40,
+      "row": 5815
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 5815,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5843
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 5843
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5843,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 65,
+      "row": 5843
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 50,
+      "row": 5843
+    },
+    "message": "Undefined name `ToolReviewValue`",
+    "name": "undefined-name",
+    "noqa_row": 5843,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 5993
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 5993
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 5993,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 45,
+      "row": 6044
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 31,
+      "row": 6044
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 6044,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 54,
+      "row": 6045
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 40,
+      "row": 6045
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 6045,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 46,
+      "row": 6124
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 32,
+      "row": 6124
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 6124,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 47,
+      "row": 6204
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 33,
+      "row": 6204
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 6204,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 39,
+      "row": 6222
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 25,
+      "row": 6222
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 6222,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 34,
+      "row": 6403
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 6403
+    },
+    "message": "Undefined name `VirtualCliProvider`",
+    "name": "undefined-name",
+    "noqa_row": 6403,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 54,
+      "row": 6404
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 40,
+      "row": 6404
+    },
+    "message": "Undefined name `MCPPendingCall`",
+    "name": "undefined-name",
+    "noqa_row": 6404,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 6409
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 6409
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 6409,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 65,
+      "row": 6409
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 50,
+      "row": 6409
+    },
+    "message": "Undefined name `ToolReviewValue`",
+    "name": "undefined-name",
+    "noqa_row": 6409,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  },
+  {
+    "cell": null,
+    "code": "F821",
+    "end_location": {
+      "column": 30,
+      "row": 6418
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "fix": null,
+    "location": {
+      "column": 22,
+      "row": 6418
+    },
+    "message": "Undefined name `ToolCall`",
+    "name": "undefined-name",
+    "noqa_row": 6418,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/undefined-name"
+  }
+]

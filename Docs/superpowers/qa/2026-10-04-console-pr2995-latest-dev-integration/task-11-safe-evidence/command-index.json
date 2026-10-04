@@ -1,0 +1,710 @@
+{
+  "batch-fatal-ruff.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "check",
+      "--no-cache",
+      "--select",
+      "E9,F63,F7,F82",
+      "Tests/Chat/test_console_automatic_library_preparation.py",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.03185105323791504
+  },
+  "batch-format.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "format",
+      "--no-cache",
+      "--check",
+      "Tests/Chat/test_console_automatic_library_preparation.py",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.059149980545043945
+  },
+  "batch-unrestricted-ruff.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "check",
+      "--no-cache",
+      "--output-format",
+      "json",
+      "Tests/Chat/test_console_automatic_library_preparation.py",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 1,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.03133702278137207
+  },
+  "batch-whitespace.json": {
+    "command": [
+      "git",
+      "-c",
+      "gc.auto=0",
+      "diff",
+      "--check",
+      "--",
+      "Tests/Chat/test_console_automatic_library_preparation.py",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.03367900848388672
+  },
+  "chat-qualification.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "Tests/Agents/test_agent_worktree_retire_race_copy.py::test_retire_before_the_gate_names_the_released_worktree",
+      "Tests/Agents/test_agent_worktree_retire_race_copy.py::test_run_ending_while_its_approval_card_waits_is_refused_honestly",
+      "Tests/Agents/test_agent_worktree_retire_race_copy.py::test_unavailable_private_scratch_keeps_the_scratch_copy",
+      "Tests/Chat/test_console_activity_presentation.py::test_error_wrapped_provider_refusals_keep_their_refusing_authority",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_controller_cancel_removes_exact_owner_and_sidecars_without_touching_staged_inputs",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_cancel_keeps_original_staged",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_never_releases_newer_launch",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_survives_preaccept_failure",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_a_failed_compaction_keeps_the_hold_and_says_why",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_a_hold_after_hooks_resumes_without_repeating_its_side_effects",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_held_send_is_not_also_a_turn_recovery",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_held_send_resumes_and_replies",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_send_that_cannot_fit_keeps_the_message_recoverable",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_a_send_that_cannot_fit_is_refused_before_commit_with_the_alert",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_an_abandoned_resumed_hold_leaves_no_answered_id_behind",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_an_ask_hold_pauses_the_send_before_it_is_committed",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_cancel_sends_nothing_and_returns_the_message_to_the_composer",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_compact_and_send_summarizes_then_sends_the_held_message_once",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_hook_context_that_cannot_fit_is_refused_before_commit",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_send_without_compacting_holds_even_if_the_policy_turned_automatic",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_send_without_compacting_past_the_ceiling_drops_older_turns_to_fit",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_send_without_compacting_sends_with_no_summary_call",
+      "Tests/Chat/test_console_context_compaction.py::test_known_overflow_still_blocks_when_compaction_is_unavailable",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_releases_only_its_frozen_evidence_lease",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_scrubs_content_when_evidence_release_raises",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_discard_releases_only_exact_frozen_evidence_once",
+      "Tests/Chat/test_console_durable_turn_fix_round1.py::test_explicit_frozen_evidence_makes_checkpoint_unreconstructable",
+      "Tests/Chat/test_console_staged_evidence_dispatch_pin.py::test_a_composer_send_uses_the_evidence_staged_at_dispatch",
+      "Tests/Chat/test_console_staged_evidence_dispatch_pin.py::test_a_resumed_turn_does_not_take_evidence_staged_while_it_was_paused",
+      "Tests/Chat/test_console_turn_preparation.py::test_pause_actions_are_the_exact_frozen_data_matrix",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_release_fault_cannot_skip_owner_cleanup",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_releases_exact_evidence_once_and_preserves_replacement",
+      "Tests/Chat/test_console_turn_preparation.py::test_transition_cartesian_matrix_matches_only_the_frozen_legal_edges",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/chat-qualification.xml"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 2,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 362.2421259880066
+  },
+  "combined-seam-qualification.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[hello]",
+      "Tests/Chat/test_console_fork_transition_census.py::test_external_console_modules_do_not_write_live_fork_fields_directly",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/combined-seam-qualification.xml"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 8.826435089111328
+  },
+  "dev-evidence-cancel-attribution.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-vv",
+      "-s",
+      "-p",
+      "task11_observe",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_cancel_keeps_original_staged",
+      "--maxfail=1",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/dev-evidence-cancel-attribution.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 2,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": null,
+    "seconds": 168.46757626533508
+  },
+  "diagnostic-inventory.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_persistent_diagnostic_inventory.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 73.25282716751099
+  },
+  "fatal-ruff.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "check",
+      "--no-cache",
+      "--select",
+      "E9,F63,F7,F82",
+      "Tests/Agents/test_agent_worktree_retire_race_copy.py",
+      "Tests/Chat/test_console_activity_presentation.py",
+      "Tests/Chat/test_console_automatic_library_preparation.py",
+      "Tests/Chat/test_console_compaction_ask_hold.py",
+      "Tests/Chat/test_console_context_budget_copy.py",
+      "Tests/Chat/test_console_context_budget_routes.py",
+      "Tests/Chat/test_console_context_compaction.py",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py",
+      "Tests/Chat/test_console_durable_turn_fix_round1.py",
+      "Tests/Chat/test_console_staged_evidence_dispatch_pin.py",
+      "Tests/Chat/test_console_turn_preparation.py",
+      "Tests/Performance/test_textual_css_fastpath.py",
+      "Tests/Scripts/test_check_textual_worker_contract.py",
+      "Tests/UI/test_console_compaction_hold_flow.py",
+      "Tests/UI/test_console_trace_call_recovery.py",
+      "scripts/check_textual_worker_contract.py",
+      "tldw_chatbook/Agents/local_tool_provider.py",
+      "tldw_chatbook/Chat/console_agent_bridge.py",
+      "tldw_chatbook/Chat/console_chat_controller.py",
+      "tldw_chatbook/Chat/console_context_budget_copy.py",
+      "tldw_chatbook/Chat/console_runtime.py",
+      "tldw_chatbook/Chat/console_turn_preparation.py",
+      "tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py",
+      "tldw_chatbook/UI/Screens/chat_screen.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.1780862808227539
+  },
+  "fixture-batch-qualification.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "--maxfail=1",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_survives_preaccept_failure",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_never_releases_newer_launch",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_releases_only_its_frozen_evidence_lease",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_scrubs_content_when_evidence_release_raises",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_discard_releases_only_exact_frozen_evidence_once",
+      "Tests/Chat/test_console_durable_turn_fix_round1.py::test_explicit_frozen_evidence_makes_checkpoint_unreconstructable",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_release_fault_cannot_skip_owner_cleanup",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_releases_exact_evidence_once_and_preserves_replacement",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/fixture-batch-qualification.xml"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 33.96730613708496
+  },
+  "fixture-fatal-ruff.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "check",
+      "--no-cache",
+      "--select",
+      "E9,F63,F7,F82",
+      "Tests/Chat/test_console_automatic_library_preparation.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.06227898597717285
+  },
+  "fixture-final-fatal-ruff.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "check",
+      "--no-cache",
+      "--select",
+      "E9,F63,F7,F82",
+      "Tests/Chat/test_console_automatic_library_preparation.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.06351208686828613
+  },
+  "fixture-final-format.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "format",
+      "--no-cache",
+      "--check",
+      "Tests/Chat/test_console_automatic_library_preparation.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.08960485458374023
+  },
+  "fixture-final-whitespace.json": {
+    "command": [
+      "git",
+      "-c",
+      "gc.auto=0",
+      "diff",
+      "--check",
+      "--",
+      "Tests/Chat/test_console_automatic_library_preparation.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.05248594284057617
+  },
+  "fixture-format.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "format",
+      "--no-cache",
+      "--check",
+      "Tests/Chat/test_console_automatic_library_preparation.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 1,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.13808822631835938
+  },
+  "fixture-repair-green.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_cancel_keeps_original_staged",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/fixture-repair-green.xml"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 13.197474956512451
+  },
+  "fixture-whitespace.json": {
+    "command": [
+      "git",
+      "-c",
+      "gc.auto=0",
+      "diff",
+      "--check",
+      "--",
+      "Tests/Chat/test_console_automatic_library_preparation.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.10706186294555664
+  },
+  "format-check.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "format",
+      "--no-cache",
+      "--check",
+      "Tests/Agents/test_agent_worktree_retire_race_copy.py",
+      "Tests/Chat/test_console_activity_presentation.py",
+      "Tests/Chat/test_console_automatic_library_preparation.py",
+      "Tests/Chat/test_console_compaction_ask_hold.py",
+      "Tests/Chat/test_console_context_budget_copy.py",
+      "Tests/Chat/test_console_context_budget_routes.py",
+      "Tests/Chat/test_console_context_compaction.py",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py",
+      "Tests/Chat/test_console_durable_turn_fix_round1.py",
+      "Tests/Chat/test_console_staged_evidence_dispatch_pin.py",
+      "Tests/Chat/test_console_turn_preparation.py",
+      "Tests/Performance/test_textual_css_fastpath.py",
+      "Tests/Scripts/test_check_textual_worker_contract.py",
+      "Tests/UI/test_console_compaction_hold_flow.py",
+      "Tests/UI/test_console_trace_call_recovery.py",
+      "scripts/check_textual_worker_contract.py",
+      "tldw_chatbook/Agents/local_tool_provider.py",
+      "tldw_chatbook/Chat/console_agent_bridge.py",
+      "tldw_chatbook/Chat/console_chat_controller.py",
+      "tldw_chatbook/Chat/console_context_budget_copy.py",
+      "tldw_chatbook/Chat/console_runtime.py",
+      "tldw_chatbook/Chat/console_turn_preparation.py",
+      "tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py",
+      "tldw_chatbook/UI/Screens/chat_screen.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 1,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.1682898998260498
+  },
+  "immutable-fixed-cause.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-vv",
+      "-s",
+      "-p",
+      "task11_fixed_exception_observer",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_cancel_keeps_original_staged",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/immutable-fixed-cause.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 2,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": true,
+    "seconds": 8.340978860855103
+  },
+  "immutable-preaccept-failure-attribution.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "-p",
+      "task11_fixed_exception_observer",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_survives_preaccept_failure",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/immutable-preaccept-failure-attribution.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 1,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": true,
+    "seconds": 6.949956178665161
+  },
+  "pending-setup-01.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "-p",
+      "task11_setup_observer",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_never_releases_newer_launch",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/pending-setup-01.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 2,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": true,
+    "seconds": 5.351495981216431
+  },
+  "pending-setup-02.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "-p",
+      "task11_setup_observer",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/pending-setup-02.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 2,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": true,
+    "seconds": 4.192813158035278
+  },
+  "pending-setup-03.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "-p",
+      "task11_setup_observer",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/pending-setup-03.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 2,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": true,
+    "seconds": 3.739234209060669
+  },
+  "pending-setup-04.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "-p",
+      "task11_setup_observer",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged[retry]",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/pending-setup-04.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 2,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": true,
+    "seconds": 3.9238500595092773
+  },
+  "pending-setup-05.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "-p",
+      "task11_setup_observer",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_releases_only_its_frozen_evidence_lease",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/pending-setup-05.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 2,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": true,
+    "seconds": 6.285738945007324
+  },
+  "pending-setup-06.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "-p",
+      "task11_setup_observer",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_scrubs_content_when_evidence_release_raises",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/pending-setup-06.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 2,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": true,
+    "seconds": 5.501862049102783
+  },
+  "pending-setup-07.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "-p",
+      "task11_setup_observer",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_discard_releases_only_exact_frozen_evidence_once",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/pending-setup-07.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 2,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": true,
+    "seconds": 5.409765958786011
+  },
+  "pending-setup-08.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "-p",
+      "task11_setup_observer",
+      "Tests/Chat/test_console_durable_turn_fix_round1.py::test_explicit_frozen_evidence_makes_checkpoint_unreconstructable",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/pending-setup-08.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 2,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": true,
+    "seconds": 6.3482348918914795
+  },
+  "pending-setup-09.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "-p",
+      "task11_setup_observer",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_release_fault_cannot_skip_owner_cleanup",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/pending-setup-09.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 2,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": true,
+    "seconds": 5.012001037597656
+  },
+  "pending-setup-10.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "-s",
+      "-p",
+      "task11_setup_observer",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_releases_exact_evidence_once_and_preserves_replacement",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/pending-setup-10.xml"
+    ],
+    "cwd": "/private/tmp/pr2995-task11-dev-attribution",
+    "exit": 2,
+    "source_ref": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+    "stable": true,
+    "seconds": 5.489193916320801
+  },
+  "remaining-existing-qualification.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "--maxfail=1",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_survives_preaccept_failure",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_never_releases_newer_launch",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch",
+      "Tests/Chat/test_console_automatic_library_preparation.py::test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_releases_only_its_frozen_evidence_lease",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_scrubs_content_when_evidence_release_raises",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_discard_releases_only_exact_frozen_evidence_once",
+      "Tests/Chat/test_console_durable_turn_fix_round1.py::test_explicit_frozen_evidence_makes_checkpoint_unreconstructable",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_release_fault_cannot_skip_owner_cleanup",
+      "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_releases_exact_evidence_once_and_preserves_replacement",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/remaining-existing-qualification.xml"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 1,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 14.153716087341309
+  },
+  "remaining-independent-qualification.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_a_failed_compaction_keeps_the_hold_and_says_why",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_a_hold_after_hooks_resumes_without_repeating_its_side_effects",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_held_send_is_not_also_a_turn_recovery",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_held_send_resumes_and_replies",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_send_that_cannot_fit_keeps_the_message_recoverable",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_a_send_that_cannot_fit_is_refused_before_commit_with_the_alert",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_an_abandoned_resumed_hold_leaves_no_answered_id_behind",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_an_ask_hold_pauses_the_send_before_it_is_committed",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_cancel_sends_nothing_and_returns_the_message_to_the_composer",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_compact_and_send_summarizes_then_sends_the_held_message_once",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_hook_context_that_cannot_fit_is_refused_before_commit",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_send_without_compacting_holds_even_if_the_policy_turned_automatic",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_send_without_compacting_past_the_ceiling_drops_older_turns_to_fit",
+      "Tests/Chat/test_console_compaction_ask_hold.py::test_send_without_compacting_sends_with_no_summary_call",
+      "Tests/Chat/test_console_context_compaction.py::test_known_overflow_still_blocks_when_compaction_is_unavailable",
+      "Tests/Chat/test_console_staged_evidence_dispatch_pin.py::test_a_composer_send_uses_the_evidence_staged_at_dispatch",
+      "Tests/Chat/test_console_staged_evidence_dispatch_pin.py::test_a_resumed_turn_does_not_take_evidence_staged_while_it_was_paused",
+      "Tests/Chat/test_console_turn_preparation.py::test_pause_actions_are_the_exact_frozen_data_matrix",
+      "Tests/Chat/test_console_turn_preparation.py::test_transition_cartesian_matrix_matches_only_the_frozen_legal_edges",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/remaining-independent-qualification.xml"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 76.14294195175171
+  },
+  "source-whitespace.json": {
+    "command": [
+      "git",
+      "-c",
+      "gc.auto=0",
+      "diff",
+      "--check",
+      "8d1088a5078337534bb700ce16aecd4d65399660",
+      "HEAD",
+      "--",
+      "tldw_chatbook",
+      "Tests",
+      "scripts"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 2,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.16263818740844727
+  },
+  "ui-census.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_ui_pr_gate_census.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 0.09722590446472168
+  },
+  "ui-qualification.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "Tests/UI/test_console_compaction_hold_flow.py::test_an_ask_hold_shows_the_card_and_each_action_completes",
+      "Tests/UI/test_console_trace_call_recovery.py::test_a_compaction_hold_on_an_estimated_window_says_so",
+      "Tests/UI/test_console_trace_call_recovery.py::test_a_compaction_hold_shows_its_numbers_and_three_choices",
+      "Tests/UI/test_console_trace_call_recovery.py::test_each_compaction_hold_button_reaches_its_controller_action",
+      "Tests/Performance/test_textual_css_fastpath.py::test_ancestor_scoped_bare_type_rule_count_is_a_ratchet",
+      "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/ui-qualification.xml"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 136.95929288864136
+  },
+  "worker-analyzer.json": {
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "scripts/check_textual_worker_contract.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "exit": 0,
+    "source_ref": null,
+    "stable": true,
+    "seconds": 31.46412181854248
+  }
+}

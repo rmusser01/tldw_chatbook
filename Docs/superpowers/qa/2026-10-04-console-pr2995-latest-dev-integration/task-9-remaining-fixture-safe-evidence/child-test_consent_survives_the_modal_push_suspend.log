@@ -1,0 +1,10 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.                                                                        [100%]
+- generated xml file: /private/tmp/task9-remaining-fixtures/test_consent_survives_the_moda0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+9.57s call     Tests/UI/test_console_auto_speak_wiring.py::test_consent_survives_the_modal_push_suspend
+
+(2 durations < 1s hidden.)
+1 passed in 11.61s

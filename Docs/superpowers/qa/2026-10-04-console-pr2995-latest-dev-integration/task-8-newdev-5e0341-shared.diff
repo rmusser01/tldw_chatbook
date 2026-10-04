@@ -1,0 +1,2098 @@
+diff --git a/Docs/User_Guide/console/agent-runs-and-tools.md b/Docs/User_Guide/console/agent-runs-and-tools.md
+index b68d25e505..f00fa6d1e1 100644
+--- a/Docs/User_Guide/console/agent-runs-and-tools.md
++++ b/Docs/User_Guide/console/agent-runs-and-tools.md
+@@ -66,14 +66,14 @@ answer · 12s` for a question, or `Waiting for your confirmation · 12s` for
+ a skill/worktree confirm — instead of `Thinking…`, since a decision only
+ you can make outranks whatever the model's last step happened to be — and
+ the "Run:" status chip above the composer reads the same kind-aware line.
+-The Inspector's `Live work` row and the pinned authority summary's `Run`
+-fact stay approval-specific, though: they read "Waiting for your approval"
+-only while an actual approval card (not a question or confirm) is mounted,
+-and otherwise show their ordinary copy — `Generating…`, or no active work —
+-even while a question or confirm card is the one genuinely pending. The
+-elapsed figure
+-advances while you watch. The line is live-only — it vanishes the moment
+-the reply's own text arrives, and a conversation you reopen later shows the
++The Inspector's `Live work` row uses the same waiting copy. Its `Approvals`
++count and the pinned authority summary's `Run` fact cover tool-approval rounds
++for the viewed conversation, including approvals queued behind another card.
++Questions and skill/worktree confirmations do not increase that count. Older
++integrations can show an approval without attaching it to a conversation; when
++it is the only pending tool decision, the Inspector and Files attention count
++it while you decide. The elapsed figure advances while you watch. The line is live-only — it vanishes
++the moment the reply's own text arrives, and a conversation you reopen later shows the
+ completed `Tool` rows below instead. During a fleet turn, while the primary
+ waits on its children, the line reads `2 sub-agents · ⚙ grep_files · 12s`
+ (the count of running sub-agents and their longest-running tool) instead of
+@@ -161,9 +161,14 @@ its rows and actions is unchanged.
+ **In the status chips** (above the composer) — "Tools: N ready" counts the
+ tools available to the agent (the chip stays hidden until tools are counted,
+ which happens after your first send), and
+-"Approvals: N pending" counts tool calls waiting on you. The Approvals chip is
+-clickable: it jumps you to the pending approval card (with nothing pending it
+-just says "No approval is pending."). A mutation already in **Finishing** is
++"Approvals: N pending" counts outstanding tool-approval rounds in the viewed
++conversation; a round may contain several calls. Chat-creation confirmations
++use "Waiting for your confirmation" and do not count as tool approvals.
++The Approvals chip is
++clickable: it jumps to the visible decision card, preferring an approval when
++one is displayed. If approvals are queued behind a skill confirmation, review
++reaches that confirmation first. With no decision visible it says
++"No approval is pending." A mutation already in **Finishing** is
+ status, not a pending decision, so it no longer contributes to this count.
+ 
+ ## Features & controls
+@@ -249,7 +254,7 @@ Region     Which regions? (pick any)
+   turn, leaving the question up for you to answer on the card.
+ - The card never grabs focus from something you are typing. If you need to
+   reach it from the keyboard, the inspector's **Review approval** action
+-  focuses the question card when no approval is pending.
++  focuses the question card when no approval card is displayed.
+ - By default the question waits as long as it takes. To make an unanswered
+   question expire instead, set `ask_user_timeout_seconds` under `[console]`
+   in your config; the card then shows *Auto-continues in m:ss* and the run
+@@ -275,6 +280,15 @@ manual review. It may be absent from the recovery picker when no ownership row
+ was saved. Chatbook does not delete or adopt an unrecorded checkout automatically.
+ 
+ 
++### Approval controls in small terminals
++
++When the chat column is narrow or Console uses its short-height layout, the
++existing decision Select sits above the **Approve once** and **Deny** pair.
++The bulk bar puts **Deny all** first, followed by **Approve all** and **Submit**.
++Review details scroll inside the card so those actions stay visible. Tab brings
++the optional denial-reason field into view. Resizing preserves the current
++choice and focus; taller, wider layouts restore the original arrangement.
++
+ ### Consecutive tool denials
+ 
+ Console agent runs stop after three consecutive authoritative tool denials by
+@@ -412,7 +426,7 @@ approval"; the inspector's **Review approval** button is the same route. A
+ session tab wearing the **◆** marker (the status legend reads "● running · ◆
+ needs approval · ✓ finished · ✗ failed") routes straight to whichever
+ decision card is actually pending — approval, question, skill-install, or
+-skill-script confirm, checked in that precedence (a worktree-merge confirm
++skill-script or chat-creation confirm, checked in that precedence (a worktree-merge confirm
+ has no card wired on this screen) — when you press it: the session is
+ activated first — a parked round only mounts its card once its session is
+ the one you are viewing — and the usual "press the active tab to rename it"
+@@ -2004,8 +2018,10 @@ proposes chats.
+   and any instructions. When the agent didn't name the new chat, the card
+   shows the default title it would get ("Fork of <source chat>" for a fork,
+   "New Chat" otherwise). Buttons: **Allow** / **Allow for this session** /
+-  **Deny**. A round that never gets answered — you stop the run, or the
+-  card is torn down — fails closed as a denial: nothing is created.
++  **Deny**. Stopping the run or closing its source tab cancels the
++  confirmation: nothing is created. Switching tabs keeps the decision with
++  its source tab; return there to answer it. Delayed updates from that tab
++  cannot replace another tab's live confirmation.
+ - **"Allow for this session" is per tool and ends with the session.**
+   `fork_chat` and `new_chat` are remembered separately, a remembered tool
+   skips its card for the rest of the Console session, and the next session
+diff --git a/Docs/security/production-diagnostic-inventory.json b/Docs/security/production-diagnostic-inventory.json
+index 551634b266..d1288f0950 100644
+--- a/Docs/security/production-diagnostic-inventory.json
++++ b/Docs/security/production-diagnostic-inventory.json
+@@ -386,8 +386,8 @@
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+     },
+     {
+-      "call_count": 90,
+-      "diagnostic_digest": "f6cc31a7f2a7205adb83",
++      "call_count": 92,
++      "diagnostic_digest": "44b391a5bd7e5027544a",
+       "owner": "TASK-492",
+       "path": "tldw_chatbook/Chat/console_chat_controller.py",
+       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+diff --git a/Tests/Chat/test_console_chat_create_confirm.py b/Tests/Chat/test_console_chat_create_confirm.py
+index 1f2ed989ba..cd486418fe 100644
+--- a/Tests/Chat/test_console_chat_create_confirm.py
++++ b/Tests/Chat/test_console_chat_create_confirm.py
+@@ -1,5 +1,6 @@
+ """Confirm rounds for agent-initiated chat creation (fork_chat / new_chat)."""
+ import threading
++from collections.abc import Callable
+ 
+ import pytest
+ 
+@@ -11,6 +12,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+ from Tests.Chat.test_console_skill_script_confirm import _FakeApp, _wait_until  # reuse fakes
+ 
+ 
++#: Event waits and worker joins share the existing bounded race-test deadline.
++_CHAT_CREATE_SYNC_TIMEOUT_SECONDS = 5
++
++
+ @pytest.fixture
+ def make_controller():
+     made = []
+@@ -41,7 +46,7 @@ def test_allow_round_trip(make_controller):
+     t.start()
+     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
+     controller.resolve_pending_chat_create(True, False, request_id=controller.pending_chat_create_ids()[0])
+-    t.join(timeout=5)
++    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+     assert result["decision"] == {"allow": True, "remember": False}
+ 
+ 
+@@ -53,7 +58,7 @@ def test_deny_round_trip(make_controller):
+     t.start()
+     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
+     controller.resolve_pending_chat_create(False, False, request_id=controller.pending_chat_create_ids()[0])
+-    t.join(timeout=5)
++    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+     assert result["decision"] == {"allow": False, "remember": False}
+ 
+ 
+@@ -77,7 +82,7 @@ def test_remember_grants_session_scope(make_controller):
+     t.start()
+     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
+     controller.resolve_pending_chat_create(True, True, request_id=controller.pending_chat_create_ids()[0])
+-    t.join(timeout=5)
++    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+ 
+     # Second call in the same session: no card, straight allow. ("s1" is
+     # not the store's active session, so round 1 PARKED -- it never
+@@ -101,7 +106,7 @@ def test_remember_grants_session_scope(make_controller):
+     t2.start()
+     _wait_until(lambda: len(controller.pending_chat_create_ids()) > 0)
+     controller.resolve_pending_chat_create(True, False, request_id=controller.pending_chat_create_ids()[-1])
+-    t2.join(timeout=5)
++    t2.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+     assert results[-1] == {"allow": True, "remember": False}
+ 
+ 
+@@ -136,7 +141,7 @@ def test_revoking_a_run_denies_its_chat_create_confirm(make_controller):
+ 
+     assert controller.revoke_approval_rounds_for_run("run-chat-a") == 1
+ 
+-    t.join(timeout=5)
++    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+     assert not t.is_alive(), "the revoked confirm never released its thread"
+     assert results["decision"] == {"allow": False, "remember": False}
+     assert controller.pending_chat_create_ids() == []  # torn down, not armed
+@@ -208,7 +213,7 @@ def _arm_and_capture(controller, payload, session_id):
+     controller.resolve_pending_chat_create(
+         False, False, request_id=controller.pending_chat_create_ids()[0]
+     )
+-    t.join(timeout=5)
++    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+     assert not t.is_alive(), "the confirm round never released its thread"
+     return card, result["decision"]
+ 
+@@ -322,7 +327,7 @@ def test_confirm_payload_run_id_is_the_true_run(make_controller):
+     controller.resolve_pending_chat_create(
+         True, False, request_id=controller.pending_chat_create_ids()[0]
+     )
+-    t2.join(timeout=5)
++    t2.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+     payload = controller.pending_chat_create_payloads[0]
+     assert payload["run_id"] == "run-TRUE-1"
+ 
+@@ -366,7 +371,7 @@ def test_subagent_requester_stamps_identity_and_skips_session_grant(make_control
+     controller.resolve_pending_chat_create(
+         True, False, request_id=controller.pending_chat_create_ids()[0]
+     )
+-    t.join(timeout=5)
++    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+     # No silent grant ride: a card was armed (round existed) and decided.
+     assert decisions == [{"allow": True, "remember": False}]
+     assert payload_seen["agent_kind"] == "subagent"
+@@ -374,7 +379,16 @@ def test_subagent_requester_stamps_identity_and_skips_session_grant(make_control
+     assert payload_seen["agent_task"].startswith("do the thing")
+ 
+ 
+-def test_primary_requester_still_rides_session_grant(make_controller):
++@pytest.mark.parametrize("closing", [False, True], ids=["open-session", "committed-close"])
++def test_primary_requester_still_rides_session_grant(
++    make_controller: Callable[[], ConsoleChatController], closing: bool
++) -> None:
++    """A remembered grant survives only while its source session is live.
++
++    Args:
++        make_controller: Existing standalone confirmation controller fixture.
++        closing: Commit the real Close ticket before consulting the grant.
++    """
+     controller = make_controller()
+     real = controller.store.create_session(title="S")
+     sid = real.id
+@@ -383,6 +397,157 @@ def test_primary_requester_still_rides_session_grant(make_controller):
+ 
+     from tldw_chatbook.Agents.run_context import use_run_id
+ 
++    if closing:
++        controller.begin_session_close(
++            sid, expected_revision=controller.lifecycle_impact(session_id=sid).revision
++        )
++        assert sid in controller._chat_create_session_grants
++        assert any(session.id == sid for session in controller.store.sessions())
+     with use_run_id("run-9"):
+         decision = controller.request_chat_create_confirm(_payload(), session_id=sid)
+-    assert decision == {"allow": True, "remember": True}
++    assert decision == {"allow": not closing, "remember": not closing}
++    assert not controller.pending_chat_create_ids()
++
++
++def test_close_cannot_resurrect_a_remembered_chat_create_grant(
++    make_controller: Callable[[], ConsoleChatController],
++) -> None:
++    """A decided confirmation cannot recreate a grant after real Close.
++
++    Args:
++        make_controller: Existing standalone confirmation controller fixture.
++    """
++    controller = make_controller()
++    session = controller.store.create_session(title="Source")
++    entered = threading.Event()
++    release = threading.Event()
++    results = {}
++
++    class PausedGrants(dict):
++        def setdefault(self, key, default=None):
++            """Pause only an unprotected write so Close can settle first.
++
++            Args:
++                key: Owning session's grant key.
++                default: Grant set created by the confirmation.
++
++            Returns:
++                The existing or newly inserted grant set for the session.
++            """
++            protected = controller._pending_chat_create_lock.locked()
++            results["protected_write"] = protected
++            entered.set()
++            # A protected write must finish before Close's cancellation sweep;
++            # waiting for Close while holding its lock would deadlock the test.
++            if not protected:
++                assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
++            return super().setdefault(key, default)
++
++    controller._chat_create_session_grants = PausedGrants()
++    worker = threading.Thread(
++        target=lambda: results.update(
++            decision=controller.request_chat_create_confirm(
++                _payload(), session_id=session.id
++            )
++        )
++    )
++    worker.start()
++    try:
++        _wait_until(lambda: bool(controller.pending_chat_create_ids()))
++        controller.resolve_pending_chat_create(
++            True, True, request_id=controller.pending_chat_create_ids()[0]
++        )
++        assert entered.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
++        if results["protected_write"]:
++            worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
++            assert not worker.is_alive()
++        ticket = controller.begin_session_close(
++            session.id,
++            expected_revision=controller.lifecycle_impact(
++                session_id=session.id
++            ).revision,
++        )
++        controller.finalize_session_close(ticket)
++        assert not any(s.id == session.id for s in controller.store.sessions())
++    finally:
++        release.set()
++        worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
++    assert not worker.is_alive()
++    assert results["decision"] == {"allow": True, "remember": True}
++    assert session.id not in controller._chat_create_session_grants
++    assert controller.pending_chat_create_ids() == []
++    assert controller._parked_chat_create_payloads == {}
++
++
++@pytest.mark.bootstrap_profile
++@pytest.mark.parametrize("closing", [False, True], ids=["navigate", "close"])
++def test_legacy_chat_create_marshal_keeps_its_unscoped_contract(
++    make_controller: Callable[[], ConsoleChatController],
++    monkeypatch: pytest.MonkeyPatch,
++    closing: bool,
++) -> None:
++    """An unparked legacy round remains visible after navigation, or denies Close.
++
++    Args:
++        make_controller: Existing real confirmation registry with a fake UI sink.
++        monkeypatch: Pauses only the original worker-to-UI marshal boundary.
++        closing: Complete source Close instead of merely changing the viewed tab.
++    """
++    controller = make_controller()
++    source = controller.new_session(title="Legacy source")
++    entered = threading.Event()
++    release = threading.Event()
++    marshalled = threading.Event()
++    results = {}
++    original_marshal = controller._marshal_pending_chat_create
++
++    def delayed_marshal(payload):
++        """Hold the legacy initial projection before its real UI callback.
++
++        Args:
++            payload: Original controller confirmation or teardown payload.
++        """
++        if payload:
++            entered.set()
++            assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
++        original_marshal(payload)
++        if payload:
++            marshalled.set()
++
++    monkeypatch.setattr(controller, "_marshal_pending_chat_create", delayed_marshal)
++    worker = threading.Thread(
++        target=lambda: results.update(
++            decision=controller.request_chat_create_confirm(_payload())
++        )
++    )
++    worker.start()
++    try:
++        assert entered.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
++        request_id = controller.pending_chat_create_ids()[0]
++        controller.new_session(title="Viewed sibling")
++        if closing:
++            ticket = controller.begin_session_close(
++                source.id,
++                expected_revision=controller.lifecycle_impact(
++                    session_id=source.id
++                ).revision,
++            )
++            controller.finalize_session_close(ticket)
++        release.set()
++        assert marshalled.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
++        captured = [
++            payload
++            for payload in controller.pending_chat_create_payloads
++            if payload and payload.get("request_id") == request_id
++        ]
++        assert bool(captured) is not closing
++        assert controller._parked_chat_create_payloads == {}
++        if not closing:
++            controller.resolve_pending_chat_create(True, False, request_id=request_id)
++        worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
++        assert not worker.is_alive()
++        assert results == {"decision": {"allow": not closing, "remember": False}}
++    finally:
++        release.set()
++        controller.begin_shutdown()
++        worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+diff --git a/Tests/Chat/test_console_chat_create_integration.py b/Tests/Chat/test_console_chat_create_integration.py
+index 1f9f43845c..ea8a97f32b 100644
+--- a/Tests/Chat/test_console_chat_create_integration.py
++++ b/Tests/Chat/test_console_chat_create_integration.py
+@@ -11,6 +11,7 @@ Task 7 of the agent-chat-fork-spawn plan (TASK-32482):
+    fixture) with the UI completion callback stubbed to record kwargs.
+ """
+ import json
++import threading
+ 
+ import pytest
+ 
+@@ -25,6 +26,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+ from Tests.Chat.test_console_skill_script_confirm import _FakeApp
+ 
+ 
++#: Event waits and worker joins share the existing bounded race-test deadline.
++_CHAT_CREATE_SYNC_TIMEOUT_SECONDS = 5
++
++
+ class _FakeConfirm:
+     def __init__(self, decisions):
+         self.decisions = list(decisions)
+@@ -707,3 +712,273 @@ def test_fork_from_child_run_context_copies_parent_conversation(real_db_controll
+     assert [m["content"] for m in copied] == ["root"]
+     handoff = completed[0]
+     assert handoff["conversation_id"] == outcome["conversation_id"]
++
++
++@pytest.mark.parametrize("tool", ["new_chat", "fork_chat"])
++def test_confirmed_create_refuses_a_source_retained_during_close(
++    real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
++    tool: str,
++) -> None:
++    """A committed Close prevents rows and UI completion before deletion.
++
++    Args:
++        real_db_controller: Controller over real SQLite with a UI bridge.
++        tool: Confirmed new-chat or fork-chat executor path.
++    """
++    controller, db = real_db_controller
++    source = controller.store.create_session(title="Source")
++    conversation_id = controller.store.persistence.create_conversation(
++        conversation_title="Source"
++    )
++    source.persisted_conversation_id = conversation_id
++    message_id = db.add_message(
++        {"conversation_id": conversation_id, "sender": "user", "content": "hi"}
++    )
++    db.set_conversation_active_leaf(conversation_id, str(message_id))
++    completed = []
++    controller.complete_agent_chat_create = lambda **kwargs: completed.append(kwargs)
++    before = _live_conversation_count(db)
++    ticket = controller.begin_session_close(
++        source.id,
++        expected_revision=controller.lifecycle_impact(session_id=source.id).revision,
++    )
++    assert any(session.id == source.id for session in controller.store.sessions())
++    outcome = controller.execute_agent_chat_create(
++        {"tool": tool, "session_id": source.id, "title": "Late creation"}
++    )
++    assert not outcome["ok"] and outcome["kind"] == "session_gone"
++    assert _live_conversation_count(db) == before
++    assert completed == []
++    controller.finalize_session_close(ticket)
++    assert not any(s.id == source.id for s in controller.store.sessions())
++
++
++@pytest.mark.parametrize("tool", ["new_chat", "fork_chat"])
++@pytest.mark.parametrize(
++    "close_at", ["durable-create", "ui-handoff", "ui-handoff-error"]
++)
++def test_inflight_create_cannot_publish_after_its_source_closes(
++    real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
++    monkeypatch: pytest.MonkeyPatch,
++    tool: str,
++    close_at: str,
++) -> None:
++    """Actual Close suppresses a started creation and its queued UI handoff.
++
++    Args:
++        real_db_controller: Controller over real SQLite with a UI bridge.
++        monkeypatch: Pause the real create or queued completion boundary.
++        tool: New-chat or fork-chat executor path.
++        close_at: Boundary held while the source's actual Close completes.
++    """
++    controller, db = real_db_controller
++    source = controller.store.create_session(title="Source")
++    source_conv = controller.store.persistence.create_conversation(
++        conversation_title="Source"
++    )
++    source.persisted_conversation_id = source_conv
++    message_id = db.add_message(
++        {"conversation_id": source_conv, "sender": "user", "content": "hi"}
++    )
++    db.set_conversation_active_leaf(source_conv, str(message_id))
++    entered, release = threading.Event(), threading.Event()
++    created, completed, queued = [], [], []
++    result = {}
++    original_create = controller.store.persistence.create_conversation
++    original_marshal = controller.app.call_from_thread
++    before = _live_conversation_count(db)
++    controller.complete_agent_chat_create = lambda **kwargs: completed.append(kwargs)
++
++    def paused_create(**kwargs):
++        """Create a real row after the optional Close interleaving.
++
++        Args:
++            kwargs: Original persistence inputs.
++
++        Returns:
++            The actual created conversation ID.
++        """
++        if close_at == "durable-create":
++            entered.set()
++            assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
++        conversation_id = original_create(**kwargs)
++        created.append(conversation_id)
++        return conversation_id
++
++    def queued_marshal(callback, *args, **kwargs):
++        """Hand worker callbacks to the test's UI thread across Close.
++
++        Args:
++            callback: Controller completion gate or original completion sink.
++            args: Positional callback inputs.
++            kwargs: Keyword callback inputs.
++
++        Returns:
++            The result produced by the actual callback on the UI thread.
++        """
++        if close_at.startswith("ui-handoff") and threading.current_thread() is worker:
++            queued.append((callback, args, kwargs))
++            entered.set()
++            assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
++            if close_at == "ui-handoff-error":
++                raise RuntimeError("App is not running")
++            return result["ui_result"]
++        return original_marshal(callback, *args, **kwargs)
++
++    monkeypatch.setattr(
++        controller.store.persistence, "create_conversation", paused_create
++    )
++    monkeypatch.setattr(controller.app, "call_from_thread", queued_marshal)
++
++    def execute():
++        """Capture executor failure without abandoning test-owned thread cleanup."""
++        try:
++            result["outcome"] = controller.execute_agent_chat_create(
++                {"tool": tool, "session_id": source.id, "title": "Late creation"}
++            )
++        except Exception as exc:  # noqa: BLE001 -- surface owned thread failures
++            result["error"] = str(exc)
++
++    worker = threading.Thread(target=execute)
++    worker.start()
++    try:
++        assert entered.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
++        ticket = controller.begin_session_close(
++            source.id,
++            expected_revision=controller.lifecycle_impact(
++                session_id=source.id
++            ).revision,
++        )
++        controller.finalize_session_close(ticket)
++        assert not any(s.id == source.id for s in controller.store.sessions())
++        if queued and close_at != "ui-handoff-error":
++            callback, args, kwargs = queued[0]
++            result["ui_result"] = callback(*args, **kwargs)
++    finally:
++        release.set()
++        worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
++    assert not worker.is_alive()
++    assert _live_conversation_count(db) == before
++    assert "error" not in result
++    assert not result["outcome"]["ok"]
++    assert result["outcome"]["kind"] == "session_gone"
++    assert completed == []
++    assert len(created) == 1
++    assert db.get_conversation_by_id(created[0]) is None
++    assert db.get_conversation_by_id(created[0], include_deleted=True)["deleted"] == 1
++
++
++@pytest.mark.parametrize("view_change", ["detached", "reattached"])
++def test_chat_create_completion_uses_the_current_view_sink(
++    real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
++    monkeypatch: pytest.MonkeyPatch,
++    view_change: str,
++) -> None:
++    """View detachment preserves durable results and reattachment owns UI.
++
++    Args:
++        real_db_controller: Controller over real SQLite with a UI bridge.
++        monkeypatch: Change the view sink during the UI handoff.
++        view_change: Detach the old view or replace it with a new one.
++    """
++    controller, db = real_db_controller
++    source = controller.store.create_session(title="Source")
++    old_completed, new_completed = [], []
++    controller.complete_agent_chat_create = lambda **kwargs: old_completed.append(
++        kwargs
++    )
++
++    def handoff_after_view_change(callback, *args, **kwargs):
++        """Execute the actual queued callback after changing its UI sink.
++
++        Args:
++            callback: Controller completion gate or original completion sink.
++            args: Positional callback inputs.
++            kwargs: Keyword callback inputs.
++
++        Returns:
++            The actual callback result.
++        """
++        controller.complete_agent_chat_create = (
++            None
++            if view_change == "detached"
++            else lambda **fields: new_completed.append(fields)
++        )
++        return callback(*args, **kwargs)
++
++    monkeypatch.setattr(controller.app, "call_from_thread", handoff_after_view_change)
++    outcome = controller.execute_agent_chat_create(
++        {"tool": "new_chat", "session_id": source.id, "title": "Live source"}
++    )
++    assert outcome["ok"]
++    assert db.get_conversation_by_id(outcome["conversation_id"]) is not None
++    assert old_completed == []
++    assert len(new_completed) == (view_change == "reattached")
++
++
++def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
++    real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    """A later source Close cannot discard an already-admitted UI result.
++
++    Args:
++        real_db_controller: Controller over real SQLite and the real chat store.
++        monkeypatch: Deliver a UI exception after retiring its source.
++    """
++    controller, db = real_db_controller
++    source = controller.store.create_session(title="Source")
++    placed = []
++
++    def place_then_fail(**kwargs):
++        """Place the durable chat before a subsequent UI completion failure.
++
++        Args:
++            kwargs: Real executor completion inputs.
++        """
++        placed.append(
++            controller.store.restore_persisted_session(
++                title=kwargs["title"],
++                workspace_id=kwargs["workspace_id"],
++                persisted_conversation_id=kwargs["conversation_id"],
++                all_nodes=kwargs["nodes"],
++                active_leaf_persisted_id=kwargs["active_leaf_persisted_id"],
++                activate=False,
++            )
++        )
++        raise RuntimeError("completion failed after placement")
++
++    def retire_before_worker_receives_error(callback, *args, **kwargs):
++        """Retire the source after the admitted UI callback fails.
++
++        Args:
++            callback: The actual controller completion gate.
++            args: Positional callback inputs.
++            kwargs: Keyword callback inputs.
++
++        Returns:
++            The actual callback result if it succeeds.
++        """
++        try:
++            return callback(*args, **kwargs)
++        except RuntimeError:
++            ticket = controller.begin_session_close(
++                source.id,
++                expected_revision=controller.lifecycle_impact(
++                    session_id=source.id
++                ).revision,
++            )
++            controller.finalize_session_close(ticket)
++            raise
++
++    controller.complete_agent_chat_create = place_then_fail
++    monkeypatch.setattr(
++        controller.app, "call_from_thread", retire_before_worker_receives_error
++    )
++    with pytest.raises(RuntimeError, match="completion failed after placement"):
++        controller.execute_agent_chat_create(
++            {"tool": "new_chat", "session_id": source.id, "title": "Placed chat"}
++        )
++    assert len(placed) == 1
++    assert placed[0] in controller.store.sessions()
++    assert db.get_conversation_by_id(placed[0].persisted_conversation_id) is not None
+diff --git a/Tests/Performance/test_ui_ready_module_census.py b/Tests/Performance/test_ui_ready_module_census.py
+index 4cf364a4c8..1bd0ceda56 100644
+--- a/Tests/Performance/test_ui_ready_module_census.py
++++ b/Tests/Performance/test_ui_ready_module_census.py
+@@ -165,6 +165,8 @@ MAX_TLDW_MODULES_AT_UI_READY = 1033
+ #: The two package prefixes are TASK-21731's; the exact module names are the
+ #: trajectory family TASK-22213 took off the Chat leg.
+ ABSENT_AT_READY_PREFIXES = (
++    # Resend execution is first-use work; pure row eligibility is already resident.
++    "tldw_chatbook.Chat.console_turn_resend",
+     "tldw_chatbook.Chunking",
+     # Personal Context is user/setup/settings/send work. Its encrypted store,
+     # interview coordinator, and agent tools must not delay the first frame.
+diff --git a/backlog/docs/lessons-testing-evidence.md b/backlog/docs/lessons-testing-evidence.md
+index f2f6cbf262..bf5733518d 100644
+--- a/backlog/docs/lessons-testing-evidence.md
++++ b/backlog/docs/lessons-testing-evidence.md
+@@ -17889,3 +17889,271 @@ source. The archive arm has no `.git`, so it silently takes the fallback path
+ and passes. Before calling a paired failure new, check whether the test shells
+ out to `git`. If it does, rerun that test in a real checkout of the base, or
+ show that every failing row names a file the diff does not touch.
++
++
++## A provisional close fence is not a closed-session usage marker
++
++**TASK-33621.16 / PR #2953, 2026-10-01.** The first Close retry repair
++retained an uncertain fleet rollback in `_session_close_generations` so
++another attempt could not replace its generation. All 19 mounted Close
++checks passed, but independent review traced that map's other reader:
++`_fleet_event_is_stale` treats its sessions as closed and drops child usage.
++A live-controller probe retained an open session with no close ticket;
++parent usage stayed at 120 tokens after a 45-token child drain. Removing
++only that marker let the same drain fold the total to 165.
++
++Keep failed-provisional retry markers separate from committed-close
++markers. The mounted refused-rollback regression now delivers a deterministic
++drain through the real bridge fanout, checks usage 3→6, and proves a retry
++cannot allocate a new generation. Trace every reader before reusing an
++ownership marker; successful cleanup tests do not cover surviving work after
++an unsuccessful boundary.
++
++**Follow-up, 2026-10-02.** Recreating a closed native ID exposed a second
++reader: the runtime retains its own admission tombstone even after a proven
++drain. Clearing only the controller marker would admit a queued old usage
++callback against a restored assistant ID. The regression now delivers both
++immediate and already-queued stale drains, preserving the restored usage and
++source; retained Close refuses before voice ownership with the authored restart
++message and ends the confirmation flow. Normal resume uses a fresh native ID.
++
++## Containment does not prove a dialog kept its frame (TASK-33621.16, 2026-10-02)
++
++The short-height Close fix replaced `Container` with `VerticalScroll`. Its first
++containment check passed while the old `ConfirmationDialog > Container` selector
++stopped matching: Textual's scroll container inherits `Widget`, so the dialog
++expanded to the viewport and lost its intended frame. Independent review caught
++the mismatch before native qualification. The corrected selector retains both
++body types; the mounted and native regressions now assert the original 60-cell
++width alongside painted actions, keyboard scrolling and focus across resize.
++
++The same PR later missed `CancelConfirmationDialog`'s inherited primary-border
++override: its selector still named only `Container`, so the scroll body inherited
++the base accent. A mounted production-CSS check now asserts all four computed
++border edges, literal prose and safe Enter/Escape dismissal. Review subclass
++body selectors as well as the shared frame when changing the body type.
++
++## A refusal toast does not prove the user can resolve it (TASK-33621.16, 2026-10-02)
++
++Qodo's final-head review found that the temporary-turn Close regression checked
++the authored refusal toast but allowed a replacement confirmation to cover the
++tab immediately. Strengthening the same real pending-turn test to require the
++close worker's claim to end reproduced the defect. The shared existing refusal
++allowlist now governs both safe wording and terminal exit; transient cleanup
++failures retain their separate fresh-consent retry check. Assert the user can
++reach the work a refusal asks them to resolve, as well as the refusal's wording.
++
++
++## A captured maintenance scheduler leaves cold work for the idle census
++
++**TASK-33260 / PR #2953, 2026-10-02.** After dev added the read-only trace
++completion pre-check, the settled-idle guard failed at17 storage admissions
++over eight ticks (ceiling2 per tick). A real call-through diagnostic found
++3 admissions for the first pending migration completion and2 for each later
++check. The test had captured the scheduler, so its startup migration never
++ran. Assert that real one-time completion in uncounted setup before measuring
++settled idle; retain every measured tick, admission seam, canary and ceiling.
++The cold cost still exists. A passing idle guard does not claim it was removed.
++
++
++**PR #2953 typing fixture follow-up, 2026-10-02.** The aggregate guard saw one
++helper during typing, but no counted caller was captured. Two frozen call-through
++runs instead found the unowned five-second media startup helper ending 116 ms
++and 508 ms before the first key. Hold that private startup schedule and await
++its real cleanup before counting; a Textual worker drain cannot own this plain
++`asyncio.to_thread` task. The ordinary guard passes with unchanged seams,
++canaries and ceilings. This removes a proven setup timing window; it does not
++attribute the original aggregate failure or remove the production cold cost.
++
++
++## A first baseline call can count setup absent from its comparison
++
++**TASK-33260 / PR #2953, 2026-10-02.** After the readiness rebase, the
++isolated shared-evidence normalization comparison counted3669 without evidence
++and9 with it. The first call initialized the cached support set:59 non-direct
++handlers each normalized62 keys, plus two direct handlers, exactly3660 calls.
++One real no-evidence build before either profile preserves the positive baseline
++and exact equality while leaving the first shared-owner lookup measured. Existing
++cached/injected/derived-set contracts remain green; production and boot ceilings
++are unchanged. Initialize equivalent setup on both sides of a per-build comparison,
++and keep startup cost and cache semantics covered separately.
++
++
++## A retained Close source still needs an execution fence
++
++**TASK-32367 / PR #2953, 2026-10-02.** Qodo found that a standalone
++chat-create confirmation could remember an Allow after Close had removed its
++grants, and the executor treated a source retained during bounded Close drain
++as open. Real Close regressions reproduced grant resurrection and durable
++new-chat/fork-chat creation before final deletion. Check the committed Close
++generation at shared executor entry; decide and remember under the same lock
++as revocation. Verify rows and UI completion while the actual ticket retains
++the source, rather than testing only after the source disappears.
++
++
++**In-flight follow-up, same task/PR.** The entry fence did not stop a physical
++worker already creating a chat: the bounded runtime drain could retire its
++source before durable creation or a queued UI callback completed. Real SQLite
++pauses at creation and UI handoff reproduced live orphan rows for both tools;
++a refused Textual UI dispatch reproduced the same cleanup gap. Check currentness
++again at the synchronous UI handoff and use the existing worker-side soft-delete
++compensation, rather than holding a lock or DB transaction across that handoff.
++A peer review then reproduced a placed chat being deleted when its UI callback
++raised before a later source Close reached the worker. Record UI admission
++before calling the current sink; preserve an admitted result and its original
++exception. Soft-delete is compensation, not physical transaction rollback.
++
++
++### End-key scroll checks need animation completion before pixel assertions
++
++PR2953's private-process timing baseline failed the existing short-height Close
++geometry assertion after End: scroll_y was positive, but the bottom consequence
++was not yet painted. The initial234.08s receipt records7 passes/1 failure; it is
++not a successful timing baseline. Waiting on Textual Pilot's existing
++wait_for_scheduled_animations after the same positive-scroll check preserves
++every pixel assertion and passes both long-title journeys in the original node
++and the later complete grouped files. A positive scroll offset proves motion
++started; wait for actual animation completion before asserting final pixels.
++
++
++## A Close cancellation sweep also needs a late-registration fence
++
++**TASK-32367 / PR #2953, 2026-10-03.** Qodo found that a delayed question
++could register after committed Close had already swept the question registry.
++The real-host after-registration regression passed, while already-closed and
++paused-before-registration variants both left workers waiting. Publish and check
++the existing committed generation under the shared interrupt lock: earlier
++states are swept and later admission returns cancelled. Keep callbacks outside
++the non-reentrant lock, and assert a sibling question remains answerable.
++Testing only a round present at the cancellation snapshot misses late admission.
++
++
++## A cancelled worker can still have a stale UI payload
++
++**TASK-32367 / PR #2953, 2026-10-03.** A review alleged that chat-create
++registration could pass its Close fence and occur after cancellation. The actual
++check/insert and sweep share the standalone mutex: six call-through interleavings
++for both tools passed, preserving a live sibling. Running Close on a foreign
++thread instead hit the real prompt-queue ownership refusal; that invalid probe
++was not evidence of a registration race.
++
++Independent review found a different gap. Real mounted tests paused the source's
++initial marshal, changed tabs or completed Close, then resumed it. The worker
++correctly denied Close, but its captured payload replaced the sibling's live card.
++A queued `None` clear could erase that sibling too; restoring only the old clear
++inside the otherwise corrected test process reproduced the erased state. Qualify
++scoped owners and derive the current head on the actual UI callback, then invoke
++the sink outside locks. Keep legacy unparked callers distinct: an initial equality
++guard dropped their only card after navigation, reproduced by the new legacy
++control. Inspect the survivor's actual resume state and mounted request ID after
++dispatch completes; worker cancellation and registration snapshots alone do not
++prove correct presentation.
++
++
++## A live host round does not prove a kind-registry count
++
++**TASK-32367 / PR #2953, 2026-10-03.** Qodo found a mounted legacy tool
++approval showing zero pending. The actual host state and waiting worker existed,
++but request_mcp_approvals(session_id=None) deliberately skips the separate
++kind/badge entry even when the controller infers a run owner. A real mounted
++RED and a pure zero-registry control both reproduced the count. Preserve
++positive registered counts and use only typed tool-card state for the zero
++compatibility fallback; broad app metadata can instead describe a question or
++another session. The new helper initially asserted unrelated transcript waiting
++copy and failed after its count was fixed; assert the affected Inspector and
++Files counts for this contract. Ordinary full wrappers then verify old journeys,
++worker completion and cleanup. Record the maximum-count compatibility bound
++rather than claiming an additive deduplicated mixed legacy/registered total.
++
++
++## Ruff line:column is one range endpoint
++
++**TASK-32367 / PR #2953, 2026-10-03.** A mechanical review fix passed full-module
++AST equivalence, but `ruff format --range start:end` interpreted the colon as
++line:column and reformatted code beyond the intended edit. Artifact preflight
++caught a controller diagnostic digest change despite an unchanged call count.
++Remove the unrelated formatting rather than blessing it in the inventory. Use
++`start_line:start_column-end_line:end_column` (or `start_line-end_line`), validate
++nonempty parsed diff ranges, and inspect the actual diff; AST equality alone
++does not establish byte-local scope or persistent-diagnostic reproducibility.
++
++## A queryable confirmation is not a painted confirmation
++
++**TASK-33621.16 / PR #2953, 2026-10-03.** A latest-dev qualification
++uncovered three real Close journey failures after ConfirmationDialog had
++entered the screen stack and its Confirm selector existed. Navigation and
++refusal tests tried to click at `(0, 0)` with an empty compositor; the compact
++geometry test saw the scroll container's width as zero even though Stay had
++focus. The shared `_wait_for_confirmation` helper returned on selector
++existence, before the first paint.
++
++Wait at that common boundary until both Confirm and Stay have non-empty
++regions and the compositor returns the actual buttons at their centres.
++Keep the original polling budget and real Pilot clicks, focus/geometry
++assertions and private-profile wrapper caps. Focus and selector readiness
++do not establish paint readiness; adding sleeps or weakening geometry
++assertions would conceal the timing gap instead of verifying the interface.
++
++
++## Resolve controls before committing layout state (Console PR #2953, 2026-10-03)
++
++Qodo flagged the screen's resize dispatch reaching an approval card before
++its controls composed. A real-card regression reproduced NoMatches for
++`#approval-batch-actions` with `approval-compact` already set: the class
++was also the next reflow's applied-state guard. Resolve all controls before
++committing that class, and leave it unapplied when composition is pending.
++The RED boundary case and unchanged mounted width/height/focus journeys
++prove both retry readiness and normal painted controls. An uncomposed-widget
++check alone is not evidence of native visibility; pair it with those mounted
++journeys and retain each source identity.
++
++
++## A real startup callback superseded an older census setup seam
++
++**PR #2953, 2026-10-03.** Rebase brought in a census that pauses the actual
++startup media-cleanup timer and bills its real callback separately. The PR's
++older setup still disabled startup cleanup and called it manually before
++typing. Both variants failed with zero captured callbacks before reaching the
++new query/helper proof. Removing only the old disable/manual-call blocks
++restored the capture and completed-query assertion; the existing trace
++migration settlement remained necessary. Compare complete test modules across
++the rebase before retaining an old settlement seam: its replacement may now
++measure the operation that the old setup suppresses.
++
++## A group selector spent the fully mounted CSS candidate budget
++
++**TASK-33625.2 / PR #2953, 2026-10-03.** A real mounted startup census read
++275 CSS candidates above its unchanged ceiling274. A read-only failure-frame
++probe identified `.approval-compact #approval-batch-actions Button` among the
++Button candidates. The three existing action IDs preserve the parsed(1,1,1)
++specificity and token declarations while indexing under those IDs. Source
++rebuild, mounted candidate budget, complete approval journeys and token/bundle
++guards then passed. Check actual parsed specificity and the fully mounted
++census when narrowing a selector; matching the same controls alone does not
++prove its global styling cost is unchanged.
++
++
++## A batched UI wrapper must preserve each journey's cleanup boundary
++
++**PR #2953, 2026-10-03.** Two hosted UI lanes reached the20-minute cap at
++92% and83% without reporting an assertion failure. The Close harness eagerly
++loaded all destination sheets rather than the shipping Console's startup CSS.
++A call-through comparison retained every action/geometry assertion; group
++JUnit totals changed from287.194s to199.903s. The ordinary scoped harness
++then passed all four groups in133.63s process elapsed. These are observed
++runs, not repeated benchmarks or a guaranteed hosted duration.
++
++The pending-interrupt batch also retained factory patches/directories until
++its outer test ended. A real call-through probe drained7of each at6journey
++boundaries and passed. Mirror the existing Close/compact cleanup there, while
++keeping fresh app/DB owners and all worker shutdown/assertion operations.
++Six old apps still remained weak-reference reachable in that diagnostic: GC
++and factory cleanup do not establish an app-retention fix. The whole original
++test ASTs restore after removing only scoped harness/cleanup substitutions.
++
++
++## A storage census idle phase can bill background native pause checks
++
++**PR #2953, 2026-10-04.** On identical sources, Linux credential polling measured 10.125 os.open/tick against a 6.75 ceiling, then its same-head retry passed at 6.75 in both variants. A local call-through audit attributed every traced idle open to storage_admission._local_pause_requested / Admission.pause_requested on executor threads: each native backup-pause probe opened 37 descriptors on that private macOS path, and two or three probes landed in the idle phase. Those are real guard costs, not additional credential-poll admissions. No stack was captured in the failing Linux job, so the local attribution does not prove that job's exact cause.
++
++Before attributing a timing-dependent storage count to the UI callback, trace all threads and retain the failed census, successful repeat and exact source identities. Keep actual native pause/admission checks and the existing ceilings intact; an observed passing repeat is not a universal flake repair.
+diff --git a/tldw_chatbook/Chat/console_chat_controller.py b/tldw_chatbook/Chat/console_chat_controller.py
+index ce31779db3..bf17a8323e 100644
+--- a/tldw_chatbook/Chat/console_chat_controller.py
++++ b/tldw_chatbook/Chat/console_chat_controller.py
+@@ -16,6 +16,7 @@ import stat
+ import contextlib
+ import threading
+ import time
++import traceback
+ from contextlib import nullcontext
+ from collections import OrderedDict
+ from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
+@@ -62,10 +63,13 @@ from tldw_chatbook.Chat.attachment_core import (
+     vision_block_reason,
+ )
+ from tldw_chatbook.Chat.console_chat_models import (
++    CONSOLE_PENDING_APPROVAL_KIND,
++    CONSOLE_PENDING_CHAT_CREATE_KIND,
+     FEEDBACK_ACTIVE_RUN_STATUSES,
+     CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
+     CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
+     CONSOLE_DISPATCH_DISCARDED_COPY,
++    CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
+     CONSOLE_GLOBAL_WORKSPACE_ID,
+     ConsoleChatMessage,
+     ConsoleControllerActivity,
+@@ -818,6 +822,7 @@ _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
+ #: for `request_chat_create_confirm`'s own wait loop (fallback used when no
+ #: `chat_create_confirm_timeout_seconds` seam is injected).
+ _DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS = 0.0
++_CHAT_CREATE_SESSION_GONE = "session_gone"
+ #: Same ADR-067 contract, for `request_worktree_merge_confirm`'s own wait
+ #: loop (fallback used when no `worktree_merge_confirm_timeout_seconds`
+ #: seam is injected).
+@@ -5123,6 +5128,8 @@ class ConsoleChatController:
+         # from reusing the generation of an older, timed-out incarnation.
+         self._session_close_generation = 0
+         self._session_close_generations: dict[str, int] = {}
++        # Failed provisional rollbacks block retry without retiring live usage.
++        self._failed_session_close_generations: dict[str, int] = {}
+         self._session_close_states: dict[
+             str,
+             tuple[ConsoleSessionCloseTicket, bool, Any, str | None],
+@@ -7205,7 +7212,7 @@ class ConsoleChatController:
+         return len(self._live_busy_session_ids())
+ 
+     def add_pending_round(
+-        self, session_id: str, round_id: str, kind: str = "approval"
++        self, session_id: str, round_id: str, kind: str = CONSOLE_PENDING_APPROVAL_KIND
+     ) -> None:
+         """Register ``round_id`` as an outstanding approval-like round for ``session_id``.
+ 
+@@ -7238,9 +7245,9 @@ class ConsoleChatController:
+                 the reserved ``_LEGACY_PENDING_APPROVAL_ROUND_ID`` sentinel
+                 -- see ``set_run_pending_approval``).
+             kind: Which interrupt kind is waiting -- a
+-                ``console_interrupt_rounds.KIND_SETTER_ATTRS`` key
+-                (``approval``, ``question``, ``skill_install``,
+-                ``skill_script``, ``worktree_merge``). Qodo #4: the badge and
++                registered interrupt key (``approval``, ``question``,
++                ``skill_install``, ``skill_script``, ``worktree_merge``, or
++                the standalone ``chat_create`` confirmation). Qodo #4: the badge and
+                 lifecycle do not care, but the run chip and activity line do
+                 -- they used to translate this registry's generic "something
+                 is pending" into "Waiting for your approval" even for a
+@@ -7257,7 +7264,7 @@ class ConsoleChatController:
+             changed = round_id not in rounds
+             rounds.add(round_id)
+             self._pending_round_kinds.setdefault(session_id, {})[round_id] = str(
+-                kind or "approval"
++                kind or CONSOLE_PENDING_APPROVAL_KIND
+             )
+         if changed:
+             if self._buddy_sink is not None:
+@@ -7353,13 +7360,30 @@ class ConsoleChatController:
+             session_id: The session to read.
+ 
+         Returns:
+-            Every distinct kind currently outstanding for ``session_id``
+-            (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys), empty
+-            when nothing is.
++            Every distinct registered kind outstanding for ``session_id``,
++            including standalone chat creation, empty when nothing is.
+         """
+         with self._approval_state_lock:
+             return frozenset(self._pending_round_kinds.get(session_id, {}).values())
+ 
++    def pending_round_count(
++        self, session_id: str, *, kind: str = CONSOLE_PENDING_APPROVAL_KIND
++    ) -> int:
++        """Count one session's outstanding rounds of the requested kind.
++
++        Args:
++            session_id: The owning session to inspect.
++            kind: Interrupt kind to count, including queued or hidden rounds.
++
++        Returns:
++            Number of registered rounds of this kind for the session.
++        """
++        with self._approval_state_lock:
++            return sum(
++                value == kind
++                for value in self._pending_round_kinds.get(session_id, {}).values()
++            )
++
+     def set_run_pending_approval(self, session_id: str, pending: bool) -> None:
+         """DEPRECATED boolean shim -- prefer ``add_pending_round``/``discard_pending_round``.
+ 
+@@ -12388,8 +12412,7 @@ class ConsoleChatController:
+ 
+         if error is not None:
+             logger.warning(
+-                "Console trace provenance could not be saved; "
+-                "exception_type={}",
++                "Console trace provenance could not be saved; exception_type={}",
+                 type(error).__name__,
+             )
+         visible_copy = (
+@@ -14645,7 +14668,15 @@ class ConsoleChatController:
+ 
+         Returns:
+             Opaque ticket required by :meth:`finalize_session_close`.
++
++        Raises:
++            ConsoleLifecycleRevisionChanged: The approved impact changed.
++            RuntimeError: Recovery or an unreconciled close fence blocks close.
+         """
++        if session_id in self._failed_session_close_generations:
++            raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
++        if session_id in self._session_close_generations:
++            raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+         impact = self.lifecycle_impact(session_id=session_id)
+         if impact.revision != expected_revision:
+             raise ConsoleLifecycleRevisionChanged(
+@@ -14686,51 +14717,81 @@ class ConsoleChatController:
+                 "abort_fleet_fence",
+                 None,
+             )
+-            if not callable(abort_fleet_fence):
+-                return
+             try:
+-                abort_fleet_fence(
++                if callable(abort_fleet_fence) and abort_fleet_fence(
+                     fleet_conversation_id,
+                     generation=generation,
++                ):
++                    return
++            except Exception as exc:  # noqa: BLE001 -- failed rollback stays fenced
++                logger.warning(
++                    "close_session provisional fleet rollback failed (error_type={})",
++                    type(exc).__name__,
+                 )
+-            except Exception:  # noqa: BLE001 -- failed rollback stays fenced
+-                logger.warning("close_session provisional fleet fence stayed latched")
++            # An uncertain rollback must never be replaced by a retry's new
++            # generation. Keep this close fail-closed even without a ticket;
++            # surviving children still own valid usage in the retained session.
++            self._failed_session_close_generations[session_id] = generation
++            logger.warning("close_session provisional fleet fence stayed latched")
+ 
+         # A reservation publishes its lifecycle revision before the fleet
+         # fence can acquire the coordinator lock. Recheck only after that
+         # admission boundary is closed; a child admitted while the dialog was
+         # open must refresh consent rather than silently widening it.
+-        current_impact = self.lifecycle_impact(session_id=session_id)
+-        if current_impact.revision != expected_revision:
+-            abort_provisional_fleet_fence()
+-            raise ConsoleLifecycleRevisionChanged(
+-                "Console session activity changed during close."
+-            )
+-        if self._cancel_raw_cli_session is not None:
+-            try:
+-                self._cancel_raw_cli_session(session_id)
+-            except Exception:  # noqa: BLE001 -- teardown remains best-effort
+-                logger.warning("close_session could not cancel raw CLI commands")
+-        owns_active_stream = self._active_stream_belongs_to_session(session_id)
+-        active_assistant_message_id = self._active_assistant_message_ids.get(session_id)
+-        if owns_active_stream and active_assistant_message_id is not None:
+-            # Closing is an explicit cancellation boundary. Settle the durable
+-            # dispatch before removing its in-memory owner so the cancelled
+-            # task cannot leave a restart-visible ``dispatch_started`` row.
+-            self._signal_stop(session_id=session_id)
+-            try:
+-                self._mark_stream_stopped(
+-                    active_assistant_message_id,
+-                    visible_copy="Session closed.",
++        try:
++            current_impact = self.lifecycle_impact(session_id=session_id)
++            if current_impact.revision != expected_revision:
++                raise ConsoleLifecycleRevisionChanged(
++                    "Console session activity changed during close."
+                 )
+-            except ConsoleDispatchSettlementError:
+-                self._restore_dispatch_recovery_after_settlement_failure(
+-                    session_id,
+-                    active_assistant_message_id,
++            if self._cancel_raw_cli_session is not None:
++                try:
++                    self._cancel_raw_cli_session(session_id)
++                except Exception:  # noqa: BLE001 -- teardown remains best-effort
++                    logger.warning("close_session could not cancel raw CLI commands")
++            owns_active_stream = self._active_stream_belongs_to_session(session_id)
++            active_assistant_message_id = self._active_assistant_message_ids.get(
++                session_id
++            )
++            if owns_active_stream and active_assistant_message_id is not None:
++                # Closing is an explicit cancellation boundary. Settle the durable
++                # dispatch before removing its in-memory owner so the cancelled
++                # task cannot leave a restart-visible ``dispatch_started`` row.
++                self._signal_stop(session_id=session_id)
++                try:
++                    self._mark_stream_stopped(
++                        active_assistant_message_id,
++                        visible_copy="Session closed.",
++                    )
++                except ConsoleDispatchSettlementError:
++                    self._restore_dispatch_recovery_after_settlement_failure(
++                        session_id,
++                        active_assistant_message_id,
++                    )
++                    raise
++            # Progress ownership must release before child cancellation, but a
++            # failed callback must not commit wake, scratch or queue teardown.
++            close_progress = getattr(self._agent_bridge, "close_progress", None)
++            if callable(close_progress):
++                close_progress(session_id, conversation_id=fleet_conversation_id)
++        except BaseException as exc:
++            abort_provisional_fleet_fence()
++            if (
++                isinstance(exc, Exception)
++                and session_id in self._failed_session_close_generations
++            ):
++                frames = traceback.extract_tb(exc.__traceback__)
++                logger.warning(
++                    "close_session provisional failure (error_type={}, origin={})",
++                    type(exc).__name__,
++                    frames[-1].name if frames else "unknown",
+                 )
+-                abort_provisional_fleet_fence()
+-                raise
+-        self._session_close_generations[session_id] = generation
++                raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL) from None
++            raise
++        # Commit under the question registry's shared host lock. An earlier
++        # registration is swept below; a later one observes this fence.
++        with self._approval_state_lock:
++            self._session_close_generations[session_id] = generation
+         # Admission fences are the first irreversible close action after the
+         # durable stream gate has settled successfully. They must beat every
+         # cancellation snapshot and precede queue/file teardown, so a stale
+@@ -14778,9 +14839,6 @@ class ConsoleChatController:
+         # along. getattr-guarded and wrapped: a bare bridge double, no
+         # bridge, or a raising cancel must never break a close.
+         fleet_conversation_id = self._agent_conversation_id(session_id)
+-        close_progress = getattr(self._agent_bridge, "close_progress", None)
+-        if callable(close_progress):
+-            close_progress(session_id, conversation_id=fleet_conversation_id)
+         cancel_all = (
+             getattr(self._agent_bridge, "cancel_all_subagents", None)
+             if self._agent_bridge is not None
+@@ -16222,6 +16280,17 @@ class ConsoleChatController:
+                 event = state.get("event")
+                 if isinstance(event, threading.Event):
+                     events.append(event)
++        with self._pending_question_lock:
++            for state in self._pending_question_rounds.values():
++                if state.get("session_id") != session_id:
++                    continue
++                state["revoked"] = True
++                if not state.get("settled"):
++                    state["settled"] = True
++                    state["terminal_reason"] = "cancelled"
++                event = state.get("event")
++                if isinstance(event, threading.Event):
++                    events.append(event)
+         with self._pending_skill_install_lock:
+             for state in self._pending_skill_install_rounds.values():
+                 if state.get("session_id") == session_id:
+@@ -16249,6 +16318,18 @@ class ConsoleChatController:
+                 event = state.get("event")
+                 if isinstance(event, threading.Event):
+                     events.append(event)
++        with self._pending_chat_create_lock:
++            for state in self._pending_chat_create_rounds.values():
++                if state.get("session_id") != session_id:
++                    continue
++                state["revoked"] = True
++                decision = state.get("decision")
++                if isinstance(decision, dict):
++                    decision["allow"] = False
++                    decision["remember"] = False
++                event = state.get("event")
++                if isinstance(event, threading.Event):
++                    events.append(event)
+         for event in events:
+             event.set()
+ 
+@@ -16610,7 +16691,7 @@ class ConsoleChatController:
+         self._announce_detached_approval(session_id, kind=kind)
+ 
+     def _announce_detached_approval(
+-        self, session_id: str, *, kind: str = "approval"
++        self, session_id: str, *, kind: str = CONSOLE_PENDING_APPROVAL_KIND
+     ) -> None:
+         """Raise the app-wide toast for a round with no visible Console view.
+ 
+@@ -18975,11 +19056,15 @@ class ConsoleChatController:
+         # SUB-AGENT requester never rides one -- children share the session
+         # with the primary, so the user's session grant must not silently
+         # auto-allow child-run chat creation; every child call confirms.
+-        if (
+-            requesting_kind == AGENT_KIND_PRIMARY
+-            and tool in self._chat_create_session_grants.get(owning_session_id, set())
+-        ):
+-            return {"allow": True, "remember": True}
++        with self._pending_chat_create_lock:
++            if owning_session_id in self._session_close_generations:
++                return {"allow": False, "remember": False}
++            if (
++                requesting_kind == AGENT_KIND_PRIMARY
++                and tool
++                in self._chat_create_session_grants.get(owning_session_id, set())
++            ):
++                return {"allow": True, "remember": True}
+ 
+         # Final-review fix wave (Finding 1): enrich the payload BEFORE the
+         # round is armed -- fork_source_title/fork_message_count (the card's
+@@ -19002,12 +19087,17 @@ class ConsoleChatController:
+             "event": event,
+             "decision": decision,
+             "session_id": owning_session_id,
++            # Legacy callers never park; their initial card remains unscoped.
++            "session_scoped": session_id is not None,
+             "run_id": current_run_id(),
+             # Re-read after the wait: a late Allow must not stick. See
+             # `revoke_approval_rounds_for_run`.
+             "revoked": False,
+         }
+         with self._pending_chat_create_lock:
++            # Enrichment can finish after Close has swept the standalone rounds.
++            if owning_session_id in self._session_close_generations:
++                return {"allow": False, "remember": False}
+             self._pending_chat_create_rounds[request_id] = chat_create_round_state
+ 
+         timeout_seconds = (
+@@ -19032,7 +19122,9 @@ class ConsoleChatController:
+         # they keep the unconditional mount below.
+         is_head = True
+         if session_id is not None:
+-            self.add_pending_round(session_id, request_id)
++            self.add_pending_round(
++                session_id, request_id, kind=CONSOLE_PENDING_CHAT_CREATE_KIND
++            )
+             # Keyed by ROUND; the return says whether THIS round is its
+             # session's FIFO head. A non-head round must not mount: an
+             # older sibling is still holding the card.
+@@ -19062,19 +19154,20 @@ class ConsoleChatController:
+             # was cancelled must not authorize the create. Mirrors the
+             # sibling bridges' identical post-wait guard.
+             with self._pending_chat_create_lock:
+-                was_revoked = bool(chat_create_round_state.get("revoked"))
+-            if was_revoked:
+-                return {"allow": False, "remember": False}
+-            allow = bool(decision.get("allow", False))
+-            remember = bool(decision.get("remember", False))
+-            # Record a standing grant only on an allow that ALSO asked to
+-            # be remembered -- a remembered deny must not poison later
+-            # rounds into auto-allowing.
+-            if allow and remember:
+-                self._chat_create_session_grants.setdefault(
+-                    owning_session_id, set()
+-                ).add(tool)
+-            return {"allow": allow, "remember": remember}
++                if (
++                    chat_create_round_state.get("revoked")
++                    or owning_session_id in self._session_close_generations
++                ):
++                    return {"allow": False, "remember": False}
++                allow = bool(decision.get("allow", False))
++                remember = bool(decision.get("remember", False))
++                # Decide and remember atomically with the Close/revocation sweep.
++                # A remembered deny must never become a standing grant.
++                if allow and remember:
++                    self._chat_create_session_grants.setdefault(
++                        owning_session_id, set()
++                    ).add(tool)
++                return {"allow": allow, "remember": remember}
+         finally:
+             with self._pending_chat_create_lock:
+                 self._pending_chat_create_rounds.pop(request_id, None)
+@@ -19134,13 +19227,45 @@ class ConsoleChatController:
+         )
+ 
+     def _marshal_pending_chat_create(self, payload: dict[str, Any] | None) -> None:
+-        """WORKER THREAD: hand a chat-create confirm payload to the UI thread.
++        """WORKER THREAD: project a current chat-create decision on the UI.
++
++        Recheck scoped ownership after dispatch; legacy unparked rounds keep
++        their unconditional initial projection. A clear derives the current head.
+ 
+         Args:
+-            payload: The pending confirm dict to show, or None to hide it.
++            payload: Proposed confirmation, or None to rederive the active head.
+         """
+-        if self.app is not None and self.set_pending_chat_create is not None:
+-            self.app.call_from_thread(self.set_pending_chat_create, payload)
++        if self.app is None or self.set_pending_chat_create is None:
++            return
++
++        def _apply() -> None:
++            """UI THREAD: qualify the current owner before painting its decision."""
++            setter = self.set_pending_chat_create
++            if setter is None:
++                return
++            active_session_id = self.store.active_session_id or ""
++            if payload is None:
++                setter(
++                    self._head_round_payload(
++                        self._parked_chat_create_payloads, active_session_id
++                    )
++                )
++                return
++            owning_session_id = str(payload.get("session_id") or "")
++            if owning_session_id in self._session_close_generations:
++                return
++            with self._pending_chat_create_lock:
++                state = self._pending_chat_create_rounds.get(payload.get("request_id"))
++                if state is None or state.get("revoked") or state["event"].is_set():
++                    return
++                if state.get("session_scoped", True) and (
++                    owning_session_id != active_session_id
++                ):
++                    return
++            # The UI owns Close/navigation; external sinks run outside locks.
++            setter(payload)
++
++        self.app.call_from_thread(_apply)
+ 
+     def resolve_pending_chat_create(
+         self, allow: bool, remember: bool, request_id: str | None = None
+@@ -19175,11 +19300,11 @@ class ConsoleChatController:
+             return
+         with self._pending_chat_create_lock:
+             round_state = self._pending_chat_create_rounds.get(request_id)
+-        if round_state is None:
+-            return
+-        round_state["decision"]["allow"] = bool(allow)
+-        round_state["decision"]["remember"] = bool(remember)
+-        round_state["event"].set()
++            if round_state is None:
++                return
++            round_state["decision"]["allow"] = bool(allow)
++            round_state["decision"]["remember"] = bool(remember)
++            round_state["event"].set()
+ 
+     def pending_chat_create_ids(self) -> list[str]:
+         """Return the request ids of every currently-armed chat-create round.
+@@ -19197,8 +19322,10 @@ class ConsoleChatController:
+ 
+         TASK-32482 Task 7. Runs ONLY after ``request_chat_create_confirm``
+         returned an allow (the bridge closure enforces that ordering), so
+-        every failure below is fail-closed: nothing is created, and the
+-        outcome's ``kind`` tells the model (and the run log) why.
++        refusal before creation makes no chat; the outcome's ``kind``
++        tells the model (and the run log) why. A source retired during I/O
++        refuses UI placement and discards its newly committed row through
++        the existing best-effort orphan soft-delete helper.
+ 
+         For ``fork_chat`` the new conversation copies the source's active
+         path verbatim (``ChatConversationService.copy_conversation_active_
+@@ -19234,11 +19361,19 @@ class ConsoleChatController:
+ 
+         tool = str(payload.get("tool") or "")
+         session_id = str(payload.get("session_id") or "")
++        # A committed Close retains its source during drain; an earlier Allow
++        # cannot authorize a new durable chat once that Close has committed.
++        if session_id in self._session_close_generations:
++            return {
++                "ok": False,
++                "kind": _CHAT_CREATE_SESSION_GONE,
++                "error": "source session is closing",
++            }
+         session = next((s for s in self.store.sessions() if s.id == session_id), None)
+         if session is None:
+             return {
+                 "ok": False,
+-                "kind": "session_gone",
++                "kind": _CHAT_CREATE_SESSION_GONE,
+                 "error": "source session not found",
+             }
+         title = str(payload.get("title") or "").strip()
+@@ -19551,20 +19686,57 @@ class ConsoleChatController:
+                 if session.local_character_id() is not None
+                 else None,
+             }
+-        if self.app is not None and self.complete_agent_chat_create is not None:
+-            self.app.call_from_thread(
+-                self.complete_agent_chat_create,
+-                session_id=session_id,
+-                conversation_id=new_conv,
+-                title=title,
+-                tool=tool,
+-                opening_prompt=opening_prompt,
+-                workspace_id=completion_workspace_id,
+-                nodes=nodes,
+-                active_leaf_persisted_id=new_leaf,
+-                settings=routed_settings,
+-                **identity,
+-            )
++
++        completion_admitted = False
++
++        def complete_if_source_open(**kwargs: Any) -> bool:
++            """UI THREAD: qualify the source before using the current view sink.
++
++            Args:
++                kwargs: Created-chat placement inputs resolved by this worker.
++
++            Returns:
++                False if Close/disposal retired the source; True otherwise,
++                including a live source whose view is currently detached.
++            """
++            nonlocal completion_admitted
++            if not self._chat_create_source_is_open(session_id):
++                return False
++            completion_admitted = True
++            complete = self.complete_agent_chat_create
++            if complete is not None:
++                complete(session_id=session_id, **kwargs)
++            return True
++
++        completion_allowed = self._chat_create_source_is_open(session_id)
++        app = self.app
++        if completion_allowed and app is not None:
++            try:
++                completion_allowed = app.call_from_thread(
++                    complete_if_source_open,
++                    conversation_id=new_conv,
++                    title=title,
++                    tool=tool,
++                    opening_prompt=opening_prompt,
++                    workspace_id=completion_workspace_id,
++                    nodes=nodes,
++                    active_leaf_persisted_id=new_leaf,
++                    settings=routed_settings,
++                    **identity,
++                )
++            except Exception:
++                # A retiring app can refuse the UI hop before running its gate.
++                # Keep unrelated completion failures on their existing path.
++                if completion_admitted or self._chat_create_source_is_open(session_id):
++                    raise
++                completion_allowed = False
++        if not completion_allowed:
++            self._discard_chat_create_orphan(db, new_conv)
++            return {
++                "ok": False,
++                "kind": _CHAT_CREATE_SESSION_GONE,
++                "error": "source session closed before chat completion",
++            }
+         return {
+             "ok": True,
+             "title": title,
+@@ -19574,6 +19746,21 @@ class ConsoleChatController:
+             "draft_set": bool(opening_prompt),
+         }
+ 
++    def _chat_create_source_is_open(self, session_id: str) -> bool:
++        """Check the existing lifetime fence and live source ownership.
++
++        Args:
++            session_id: Exact source session of the confirmed chat creation.
++
++        Returns:
++            True while the source exists without committed Close or disposal.
++        """
++        return (
++            not self._disposed
++            and session_id not in self._session_close_generations
++            and any(session.id == session_id for session in self.store.sessions())
++        )
++
+     def _resolve_ask_user_timeout_seconds(self) -> float:
+         """PRD A7: the question deadline -- seam, else env, else config, else 0.
+ 
+@@ -19677,6 +19864,10 @@ class ConsoleChatController:
+         # gets `busy`. The host re-registers the same state object at
+         # run_round entry, which is idempotent.
+         with self._pending_question_lock:
++            # Close publishes its fence and sweeps questions under this same
++            # lock; no delayed worker may register after the sweep has passed.
++            if owning_session_id in self._session_close_generations:
++                return unanswered_result("cancelled")
+             live = any(
+                 state.get("session_id") == owning_session_id
+                 for state in self._pending_question_rounds.values()
+@@ -20686,11 +20877,15 @@ class ConsoleChatController:
+             )
+             return self._block(session_id, visible_copy)
+         assert turn_context is not None
+-        if resend and (
+-            thinking_block := self._thinking_persistence_preflight(
+-                session_id=session_id, resolution=resolution
++        if (
++            resend
++            and (
++                thinking_block := self._thinking_persistence_preflight(
++                    session_id=session_id, resolution=resolution
++                )
+             )
+-        ) is not None:
++            is not None
++        ):
+             return thinking_block
+         provider_messages = self._provider_messages_through_message(
+             session_id,
+@@ -23416,7 +23611,9 @@ class ConsoleChatController:
+     def _hook_authority_values(self, session_id: str) -> dict[str, Any]:
+         """Read current hook authority without assembling unrelated catalogs."""
+         keys = (
+-            "workspace_roots", "project_authority", "tool_policy_profile_id",
++            "workspace_roots",
++            "project_authority",
++            "tool_policy_profile_id",
+             "persona_policy_rules",
+         )
+         if self._turn_context_provider is not None:
+@@ -23424,17 +23621,24 @@ class ConsoleChatController:
+             return {key: getattr(snapshot, key) for key in keys}
+         session = next(item for item in self.store.sessions() if item.id == session_id)
+         workspace_id = self.store.session_workspace_id(session_id)
+-        roots, _aliases, _skipped = capture_change_review_admission(self.app, workspace_id)
++        roots, _aliases, _skipped = capture_change_review_admission(
++            self.app, workspace_id
++        )
+         return {
+             "workspace_roots": roots,
+             "project_authority": capture_project_instruction_authority(
+-                session, getattr(self.app, "workspace_registry_service", None),
++                session,
++                getattr(self.app, "workspace_registry_service", None),
+                 include_bindings=self._agent_dispatch_is_eligible(
+                     session, prefill=self.store.session_one_shot_prefill(session_id)
+                 ),
+             ),
+-            "tool_policy_profile_id": resolve_turn_tool_policy_profile_id(self.app, workspace_id),
+-            "persona_policy_rules": resolve_turn_persona_policy_rules(self.app, session),
++            "tool_policy_profile_id": resolve_turn_tool_policy_profile_id(
++                self.app, workspace_id
++            ),
++            "persona_policy_rules": resolve_turn_persona_policy_rules(
++                self.app, session
++            ),
+         }
+ 
+     def resolve_turn_configuration_snapshot(
+@@ -26820,12 +27024,14 @@ class ConsoleChatController:
+             session_id,
+             resolution,
+             reason="automatic",
+-            current=lambda: self._compaction_admission(
+-                session_id=session_id,
+-                resolution=resolution,
+-                prompt=prompt,
+-            )
+-            == admission,
++            current=lambda: (
++                self._compaction_admission(
++                    session_id=session_id,
++                    resolution=resolution,
++                    prompt=prompt,
++                )
++                == admission
++            ),
+         )
+         transaction = await service.compact(
+             admission=admission,
+@@ -26841,7 +27047,12 @@ class ConsoleChatController:
+             prepare_main=prepare_main,
+             prefix_messages=snapshots[: boundary_index + 1],
+             retry_fence=compaction_retry_fence(
+-                conversation_id, resolution, prompt, resolved, effective, snapshots,
++                conversation_id,
++                resolution,
++                prompt,
++                resolved,
++                effective,
++                snapshots,
+                 active_request=not manual_action,
+             ),
+             honor_failure_latch=micro_compaction or not manual_action,
+diff --git a/tldw_chatbook/Chat/console_chat_models.py b/tldw_chatbook/Chat/console_chat_models.py
+index 651e6431df..646cbfd5f4 100644
+--- a/tldw_chatbook/Chat/console_chat_models.py
++++ b/tldw_chatbook/Chat/console_chat_models.py
+@@ -370,6 +370,14 @@ _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
+ }
+ 
+ 
++#: Shared decision-kind keys for pending-round registries and UI copy.
++CONSOLE_PENDING_APPROVAL_KIND = "approval"
++CONSOLE_PENDING_QUESTION_KIND = "question"
++CONSOLE_PENDING_SKILL_INSTALL_KIND = "skill_install"
++CONSOLE_PENDING_SKILL_SCRIPT_KIND = "skill_script"
++CONSOLE_PENDING_WORKTREE_MERGE_KIND = "worktree_merge"
++
++
+ #: Qodo #4 (task-32345): what the run chip and the turn-activity line say
+ #: while an interrupt round is waiting on the user, by round KIND
+ #: (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys). Only the two kinds
+@@ -381,8 +389,8 @@ _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
+ #: Sentence-less on purpose: the run chip appends its own full stop, the
+ #: activity line appends " · <elapsed>".
+ CONSOLE_PENDING_ROUND_COPY: Mapping[str, str] = {
+-    "approval": "Waiting for your approval",
+-    "question": "Waiting for your answer",
++    CONSOLE_PENDING_APPROVAL_KIND: "Waiting for your approval",
++    CONSOLE_PENDING_QUESTION_KIND: "Waiting for your answer",
+ }
+ CONSOLE_PENDING_ROUND_DEFAULT_COPY = "Waiting for your confirmation"
+ 
+@@ -392,8 +400,8 @@ def console_pending_round_copy(kinds: Iterable[str] = ()) -> str:
+ 
+     Precedence, when more than one kind is outstanding at once: an approval
+     wins. That is the one kind the Inspector counts
+-    (``ConsoleInspectorState.pending_approval_count`` counts mounted APPROVAL
+-    cards), so it is the only choice that keeps the chip and the Inspector
++    (``ConsoleInspectorState.pending_approval_count`` counts outstanding APPROVAL
++    rounds), so it is the only choice that keeps the chip and the Inspector
+     telling the same story -- and an approval is the heavier decision of the
+     two. Otherwise a lone question asks for an answer, and anything else --
+     including a mix of non-approval kinds -- asks for a confirmation.
+@@ -409,10 +417,10 @@ def console_pending_round_copy(kinds: Iterable[str] = ()) -> str:
+         The waiting sentence, without trailing punctuation.
+     """
+     resolved = {str(kind) for kind in kinds}
+-    if not resolved or "approval" in resolved:
+-        return CONSOLE_PENDING_ROUND_COPY["approval"]
+-    if resolved == {"question"}:
+-        return CONSOLE_PENDING_ROUND_COPY["question"]
++    if not resolved or CONSOLE_PENDING_APPROVAL_KIND in resolved:
++        return CONSOLE_PENDING_ROUND_COPY[CONSOLE_PENDING_APPROVAL_KIND]
++    if resolved == {CONSOLE_PENDING_QUESTION_KIND}:
++        return CONSOLE_PENDING_ROUND_COPY[CONSOLE_PENDING_QUESTION_KIND]
+     return CONSOLE_PENDING_ROUND_DEFAULT_COPY
+ 
+ 
+@@ -463,6 +471,12 @@ CONSOLE_DISPATCH_DUPLICATE_WARNING = (
+     "Retry anyway may send a duplicate request because delivery status is unknown."
+ )
+ CONSOLE_DISPATCH_DISCARDED_COPY = "Response discarded."
++#: Shared kind for chat-creation registration and Close consequences.
++CONSOLE_PENDING_CHAT_CREATE_KIND = "chat_create"
++
++CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL = (
++    "Close cleanup needs recovery. Restart the app before closing this tab."
++)
+ CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY = (
+     "Finish or discard the pending turn before saving."
+ )
+diff --git a/tldw_chatbook/Chat/console_runtime.py b/tldw_chatbook/Chat/console_runtime.py
+index 7ad6ab083e..fdd2fc1cc6 100644
+--- a/tldw_chatbook/Chat/console_runtime.py
++++ b/tldw_chatbook/Chat/console_runtime.py
+@@ -131,6 +131,7 @@ from uuid import uuid4
+ from loguru import logger
+ 
+ from tldw_chatbook.Chat.console_chat_models import (
++    CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
+     ConsoleLifecycleRevisionChanged,
+     ConsoleRunStatus,
+     ConsoleSubmissionOrigin,
+@@ -4683,8 +4684,27 @@ class ConsoleRuntime:
+         expected_revision: int,
+         timeout_seconds: float = CONSOLE_SESSION_CLOSE_GRACE_SECONDS,
+     ) -> Any | None:
+-        """Drain already-claimed voice publication before closing its session."""
++        """Drain already-claimed voice publication before closing its session.
+ 
++        Args:
++            session_id: Exact Console session to close.
++            expected_revision: Revision from the caller's lifecycle impact snapshot.
++            timeout_seconds: Grace period for bounded publication and turn drains.
++
++        Returns:
++            The removed session, or None if claimed voice publication does not
++            drain within its grace period.
++
++        Raises:
++            RuntimeError: Recovery retains a session admission fence, a voice
++                close is already active, or the runtime/controller cannot
++                accept closure.
++        """
++
++        # A recreated store row cannot retire this app-lifetime close fence.
++        # Refuse before taking any new voice-close ownership.
++        if session_id in self._admission_fenced_sessions:
++            raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+         owner = self._voice_promotion_owner
+         if owner is None:
+             if session_id in self._voice_promotion_pending_closes:
+diff --git a/tldw_chatbook/UI/Console_Modules/session.py b/tldw_chatbook/UI/Console_Modules/session.py
+index e79dbf842e..0018da4677 100644
+--- a/tldw_chatbook/UI/Console_Modules/session.py
++++ b/tldw_chatbook/UI/Console_Modules/session.py
+@@ -140,7 +140,14 @@ from textual.widgets import Select
+ from ...Agents.session_todo_store import SessionTodoStore, TodoStoreError
+ from ...Chat.chat_handoff_models import ChatHandoffPayload
+ from ...Chat.console_chat_models import (
++    CONSOLE_PENDING_APPROVAL_KIND,
++    CONSOLE_PENDING_CHAT_CREATE_KIND,
++    CONSOLE_PENDING_QUESTION_KIND,
++    CONSOLE_PENDING_SKILL_INSTALL_KIND,
++    CONSOLE_PENDING_SKILL_SCRIPT_KIND,
++    CONSOLE_PENDING_WORKTREE_MERGE_KIND,
+     CONSOLE_GLOBAL_WORKSPACE_ID,
++    CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
+     DEFAULT_CONSOLE_SESSION_TITLE,
+     ConsoleLifecycleImpact,
+     ConsoleLifecycleRevisionChanged,
+@@ -303,7 +310,10 @@ _SESSION_CLOSE_TITLE_MAX_CHARACTERS = 60
+ #: generic defect type of Python, asyncio and Textual, and internal texts
+ #: such as "Console session is closed." would contradict the open tab.
+ _USER_ACTIONABLE_CLOSE_REFUSALS = frozenset(
+-    {"Finish or discard the pending turn before closing this chat."}
++    {
++        "Finish or discard the pending turn before closing this chat.",
++        CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
++    }
+ )
+ 
+ 
+@@ -335,6 +345,7 @@ class ConsoleSessionCloseImpact:
+     lifecycle: ConsoleLifecycleImpact
+     has_draft: bool = False
+     pending_attachment_count: int = 0
++    pending_round_kinds: frozenset[str] = frozenset()
+ 
+     @property
+     def has_loss_risk(self) -> bool:
+@@ -343,6 +354,7 @@ class ConsoleSessionCloseImpact:
+             or self.lifecycle.has_loss_risk
+             or self.has_draft
+             or self.pending_attachment_count
++            or self.pending_round_kinds
+         )
+ 
+ 
+@@ -2852,6 +2864,7 @@ class ConsoleSessionController:
+             await self._sync_native_console_chat_ui()
+             return True
+ 
++        retry_confirmation = False
+         while True:
+             impact = self._session_close_impact(session_id)
+             if impact is None:
+@@ -2860,7 +2873,7 @@ class ConsoleSessionController:
+                 # its ✕ never does nothing.
+                 await self._sync_native_console_chat_ui()
+                 return
+-            if not impact.has_loss_risk:
++            if not impact.has_loss_risk and not retry_confirmation:
+                 if await _complete_close(impact):
+                     return
+                 self.app_instance.notify(
+@@ -2875,8 +2888,21 @@ class ConsoleSessionController:
+                 await self._sync_native_console_chat_ui()
+                 return
+             if current == impact:
+-                if await _complete_close(impact):
+-                    return
++                title = self._session_close_display_title(session_id)
++                try:
++                    if await _complete_close(impact):
++                        return
++                except Exception as exc:  # noqa: BLE001 -- an explicit retry needs consent
++                    await self._report_session_close_failure(session_id, title, exc)
++                    if self._session_is_gone(session_id) or (
++                        isinstance(exc, RuntimeError)
++                        and str(exc) in _USER_ACTIONABLE_CLOSE_REFUSALS
++                    ):
++                        return
++                    # A failed confirmed close gets another fresh dialog, even
++                    # if cancellation already removed its original loss risk.
++                    retry_confirmation = True
++                    continue
+             self.app_instance.notify(
+                 "Session activity changed; review the updated close impact.",
+                 severity="warning",
+@@ -3026,6 +3052,7 @@ class ConsoleSessionController:
+             lifecycle=controller.lifecycle_impact(session_id=session_id),
+             has_draft=bool(draft),
+             pending_attachment_count=len(session.pending_attachments),
++            pending_round_kinds=controller.pending_round_kinds(session_id),
+         )
+ 
+     async def _await_confirmation(self, dialog: Any) -> bool:
+@@ -3042,19 +3069,69 @@ class ConsoleSessionController:
+         from ...Widgets.confirmation_dialog import ConfirmationDialog
+ 
+         lifecycle = impact.lifecycle
++        consequences = [
++            text
++            for present, text in (
++                (
++                    impact.transcript_message_count,
++                    f"Temporary or unsaved messages: {impact.transcript_message_count}",
++                ),
++                (impact.has_draft, "Unsent draft: yes"),
++                (
++                    impact.pending_attachment_count,
++                    f"Pending attachments: {impact.pending_attachment_count}",
++                ),
++                (
++                    lifecycle.live_run_count,
++                    f"Live agent turns: {lifecycle.live_run_count}",
++                ),
++                (
++                    lifecycle.delegated_child_count,
++                    f"Delegated agents: {lifecycle.delegated_child_count}",
++                ),
++                (
++                    lifecycle.unsent_prompt_count,
++                    f"Unsent queued prompts: {lifecycle.unsent_prompt_count}",
++                ),
++            )
++            if present
++        ]
++        consequences.extend(
++            text
++            for kind, text in (
++                (
++                    CONSOLE_PENDING_APPROVAL_KIND,
++                    "Tool approvals: denied; runs cancelled.",
++                ),
++                (
++                    CONSOLE_PENDING_QUESTION_KIND,
++                    "Questions: cancelled without an answer.",
++                ),
++                (
++                    CONSOLE_PENDING_SKILL_INSTALL_KIND,
++                    "Skill installs: declined; runs cancelled.",
++                ),
++                (
++                    CONSOLE_PENDING_SKILL_SCRIPT_KIND,
++                    "Skill scripts: declined; runs cancelled.",
++                ),
++                (
++                    CONSOLE_PENDING_CHAT_CREATE_KIND,
++                    "Chat creation: declined; no chat created.",
++                ),
++                (
++                    CONSOLE_PENDING_WORKTREE_MERGE_KIND,
++                    "Worktree decisions: cancelled; no merge or discard.",
++                ),
++            )
++            if kind in impact.pending_round_kinds
++        )
++        message = "Saved history stays in Library."
++        if consequences:
++            message += "\nClosing will discard or cancel:\n" + "\n".join(consequences)
+         dialog = ConfirmationDialog(
+-            title="Close Console session?",
+-            message=(
+-                "Saved history stays in Library. Closing removes this open tab.\n\n"
+-                "Closing will discard or cancel:\n"
+-                f"Temporary or unsaved messages: {impact.transcript_message_count}\n"
+-                f"Unsent draft: {'yes' if impact.has_draft else 'no'}\n"
+-                f"Pending attachments: {impact.pending_attachment_count}\n"
+-                f"Live agent turns: {lifecycle.live_run_count}\n"
+-                f"Delegated agents: {lifecycle.delegated_child_count}\n"
+-                f"Unsent queued prompts: {lifecycle.unsent_prompt_count}\n\n"
+-                "Close this session?"
+-            ),
++            title=f'Close tab "{self._session_close_display_title(impact.session_id)}"?',
++            message=message,
+             confirm_label="Close",
+             cancel_label="Stay",
+         )
+diff --git a/tldw_chatbook/UI/Console_Modules/wiring.py b/tldw_chatbook/UI/Console_Modules/wiring.py
+index e78b94267d..03530e698c 100644
+--- a/tldw_chatbook/UI/Console_Modules/wiring.py
++++ b/tldw_chatbook/UI/Console_Modules/wiring.py
+@@ -302,7 +302,6 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) ->
+ 
+ async def _resend_refused_console_echo(screen: Any, echo: Any) -> str | None:
+     """TASK-33661: re-send a refused echo through the normal send path."""
+-    # Lazy: keeps console_turn_resend off the boot path (_ui_ready census).
+     from tldw_chatbook.Chat.console_turn_resend import resend_refused_echo
+ 
+     store = screen._ensure_console_chat_store()
+diff --git a/tldw_chatbook/UI/Screens/chat_screen.py b/tldw_chatbook/UI/Screens/chat_screen.py
+index b7e355b2f6..546eaa720b 100644
+--- a/tldw_chatbook/UI/Screens/chat_screen.py
++++ b/tldw_chatbook/UI/Screens/chat_screen.py
+@@ -1381,6 +1381,7 @@ CONSOLE_DECISION_CARD_SELECTORS: tuple[str, ...] = (
+     "#chat-question-card",
+     "#chat-skill-install-card",
+     "#chat-skill-script-card",
++    "#chat-create-card",
+ )
+ 
+ 
+@@ -14182,6 +14183,26 @@ class ChatScreen(BaseAppScreen):
+         return source in {"artifacts", "chatbooks"} and ":chatbook:" in target_id
+ 
+     def _console_pending_approval_count(self) -> int:
++        controller = self._console_chat_controller
++        count = getattr(controller, "pending_round_count", None)
++        store = self._console_chat_store
++        if callable(count) and store is not None:
++            registered = count(store.active_session_id or "")
++            if registered:
++                return registered
++            # Legacy unscoped tool rounds can mount without a kind-registry entry.
++            task_approval = self._task_resume_state.pending_approval
++            if not task_approval or (
++                isinstance(task_approval, dict)
++                and task_approval.get("phase") == "finishing"
++            ):
++                return 0
++            if isinstance(task_approval, dict):
++                owner = task_approval.get("session_id")
++                if owner and owner != store.active_session_id:
++                    return 0
++            return 1
++
+         explicit_count = getattr(
+             self.app_instance, "console_pending_approval_count", None
+         )
+@@ -14293,7 +14314,16 @@ class ChatScreen(BaseAppScreen):
+         run_controller = self._console_chat_controller
+         run_state = getattr(run_controller, "run_state", None)
+         run_failed = getattr(run_state, "status", None) is ConsoleRunStatus.FAILED
++        store = self._console_chat_store
++        session_id = store.active_session_id if store is not None else ""
++        has_pending = getattr(run_controller, "has_pending_approval_round", None)
++        pending_copy = (
++            console_pending_round_copy_for(run_controller, session_id or "")
++            if callable(has_pending) and has_pending(session_id or "")
++            else ""
++        )
+         inspector_state = ConsoleInspectorState.from_values(
++            pending_interrupt_copy=pending_copy,
+             live_work_title=pending_launch.title if pending_launch else None,
+             run_active=self._console_run_active(),
+             run_failed=run_failed,
+@@ -18516,21 +18546,8 @@ class ChatScreen(BaseAppScreen):
+         run_state = controller.run_state if controller is not None else None
+         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
+             return ""
+-        # `has_pending_approval_round` reads the controller's round
+-        # registry, which `run_round` (console_interrupt_rounds.py) feeds
+-        # for ALL FIVE interrupt-round kinds -- approval, skill_install,
+-        # skill_script, worktree_merge, and question -- not just MCP
+-        # approvals. `_console_pending_approval_count` / `ConsoleInspector
+-        # State.pending_approval_count` (console_display_state.py) instead
+-        # count the viewed session's mounted APPROVAL card only.
+-        #
+-        # Qodo #4 (the rider this comment used to describe, now done): that
+-        # generic predicate answers "is anything waiting" -- right for the
+-        # gate above, wrong for the copy -- so a question card used to
+-        # render "Waiting for your approval" while the inspector correctly
+-        # showed zero pending approvals. The KIND now picks the sentence;
+-        # an approval among the outstanding rounds still wins, which is
+-        # what keeps this and the inspector's count agreeing.
++        # Every interrupt kind owns its waiting copy; approval takes priority.
++        # The Inspector counts approval rounds from the same session registry.
+         if controller.has_pending_approval_round(session_id or ""):
+             return f"{console_pending_round_copy_for(controller, session_id or '')}."
+         return run_state.visible_copy or run_state.status.value
+@@ -20904,14 +20921,14 @@ class ChatScreen(BaseAppScreen):
+         ``handle_console_inspector_review_approval`` verbatim so a third
+         (or fourth) caller cannot drift from it.
+ 
+-        Qodo #5: that ``◆`` marker is worn for ALL FIVE interrupt-round
+-        kinds (``console_interrupt_rounds.KIND_SETTER_ATTRS``), but this
++        Qodo #5: that ``◆`` marker is worn for every interrupt-round kind,
++        including standalone chat creation, but this
+         knew only approvals and questions -- a pending skill-install or
+         skill-script confirm reached the "no approval" warning instead of
+         its own mounted card. The scan now walks every decision card in the
+         same kind precedence the copy uses (approval first, then question,
+-        then the confirmations), so it cannot disagree with what the run
+-        chip is telling the user is waiting.
++        then the confirmations). Queued approvals still contribute to the
++        waiting copy and count, while focus reaches the card on screen.
+ 
+         Args:
+             notify_missing: Whether to warn when nothing is focusable. The
+@@ -20922,21 +20939,13 @@ class ChatScreen(BaseAppScreen):
+         Returns:
+             Whether a card was found and focused.
+         """
+-        if self._console_pending_approval_count() > 0:
+-            card = self._first_displayed_console_decision_card("#chat-approval-card")
++        # Registered approvals can be queued behind a visible confirmation.
++        # Route to painted cards in priority order, independently of that count.
++        for selector in CONSOLE_DECISION_CARD_SELECTORS:
++            card = self._first_displayed_console_decision_card(selector)
+             if card is not None:
+                 self._focus_console_decision_card(card)
+                 return True
+-        else:
+-            # PRD A4: this focus action is how keyboard-only users reach a
+-            # question card that deliberately never steals focus -- and,
+-            # since Qodo #5, the skill/merge confirms that never had a
+-            # route at all.
+-            for selector in CONSOLE_DECISION_CARD_SELECTORS:
+-                card = self._first_displayed_console_decision_card(selector)
+-                if card is not None:
+-                    self._focus_console_decision_card(card)
+-                    return True
+         if notify_missing:
+             self.app_instance.notify(
+                 CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning"
+@@ -20956,7 +20965,7 @@ class ChatScreen(BaseAppScreen):
+         `ChatApprovalCard` owns `focus_first_decision` (``set_batch``, the
+         card's sole production entry point, is the only body it ever
+         renders, so a displayed card's action is always its "Submit"
+-        button). The other four kinds have no such method, so their first
++        button). The other cards have no such method, so their first
+         interactive control is focused directly -- Buttons included, which
+         is what a confirm card's Approve/Deny pair is made of.
+         """
+@@ -22432,6 +22441,8 @@ class ChatScreen(BaseAppScreen):
+             return
+         compact = event.size.height < CONSOLE_COMPACT_HEIGHT_ROWS
+         shell.set_class(compact, "-console-compact")
++        for card in self.query(ChatApprovalCard):
++            card._sync_control_layout()
+         self._request_console_context_allocation_reconcile()
+ 
+     @on(Resize)

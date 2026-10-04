@@ -1,0 +1,96 @@
+{
+  "prior_passed_cases": 268,
+  "all268_test_function_asts_exact": true,
+  "production_source_unchanged": true,
+  "shared_helper_routes": [
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_mode_off_never_fires",
+      "helper_calls": [
+        "_bare_controller"
+      ],
+      "test_ast_exact": true,
+      "carry_reason": "Direct summary/delivery calls use original approval registry/lock/payload, without switch/remount/decision projection. Added native payload and decision fields are unused; original import/mode/once/delivery assertions unchanged."
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_summary_service_import_failure_is_advisory",
+      "helper_calls": [
+        "_bare_controller"
+      ],
+      "test_ast_exact": true,
+      "carry_reason": "Direct summary/delivery calls use original approval registry/lock/payload, without switch/remount/decision projection. Added native payload and decision fields are unused; original import/mode/once/delivery assertions unchanged."
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_fallback_fires_only_when_a_rationale_is_missing",
+      "helper_calls": [
+        "_bare_controller"
+      ],
+      "test_ast_exact": true,
+      "carry_reason": "Direct summary/delivery calls use original approval registry/lock/payload, without switch/remount/decision projection. Added native payload and decision fields are unused; original import/mode/once/delivery assertions unchanged."
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_delivery_drops_resolved_rounds_and_updates_live_ones",
+      "helper_calls": [
+        "_bare_controller"
+      ],
+      "test_ast_exact": true,
+      "carry_reason": "Direct summary/delivery calls use original approval registry/lock/payload, without switch/remount/decision projection. Added native payload and decision fields are unused; original import/mode/once/delivery assertions unchanged."
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_remount_head_helper_skips_non_mcp_payloads",
+      "helper_calls": [
+        "_parked_controller"
+      ],
+      "test_ast_exact": true,
+      "carry_reason": "Explicitly refreshed by the one additional approved selector because native parked helper changed."
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_the_store_read_happens_on_the_spawning_thread_not_the_worker",
+      "helper_calls": [
+        "_bare_controller"
+      ],
+      "test_ast_exact": true,
+      "carry_reason": "Direct summary call; this test supplies its own store. Summary reads only original approval registry/lock and passed payload; newly initialized decision/native-payload fields are unused."
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_disabled_flag",
+      "helper_calls": [
+        "_bare_controller"
+      ],
+      "test_ast_exact": true,
+      "carry_reason": "Disabled/quoted-false/no-service/kill-switch/kill-read-failure returns from _compose_local_provider before _character_wiring. New store and character guard fields are never consulted on these previously passed routes."
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_coerces_quoted_false_to_disabled",
+      "helper_calls": [
+        "_bare_controller"
+      ],
+      "test_ast_exact": true,
+      "carry_reason": "Disabled/quoted-false/no-service/kill-switch/kill-read-failure returns from _compose_local_provider before _character_wiring. New store and character guard fields are never consulted on these previously passed routes."
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_no_service",
+      "helper_calls": [
+        "_bare_controller"
+      ],
+      "test_ast_exact": true,
+      "carry_reason": "Disabled/quoted-false/no-service/kill-switch/kill-read-failure returns from _compose_local_provider before _character_wiring. New store and character guard fields are never consulted on these previously passed routes."
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_kill_switch_on",
+      "helper_calls": [
+        "_bare_controller"
+      ],
+      "test_ast_exact": true,
+      "carry_reason": "Disabled/quoted-false/no-service/kill-switch/kill-read-failure returns from _compose_local_provider before _character_wiring. New store and character guard fields are never consulted on these previously passed routes."
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_kill_switch_read_failure_fails_closed",
+      "helper_calls": [
+        "_bare_controller"
+      ],
+      "test_ast_exact": true,
+      "carry_reason": "Disabled/quoted-false/no-service/kill-switch/kill-read-failure returns from _compose_local_provider before _character_wiring. New store and character guard fields are never consulted on these previously passed routes."
+    }
+  ],
+  "additional_non_mcp_control_refreshed_separately": true
+}

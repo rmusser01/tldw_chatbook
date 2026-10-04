@@ -1,0 +1,45 @@
+import sys,subprocess,pathlib,json,hashlib,tempfile,ast
+sys.path.insert(0,'/private/tmp/pr2995-task12');from run import W,S,O,dump,git
+B='1b12df2757f901e5c8e7a1e8946ad98f315eb8f9'; F='99bd5b13db620435a8824b7599708e85ca8009d9';D='7d155170dc95557736a239a1ce7427981f4d50ec';R='439b8b1617a2a7816010e55da6a37482102c6da5'
+def tree(ref):return {entry.split(b'\t',1)[1].decode():entry.split(b'\t')[0].split()[2].decode() for entry in git('ls-tree','-rz',ref).split(b'\0') if entry}
+def blob(ref,p):return git('show',ref+':'+p)
+def digest(b):return hashlib.sha256(b).hexdigest()
+b,f,d,r=map(tree,[B,F,D,R]);union={};bad=[];overlaps=[]
+for p in sorted(b.keys()|f.keys()|d.keys()|r.keys()):
+ bb,ff,dd,rr=[t.get(p) for t in [b,f,d,r]]
+ if ff==bb:expected=dd;owner='upstream'
+ elif dd==bb or ff==dd:expected=ff;owner='feature'
+ else:
+  assert bb and ff and dd,p
+  with tempfile.TemporaryDirectory(prefix='task12-merge-',dir='/private/tmp') as td:
+   paths=[]
+   for label,ref in [('feature',F),('base',B),('dev',D)]:
+    q=pathlib.Path(td)/label;q.write_bytes(blob(ref,p));paths.append(str(q))
+   x=subprocess.run(['git','merge-file','-p',*paths],capture_output=True);assert x.returncode==0,(p,x.returncode)
+   expected=hashlib.sha1(b'blob '+str(len(x.stdout)).encode()+b'\0'+x.stdout).hexdigest();owner='exact_three_way';overlaps.append({'path':p,'expected_blob':expected,'actual_blob':rr,'exact':expected==rr})
+ row={'base':bb,'feature':ff,'dev':dd,'rebased':rr,'owner':owner,'exact':rr==expected};union[p]=row
+ if not row['exact']:bad.append(p)
+dump('rebase-exact-union.json',{'pins':{'common':B,'feature':F,'dev':D,'rebased':R},'count':len(union),'unexpected':bad,'overlaps':overlaps,'paths':union});assert not bad,bad
+m=json.loads((S/'task-12-preflight-overlap-map.json').read_text());maps={}
+def definitions(data):
+ out={}
+ def walk(nodes,prefix=''):
+  for n in nodes:
+   if isinstance(n,(ast.ClassDef,ast.FunctionDef,ast.AsyncFunctionDef)):
+    name=prefix+n.name;out[name]=digest(ast.dump(n,include_attributes=False).encode());walk(n.body,name+'.')
+ walk(ast.parse(data).body);return out
+for row in m['paths']:
+ p=row['path']
+ if not p.startswith('tldw_chatbook/'):continue
+ fd,dd,rd=map(definitions,[blob(F,p),blob(D,p),blob(R,p)]);incoming=set(row['upstream_definitions']);checks={}
+ # Class containers aggregate changed descendants and are checked through their members.
+ containers={x.rsplit('.',1)[0] for x in incoming if '.' in x}
+ for name,h in rd.items():
+  if name in incoming or any(name.startswith(x+'.') for x in incoming): expected=dd[name]; owner='upstream'
+  elif name in containers:continue
+  else:expected=fd.get(name);owner='feature'
+  checks[name]={'owner':owner,'expected':expected,'actual':h,'exact':h==expected}
+ assert all(x['exact'] for x in checks.values()),p
+ maps[p]={'definitions':checks,'incoming':sorted(incoming),'count':len(checks)}
+dump('production-method-union.json',maps)
+q=json.loads((S/'task-11-safe-evidence/final-historical-qa-carry.json').read_text());print('QA_STRUCTURE',type(q).__name__,list(q)[:10]);print('UNION',len(union),'overlaps',len(overlaps),'method_paths',len(maps))

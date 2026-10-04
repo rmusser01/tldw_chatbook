@@ -1,0 +1,1866 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="15" skipped="0" tests="61" time="302.351" timestamp="2026-10-04T09:46:18.454161-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_fallback_fires_when_missing_and_always_fires" time="0.273" /><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_parked_round_fires_once_on_attach_remount" time="0.101" /><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_consumed_flag_prevents_refire_on_attach_remount" time="0.101" /><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_switch_session_promotes_parked_round_and_fires_once" time="0.090"><failure message="assert [] == [True]&#10;  &#10;  Right contains one more item: True&#10;  Use -v to get more diff">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x1160501d0&gt;
+
+    @pytest.mark.bootstrap_profile
+    def test_switch_session_promotes_parked_round_and_fires_once(monkeypatch):
+        ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
+        ctrl.store.active_session_id = "s0"  # switching away from s0 onto s1
+    
+        def switch_session(session_id):
+            ctrl.store.active_session_id = session_id
+            return SimpleNamespace(id=session_id)
+    
+        ctrl.store.switch_session = switch_session
+        ctrl.mark_session_visited = lambda session_id: None
+        ctrl._clear_terminal_run_state = lambda **_: None
+        ctrl._remount_parked_skill_install = lambda session_id: None
+        ctrl._remount_parked_skill_script = lambda session_id: None
+        ctrl.switch_session("s1")
+        assert mounted == [payload]
+&gt;       assert _ThreadStub.started == [True]
+E       assert [] == [True]
+E         
+E         Right contains one more item: True
+E         Use -v to get more diff
+
+Tests/Chat/test_permission_summary_wiring.py:214: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_remount_head_helper_fires_promoted_sibling_once" time="0.096" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_hook_clears_stamps_before_gating" time="0.088" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_hook_gates_ask_calls_in_one_batch" time="0.084" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_hook_keeps_same_name_watchlist_decisions_per_call" time="0.087" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_local_same_name_broad_approval_scope_survives_later_narrow_scope[always_allow-approve_session]" time="0.090" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_local_same_name_broad_approval_scope_survives_later_narrow_scope[always_allow-approve_once]" time="0.100" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_local_same_name_broad_approval_scope_survives_later_narrow_scope[approve_session-approve_once]" time="0.096" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_local_pending_gate_carries_descriptor_owned_effects" time="0.096" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_mounted_approval_row_carries_exact_descriptor_effects" time="0.104" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_hook_skips_non_ask_calls" time="0.097" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_combined_hook_does_not_overwrite_a_local_refusal" time="0.098" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_combined_hook_clears_later_providers_when_earlier_hook_raises" time="0.096" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_combined_hook_runs_remaining_hooks_after_a_raise" time="0.095" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_hook_level_card_deny_lands_in_the_execution_log_exactly_once" time="0.105" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_missing_master_key_defaults_enabled" time="0.113" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_coerces_quoted_true_to_enabled" time="0.103" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_eligible" time="0.100" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_default_chat_local_provider_uses_scratch_not_config_or_cwd" time="0.089"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x114021dc0&gt;
+tmp_path = PosixPath('/private/tmp/task9-remaining-fixtures/test_default_chat_local_provid0')
+
+    def test_default_chat_local_provider_uses_scratch_not_config_or_cwd(
+        monkeypatch,
+        tmp_path,
+    ):
+        configured = tmp_path / "configured"
+        cwd = tmp_path / "cwd"
+        configured.mkdir()
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        monkeypatch.setattr(
+            controller_mod,
+            "get_cli_setting",
+            _console_settings(enabled=True, workspace_root=str(configured)),
+        )
+        scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+        snapshot = scratch_spaces.snapshot("chat-a")
+        context = _test_execution_context(
+            snapshot,
+            session_id="chat-a",
+            tool_configuration={
+                "local_tools_enabled": True,
+                "workspace_root": str(configured),
+            },
+        )
+        controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+        controller._scratch_spaces = scratch_spaces
+    
+&gt;       provider, review = _compose_local_provider(
+            controller,
+            session_id="chat-a",
+            turn_context=context,
+        )
+
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Chat/test_console_local_review_hook.py:976: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Chat/test_console_local_review_hook.py:798: in _compose_local_provider
+    return ConsoleChatController._compose_local_provider(
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_controller.py:16139: in _compose_local_provider
+    provider = LocalToolProvider(
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Agents/local_tool_provider.py:830: in __init__
+    selected_specs = _default_specs(
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Agents/local_tool_provider.py:5162: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c04a450&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_default_chat_local_provider_rejects_after_scratch_close" time="0.090" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per_call" time="0.081"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x114057410&gt;
+tmp_path = PosixPath('/private/tmp/task9-remaining-fixtures/test_compose_local_provider_re0')
+
+    @pytest.mark.bootstrap_profile
+    def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per_call(
+        monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(
+            controller_mod,
+            "get_cli_setting",
+            _console_settings(workspace_root=str(tmp_path)),
+        )
+        profile = tmp_path / "profile" / "config.toml"
+        profile.parent.mkdir()
+        profile.write_text("", encoding="utf-8")
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    
+        class AppDatabase:
+            def __init__(self):
+                self.searches = 0
+    
+            def assert_agent_read_ready(self):
+                return None
+    
+            def search_items_for_agent(self, **_kwargs):
+                self.searches += 1
+                return {"items": [], "has_more": False, "snapshot_max_item_id": 0}
+    
+            def get_source_collection_memberships(self, _source_ids):
+                return {}
+    
+        database = AppDatabase()
+        app = SimpleNamespace(
+            unified_mcp_service=_FakeService(state=ALLOW),
+            subscriptions_db=database,
+        )
+        controller = _bare_controller(app)
+&gt;       provider, hook = _compose_local_provider(
+            controller,
+        )
+
+Tests/Chat/test_console_local_review_hook.py:1048: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_local_review_hook.py:798: in _compose_local_provider
+    return ConsoleChatController._compose_local_provider(
+tldw_chatbook/Chat/console_chat_controller.py:16139: in _compose_local_provider
+    provider = LocalToolProvider(
+tldw_chatbook/Agents/local_tool_provider.py:830: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:5162: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c04a450&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_wires_transactional_watchlists_commands" time="0.198"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x114020920&gt;
+tmp_path = PosixPath('/private/tmp/task9-remaining-fixtures/test_compose_local_provider_wi0')
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_compose_local_provider_wires_transactional_watchlists_commands(
+        monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(
+            controller_mod,
+            "get_cli_setting",
+            _console_settings(workspace_root=str(tmp_path)),
+        )
+        profile = tmp_path / "profile" / "config.toml"
+        profile.parent.mkdir()
+        profile.write_text("", encoding="utf-8")
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+        RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
+        database = SubscriptionsDB(tmp_path / "subscriptions.db")
+        local_service = LocalWatchlistsService(db_factory=lambda: database)
+        bundle_service = WatchlistBundleService(database)
+        controller = _bare_controller(
+            SimpleNamespace(
+                unified_mcp_service=_FakeService(state=ALLOW),
+                subscriptions_db=database,
+                local_watchlists_service=local_service,
+                watchlist_bundle_service=bundle_service,
+            )
+        )
+    
+&gt;       provider, _hook = _compose_local_provider(controller)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_local_review_hook.py:1109: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_local_review_hook.py:798: in _compose_local_provider
+    return ConsoleChatController._compose_local_provider(
+tldw_chatbook/Chat/console_chat_controller.py:16139: in _compose_local_provider
+    provider = LocalToolProvider(
+tldw_chatbook/Agents/local_tool_provider.py:830: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:5162: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c04a450&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_routes_schedule_through_shared_app_command_service" time="0.110" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_routes_long_watchlists_work_to_app_coordinator" time="0.121"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x113fff770&gt;
+tmp_path = PosixPath('/private/tmp/task9-remaining-fixtures/test_compose_local_provider_ro1')
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_compose_local_provider_routes_long_watchlists_work_to_app_coordinator(
+        monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(
+            controller_mod,
+            "get_cli_setting",
+            _console_settings(workspace_root=str(tmp_path)),
+        )
+        profile = tmp_path / "profile" / "config.toml"
+        profile.parent.mkdir()
+        profile.write_text("", encoding="utf-8")
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+        RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
+    
+        class Coordinator:
+            def __init__(self):
+                self.checks = []
+                self.briefings = []
+    
+            def submit_checks(self, source_ids):
+                self.checks.append(source_ids)
+                return [{"run_id": 7, "source_id": 3, "status": "queued"}]
+    
+            def submit_briefing(self, watchlist_id, preset_id):
+                self.briefings.append((watchlist_id, preset_id))
+                return {"id": 11, "status": "generating"}
+    
+        coordinator = Coordinator()
+        bundle = SimpleNamespace(list_sources=lambda watchlist_id: [3])
+        app = SimpleNamespace(
+            unified_mcp_service=_FakeService(state=ALLOW),
+            watchlists_operation_coordinator=coordinator,
+            watchlist_bundle_service=bundle,
+        )
+&gt;       provider, _hook = _compose_local_provider(_bare_controller(app))
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_local_review_hook.py:1237: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_local_review_hook.py:798: in _compose_local_provider
+    return ConsoleChatController._compose_local_provider(
+tldw_chatbook/Chat/console_chat_controller.py:16139: in _compose_local_provider
+    provider = LocalToolProvider(
+tldw_chatbook/Agents/local_tool_provider.py:830: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:5162: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c04a450&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_console_watchlists_real_reads_leave_app_owned_state_unchanged" time="0.203"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x1104db950&gt;
+tmp_path = PosixPath('/private/tmp/task9-remaining-fixtures/test_console_watchlists_real_r0')
+
+    @pytest.mark.bootstrap_profile
+    def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(
+        monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(
+            controller_mod,
+            "get_cli_setting",
+            _console_settings(workspace_root=str(tmp_path)),
+        )
+        profile = tmp_path / "profile" / "config.toml"
+        profile.parent.mkdir()
+        profile.write_text("", encoding="utf-8")
+        monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+        policy_store = RuntimeSourceStateStore(default_runtime_policy_path())
+        policy_store.save(RuntimeSourceState())
+    
+        database = SubscriptionsDB(tmp_path / "subscriptions.db")
+        try:
+&gt;           source_id = database.add_subscription(
+                name="Evidence feed",
+                type="rss",
+                source="https://example.test/feed?token=private",
+            )
+
+Tests/Chat/test_console_local_review_hook.py:1276: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/DB/Subscriptions_DB.py:2292: in add_subscription
+    _default_auto_pause_threshold()
+tldw_chatbook/DB/Subscriptions_DB.py:346: in _default_auto_pause_threshold
+    configured = get_cli_setting(
+tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c04a450&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_empty_workspace_root_uses_scratch" time="0.099" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_console_run_without_admitted_roots_keeps_non_path_local_tools" time="0.100" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_local_provider_read_only_filters_write_specs_without_global_mutation" time="0.098" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_selected_root_overrides_disabled_fallback" time="0.096" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_selected_root_swap_fails_closed_before_local_invoke" time="0.097" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_tilde_workspace_root_does_not_grant_home_access" time="0.093" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_persists_session_and_always_allow" time="0.599" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_session_approval_skips_reprompt" time="0.376" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_records_deny_via_service" time="0.103" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_records_timeout_via_service" time="0.102" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_allow_records_no_refusal" time="0.391" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_recording_failure_does_not_break_invoke" time="0.102" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_without_session_registers_no_todo_spec" time="0.102" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_wires_the_sessions_exact_todo_store" time="0.098"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11403f350&gt;
+tmp_path = PosixPath('/private/tmp/task9-remaining-fixtures/test_compose_local_provider_wi2')
+
+    def test_compose_local_provider_wires_the_sessions_exact_todo_store(
+        monkeypatch, tmp_path
+    ):
+        """An inactive target, not the active session, owns provider task state."""
+        from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    
+        monkeypatch.setattr(
+            controller_mod,
+            "get_cli_setting",
+            _console_settings(workspace_root=str(tmp_path)),
+        )
+        service = _FakeService(state=ALLOW)
+        controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
+        controller.store = ConsoleChatStore()
+        target = controller.store.create_session(title="Target", workspace_id="ws")
+        active = controller.store.create_session(title="Active", workspace_id="ws")
+        assert controller.store.active_session_id == active.id
+        markers = []
+        controller._agent_bridge = SimpleNamespace(
+            append_todo_marker=lambda session_id, todos: markers.append(
+                (session_id, list(todos))
+            )
+        )
+    
+&gt;       local_provider, _hook = _compose_local_provider(controller, session_id=target.id)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_local_review_hook.py:1686: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_local_review_hook.py:798: in _compose_local_provider
+    return ConsoleChatController._compose_local_provider(
+tldw_chatbook/Chat/console_chat_controller.py:16139: in _compose_local_provider
+    provider = LocalToolProvider(
+tldw_chatbook/Agents/local_tool_provider.py:830: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:5162: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c04a450&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_unknown_session_registers_no_todo_spec" time="0.096" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_without_bridge_registers_no_todo_spec" time="0.113"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x1127f8c20&gt;
+tmp_path = PosixPath('/private/tmp/task9-remaining-fixtures/test_compose_local_provider_wi3')
+
+    def test_compose_local_provider_without_bridge_registers_no_todo_spec(
+        monkeypatch, tmp_path
+    ):
+        """A live session without a transcript bridge exposes no task capability."""
+        from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    
+        monkeypatch.setattr(
+            controller_mod,
+            "get_cli_setting",
+            _console_settings(workspace_root=str(tmp_path)),
+        )
+        controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+        controller.store = ConsoleChatStore()
+        session = controller.store.create_session(workspace_id="ws")
+        controller._agent_bridge = None
+    
+&gt;       local_provider, _hook = _compose_local_provider(controller, session_id=session.id)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_local_review_hook.py:1733: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_local_review_hook.py:798: in _compose_local_provider
+    return ConsoleChatController._compose_local_provider(
+tldw_chatbook/Chat/console_chat_controller.py:16139: in _compose_local_provider
+    provider = LocalToolProvider(
+tldw_chatbook/Agents/local_tool_provider.py:830: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:5162: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c04a450&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_hook_passes_rationale_onto_local_pending_rows" time="0.108" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_a_no_app_headless_round_is_not_recorded_as_a_local_user_denial" time="0.103" /><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_pretooluse_hook_denies_before_permission_store" time="0.153"><failure message="AssertionError: assert ToolReviewDecision(verdict='proceed', approval_decision='approved') == 'proceed'">tmp_path = PosixPath('/private/tmp/task9-remaining-fixtures/test_pretooluse_hook_denies_be0')
+
+    @pytest.mark.bootstrap_profile
+    def test_pretooluse_hook_denies_before_permission_store(tmp_path):
+        """A configured exit-2 PreToolUse hook denies the matched call and the
+        approval round never carries it (deny-only, spec §5).
+    
+        Composition-level: the engine's wrap_review layers the real controller
+        review hook (build_local_review_hook) exactly the way the bridge does --
+        the matched ``fs_*`` call comes back as a namespaced ``hook: `` refusal
+        without ever entering the request_approvals round, while the
+        non-matching tool runs the normal ask -&gt; approve -&gt; proceed chain.
+        """
+        engine = _deny_fs_tools_engine(tmp_path)
+        p = provider(ASK, tmp_path)
+        rounds = []
+    
+        def approvals(pending):
+            rounds.append([call.tool_name for call in pending])
+            return {call.tool_name: "approve_once" for call in pending}
+    
+        wrapped = engine.wrap_review(
+            build_local_review_hook(p, approvals), session_id="session-1"
+        )
+        verdicts = wrapped(
+            [
+                ToolCall(name="fs_list", args={"path": "."}),
+                ToolCall(name="git_status", args={"path": "."}),
+            ],
+            RUN,
+        )
+        assert verdicts["fs_list"] != "proceed"
+        assert verdicts["fs_list"].startswith("hook: ")
+&gt;       assert verdicts["git_status"] == "proceed"
+E       AssertionError: assert ToolReviewDecision(verdict='proceed', approval_decision='approved') == 'proceed'
+
+Tests/Chat/test_console_local_review_hook.py:1871: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_run_reply_wraps_the_review_chain_with_pretooluse_hooks" time="0.676" /><testcase classname="Tests.Agents.test_builtin_gate_real_tool_coverage" name="test_create_note_persists_through_a_real_db_on_a_worker_thread" time="0.692" /><testcase classname="Tests.Chat.test_console_rewind_summarize" name="test_range_projection_is_shared_by_preflight_and_next_send_preview" time="0.789" /><testcase classname="Tests.Chat.test_console_rewind_summarize" name="test_preview_duplicates_complete_system_and_memory_dispatch_block" time="0.695" /><testcase classname="Tests.Chat.test_console_rewind_summarize" name="test_effective_legacy_memory_makes_automatic_and_compact_now_zero_call" time="0.726" /><testcase classname="Tests.Chat.test_console_video_actions" name="test_handle_console_message_action_routes_video_play_with_persisted_storage_id" time="0.137"><failure message="AttributeError: 'ChatScreen' object has no attribute '_session'">tmp_path = PosixPath('/private/tmp/task9-remaining-fixtures/test_handle_console_message_ac0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x116305c10&gt;
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_handle_console_message_action_routes_video_play_with_persisted_storage_id(
+        tmp_path, monkeypatch
+    ):
+        screen, message, stored_path, resolve_calls, pushed, _pending = (
+&gt;           _video_action_screen(tmp_path)
+        )
+
+Tests/Chat/test_console_video_actions.py:192: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_video_actions.py:93: in _video_action_screen
+    screen._console_chat_store = store
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9566: in _console_chat_store
+    self._console_runtime().set_chat_store(value)
+    ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9533: in _console_runtime
+    runtime = ensure_console_runtime(
+tldw_chatbook/Chat/console_runtime.py:5407: in ensure_console_runtime
+    generation = runtime.attach_view(view)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_runtime.py:4594: in attach_view
+    self._bind_view_hooks()
+tldw_chatbook/Chat/console_runtime.py:4371: in _bind_view_hooks
+    hooks = provider() if callable(provider) else {}
+            ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ChatScreen()
+
+    def console_view_hooks(self) -&gt; dict[str, Any]:
+        """Return this view's value for every `CONSOLE_VIEW_HOOK_SLOTS` slot.
+    
+        task-15860. The runtime outlives this screen, so every callable it
+        holds that closes over `self` has to be re-bindable and, more
+        importantly, CLEARABLE -- Task 0's P3 found five such slots still
+        pointing at a dead `ChatScreen` after a real unmount, none of them
+        raising, and a silent wrong answer from `wake_conversation_in_view`
+        decides whether the unseen `◈` mark survives.
+    
+        Keys either match `CONSOLE_VIEW_HOOK_SLOTS` (directly rebound and
+        cleared) or are reached through a stable runtime projection router.
+        A test inventories both sets so neither path can retain this view.
+    
+        Returns:
+            dict[str, Any]: slot name -&gt; this view's value.
+        """
+        skill = getattr(self, "_skill", None)
+        return {
+            "set_pending_decision": self._set_console_pending_decision,
+            "follow_watchlists_operations": self._follow_console_watchlists_operations,
+            "set_pending_approval": self._set_console_pending_approval,
+            # ADR-090: UI-thread bridge to patch a mounted approval card's
+            # advisory summary line in place (never re-runs set_batch).
+            "update_pending_approval_summary": self._update_console_approval_summary,
+            # Task 9 (parked background approvals): UI-thread bridge target
+            # for a NON-active session's approval round -- badge + one
+            # toast, never the mounted-card path above.
+            "park_pending_approval": self._park_console_approval,
+            # Task 10 (background completion toasts): UI-thread bridge
+            # target for a NON-active session's run finishing/failing -- the
+            # one-per-run toast, invoked directly (never via
+            # `call_from_thread`) from `_set_run_state`'s once-guarded
+            # non-active terminal branch.
+            "notify_run_outcome": self._notify_console_run_outcome,
+            # task-2154.16 (FB-05): the ACTIVE session's own run failing --
+            # one error toast carrying the run's visible copy.
+            "notify_run_failure": self._notify_console_run_failure,
+            "set_pending_skill_install": getattr(
+                skill, "_set_console_pending_skill_install", None
+            ),
+            "set_pending_skill_script": getattr(
+                skill, "_set_console_pending_skill_script", None
+            ),
+            "set_pending_chat_create": getattr(
+                skill, "_set_console_pending_chat_create", None
+            ),
+            # TASK-32482 Task 7: UI-thread completion for a confirmed
+            # agent-created chat (fork_chat/new_chat) -- the executor's
+            # marshal target. Wired here (not at construction) because it
+            # closes over THIS screen, exactly like its sibling bridges.
+            "complete_agent_chat_create": self._complete_agent_chat_create,
+            # PRD Feature B: the pinned task panel above the transcript.
+            "set_task_panel": self._set_console_task_panel,
+            # PRD Feature A: the ask_user question card.
+            "set_pending_question": self._set_console_pending_question,
+            "set_pending_worktree_merge": self._set_console_pending_worktree_merge,
+            # PR3a-2 Task 5, user-wins-ties.
+            "wake_user_priority_probe": self._fleet._console_wake_user_priority,
+            # task-15971: the delivery COMMIT's visibility probe -- a wake
+            # completing while this conversation is not displayed-and-active
+            # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
+            # learns an off-view delivery landed).
+            "wake_conversation_in_view": (
+                self._fleet._console_wake_conversation_in_view
+            ),
+            # the store's one screen-owned callback
+            "on_scope_flushed": self._on_console_scope_flushed,
+            # task-15862: a wake turn enters through the coordinator, never
+            # the user-send worker that arms the 0.2s transcript poll --
+            # without this hook nothing repaints the wake turn's streamed
+            # reply, its terminal tab glyph, or the composer state (the live
+            # 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
+            "delivery_ui_hook": self._fleet._on_console_wake_delivery_started,
+            "project_project_instruction_binding": (
+&gt;               self._session._project_project_instruction_binding
+                ^^^^^^^^^^^^^
+            ),
+            "project_project_instruction_dispatch": (
+                self._session._project_project_instruction_dispatch
+            ),
+            "dismiss_project_instruction_decision": (
+                self._session._dismiss_project_instruction_decision_projection
+            ),
+        }
+E       AttributeError: 'ChatScreen' object has no attribute '_session'
+
+tldw_chatbook/UI/Screens/chat_screen.py:9906: AttributeError</failure></testcase><testcase classname="Tests.Chat.test_console_video_actions" name="test_handle_console_message_action_routes_video_save_with_persisted_storage_id" time="0.127"><failure message="AttributeError: 'ChatScreen' object has no attribute '_session'">tmp_path = PosixPath('/private/tmp/task9-remaining-fixtures/test_handle_console_message_ac1')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x1163040e0&gt;
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_handle_console_message_action_routes_video_save_with_persisted_storage_id(
+        tmp_path, monkeypatch
+    ):
+        screen, message, _stored_path, resolve_calls, _pushed, pending_workers = (
+&gt;           _video_action_screen(tmp_path)
+        )
+
+Tests/Chat/test_console_video_actions.py:224: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_video_actions.py:93: in _video_action_screen
+    screen._console_chat_store = store
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9566: in _console_chat_store
+    self._console_runtime().set_chat_store(value)
+    ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9533: in _console_runtime
+    runtime = ensure_console_runtime(
+tldw_chatbook/Chat/console_runtime.py:5407: in ensure_console_runtime
+    generation = runtime.attach_view(view)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_runtime.py:4594: in attach_view
+    self._bind_view_hooks()
+tldw_chatbook/Chat/console_runtime.py:4371: in _bind_view_hooks
+    hooks = provider() if callable(provider) else {}
+            ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ChatScreen()
+
+    def console_view_hooks(self) -&gt; dict[str, Any]:
+        """Return this view's value for every `CONSOLE_VIEW_HOOK_SLOTS` slot.
+    
+        task-15860. The runtime outlives this screen, so every callable it
+        holds that closes over `self` has to be re-bindable and, more
+        importantly, CLEARABLE -- Task 0's P3 found five such slots still
+        pointing at a dead `ChatScreen` after a real unmount, none of them
+        raising, and a silent wrong answer from `wake_conversation_in_view`
+        decides whether the unseen `◈` mark survives.
+    
+        Keys either match `CONSOLE_VIEW_HOOK_SLOTS` (directly rebound and
+        cleared) or are reached through a stable runtime projection router.
+        A test inventories both sets so neither path can retain this view.
+    
+        Returns:
+            dict[str, Any]: slot name -&gt; this view's value.
+        """
+        skill = getattr(self, "_skill", None)
+        return {
+            "set_pending_decision": self._set_console_pending_decision,
+            "follow_watchlists_operations": self._follow_console_watchlists_operations,
+            "set_pending_approval": self._set_console_pending_approval,
+            # ADR-090: UI-thread bridge to patch a mounted approval card's
+            # advisory summary line in place (never re-runs set_batch).
+            "update_pending_approval_summary": self._update_console_approval_summary,
+            # Task 9 (parked background approvals): UI-thread bridge target
+            # for a NON-active session's approval round -- badge + one
+            # toast, never the mounted-card path above.
+            "park_pending_approval": self._park_console_approval,
+            # Task 10 (background completion toasts): UI-thread bridge
+            # target for a NON-active session's run finishing/failing -- the
+            # one-per-run toast, invoked directly (never via
+            # `call_from_thread`) from `_set_run_state`'s once-guarded
+            # non-active terminal branch.
+            "notify_run_outcome": self._notify_console_run_outcome,
+            # task-2154.16 (FB-05): the ACTIVE session's own run failing --
+            # one error toast carrying the run's visible copy.
+            "notify_run_failure": self._notify_console_run_failure,
+            "set_pending_skill_install": getattr(
+                skill, "_set_console_pending_skill_install", None
+            ),
+            "set_pending_skill_script": getattr(
+                skill, "_set_console_pending_skill_script", None
+            ),
+            "set_pending_chat_create": getattr(
+                skill, "_set_console_pending_chat_create", None
+            ),
+            # TASK-32482 Task 7: UI-thread completion for a confirmed
+            # agent-created chat (fork_chat/new_chat) -- the executor's
+            # marshal target. Wired here (not at construction) because it
+            # closes over THIS screen, exactly like its sibling bridges.
+            "complete_agent_chat_create": self._complete_agent_chat_create,
+            # PRD Feature B: the pinned task panel above the transcript.
+            "set_task_panel": self._set_console_task_panel,
+            # PRD Feature A: the ask_user question card.
+            "set_pending_question": self._set_console_pending_question,
+            "set_pending_worktree_merge": self._set_console_pending_worktree_merge,
+            # PR3a-2 Task 5, user-wins-ties.
+            "wake_user_priority_probe": self._fleet._console_wake_user_priority,
+            # task-15971: the delivery COMMIT's visibility probe -- a wake
+            # completing while this conversation is not displayed-and-active
+            # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
+            # learns an off-view delivery landed).
+            "wake_conversation_in_view": (
+                self._fleet._console_wake_conversation_in_view
+            ),
+            # the store's one screen-owned callback
+            "on_scope_flushed": self._on_console_scope_flushed,
+            # task-15862: a wake turn enters through the coordinator, never
+            # the user-send worker that arms the 0.2s transcript poll --
+            # without this hook nothing repaints the wake turn's streamed
+            # reply, its terminal tab glyph, or the composer state (the live
+            # 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
+            "delivery_ui_hook": self._fleet._on_console_wake_delivery_started,
+            "project_project_instruction_binding": (
+&gt;               self._session._project_project_instruction_binding
+                ^^^^^^^^^^^^^
+            ),
+            "project_project_instruction_dispatch": (
+                self._session._project_project_instruction_dispatch
+            ),
+            "dismiss_project_instruction_decision": (
+                self._session._dismiss_project_instruction_decision_projection
+            ),
+        }
+E       AttributeError: 'ChatScreen' object has no attribute '_session'
+
+tldw_chatbook/UI/Screens/chat_screen.py:9906: AttributeError</failure></testcase><testcase classname="Tests.Chat.test_console_video_actions" name="test_video_play_resolves_webm_from_metadata" time="0.104"><failure message="AttributeError: 'ChatScreen' object has no attribute '_session'">tmp_path = PosixPath('/private/tmp/task9-remaining-fixtures/test_video_play_resolves_webm_0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x11403f5c0&gt;
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_video_play_resolves_webm_from_metadata(tmp_path, monkeypatch):
+        screen, message, stored_path, resolve_calls, pushed, _pending = (
+&gt;           _video_action_screen(tmp_path, container="webm")
+        )
+
+Tests/Chat/test_console_video_actions.py:250: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_video_actions.py:93: in _video_action_screen
+    screen._console_chat_store = store
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9566: in _console_chat_store
+    self._console_runtime().set_chat_store(value)
+    ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9533: in _console_runtime
+    runtime = ensure_console_runtime(
+tldw_chatbook/Chat/console_runtime.py:5407: in ensure_console_runtime
+    generation = runtime.attach_view(view)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_runtime.py:4594: in attach_view
+    self._bind_view_hooks()
+tldw_chatbook/Chat/console_runtime.py:4371: in _bind_view_hooks
+    hooks = provider() if callable(provider) else {}
+            ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ChatScreen()
+
+    def console_view_hooks(self) -&gt; dict[str, Any]:
+        """Return this view's value for every `CONSOLE_VIEW_HOOK_SLOTS` slot.
+    
+        task-15860. The runtime outlives this screen, so every callable it
+        holds that closes over `self` has to be re-bindable and, more
+        importantly, CLEARABLE -- Task 0's P3 found five such slots still
+        pointing at a dead `ChatScreen` after a real unmount, none of them
+        raising, and a silent wrong answer from `wake_conversation_in_view`
+        decides whether the unseen `◈` mark survives.
+    
+        Keys either match `CONSOLE_VIEW_HOOK_SLOTS` (directly rebound and
+        cleared) or are reached through a stable runtime projection router.
+        A test inventories both sets so neither path can retain this view.
+    
+        Returns:
+            dict[str, Any]: slot name -&gt; this view's value.
+        """
+        skill = getattr(self, "_skill", None)
+        return {
+            "set_pending_decision": self._set_console_pending_decision,
+            "follow_watchlists_operations": self._follow_console_watchlists_operations,
+            "set_pending_approval": self._set_console_pending_approval,
+            # ADR-090: UI-thread bridge to patch a mounted approval card's
+            # advisory summary line in place (never re-runs set_batch).
+            "update_pending_approval_summary": self._update_console_approval_summary,
+            # Task 9 (parked background approvals): UI-thread bridge target
+            # for a NON-active session's approval round -- badge + one
+            # toast, never the mounted-card path above.
+            "park_pending_approval": self._park_console_approval,
+            # Task 10 (background completion toasts): UI-thread bridge
+            # target for a NON-active session's run finishing/failing -- the
+            # one-per-run toast, invoked directly (never via
+            # `call_from_thread`) from `_set_run_state`'s once-guarded
+            # non-active terminal branch.
+            "notify_run_outcome": self._notify_console_run_outcome,
+            # task-2154.16 (FB-05): the ACTIVE session's own run failing --
+            # one error toast carrying the run's visible copy.
+            "notify_run_failure": self._notify_console_run_failure,
+            "set_pending_skill_install": getattr(
+                skill, "_set_console_pending_skill_install", None
+            ),
+            "set_pending_skill_script": getattr(
+                skill, "_set_console_pending_skill_script", None
+            ),
+            "set_pending_chat_create": getattr(
+                skill, "_set_console_pending_chat_create", None
+            ),
+            # TASK-32482 Task 7: UI-thread completion for a confirmed
+            # agent-created chat (fork_chat/new_chat) -- the executor's
+            # marshal target. Wired here (not at construction) because it
+            # closes over THIS screen, exactly like its sibling bridges.
+            "complete_agent_chat_create": self._complete_agent_chat_create,
+            # PRD Feature B: the pinned task panel above the transcript.
+            "set_task_panel": self._set_console_task_panel,
+            # PRD Feature A: the ask_user question card.
+            "set_pending_question": self._set_console_pending_question,
+            "set_pending_worktree_merge": self._set_console_pending_worktree_merge,
+            # PR3a-2 Task 5, user-wins-ties.
+            "wake_user_priority_probe": self._fleet._console_wake_user_priority,
+            # task-15971: the delivery COMMIT's visibility probe -- a wake
+            # completing while this conversation is not displayed-and-active
+            # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
+            # learns an off-view delivery landed).
+            "wake_conversation_in_view": (
+                self._fleet._console_wake_conversation_in_view
+            ),
+            # the store's one screen-owned callback
+            "on_scope_flushed": self._on_console_scope_flushed,
+            # task-15862: a wake turn enters through the coordinator, never
+            # the user-send worker that arms the 0.2s transcript poll --
+            # without this hook nothing repaints the wake turn's streamed
+            # reply, its terminal tab glyph, or the composer state (the live
+            # 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
+            "delivery_ui_hook": self._fleet._on_console_wake_delivery_started,
+            "project_project_instruction_binding": (
+&gt;               self._session._project_project_instruction_binding
+                ^^^^^^^^^^^^^
+            ),
+            "project_project_instruction_dispatch": (
+                self._session._project_project_instruction_dispatch
+            ),
+            "dismiss_project_instruction_decision": (
+                self._session._dismiss_project_instruction_decision_projection
+            ),
+        }
+E       AttributeError: 'ChatScreen' object has no attribute '_session'
+
+tldw_chatbook/UI/Screens/chat_screen.py:9906: AttributeError</failure></testcase><testcase classname="Tests.Chat.test_console_video_actions" name="test_video_save_copy_preserves_webm_extension_and_collision_names" time="0.127"><failure message="AttributeError: 'ChatScreen' object has no attribute '_session'">tmp_path = PosixPath('/private/tmp/task9-remaining-fixtures/test_video_save_copy_preserves0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x124d97110&gt;
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_video_save_copy_preserves_webm_extension_and_collision_names(
+        tmp_path, monkeypatch
+    ):
+        screen, message, _stored_path, resolve_calls, _pushed, pending_workers = (
+&gt;           _video_action_screen(tmp_path, container="webm")
+        )
+
+Tests/Chat/test_console_video_actions.py:284: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_video_actions.py:93: in _video_action_screen
+    screen._console_chat_store = store
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9566: in _console_chat_store
+    self._console_runtime().set_chat_store(value)
+    ^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/UI/Screens/chat_screen.py:9533: in _console_runtime
+    runtime = ensure_console_runtime(
+tldw_chatbook/Chat/console_runtime.py:5407: in ensure_console_runtime
+    generation = runtime.attach_view(view)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Chat/console_runtime.py:4594: in attach_view
+    self._bind_view_hooks()
+tldw_chatbook/Chat/console_runtime.py:4371: in _bind_view_hooks
+    hooks = provider() if callable(provider) else {}
+            ^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ChatScreen()
+
+    def console_view_hooks(self) -&gt; dict[str, Any]:
+        """Return this view's value for every `CONSOLE_VIEW_HOOK_SLOTS` slot.
+    
+        task-15860. The runtime outlives this screen, so every callable it
+        holds that closes over `self` has to be re-bindable and, more
+        importantly, CLEARABLE -- Task 0's P3 found five such slots still
+        pointing at a dead `ChatScreen` after a real unmount, none of them
+        raising, and a silent wrong answer from `wake_conversation_in_view`
+        decides whether the unseen `◈` mark survives.
+    
+        Keys either match `CONSOLE_VIEW_HOOK_SLOTS` (directly rebound and
+        cleared) or are reached through a stable runtime projection router.
+        A test inventories both sets so neither path can retain this view.
+    
+        Returns:
+            dict[str, Any]: slot name -&gt; this view's value.
+        """
+        skill = getattr(self, "_skill", None)
+        return {
+            "set_pending_decision": self._set_console_pending_decision,
+            "follow_watchlists_operations": self._follow_console_watchlists_operations,
+            "set_pending_approval": self._set_console_pending_approval,
+            # ADR-090: UI-thread bridge to patch a mounted approval card's
+            # advisory summary line in place (never re-runs set_batch).
+            "update_pending_approval_summary": self._update_console_approval_summary,
+            # Task 9 (parked background approvals): UI-thread bridge target
+            # for a NON-active session's approval round -- badge + one
+            # toast, never the mounted-card path above.
+            "park_pending_approval": self._park_console_approval,
+            # Task 10 (background completion toasts): UI-thread bridge
+            # target for a NON-active session's run finishing/failing -- the
+            # one-per-run toast, invoked directly (never via
+            # `call_from_thread`) from `_set_run_state`'s once-guarded
+            # non-active terminal branch.
+            "notify_run_outcome": self._notify_console_run_outcome,
+            # task-2154.16 (FB-05): the ACTIVE session's own run failing --
+            # one error toast carrying the run's visible copy.
+            "notify_run_failure": self._notify_console_run_failure,
+            "set_pending_skill_install": getattr(
+                skill, "_set_console_pending_skill_install", None
+            ),
+            "set_pending_skill_script": getattr(
+                skill, "_set_console_pending_skill_script", None
+            ),
+            "set_pending_chat_create": getattr(
+                skill, "_set_console_pending_chat_create", None
+            ),
+            # TASK-32482 Task 7: UI-thread completion for a confirmed
+            # agent-created chat (fork_chat/new_chat) -- the executor's
+            # marshal target. Wired here (not at construction) because it
+            # closes over THIS screen, exactly like its sibling bridges.
+            "complete_agent_chat_create": self._complete_agent_chat_create,
+            # PRD Feature B: the pinned task panel above the transcript.
+            "set_task_panel": self._set_console_task_panel,
+            # PRD Feature A: the ask_user question card.
+            "set_pending_question": self._set_console_pending_question,
+            "set_pending_worktree_merge": self._set_console_pending_worktree_merge,
+            # PR3a-2 Task 5, user-wins-ties.
+            "wake_user_priority_probe": self._fleet._console_wake_user_priority,
+            # task-15971: the delivery COMMIT's visibility probe -- a wake
+            # completing while this conversation is not displayed-and-active
+            # leaves the FLEET_UNSEEN mark set (the ◈ badge is how the user
+            # learns an off-view delivery landed).
+            "wake_conversation_in_view": (
+                self._fleet._console_wake_conversation_in_view
+            ),
+            # the store's one screen-owned callback
+            "on_scope_flushed": self._on_console_scope_flushed,
+            # task-15862: a wake turn enters through the coordinator, never
+            # the user-send worker that arms the 0.2s transcript poll --
+            # without this hook nothing repaints the wake turn's streamed
+            # reply, its terminal tab glyph, or the composer state (the live
+            # 4+ minute mid-delivery freeze, PR3a-2 Task 7 finding 1).
+            "delivery_ui_hook": self._fleet._on_console_wake_delivery_started,
+            "project_project_instruction_binding": (
+&gt;               self._session._project_project_instruction_binding
+                ^^^^^^^^^^^^^
+            ),
+            "project_project_instruction_dispatch": (
+                self._session._project_project_instruction_dispatch
+            ),
+            "dismiss_project_instruction_decision": (
+                self._session._dismiss_project_instruction_decision_projection
+            ),
+        }
+E       AttributeError: 'ChatScreen' object has no attribute '_session'
+
+tldw_chatbook/UI/Screens/chat_screen.py:9906: AttributeError</failure></testcase><testcase classname="Tests.UI.test_console_auto_speak_wiring" name="test_consent_survives_the_modal_push_suspend" time="14.653" /><testcase classname="Tests.UI.test_console_auto_speak_wiring.TestSuspendGuardUnit" name="test_suspend_preserves_coordinator_only_while_result_pending" time="9.792" /><testcase classname="Tests.UI.test_skill_install_concurrent_confirms" name="test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_teardown" time="0.155" /><testcase classname="Tests.UI.test_console_parallel_runs" name="test_background_approval_parks_with_badge_and_single_toast" time="10.902"><failure message="Failed: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/pytest.log&#10;--- child failure: AssertionError: assert False&#10; +  where False = ChatApprovalCard(id='chat-approval-card', classes='approval-compact ds-approval-card').display&#10; +    where ChatApprovalCard(id='chat-approval-card', classes='approval-compact ds-approval-card') = query_one('#chat-approval-card')&#10; +      where query_one = ChatScreen(classes='shell-header-normal').query_one&#10;request = &lt;FixtureRequest for &lt;Coroutine test_background_approval_parks_with_badge_and_single_toast&gt;&gt;&#10;&#10;    @private_profile_test&#10;    @pytest.mark.asyncio&#10;    async def test_background_approval_parks_with_badge_and_single_toast(request) -&gt; None:&#10;        &quot;&quot;&quot;Task 9 (parked background approvals, parallel-agents spec): a run in&#10;        a NON-viewed session that needs approval must not steal the mounted&#10;        approval card out from under whatever the user is currently looking&#10;        at -- it parks (fleet badge via `set_run_pending_approval` + one&#10;        toast), and only mounts once the user actually visits it.&#10;    &#10;        Real interface names (the brief's own names were illustrative):&#10;        - The approval card is `ChatApprovalCard(id=&quot;chat-approval-card&quot;)`&#10;          (`Widgets/Chat_Widgets/chat_task_cards.py`), NOT&#10;          `#console-approval-card` -- and it is a SINGLETON always present in&#10;          the DOM (`ConsoleSessionSurface.compose` yields it once, not&#10;          per-session), toggled via its own `.display` flag rather than&#10;          mount/unmount. &quot;Not mounted&quot; is therefore verified as `display is&#10;          False`, matching `ChatApprovalCard.set_batch`'s own visibility&#10;          convention.&#10;        - `ChatScreen._park_console_approval(session_id)` is the seam this&#10;          task adds -- the UI-thread half of the park path (flag + toast),&#10;          wired as `ConsoleChatController.park_pending_approval` and invoked&#10;          via `call_from_thread` from `request_mcp_approvals`'s park branch.&#10;          The controller's own `_parked_approval_payloads` map (populated by&#10;          `request_mcp_approvals` before parking) is what `switch_session`&#10;          later reads to mount the SAME payload through the existing&#10;          `set_pending_approval` path -- seeded directly here to drive the&#10;          seam without a live worker thread/round (mirrors how the sibling&#10;          `test_tab_and_sidebar_show_run_markers_and_fleet_line` drives&#10;          `_set_run_state` directly instead of a real streamed run).&#10;        &quot;&quot;&quot;&#10;        app = _build_test_app()&#10;        host = ConsoleHarness(app)&#10;    &#10;        async with host.run_test(size=(160, 44)) as pilot:&#10;            await pilot.pause(0.2)&#10;            console = host.screen_stack[-1]&#10;            assert (&#10;                await console._ensure_console_chat_controller().hook_admission_reason()&#10;                is None&#10;            )&#10;            controller = console._ensure_console_chat_controller()&#10;            store = controller.store&#10;            viewed = store.active_session_id&#10;            background = controller.new_session().id&#10;            store.switch_session(viewed)  # keep viewing the first session&#10;    &#10;            notifications: list[str] = []&#10;            app.notify = lambda message, **kwargs: notifications.append(str(message))&#10;    &#10;            # Seed the retained round payload `request_mcp_approvals` would&#10;            # have stored before parking, then drive the UI-thread park seam&#10;            # directly.&#10;            controller._parked_approval_payloads[&quot;seeded-round&quot;] = {&#10;                # PR0: the map is keyed by ROUND, and every payload carries its&#10;                # own `round_id`/`session_id` -- the invariant `_park_round_&#10;                # payload` maintains in production.&#10;                &quot;round_id&quot;: &quot;seeded-round&quot;,&#10;                &quot;session_id&quot;: background,&#10;                &quot;calls&quot;: [&#10;                    {&#10;                        &quot;llm_name&quot;: &quot;mcp__srv__tool&quot;,&#10;                        &quot;server_key&quot;: &quot;local:srv&quot;,&#10;                        &quot;tool_name&quot;: &quot;tool&quot;,&#10;                        &quot;server_label&quot;: &quot;Srv&quot;,&#10;                        &quot;arguments&quot;: {},&#10;                        &quot;reason&quot;: &quot;ask&quot;,&#10;                        &quot;options&quot;: [&quot;approve_once&quot;, &quot;deny&quot;],&#10;                    }&#10;                ],&#10;                &quot;timeout_seconds&quot;: 30.0,&#10;            }&#10;            console._park_console_approval(background)&#10;            await pilot.pause(0.3)&#10;    &#10;            approval_card = console.query_one(&quot;#chat-approval-card&quot;)&#10;            assert not approval_card.display  # parked: never mounted over the viewed tab&#10;            approval_toasts = [n for n in notifications if &quot;needs approval&quot; in n]&#10;            assert len(approval_toasts) == 1&#10;            assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL&#10;    &#10;            # Visiting mounts the card through the existing mount path.&#10;            controller.switch_session(background)&#10;            await console._sync_native_console_chat_ui()&#10;            await pilot.pause(0.3)&#10;&gt;           assert console.query_one(&quot;#chat-approval-card&quot;).display&#10;E           AssertionError: assert False&#10;E            +  where False = ChatApprovalCard(id='chat-approval-card', classes='approval-compact ds-approval-card').display&#10;E            +    where ChatApprovalCard(id='chat-approval-card', classes='approval-compact ds-approval-card') = query_one('#chat-approval-card')&#10;E            +      where query_one = ChatScreen(classes='shell-header-normal').query_one&#10;&#10;Tests/UI/test_console_parallel_runs.py:524: AssertionError&#10;--- child log tail ---&#10;ath: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tepcw0gs/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]&#10;2026-10-04 09:47:03.052 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]&#10;2026-10-04 09:47:03.053 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tepcw0gs/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]&#10;2026-10-04 09:47:03.053 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tepcw0gs/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]&#10;2026-10-04 09:47:03.220 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)&#10;2026-10-04 09:47:03.274 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)&#10;2026-10-04 09:47:03.334 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)&#10;2026-10-04 09:47:03.389 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)&#10;2026-10-04 09:47:03.446 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)&#10;2026-10-04 09:47:03.500 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)&#10;2026-10-04 09:47:03.500 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tepcw0gs/scheduled_tasks.sqlite [Client: default]&#10;2026-10-04 09:47:03.531 | DEBUG    | tldw_chatbook.app:__init__:1435 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']&#10;2026-10-04 09:47:03.531 | DEBUG    | tldw_chatbook.app:__init__:1438 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: &lt;class 'list'&gt;&#10;2026-10-04 09:47:03.539 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml&#10;2026-10-04 09:47:03.607 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:595 - Created EvalsDB schema version 6&#10;2026-10-04 09:47:03.607 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:232 - EvalsDB initialized with path: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db&#10;2026-10-04 09:47:03.607 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized&#10;2026-10-04 09:47:03.627 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler&#10;2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:_init_worker_handlers:2176 - Worker handler registry initialized with all handlers&#10;2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1618 - === STARTUP TIMING SUMMARY ===&#10;2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1619 - Total initialization time: 0.897 seconds&#10;2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1625 -   basic_init: 0.061s (6.8%)&#10;2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1625 -   attribute_init: 0.000s (0.0%)&#10;2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1625 -   parallel_init: 0.006s (0.6%)&#10;2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1638 -     - providers_models: 0.000s (0.9% of parallel_init)&#10;2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1638 -     - notes_service: 0.000s (0.1% of parallel_init)&#10;2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1638 -     - media_db: 0.000s (0.1% of parallel_init)&#10;2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1638 -     - prompts_service: 0.000s (0.0% of parallel_init)&#10;2026-10-04 09:47:03.628 | INFO     | tldw_chatbook.app:__init__:1642 - ==============================&#10;2026-10-04 09:47:03.650 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={&quot;('first_run',)&quot;: ['setup_completed'], &quot;('splash_screen',)&quot;: ['enabled'], &quot;('chat_defaults',)&quot;: ['provider', 'model'], &quot;('api_settings', 'llama_cpp')&quot;: ['api_url', 'model']}, deletes={}&#10;2026-10-04 09:47:03.667 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/config/config.toml&#10;2026-10-04 09:47:03.670 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook&#10;2026-10-04 09:47:03.670 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook&#10;2026-10-04 09:47:03.671 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)&#10;2026-10-04 09:47:03.672 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper&#10;2026-10-04 09:47:03.708 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts&#10;2026-10-04 09:47:03.708 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use&#10;2026-10-04 09:47:03.710 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.&#10;2026-10-04 09:47:03.726 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook&#10;2026-10-04 09:47:03.726 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook&#10;2026-10-04 09:47:03.728 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6933 - Attempting to load CLI config from: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/config/config.toml&#10;2026-10-04 09:47:03.735 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6954 - Successfully loaded and merged CLI config from /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/config/config.toml&#10;2026-10-04 09:47:03.736 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7038 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']&#10;2026-10-04 09:47:03.736 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7042 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']&#10;2026-10-04 09:47:03.737 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)&#10;2026-10-04 09:47:03.737 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper&#10;2026-10-04 09:47:03.776 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts&#10;2026-10-04 09:47:03.776 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use&#10;2026-10-04 09:47:04.151 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat&#10;2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic&#10;2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai&#10;2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere&#10;2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google&#10;2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral&#10;2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai&#10;2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek&#10;2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers&#10;2026-10-04 09:47:04.457 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable&#10;2026-10-04 09:47:04.457 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:13879 - No Console workspace context tray available for sync&#10;2026-10-04 09:47:04.457 | WARNING  | tldw_chatbook.Chat.console_fleet_wake:recover:1001 - wake recovery failed (exception_type=AttributeError)&#10;2026-10-04 09:47:04.457 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}&#10;2026-10-04 09:47:05.280 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={&quot;('console', 'rail_state')&quot;: ['console_rail_state:global:shared-layout-v1']}, deletes={}&#10;2026-10-04 09:47:05.302 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/config/config.toml&#10;2026-10-04 09:47:05.306 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook&#10;2026-10-04 09:47:05.306 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook&#10;2026-10-04 09:47:05.307 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)&#10;2026-10-04 09:47:05.310 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper&#10;2026-10-04 09:47:05.362 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts&#10;2026-10-04 09:47:05.364 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use&#10;2026-10-04 09:47:05.366 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.&#10;2026-10-04 09:47:05.432 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync&#10;2026-10-04 09:47:05.571 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted&#10;2026-10-04 09:47:05.572 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23452 - Chat screen resuming&#10;2026-10-04 09:47:06.298 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23452 - Chat screen resuming&#10;2026-10-04 09:47:06.871 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25069 - No collapsible states to restore&#10;2026-10-04 09:47:08.131 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted&#10;------------------------------ Captured log call -------------------------------&#10;INFO     root:app.py:1390 App __init__: Determined initial tab value: chat&#10;WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.&#10;ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.&#10;INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/local-model, using defaults&#10;- generated xml file: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/pytest.xml -&#10;============================= slowest 25 durations =============================&#10;5.45s call     Tests/UI/test_console_parallel_runs.py::test_background_approval_parks_with_badge_and_single_toast&#10;&#10;(2 durations &lt; 1s hidden.)&#10;=========================== short test summary info ============================&#10;FAILED Tests/UI/test_console_parallel_runs.py::test_background_approval_parks_with_badge_and_single_toast&#10;1 failed in 8.21s">self = &lt;Coroutine test_background_approval_parks_with_badge_and_single_toast&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'request': &lt;FixtureRequest for &lt;Coroutine test_background_approval_parks_with_badge_and_single_toast&gt;&gt;}
+request = &lt;FixtureRequest for &lt;Coroutine test_background_approval_parks_with_badge_and_single_toast&gt;&gt;
+work = PosixPath('/private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process')
+profile = PosixPath('/private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile')
+environment = {'BROWSER_USE_ACCESS_VERIFYING_IDENTITY': 'MCowBQYDK2VwAyEASEQ7YoC0UVhCuzRaeAQNNIJkGg/NrZAcZBXWJGDILpY=', 'BUN_INSTALL... 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/5079d64b-31bd-494b-af73-0ccc4c612b37.sock', 'CODEX_CI': '1', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={timeout}",
+                f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                *coverage_args,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout &gt; 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
+        if process.returncode:
+&gt;           pytest.fail(
+                f"{log}\n{_child_failure_report(report)}\n"
+                f"--- child log tail ---\n{log.read_text()[-16000:]}"
+            )
+E           Failed: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/pytest.log
+E           --- child failure: AssertionError: assert False
+E            +  where False = ChatApprovalCard(id='chat-approval-card', classes='approval-compact ds-approval-card').display
+E            +    where ChatApprovalCard(id='chat-approval-card', classes='approval-compact ds-approval-card') = query_one('#chat-approval-card')
+E            +      where query_one = ChatScreen(classes='shell-header-normal').query_one
+E           request = &lt;FixtureRequest for &lt;Coroutine test_background_approval_parks_with_badge_and_single_toast&gt;&gt;
+E           
+E               @private_profile_test
+E               @pytest.mark.asyncio
+E               async def test_background_approval_parks_with_badge_and_single_toast(request) -&gt; None:
+E                   """Task 9 (parked background approvals, parallel-agents spec): a run in
+E                   a NON-viewed session that needs approval must not steal the mounted
+E                   approval card out from under whatever the user is currently looking
+E                   at -- it parks (fleet badge via `set_run_pending_approval` + one
+E                   toast), and only mounts once the user actually visits it.
+E               
+E                   Real interface names (the brief's own names were illustrative):
+E                   - The approval card is `ChatApprovalCard(id="chat-approval-card")`
+E                     (`Widgets/Chat_Widgets/chat_task_cards.py`), NOT
+E                     `#console-approval-card` -- and it is a SINGLETON always present in
+E                     the DOM (`ConsoleSessionSurface.compose` yields it once, not
+E                     per-session), toggled via its own `.display` flag rather than
+E                     mount/unmount. "Not mounted" is therefore verified as `display is
+E                     False`, matching `ChatApprovalCard.set_batch`'s own visibility
+E                     convention.
+E                   - `ChatScreen._park_console_approval(session_id)` is the seam this
+E                     task adds -- the UI-thread half of the park path (flag + toast),
+E                     wired as `ConsoleChatController.park_pending_approval` and invoked
+E                     via `call_from_thread` from `request_mcp_approvals`'s park branch.
+E                     The controller's own `_parked_approval_payloads` map (populated by
+E                     `request_mcp_approvals` before parking) is what `switch_session`
+E                     later reads to mount the SAME payload through the existing
+E                     `set_pending_approval` path -- seeded directly here to drive the
+E                     seam without a live worker thread/round (mirrors how the sibling
+E                     `test_tab_and_sidebar_show_run_markers_and_fleet_line` drives
+E                     `_set_run_state` directly instead of a real streamed run).
+E                   """
+E                   app = _build_test_app()
+E                   host = ConsoleHarness(app)
+E               
+E                   async with host.run_test(size=(160, 44)) as pilot:
+E                       await pilot.pause(0.2)
+E                       console = host.screen_stack[-1]
+E                       assert (
+E                           await console._ensure_console_chat_controller().hook_admission_reason()
+E                           is None
+E                       )
+E                       controller = console._ensure_console_chat_controller()
+E                       store = controller.store
+E                       viewed = store.active_session_id
+E                       background = controller.new_session().id
+E                       store.switch_session(viewed)  # keep viewing the first session
+E               
+E                       notifications: list[str] = []
+E                       app.notify = lambda message, **kwargs: notifications.append(str(message))
+E               
+E                       # Seed the retained round payload `request_mcp_approvals` would
+E                       # have stored before parking, then drive the UI-thread park seam
+E                       # directly.
+E                       controller._parked_approval_payloads["seeded-round"] = {
+E                           # PR0: the map is keyed by ROUND, and every payload carries its
+E                           # own `round_id`/`session_id` -- the invariant `_park_round_
+E                           # payload` maintains in production.
+E                           "round_id": "seeded-round",
+E                           "session_id": background,
+E                           "calls": [
+E                               {
+E                                   "llm_name": "mcp__srv__tool",
+E                                   "server_key": "local:srv",
+E                                   "tool_name": "tool",
+E                                   "server_label": "Srv",
+E                                   "arguments": {},
+E                                   "reason": "ask",
+E                                   "options": ["approve_once", "deny"],
+E                               }
+E                           ],
+E                           "timeout_seconds": 30.0,
+E                       }
+E                       console._park_console_approval(background)
+E                       await pilot.pause(0.3)
+E               
+E                       approval_card = console.query_one("#chat-approval-card")
+E                       assert not approval_card.display  # parked: never mounted over the viewed tab
+E                       approval_toasts = [n for n in notifications if "needs approval" in n]
+E                       assert len(approval_toasts) == 1
+E                       assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+E               
+E                       # Visiting mounts the card through the existing mount path.
+E                       controller.switch_session(background)
+E                       await console._sync_native_console_chat_ui()
+E                       await pilot.pause(0.3)
+E           &gt;           assert console.query_one("#chat-approval-card").display
+E           E           AssertionError: assert False
+E           E            +  where False = ChatApprovalCard(id='chat-approval-card', classes='approval-compact ds-approval-card').display
+E           E            +    where ChatApprovalCard(id='chat-approval-card', classes='approval-compact ds-approval-card') = query_one('#chat-approval-card')
+E           E            +      where query_one = ChatScreen(classes='shell-header-normal').query_one
+E           
+E           Tests/UI/test_console_parallel_runs.py:524: AssertionError
+E           --- child log tail ---
+E           ath: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tepcw0gs/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E           2026-10-04 09:47:03.052 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-10-04 09:47:03.053 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tepcw0gs/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-10-04 09:47:03.053 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tepcw0gs/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-10-04 09:47:03.220 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-10-04 09:47:03.274 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-10-04 09:47:03.334 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-10-04 09:47:03.389 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-10-04 09:47:03.446 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-10-04 09:47:03.500 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-10-04 09:47:03.500 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-tepcw0gs/scheduled_tasks.sqlite [Client: default]
+E           2026-10-04 09:47:03.531 | DEBUG    | tldw_chatbook.app:__init__:1435 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-10-04 09:47:03.531 | DEBUG    | tldw_chatbook.app:__init__:1438 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: &lt;class 'list'&gt;
+E           2026-10-04 09:47:03.539 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-10-04 09:47:03.607 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:595 - Created EvalsDB schema version 6
+E           2026-10-04 09:47:03.607 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:232 - EvalsDB initialized with path: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-10-04 09:47:03.607 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-10-04 09:47:03.627 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:_init_worker_handlers:2176 - Worker handler registry initialized with all handlers
+E           2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1618 - === STARTUP TIMING SUMMARY ===
+E           2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1619 - Total initialization time: 0.897 seconds
+E           2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1625 -   basic_init: 0.061s (6.8%)
+E           2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1625 -   attribute_init: 0.000s (0.0%)
+E           2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1625 -   parallel_init: 0.006s (0.6%)
+E           2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1638 -     - providers_models: 0.000s (0.9% of parallel_init)
+E           2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1638 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1638 -     - media_db: 0.000s (0.1% of parallel_init)
+E           2026-10-04 09:47:03.627 | INFO     | tldw_chatbook.app:__init__:1638 -     - prompts_service: 0.000s (0.0% of parallel_init)
+E           2026-10-04 09:47:03.628 | INFO     | tldw_chatbook.app:__init__:1642 - ==============================
+E           2026-10-04 09:47:03.650 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('first_run',)": ['setup_completed'], "('splash_screen',)": ['enabled'], "('chat_defaults',)": ['provider', 'model'], "('api_settings', 'llama_cpp')": ['api_url', 'model']}, deletes={}
+E           2026-10-04 09:47:03.667 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/config/config.toml
+E           2026-10-04 09:47:03.670 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-04 09:47:03.670 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-04 09:47:03.671 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-04 09:47:03.672 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-10-04 09:47:03.708 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-10-04 09:47:03.708 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E           2026-10-04 09:47:03.710 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+E           2026-10-04 09:47:03.726 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-04 09:47:03.726 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-04 09:47:03.728 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6933 - Attempting to load CLI config from: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/config/config.toml
+E           2026-10-04 09:47:03.735 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6954 - Successfully loaded and merged CLI config from /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/config/config.toml
+E           2026-10-04 09:47:03.736 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7038 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']
+E           2026-10-04 09:47:03.736 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7042 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E           2026-10-04 09:47:03.737 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-04 09:47:03.737 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-10-04 09:47:03.776 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-10-04 09:47:03.776 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E           2026-10-04 09:47:04.151 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+E           2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic
+E           2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai
+E           2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere
+E           2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google
+E           2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral
+E           2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai
+E           2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek
+E           2026-10-04 09:47:04.447 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E           2026-10-04 09:47:04.457 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable
+E           2026-10-04 09:47:04.457 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:13879 - No Console workspace context tray available for sync
+E           2026-10-04 09:47:04.457 | WARNING  | tldw_chatbook.Chat.console_fleet_wake:recover:1001 - wake recovery failed (exception_type=AttributeError)
+E           2026-10-04 09:47:04.457 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E           2026-10-04 09:47:05.280 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E           2026-10-04 09:47:05.302 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/config/config.toml
+E           2026-10-04 09:47:05.306 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-04 09:47:05.306 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-04 09:47:05.307 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-04 09:47:05.310 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-10-04 09:47:05.362 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-10-04 09:47:05.364 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E           2026-10-04 09:47:05.366 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+E           2026-10-04 09:47:05.432 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+E           2026-10-04 09:47:05.571 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted
+E           2026-10-04 09:47:05.572 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23452 - Chat screen resuming
+E           2026-10-04 09:47:06.298 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23452 - Chat screen resuming
+E           2026-10-04 09:47:06.871 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25069 - No collapsible states to restore
+E           2026-10-04 09:47:08.131 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/local-model, using defaults
+E           - generated xml file: /private/tmp/task9-remaining-fixtures/test_background_approval_parks0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           5.45s call     Tests/UI/test_console_parallel_runs.py::test_background_approval_parks_with_badge_and_single_toast
+E           
+E           (2 durations &lt; 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_console_parallel_runs.py::test_background_approval_parks_with_badge_and_single_toast
+E           1 failed in 8.21s
+
+Tests/private_profile.py:158: Failed</failure></testcase><testcase classname="Tests.UI.test_console_parallel_runs" name="test_needs_approval_tab_marker_click_routes_to_review_action" time="11.405"><failure message="Failed: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/pytest.log&#10;--- child failure: AssertionError: assert False&#10; +  where False = ChatApprovalCard(id='chat-approval-card', classes='ds-approval-card approval-compact').display&#10;request = &lt;FixtureRequest for &lt;Coroutine test_needs_approval_tab_marker_click_routes_to_review_action&gt;&gt;&#10;&#10;    @private_profile_test&#10;    @pytest.mark.asyncio&#10;    async def test_needs_approval_tab_marker_click_routes_to_review_action(request) -&gt; None:&#10;        &quot;&quot;&quot;task-32277: clicking a session tab wearing the ◆ marker reaches the&#10;        same approval-review seam as Alt+A / the inspector's Review button.&#10;    &#10;        The clicked session here is the BACKGROUND (non-viewed) one, so its&#10;        round starts PARKED exactly like&#10;        `test_background_approval_parks_with_badge_and_single_toast` above --&#10;        proving the click activates it (un-parking/re-mounting its card, the&#10;        same behaviour `ConsoleChatController.switch_session` already gives a&#10;        normal tab click) before focusing its first undecided decision.&#10;        &quot;&quot;&quot;&#10;        app = _build_test_app()&#10;        host = ConsoleHarness(app)&#10;    &#10;        async with host.run_test(size=(160, 44)) as pilot:&#10;            await pilot.pause(0.2)&#10;            console = host.screen_stack[-1]&#10;            assert (&#10;                await console._ensure_console_chat_controller().hook_admission_reason()&#10;                is None&#10;            )&#10;            controller = console._ensure_console_chat_controller()&#10;            store = controller.store&#10;            viewed = store.active_session_id&#10;            background = controller.new_session().id&#10;            store.switch_session(viewed)  # keep viewing the first session&#10;            await console._sync_native_console_chat_ui()&#10;            await pilot.pause(0.1)&#10;    &#10;            controller._parked_approval_payloads[&quot;seeded-round-tab&quot;] = {&#10;                &quot;round_id&quot;: &quot;seeded-round-tab&quot;,&#10;                &quot;session_id&quot;: background,&#10;                &quot;calls&quot;: [&#10;                    {&#10;                        &quot;llm_name&quot;: &quot;mcp__srv__tool&quot;,&#10;                        &quot;server_key&quot;: &quot;local:srv&quot;,&#10;                        &quot;tool_name&quot;: &quot;tool&quot;,&#10;                        &quot;server_label&quot;: &quot;Srv&quot;,&#10;                        &quot;arguments&quot;: {},&#10;                        &quot;reason&quot;: &quot;ask&quot;,&#10;                        &quot;options&quot;: [&quot;approve_once&quot;, &quot;deny&quot;],&#10;                    }&#10;                ],&#10;                &quot;timeout_seconds&quot;: 30.0,&#10;            }&#10;            console._park_console_approval(background)&#10;            await pilot.pause(0.3)&#10;    &#10;            assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL&#10;            assert store.active_session_id == viewed  # still viewing the other tab&#10;    &#10;            tab_button = console.query_one(f&quot;#console-session-tab-{background}&quot;, Button)&#10;            tab_button.press()&#10;            await pilot.pause(0.3)&#10;    &#10;            assert store.active_session_id == background&#10;            card = console.query_one(&quot;#chat-approval-card&quot;)&#10;&gt;           assert card.display&#10;E           AssertionError: assert False&#10;E            +  where False = ChatApprovalCard(id='chat-approval-card', classes='ds-approval-card approval-compact').display&#10;&#10;Tests/UI/test_console_parallel_runs.py:599: AssertionError&#10;--- child log tail ---&#10;__init__:989 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]&#10;2026-10-04 09:47:14.356 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-p5p9fxon/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]&#10;2026-10-04 09:47:14.357 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-p5p9fxon/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]&#10;2026-10-04 09:47:14.526 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)&#10;2026-10-04 09:47:14.581 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)&#10;2026-10-04 09:47:14.638 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)&#10;2026-10-04 09:47:14.695 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)&#10;2026-10-04 09:47:14.749 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)&#10;2026-10-04 09:47:14.803 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)&#10;2026-10-04 09:47:14.803 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-p5p9fxon/scheduled_tasks.sqlite [Client: default]&#10;2026-10-04 09:47:14.831 | DEBUG    | tldw_chatbook.app:__init__:1435 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']&#10;2026-10-04 09:47:14.832 | DEBUG    | tldw_chatbook.app:__init__:1438 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: &lt;class 'list'&gt;&#10;2026-10-04 09:47:14.840 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml&#10;2026-10-04 09:47:14.904 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:595 - Created EvalsDB schema version 6&#10;2026-10-04 09:47:14.905 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:232 - EvalsDB initialized with path: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db&#10;2026-10-04 09:47:14.905 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized&#10;2026-10-04 09:47:14.922 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler&#10;2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:_init_worker_handlers:2176 - Worker handler registry initialized with all handlers&#10;2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1618 - === STARTUP TIMING SUMMARY ===&#10;2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1619 - Total initialization time: 0.952 seconds&#10;2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1625 -   basic_init: 0.045s (4.7%)&#10;2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1625 -   attribute_init: 0.000s (0.0%)&#10;2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1625 -   parallel_init: 0.001s (0.1%)&#10;2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1638 -     - media_db: 0.000s (0.2% of parallel_init)&#10;2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1638 -     - notes_service: 0.000s (0.1% of parallel_init)&#10;2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1638 -     - providers_models: 0.000s (0.1% of parallel_init)&#10;2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1638 -     - prompts_service: 0.000s (0.1% of parallel_init)&#10;2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1642 - ==============================&#10;2026-10-04 09:47:14.945 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={&quot;('first_run',)&quot;: ['setup_completed'], &quot;('splash_screen',)&quot;: ['enabled'], &quot;('chat_defaults',)&quot;: ['provider', 'model'], &quot;('api_settings', 'llama_cpp')&quot;: ['api_url', 'model']}, deletes={}&#10;2026-10-04 09:47:14.961 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/config/config.toml&#10;2026-10-04 09:47:14.964 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook&#10;2026-10-04 09:47:14.965 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook&#10;2026-10-04 09:47:14.966 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)&#10;2026-10-04 09:47:14.966 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper&#10;2026-10-04 09:47:15.000 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts&#10;2026-10-04 09:47:15.000 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use&#10;2026-10-04 09:47:15.001 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.&#10;2026-10-04 09:47:15.016 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook&#10;2026-10-04 09:47:15.017 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook&#10;2026-10-04 09:47:15.019 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6933 - Attempting to load CLI config from: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/config/config.toml&#10;2026-10-04 09:47:15.026 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6954 - Successfully loaded and merged CLI config from /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/config/config.toml&#10;2026-10-04 09:47:15.026 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7038 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']&#10;2026-10-04 09:47:15.026 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7042 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']&#10;2026-10-04 09:47:15.027 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)&#10;2026-10-04 09:47:15.028 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper&#10;2026-10-04 09:47:15.062 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts&#10;2026-10-04 09:47:15.063 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use&#10;2026-10-04 09:47:15.441 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat&#10;2026-10-04 09:47:15.719 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic&#10;2026-10-04 09:47:15.719 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai&#10;2026-10-04 09:47:15.719 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere&#10;2026-10-04 09:47:15.719 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google&#10;2026-10-04 09:47:15.719 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral&#10;2026-10-04 09:47:15.720 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai&#10;2026-10-04 09:47:15.720 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek&#10;2026-10-04 09:47:15.720 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers&#10;2026-10-04 09:47:15.728 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable&#10;2026-10-04 09:47:15.728 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:13879 - No Console workspace context tray available for sync&#10;2026-10-04 09:47:15.729 | WARNING  | tldw_chatbook.Chat.console_fleet_wake:recover:1001 - wake recovery failed (exception_type=AttributeError)&#10;2026-10-04 09:47:15.735 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}&#10;2026-10-04 09:47:16.535 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={&quot;('console', 'rail_state')&quot;: ['console_rail_state:global:shared-layout-v1']}, deletes={}&#10;2026-10-04 09:47:16.552 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/config/config.toml&#10;2026-10-04 09:47:16.555 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook&#10;2026-10-04 09:47:16.555 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook&#10;2026-10-04 09:47:16.556 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)&#10;2026-10-04 09:47:16.557 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper&#10;2026-10-04 09:47:16.602 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts&#10;2026-10-04 09:47:16.602 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use&#10;2026-10-04 09:47:16.603 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.&#10;2026-10-04 09:47:16.661 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync&#10;2026-10-04 09:47:16.757 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted&#10;2026-10-04 09:47:16.758 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23452 - Chat screen resuming&#10;2026-10-04 09:47:17.501 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23452 - Chat screen resuming&#10;2026-10-04 09:47:18.103 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25069 - No collapsible states to restore&#10;2026-10-04 09:47:18.954 | INFO     | tldw_chatbook.UI.Screens.chat_screen:on_button_pressed:24892 - ChatScreen on_button_pressed called with button: console-session-tab-062b39ca-2507-4dc1-8176-f46a0f4244e0&#10;2026-10-04 09:47:19.337 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted&#10;------------------------------ Captured log call -------------------------------&#10;INFO     root:app.py:1390 App __init__: Determined initial tab value: chat&#10;WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.&#10;ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.&#10;INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/local-model, using defaults&#10;- generated xml file: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/pytest.xml -&#10;============================= slowest 25 durations =============================&#10;5.42s call     Tests/UI/test_console_parallel_runs.py::test_needs_approval_tab_marker_click_routes_to_review_action&#10;&#10;(2 durations &lt; 1s hidden.)&#10;=========================== short test summary info ============================&#10;FAILED Tests/UI/test_console_parallel_runs.py::test_needs_approval_tab_marker_click_routes_to_review_action&#10;1 failed in 8.44s">self = &lt;Coroutine test_needs_approval_tab_marker_click_routes_to_review_action&gt;
+
+    def runtest(self) -&gt; None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+&gt;           super().runtest()
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'request': &lt;FixtureRequest for &lt;Coroutine test_needs_approval_tab_marker_click_routes_to_review_action&gt;&gt;}
+request = &lt;FixtureRequest for &lt;Coroutine test_needs_approval_tab_marker_click_routes_to_review_action&gt;&gt;
+work = PosixPath('/private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process')
+profile = PosixPath('/private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile')
+environment = {'BROWSER_USE_ACCESS_VERIFYING_IDENTITY': 'MCowBQYDK2VwAyEASEQ7YoC0UVhCuzRaeAQNNIJkGg/NrZAcZBXWJGDILpY=', 'BUN_INSTALL... 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/5079d64b-31bd-494b-af73-0ccc4c612b37.sock', 'CODEX_CI': '1', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/pytest.xml')
+log = PosixPath('/private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={timeout}",
+                f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                *coverage_args,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout &gt; 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
+        if process.returncode:
+&gt;           pytest.fail(
+                f"{log}\n{_child_failure_report(report)}\n"
+                f"--- child log tail ---\n{log.read_text()[-16000:]}"
+            )
+E           Failed: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/pytest.log
+E           --- child failure: AssertionError: assert False
+E            +  where False = ChatApprovalCard(id='chat-approval-card', classes='ds-approval-card approval-compact').display
+E           request = &lt;FixtureRequest for &lt;Coroutine test_needs_approval_tab_marker_click_routes_to_review_action&gt;&gt;
+E           
+E               @private_profile_test
+E               @pytest.mark.asyncio
+E               async def test_needs_approval_tab_marker_click_routes_to_review_action(request) -&gt; None:
+E                   """task-32277: clicking a session tab wearing the ◆ marker reaches the
+E                   same approval-review seam as Alt+A / the inspector's Review button.
+E               
+E                   The clicked session here is the BACKGROUND (non-viewed) one, so its
+E                   round starts PARKED exactly like
+E                   `test_background_approval_parks_with_badge_and_single_toast` above --
+E                   proving the click activates it (un-parking/re-mounting its card, the
+E                   same behaviour `ConsoleChatController.switch_session` already gives a
+E                   normal tab click) before focusing its first undecided decision.
+E                   """
+E                   app = _build_test_app()
+E                   host = ConsoleHarness(app)
+E               
+E                   async with host.run_test(size=(160, 44)) as pilot:
+E                       await pilot.pause(0.2)
+E                       console = host.screen_stack[-1]
+E                       assert (
+E                           await console._ensure_console_chat_controller().hook_admission_reason()
+E                           is None
+E                       )
+E                       controller = console._ensure_console_chat_controller()
+E                       store = controller.store
+E                       viewed = store.active_session_id
+E                       background = controller.new_session().id
+E                       store.switch_session(viewed)  # keep viewing the first session
+E                       await console._sync_native_console_chat_ui()
+E                       await pilot.pause(0.1)
+E               
+E                       controller._parked_approval_payloads["seeded-round-tab"] = {
+E                           "round_id": "seeded-round-tab",
+E                           "session_id": background,
+E                           "calls": [
+E                               {
+E                                   "llm_name": "mcp__srv__tool",
+E                                   "server_key": "local:srv",
+E                                   "tool_name": "tool",
+E                                   "server_label": "Srv",
+E                                   "arguments": {},
+E                                   "reason": "ask",
+E                                   "options": ["approve_once", "deny"],
+E                               }
+E                           ],
+E                           "timeout_seconds": 30.0,
+E                       }
+E                       console._park_console_approval(background)
+E                       await pilot.pause(0.3)
+E               
+E                       assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+E                       assert store.active_session_id == viewed  # still viewing the other tab
+E               
+E                       tab_button = console.query_one(f"#console-session-tab-{background}", Button)
+E                       tab_button.press()
+E                       await pilot.pause(0.3)
+E               
+E                       assert store.active_session_id == background
+E                       card = console.query_one("#chat-approval-card")
+E           &gt;           assert card.display
+E           E           AssertionError: assert False
+E           E            +  where False = ChatApprovalCard(id='chat-approval-card', classes='ds-approval-card approval-compact').display
+E           
+E           Tests/UI/test_console_parallel_runs.py:599: AssertionError
+E           --- child log tail ---
+E           __init__:989 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E           2026-10-04 09:47:14.356 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-p5p9fxon/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-10-04 09:47:14.357 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-p5p9fxon/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E           2026-10-04 09:47:14.526 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+E           2026-10-04 09:47:14.581 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E           2026-10-04 09:47:14.638 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E           2026-10-04 09:47:14.695 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E           2026-10-04 09:47:14.749 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+E           2026-10-04 09:47:14.803 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E           2026-10-04 09:47:14.803 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-p5p9fxon/scheduled_tasks.sqlite [Client: default]
+E           2026-10-04 09:47:14.831 | DEBUG    | tldw_chatbook.app:__init__:1435 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E           2026-10-04 09:47:14.832 | DEBUG    | tldw_chatbook.app:__init__:1438 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: &lt;class 'list'&gt;
+E           2026-10-04 09:47:14.840 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml
+E           2026-10-04 09:47:14.904 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:595 - Created EvalsDB schema version 6
+E           2026-10-04 09:47:14.905 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:232 - EvalsDB initialized with path: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E           2026-10-04 09:47:14.905 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E           2026-10-04 09:47:14.922 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E           2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:_init_worker_handlers:2176 - Worker handler registry initialized with all handlers
+E           2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1618 - === STARTUP TIMING SUMMARY ===
+E           2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1619 - Total initialization time: 0.952 seconds
+E           2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1625 -   basic_init: 0.045s (4.7%)
+E           2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1625 -   attribute_init: 0.000s (0.0%)
+E           2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1625 -   parallel_init: 0.001s (0.1%)
+E           2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1638 -     - media_db: 0.000s (0.2% of parallel_init)
+E           2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1638 -     - notes_service: 0.000s (0.1% of parallel_init)
+E           2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1638 -     - providers_models: 0.000s (0.1% of parallel_init)
+E           2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1638 -     - prompts_service: 0.000s (0.1% of parallel_init)
+E           2026-10-04 09:47:14.922 | INFO     | tldw_chatbook.app:__init__:1642 - ==============================
+E           2026-10-04 09:47:14.945 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('first_run',)": ['setup_completed'], "('splash_screen',)": ['enabled'], "('chat_defaults',)": ['provider', 'model'], "('api_settings', 'llama_cpp')": ['api_url', 'model']}, deletes={}
+E           2026-10-04 09:47:14.961 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/config/config.toml
+E           2026-10-04 09:47:14.964 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-04 09:47:14.965 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-04 09:47:14.966 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-04 09:47:14.966 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-10-04 09:47:15.000 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-10-04 09:47:15.000 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E           2026-10-04 09:47:15.001 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+E           2026-10-04 09:47:15.016 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-04 09:47:15.017 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-04 09:47:15.019 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6933 - Attempting to load CLI config from: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/config/config.toml
+E           2026-10-04 09:47:15.026 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6954 - Successfully loaded and merged CLI config from /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/config/config.toml
+E           2026-10-04 09:47:15.026 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7038 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', 'first_run']
+E           2026-10-04 09:47:15.026 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7042 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+E           2026-10-04 09:47:15.027 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-04 09:47:15.028 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-10-04 09:47:15.062 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-10-04 09:47:15.063 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E           2026-10-04 09:47:15.441 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+E           2026-10-04 09:47:15.719 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic
+E           2026-10-04 09:47:15.719 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai
+E           2026-10-04 09:47:15.719 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere
+E           2026-10-04 09:47:15.719 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google
+E           2026-10-04 09:47:15.719 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral
+E           2026-10-04 09:47:15.720 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai
+E           2026-10-04 09:47:15.720 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek
+E           2026-10-04 09:47:15.720 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E           2026-10-04 09:47:15.728 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable
+E           2026-10-04 09:47:15.728 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:13879 - No Console workspace context tray available for sync
+E           2026-10-04 09:47:15.729 | WARNING  | tldw_chatbook.Chat.console_fleet_wake:recover:1001 - wake recovery failed (exception_type=AttributeError)
+E           2026-10-04 09:47:15.735 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E           2026-10-04 09:47:16.535 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E           2026-10-04 09:47:16.552 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/config/config.toml
+E           2026-10-04 09:47:16.555 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-04 09:47:16.555 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-04 09:47:16.556 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-04 09:47:16.557 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-10-04 09:47:16.602 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-10-04 09:47:16.602 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E           2026-10-04 09:47:16.603 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+E           2026-10-04 09:47:16.661 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+E           2026-10-04 09:47:16.757 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted
+E           2026-10-04 09:47:16.758 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23452 - Chat screen resuming
+E           2026-10-04 09:47:17.501 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23452 - Chat screen resuming
+E           2026-10-04 09:47:18.103 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25069 - No collapsible states to restore
+E           2026-10-04 09:47:18.954 | INFO     | tldw_chatbook.UI.Screens.chat_screen:on_button_pressed:24892 - ChatScreen on_button_pressed called with button: console-session-tab-062b39ca-2507-4dc1-8176-f46a0f4244e0
+E           2026-10-04 09:47:19.337 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/local-model, using defaults
+E           - generated xml file: /private/tmp/task9-remaining-fixtures/test_needs_approval_tab_marker0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           5.42s call     Tests/UI/test_console_parallel_runs.py::test_needs_approval_tab_marker_click_routes_to_review_action
+E           
+E           (2 durations &lt; 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_console_parallel_runs.py::test_needs_approval_tab_marker_click_routes_to_review_action
+E           1 failed in 8.44s
+
+Tests/private_profile.py:158: Failed</failure></testcase><testcase time="0.001" /></testsuite></testsuites>

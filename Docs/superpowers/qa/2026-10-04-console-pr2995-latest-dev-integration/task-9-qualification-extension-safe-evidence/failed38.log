@@ -1,0 +1,10 @@
+......................................                                   [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-9-qualification-extension-safe-evidence/failed38.xml -
+============================= slowest 25 durations =============================
+3.53s call     Tests/Chat/test_console_skill_script_confirm.py::test_confirm_callback_absent_from_bridge_when_no_ui_sink_wired
+3.51s call     Tests/Chat/test_console_skill_script_confirm.py::test_confirm_callback_present_when_ui_sink_wired
+1.37s call     Tests/Chat/test_console_ask_user_round.py::test_resolve_with_a_stale_or_missing_id_is_dropped
+1.02s call     Tests/Chat/test_console_skill_script_confirm.py::test_a_late_allow_after_a_revoke_cannot_run_the_script
+
+(21 durations < 1s hidden.)
+38 passed in 24.30s

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="5.189" timestamp="2026-10-04T02:44:31.017418-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.UI.test_llamacpp_consumers" name="test_verified_console_adoption_exact_authority_and_compensation[success-vllm]" time="3.604"><failure message="AssertionError: assert ('llama_cpp', 'model-a', None) == ('vllm', 'cha.../completions')&#10;  &#10;  At index 0 diff: 'llama_cpp' != 'vllm'&#10;  Use -v to get more diff">request = &lt;FixtureRequest for &lt;Coroutine test_verified_console_adoption_exact_authority_and_compensation[success-vllm]&gt;&gt;
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x115fd5ca0&gt;
+provider = 'vllm', outcome = 'success'
+
+    @pytest.mark.asyncio
+    @private_profile_test
+    @pytest.mark.parametrize("provider", ("llama_cpp", "vllm"))
+    @pytest.mark.parametrize("outcome", ("success", "rollback", "cancel", "stale", "wrong_owner", "wrong_type"))
+    async def test_verified_console_adoption_exact_authority_and_compensation(
+        request, monkeypatch, provider, outcome
+    ):
+        """Reach the real mutation, or prove exact authority rejects it first."""
+        import asyncio
+    
+        app = _console_app()
+        owner, target, channel, intent_type = _verified_console_target(app, provider)
+        config_path = get_cli_config_path()
+        config_before = config_path.read_bytes()
+        async with _ConsoleFlowHarness(app).run_test(size=(120, 42)) as pilot:
+            console = pilot.app.screen
+            await _wait_for_selector(console, pilot, "#console-settings-summary")
+            await pilot.pause(0.3)
+            store = console._ensure_console_chat_store()
+            session_id = store.active_session_id
+            before = store.session_settings(session_id)
+            conversation_id = store.persist_session_if_needed(session_id)
+            row_before = app.chachanotes_db.get_conversation_by_id(conversation_id)
+            metadata_before = row_before.get("metadata")
+            entered = []
+            original_sync = console._sync_console_chat_core_state
+            cancellation = asyncio.CancelledError("controlled after adoption")
+    
+            def sync_after_adoption():
+                entered.append(store.effective_session_settings(session_id))
+                original_sync()
+                if len(entered) == 1 and outcome == "rollback":
+                    raise RuntimeError("controlled after adoption")
+                if len(entered) == 1 and outcome == "cancel":
+                    raise cancellation
+    
+            monkeypatch.setattr(console, "_sync_console_chat_core_state", sync_after_adoption)
+            app.pending_handoffs.stage(channel, intent_type.from_target(target))
+            if outcome == "stale":
+                owner.invalidate("target_changed")
+            elif outcome == "wrong_owner":
+                other = "vllm" if provider == "llama_cpp" else "llama_cpp"
+                wrong_owner, _, _, _ = _verified_console_target(app, other)
+                attribute = "_llamacpp_connection_owner" if provider == "llama_cpp" else "_vllm_connection_owner"
+                monkeypatch.setattr(app, attribute, wrong_owner)
+            elif outcome == "wrong_type":
+                claim = app.pending_handoffs.claim(channel)
+                # Corrupt only the detached payload, retaining the exact real token
+                # so the production release still proves claim ownership.
+                object.__setattr__(claim, "value", object())
+                monkeypatch.setattr(app.pending_handoffs, "claim", lambda selected: claim if selected is channel else None)
+            consume = (console.consume_pending_llamacpp_console_intent
+                       if provider == "llama_cpp" else console.consume_pending_vllm_console_intent)
+            if outcome == "cancel":
+                with pytest.raises(asyncio.CancelledError) as caught:
+                    consume()
+                assert caught.value is cancellation
+            else:
+                assert consume() is (outcome == "success")
+            target_url = target.base_url if provider == "llama_cpp" else target.api_url
+            if outcome in {"success", "rollback", "cancel"}:
+                assert entered, "the injected post-adoption boundary was not reached"
+&gt;               assert (entered[0].provider, entered[0].model, entered[0].base_url) == (
+                    provider, target.model_id, target_url
+                )
+E               AssertionError: assert ('llama_cpp', 'model-a', None) == ('vllm', 'cha.../completions')
+E                 
+E                 At index 0 diff: 'llama_cpp' != 'vllm'
+E                 Use -v to get more diff
+
+Tests/UI/test_llamacpp_consumers.py:372: AssertionError</failure></testcase></testsuite></testsuites>

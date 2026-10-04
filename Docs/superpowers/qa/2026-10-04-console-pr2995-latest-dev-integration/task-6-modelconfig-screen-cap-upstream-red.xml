@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.472" timestamp="2026-10-04T02:22:02.402376-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Architecture.test_screen_size_ratchet" name="test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]" time="0.393"><failure message="AssertionError: tldw_chatbook/UI/Screens/chat_screen.py grew to 25391 lines (budget 25218, +173).&#10;  &#10;  tldw_chatbook/UI/Screens/chat_screen.py is under a one-way size ratchet (Tests/Architecture/test_screen_size_ratchet.py).&#10;  New Console code belongs in tldw_chatbook/UI/Console_Modules/ — see DESIGN.md section 7 for the region-vs-controller rule and the dependency-binding contract.&#10;  Do NOT raise the budget to make this pass. Lower it when a decomposition wave lands.&#10;assert 25391 &lt;= 25218">Tests/Architecture/test_screen_size_ratchet.py:985: in test_screen_does_not_grow_past_its_budget
+    assert lines &lt;= max_lines, (
+E   AssertionError: tldw_chatbook/UI/Screens/chat_screen.py grew to 25391 lines (budget 25218, +173).
+E     
+E     tldw_chatbook/UI/Screens/chat_screen.py is under a one-way size ratchet (Tests/Architecture/test_screen_size_ratchet.py).
+E     New Console code belongs in tldw_chatbook/UI/Console_Modules/ — see DESIGN.md section 7 for the region-vs-controller rule and the dependency-binding contract.
+E     Do NOT raise the budget to make this pass. Lower it when a decomposition wave lands.
+E   assert 25391 &lt;= 25218</failure></testcase></testsuite></testsuites>

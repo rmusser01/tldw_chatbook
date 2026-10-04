@@ -1,0 +1,13 @@
+{
+  "reason": "Child already reported F and stalled during original pending approval worker shutdown; root authorized owned-process cleanup without timeout/source/assertion changes.",
+  "parent_pid": 74436,
+  "child_pid": 77232,
+  "child_node": "Tests/UI/test_console_parallel_runs.py::test_park_toast_survives_a_viewed_run_completion_re_invocation",
+  "child_log_before": "F",
+  "signals": [
+    "parent SIGSTOP prevents launching any further selected node",
+    "failed child SIGINT requests pytest interruption and receipt flush",
+    "parent SIGINT queued",
+    "parent SIGCONT resumes controlled batch interruption"
+  ]
+}

@@ -1,0 +1,72 @@
+[
+  {
+    "path": "Docs/superpowers/plans/2026-10-02-console-chat-destinations-and-starts.md",
+    "before": "39db12cfc11d61ca80bc85c7c03424432d5dfe2bafdc12a34e57af4a3f6daafb",
+    "after": "29a816f2b94b9d043cef66659f19757fbe7ec385fe8ee4965f489a00d607d9fe",
+    "old_canonical_path_remaining": false
+  },
+  {
+    "path": "Docs/superpowers/plans/2026-10-03-console-baseline-remediation.md",
+    "before": "36d8918105016b2c4f118b95475080aef37d5e89cee983a80268a57f9990d5e2",
+    "after": "31e4dd40d9f8e14cafd9302d7fa28f0a63b137548c393c35fd1c0c2e7fd2fd88",
+    "old_canonical_path_remaining": false
+  },
+  {
+    "path": "Docs/superpowers/plans/2026-10-03-console-chat-starts-dev-integration.md",
+    "before": "6b0684baa79fc3d2a24587a904a4c4ac94dfefa472cf9d4effed2fa263898f8b",
+    "after": "0c532533859fcbe71fa99cf01502f59c608101fd7deff2cb2ba60726fc0abba5",
+    "old_canonical_path_remaining": false
+  },
+  {
+    "path": "Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md",
+    "before": "a737e77ea9dce947fc9c15390a68673f7001f228c3c6a5d33d6c41e307c4b3a2",
+    "after": "4f59fad8e519a84cf572c692d4d0616c0027bbfa4ceefe68ed6b16be5ed02aee",
+    "old_canonical_path_remaining": true
+  },
+  {
+    "path": ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-brief.md",
+    "before": "56da62a4e19bff0900d93fbf40a7571603b7f52dbf37040066fe234e281c6d50",
+    "after": "1ee8c9d481ca5e16bfd013fdd7f5ca88a23342adfe3faa667e74e1d1357857da",
+    "old_canonical_path_remaining": true
+  },
+  {
+    "path": "backlog/tasks/task-34213 - Design-Console-chat-destinations-and-bounded-agent-starts.md",
+    "before": "99224c794e310ccb60b5a4f0abf71da8c0a3978dfad48d49ff5cee20951114ea",
+    "after": "394bba5211f6ab572c05559a77bb26d792b13c98d4972a76deb21274e9de7cf9",
+    "acceptance_and_status_preserved": true,
+    "historical_notes_preserved_except_active_link_targets": true,
+    "cli_exit": 0
+  },
+  {
+    "path": "backlog/tasks/task-34214 - Console-shared-automatic-allowances-and-chat-start-attempts.md",
+    "before": "ef7f7020c8664c1f92e6ee9f0b1f2f47e9e391803346ded39641a447afbf187c",
+    "after": "e9417f39fc074a6ffa4ce21d71ffb5d88a381873f81e478d1b1bf25ffda93b72",
+    "acceptance_and_status_preserved": true,
+    "historical_notes_preserved_except_active_link_targets": true,
+    "cli_exit": 0
+  },
+  {
+    "path": "backlog/tasks/task-34215 - Console-workspace-or-casual-chats-with-bounded-background-starts.md",
+    "before": "9661f1da126b99a33c95746667fbb7075596585484ee0d1546008c246eea6759",
+    "after": "e70f16e89026578eb847203a1ff03ccfd76c22292e5698be30512d2085fede0f",
+    "acceptance_and_status_preserved": true,
+    "historical_notes_preserved_except_active_link_targets": true,
+    "cli_exit": 0
+  },
+  {
+    "path": "backlog/tasks/task-34215.1 - Clear-recorded-Console-baseline-test-failures-before-PR.md",
+    "before": "c497ad94b5532f519c4c6bf4b126d54746c2a3deff9ebd8b6c1ec6cb3940c5d7",
+    "after": "35054dbc0a6c3b229d33f3b255649dcb1e99e3bc32cb2b34747771ecd506b3bc",
+    "acceptance_and_status_preserved": true,
+    "historical_notes_preserved_except_active_link_targets": true,
+    "cli_exit": 0
+  },
+  {
+    "path": "backlog/tasks/task-34215.2 - Integrate-Console-chat-starts-with-current-dev-before-publication.md",
+    "before": "e352b9734bf1e54b84e473a31b243f16fcc0b710e406093318dd19e904c5f02d",
+    "after": "202360ebf86b85e51d5b47ab10999434de8d5a6e833871f760d092e661127033",
+    "acceptance_and_status_preserved": true,
+    "historical_notes_preserved_except_active_link_targets": true,
+    "cli_exit": 0
+  }
+]

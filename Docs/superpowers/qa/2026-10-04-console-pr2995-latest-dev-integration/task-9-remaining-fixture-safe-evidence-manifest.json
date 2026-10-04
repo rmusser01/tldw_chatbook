@@ -1,0 +1,167 @@
+{
+  "head": "5c0c57b48f8d478e620a7bd1dafc7785f4e046d9",
+  "files": {
+    "task-9-remaining-fixture-safe-evidence/child-test_background_approval_parks_with_badge_and_single_toast.log": {
+      "sha256": "08928c0b5b06963d3392495fda5e128a892d4e145c67b35d2d8e7801882ad94e",
+      "bytes": 23300
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_background_approval_parks_with_badge_and_single_toast.xml": {
+      "sha256": "f027756da1fd514b01c4532a24d9d1618e945a2c6a0c03475860beb02b828ec1",
+      "bytes": 5890
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_consent_survives_the_modal_push_suspend.log": {
+      "sha256": "aa5e71d56ff7625f8112eca43c98a674f4d18397a6da7fb5169d147b9a59a580",
+      "bytes": 613
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_consent_survives_the_modal_push_suspend.xml": {
+      "sha256": "7bd25e445ab92717b89d2dad59225d7cb3dd49d579383b2cd6cfa1a8804af08d",
+      "bytes": 393
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_needs_approval_tab_marker_click_routes_to_review_action.log": {
+      "sha256": "f0a8a51275cc40352c0c5622f463d6fa63adb71f525eaf64586f9627cd6a8fe6",
+      "bytes": 21478
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_needs_approval_tab_marker_click_routes_to_review_action.xml": {
+      "sha256": "9ee94d4a54266982fe8ad4d73ff03c4ebc4b8d389dc9797f67b66e03903f83a5",
+      "bytes": 3640
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_park_toast_fires_again_for_a_genuinely_new_round_same_session.log": {
+      "sha256": "22d67e70848b24c69744b107d4650f5439d49f26dd82fecad4ad023c23450fb3",
+      "bytes": 454
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_park_toast_fires_again_for_a_genuinely_new_round_same_session.xml": {
+      "sha256": "21fe48e89ca93af5e15a9e0319a2db835fab7f80937a6f0aff338eba9b1e59c3",
+      "bytes": 410
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_park_toast_fires_once_for_a_new_round_arriving_after_teardown.log": {
+      "sha256": "64323274345d9961d2e4fd2433a0ca51a1eb577618c951473abc5e4b9de263d8",
+      "bytes": 454
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_park_toast_fires_once_for_a_new_round_arriving_after_teardown.xml": {
+      "sha256": "99958a84f7cfbf26e86dbf0261bf777470f74cbccc90e61243ab2140c804761b",
+      "bytes": 410
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_round.log": {
+      "sha256": "b79dca222c4e24f8c9de3fb9a70059b8f9d1dd5a8830f063ed5dc836b97a6c17",
+      "bytes": 461
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_round.xml": {
+      "sha256": "a831daf147d77ba672ce6e59880e78ccf2717cc0a5f84442303ac7c0443ed353",
+      "bytes": 417
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_park_toast_survives_a_viewed_run_completion_re_invocation.log": {
+      "sha256": "f639835f26cdef61b697af41ccd19de1eed3f904d1758a4a7bda01f0948c4c75",
+      "bytes": 22174
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_park_toast_survives_a_viewed_run_completion_re_invocation.xml": {
+      "sha256": "c441249347f041ddd13ccaf8bc351df947ceeb6a758e89ebe528aa0949a82f08",
+      "bytes": 4070
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_suspend_preserves_coordinator_only_while_result_pending.log": {
+      "sha256": "6fee02bd76a70e36f46f7bc23e78129d8448391d210ded325b3fdf44fbfe2e13",
+      "bytes": 478
+    },
+    "task-9-remaining-fixture-safe-evidence/child-test_suspend_preserves_coordinator_only_while_result_pending.xml": {
+      "sha256": "086f9dc6aa3a9bd5b86ff4d81dd7ddaa2a0dcf3ff4ecfe78a2a2cec85ab33443",
+      "bytes": 429
+    },
+    "task-9-remaining-fixture-safe-evidence/closed-owned-processes.json": {
+      "sha256": "a8d49a390440e0ef387ab6a378c21fad25fa6f814aad4970f49b645a1e70c475",
+      "bytes": 214
+    },
+    "task-9-remaining-fixture-safe-evidence/commit-and-clean-status.json": {
+      "sha256": "0f391847800b86bc9c118da5b660f4614e784bb0b694b964daf897841641ad93",
+      "bytes": 894
+    },
+    "task-9-remaining-fixture-safe-evidence/consolidated-proposal.json": {
+      "sha256": "6d6b1d62d560ff88e9c6a548fdda25ec0b7b51e2d17253ed319aa478c60504ff",
+      "bytes": 17141
+    },
+    "task-9-remaining-fixture-safe-evidence/controlled-termination.json": {
+      "sha256": "b41499783c23ca6dd6b41442b88d5e7c8f7e0825a4d32221b7fa9b708ec481ec",
+      "bytes": 627
+    },
+    "task-9-remaining-fixture-safe-evidence/edit-source-hashes.json": {
+      "sha256": "415348d9d7f04aecdaec76b4fa4e5d52377c150e6c2951327ca059e42daf0e59",
+      "bytes": 2180
+    },
+    "task-9-remaining-fixture-safe-evidence/exact-outcomes.json": {
+      "sha256": "56c56d6cab199283685705a434c84b30a37c8986d8f2ef593219b3df3fad277a",
+      "bytes": 20574
+    },
+    "task-9-remaining-fixture-safe-evidence/exact-preservation-map.json": {
+      "sha256": "e21dfa2215daa8ae7629a5eea2e918b89112f2f5d40302c23ff14d5d080b53df",
+      "bytes": 3017
+    },
+    "task-9-remaining-fixture-safe-evidence/failed71-plus-control-argv.json": {
+      "sha256": "32e8c8d6056a558c487fa18381c260ead171d2eb742cd7639a57f073a6f420fd",
+      "bytes": 9141
+    },
+    "task-9-remaining-fixture-safe-evidence/failed71-plus-control-result.json": {
+      "sha256": "12f3a5935596e1b0c8884c712a7716d173d5fb15d5cc4be8b2ae6682760502e0",
+      "bytes": 62
+    },
+    "task-9-remaining-fixture-safe-evidence/failed71-plus-control.log": {
+      "sha256": "160b4a3f4f1742735b82348e53b9dbbedb680a6687a8a67e896f19b677961ba9",
+      "bytes": 131819
+    },
+    "task-9-remaining-fixture-safe-evidence/failed71-plus-control.xml": {
+      "sha256": "5197e0217cf38453db7c48cd7bdf69f2bd8413c35ecf409a68c6b4ef4999a259",
+      "bytes": 180888
+    },
+    "task-9-remaining-fixture-safe-evidence/fatal-ruff-argv.json": {
+      "sha256": "b2926054f9f982fbae1951cdc7e2413898975fa7778ced9e45af69730d1cfb69",
+      "bytes": 695
+    },
+    "task-9-remaining-fixture-safe-evidence/fatal-ruff.log": {
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "bytes": 19
+    },
+    "task-9-remaining-fixture-safe-evidence/formatter-inheritance.json": {
+      "sha256": "862ec55915c81c203c9ca54c04d5e861eacc1c9643d15fcb4346c4c9ef4f50f9",
+      "bytes": 1028
+    },
+    "task-9-remaining-fixture-safe-evidence/initial-pins.json": {
+      "sha256": "39c10994bac78655fde4c11e8724d94f98045b11c3d3a9076f45a654256d0e5f",
+      "bytes": 18184
+    },
+    "task-9-remaining-fixture-safe-evidence/passed-helper-route-carry.json": {
+      "sha256": "4386a5e68b5e4853e2fd4639ffba7ee5802c2afea6539be37174be2aba421112",
+      "bytes": 5139
+    },
+    "task-9-remaining-fixture-safe-evidence/prior-pins-verification.json": {
+      "sha256": "e521ae93ec9a43ff07bb61a10191d06ae5be1358f20bf925afbbfeec24050388",
+      "bytes": 18501
+    },
+    "task-9-remaining-fixture-safe-evidence/summary-source-proposal.json": {
+      "sha256": "4c3032e0d3d50f4ff1272e51cdca8afb02e585bd8d91c020512b14e9b13a8457",
+      "bytes": 3883
+    },
+    "task-9-remaining-fixture-safe-evidence/unexecuted-safe4-argv.json": {
+      "sha256": "266a0acc6fcb393d0566b8a4fa267bf78eec20c39f6cf8188dfe648220b0ae99",
+      "bytes": 1280
+    },
+    "task-9-remaining-fixture-safe-evidence/unexecuted-safe4-result.json": {
+      "sha256": "da4d235be5ca6322405c3c01e801e5bcc04dd8132720526cb65014a4d01b776f",
+      "bytes": 63
+    },
+    "task-9-remaining-fixture-safe-evidence/unexecuted-safe4.log": {
+      "sha256": "1bf8e7370e1a0499a06d945bf7afec2219c879fe2f94dd1638bc69d8a87e8e84",
+      "bytes": 795
+    },
+    "task-9-remaining-fixture-safe-evidence/unexecuted-safe4.xml": {
+      "sha256": "3bfe5ac75c2b27199f4c0a2f28646f8e12b0f5ca1e83b344de7f0a8e0cacc87b",
+      "bytes": 846
+    },
+    "task-9-remaining-fixture-safe-evidence/whitespace-argv.json": {
+      "sha256": "24bafd2aad6e453f6be1102f16f850aa196d4972934d58638a735242aa09da45",
+      "bytes": 176
+    },
+    "task-9-remaining-fixture-safe-evidence/whitespace.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  },
+  "original138_pins_unchanged": true,
+  "qualification_complete": false
+}

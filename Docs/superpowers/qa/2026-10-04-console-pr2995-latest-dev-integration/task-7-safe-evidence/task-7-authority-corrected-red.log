@@ -1,0 +1,1211 @@
+F.F.F.......F.FFFF.                                                      [100%]
+=================================== FAILURES ===================================
+_ test_verified_console_adoption_exact_authority_and_compensation[success-llama_cpp] _
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:158: in wrapped
+    pytest.fail(
+E   Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption0/private-profile-process/pytest.log
+E   --- child failure: AssertionError: assert False is ('success' == 'success'
+E    +  where False = consume_pending_llamacpp_console_intent()
+E     
+E       success)
+E   request = <FixtureRequest for <Coroutine test_verified_console_adoption_exact_authority_and_compensation[success-llama_cpp]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111bbfa70>
+E   provider = 'llama_cpp', outcome = 'success'
+E   
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       @pytest.mark.parametrize("provider", ("llama_cpp", "vllm"))
+E       @pytest.mark.parametrize("outcome", ("success", "rollback", "cancel", "stale", "wrong_owner", "wrong_type"))
+E       async def test_verified_console_adoption_exact_authority_and_compensation(
+E           request, monkeypatch, provider, outcome
+E       ):
+E           """Reach the real mutation, or prove exact authority rejects it first."""
+E           import asyncio
+E       
+E           app = _console_app()
+E           owner, target, channel, intent_type = _verified_console_target(app, provider)
+E           config_path = get_cli_config_path()
+E           async with _ConsoleFlowHarness(app).run_test(size=(120, 42)) as pilot:
+E               console = pilot.app.screen
+E               await _wait_for_selector(console, pilot, "#console-settings-summary")
+E               await pilot.pause(0.3)
+E               store = console._ensure_console_chat_store()
+E               session_id = store.active_session_id
+E               before = store.session_settings(session_id)
+E               conversation_id = store.persist_session_if_needed(session_id)
+E               row_before = app.chachanotes_db.get_conversation_by_id(conversation_id)
+E               metadata_before = row_before.get("metadata")
+E               config_before = config_path.read_bytes()
+E               entered = []
+E               original_sync = console._sync_console_chat_core_state
+E               cancellation = asyncio.CancelledError("controlled after adoption")
+E       
+E               adoption_completed = False
+E               original_adopt = store.adopt_session_ephemeral_endpoint
+E       
+E               def adopt_endpoint(*args, **kwargs):
+E                   nonlocal adoption_completed
+E                   receipt = original_adopt(*args, **kwargs)
+E                   adoption_completed = True
+E                   return receipt
+E       
+E               def sync_after_adoption():
+E                   original_sync()
+E                   if not adoption_completed:
+E                       return
+E                   entered.append(store.effective_session_settings(session_id))
+E                   if len(entered) == 1 and outcome == "rollback":
+E                       raise RuntimeError("controlled after adoption")
+E                   if len(entered) == 1 and outcome == "cancel":
+E                       raise cancellation
+E       
+E               monkeypatch.setattr(store, "adopt_session_ephemeral_endpoint", adopt_endpoint)
+E       
+E               monkeypatch.setattr(console, "_sync_console_chat_core_state", sync_after_adoption)
+E               app.pending_handoffs.stage(channel, intent_type.from_target(target))
+E               if outcome == "stale":
+E                   owner.invalidate("target_changed")
+E               elif outcome == "wrong_owner":
+E                   other = "vllm" if provider == "llama_cpp" else "llama_cpp"
+E                   wrong_owner, _, _, _ = _verified_console_target(app, other)
+E                   attribute = "_llamacpp_connection_owner" if provider == "llama_cpp" else "_vllm_connection_owner"
+E                   monkeypatch.setattr(app, attribute, wrong_owner)
+E               elif outcome == "wrong_type":
+E                   claim = app.pending_handoffs.claim(channel)
+E                   # Corrupt only the detached payload, retaining the exact real token
+E                   # so the production release still proves claim ownership.
+E                   object.__setattr__(claim, "value", object())
+E                   monkeypatch.setattr(app.pending_handoffs, "claim", lambda selected: claim if selected is channel else None)
+E               consume = (console.consume_pending_llamacpp_console_intent
+E                          if provider == "llama_cpp" else console.consume_pending_vllm_console_intent)
+E               if outcome == "cancel":
+E                   with pytest.raises(asyncio.CancelledError) as caught:
+E                       consume()
+E                   assert caught.value is cancellation
+E               else:
+E   >               assert consume() is (outcome == "success")
+E   E               AssertionError: assert False is ('success' == 'success'
+E   E                +  where False = consume_pending_llamacpp_console_intent()
+E   E                 
+E   E                   success)
+E   
+E   Tests/UI/test_llamacpp_consumers.py:384: AssertionError
+E   --- child log tail ---
+E   865792.
+E   2026-10-04 02:51:26.049 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:26.058 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:26.075 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:26.076 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:26.086 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:26.087 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:26.088 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:26.115 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8286 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 77.
+E   2026-10-04 02:51:26.116 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:26.116 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2908 - CharactersRAGDB initialization completed successfully db_sha256=memory
+E   2026-10-04 02:51:26.177 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+E   2026-10-04 02:51:26.223 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:51:26.223 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:26.243 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+E   2026-10-04 02:51:26.422 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic
+E   2026-10-04 02:51:26.422 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai
+E   2026-10-04 02:51:26.422 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere
+E   2026-10-04 02:51:26.423 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google
+E   2026-10-04 02:51:26.423 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral
+E   2026-10-04 02:51:26.423 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai
+E   2026-10-04 02:51:26.423 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek
+E   2026-10-04 02:51:26.423 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E   2026-10-04 02:51:26.428 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable
+E   2026-10-04 02:51:26.428 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14128 - No Console workspace context tray available for sync
+E   2026-10-04 02:51:26.429 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E   2026-10-04 02:51:26.900 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6232190976
+E   2026-10-04 02:51:26.900 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6232190976.
+E   2026-10-04 02:51:26.900 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6232190976.
+E   2026-10-04 02:51:26.973 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E   2026-10-04 02:51:26.992 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption0/private-profile-process/profile/config/config.toml
+E   2026-10-04 02:51:26.995 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:51:26.995 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:51:26.996 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-10-04 02:51:26.997 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-10-04 02:51:27.061 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-10-04 02:51:27.061 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E   2026-10-04 02:51:27.063 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+E   2026-10-04 02:51:27.158 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+E   2026-10-04 02:51:27.167 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6215364608
+E   2026-10-04 02:51:27.167 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6215364608.
+E   2026-10-04 02:51:27.178 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6215364608.
+E   2026-10-04 02:51:27.247 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted
+E   2026-10-04 02:51:27.248 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:51:27.249 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:27.249 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:51:27.575 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6232190976.
+E   2026-10-04 02:51:27.575 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6232190976.
+E   2026-10-04 02:51:27.579 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6215364608.
+E   2026-10-04 02:51:27.580 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6215364608.
+E   2026-10-04 02:51:27.771 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:51:27.771 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:27.771 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:51:27.863 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10882 - Listing all active conversations: limit=1000, offset=0
+E   2026-10-04 02:51:27.863 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (test-client, 1000, 0)
+E   2026-10-04 02:51:27.863 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3632 - Query execution failed: 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Error: exception_type=OperationalError
+E   2026-10-04 02:51:27.863 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10940 - Database error listing all active conversations: exception_type=CharactersRAGDBError
+E   2026-10-04 02:51:27.864 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_prune_console_rail_preferences:13163 - Console rail preference prune skipped: Query execution failed: no such table: conversations
+E   2026-10-04 02:51:27.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6198538240
+E   2026-10-04 02:51:27.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6198538240.
+E   2026-10-04 02:51:27.864 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6198538240.
+E   2026-10-04 02:51:27.987 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6249017344
+E   2026-10-04 02:51:27.987 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6249017344.
+E   2026-10-04 02:51:27.987 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6249017344.
+E   2026-10-04 02:51:28.115 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25325 - No collapsible states to restore
+E   2026-10-04 02:51:28.132 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6249017344.
+E   2026-10-04 02:51:28.144 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6249017344.
+E   2026-10-04 02:51:28.180 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6282670080
+E   2026-10-04 02:51:28.185 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6282670080.
+E   2026-10-04 02:51:28.185 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6282670080.
+E   2026-10-04 02:51:28.794 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:51:28.794 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:28.795 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:add_conversation:10681 - Added conversation ID: 61e8375b-a064-425c-a4e6-6c92d9ca7f3b.
+E   2026-10-04 02:51:28.795 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:28.795 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:28.796 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (61e8375b-a064-425c-a4e6-6c92d9ca7f3b)
+E   2026-10-04 02:51:28.797 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:51:28.798 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:28.798 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (61e8375b-a064-425c-a4e6-6c92d9ca7f3b)
+E   2026-10-04 02:51:28.799 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_consume_verified_console_intent:8143 - vLLM Console handoff will retry (channel=llamacpp_console, revision=1, exception_category=TypeError)
+E   2026-10-04 02:51:28.840 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:51:28.840 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:28.841 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/model-a, using defaults
+E   - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   4.25s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[success-llama_cpp]
+E   
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[success-llama_cpp]
+E   1 failed in 6.59s
+---------------------------- Captured stderr setup -----------------------------
+2026-10-04 02:51:21.241 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-04 02:51:21.255 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-04 02:51:21.333 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-04 02:51:21.335 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_ test_verified_console_adoption_exact_authority_and_compensation[rollback-llama_cpp] _
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:158: in wrapped
+    pytest.fail(
+E   Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption2/private-profile-process/pytest.log
+E   --- child failure: AssertionError: the injected post-adoption boundary was not reached
+E   assert []
+E   request = <FixtureRequest for <Coroutine test_verified_console_adoption_exact_authority_and_compensation[rollback-llama_cpp]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111cfe930>
+E   provider = 'llama_cpp', outcome = 'rollback'
+E   
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       @pytest.mark.parametrize("provider", ("llama_cpp", "vllm"))
+E       @pytest.mark.parametrize("outcome", ("success", "rollback", "cancel", "stale", "wrong_owner", "wrong_type"))
+E       async def test_verified_console_adoption_exact_authority_and_compensation(
+E           request, monkeypatch, provider, outcome
+E       ):
+E           """Reach the real mutation, or prove exact authority rejects it first."""
+E           import asyncio
+E       
+E           app = _console_app()
+E           owner, target, channel, intent_type = _verified_console_target(app, provider)
+E           config_path = get_cli_config_path()
+E           async with _ConsoleFlowHarness(app).run_test(size=(120, 42)) as pilot:
+E               console = pilot.app.screen
+E               await _wait_for_selector(console, pilot, "#console-settings-summary")
+E               await pilot.pause(0.3)
+E               store = console._ensure_console_chat_store()
+E               session_id = store.active_session_id
+E               before = store.session_settings(session_id)
+E               conversation_id = store.persist_session_if_needed(session_id)
+E               row_before = app.chachanotes_db.get_conversation_by_id(conversation_id)
+E               metadata_before = row_before.get("metadata")
+E               config_before = config_path.read_bytes()
+E               entered = []
+E               original_sync = console._sync_console_chat_core_state
+E               cancellation = asyncio.CancelledError("controlled after adoption")
+E       
+E               adoption_completed = False
+E               original_adopt = store.adopt_session_ephemeral_endpoint
+E       
+E               def adopt_endpoint(*args, **kwargs):
+E                   nonlocal adoption_completed
+E                   receipt = original_adopt(*args, **kwargs)
+E                   adoption_completed = True
+E                   return receipt
+E       
+E               def sync_after_adoption():
+E                   original_sync()
+E                   if not adoption_completed:
+E                       return
+E                   entered.append(store.effective_session_settings(session_id))
+E                   if len(entered) == 1 and outcome == "rollback":
+E                       raise RuntimeError("controlled after adoption")
+E                   if len(entered) == 1 and outcome == "cancel":
+E                       raise cancellation
+E       
+E               monkeypatch.setattr(store, "adopt_session_ephemeral_endpoint", adopt_endpoint)
+E       
+E               monkeypatch.setattr(console, "_sync_console_chat_core_state", sync_after_adoption)
+E               app.pending_handoffs.stage(channel, intent_type.from_target(target))
+E               if outcome == "stale":
+E                   owner.invalidate("target_changed")
+E               elif outcome == "wrong_owner":
+E                   other = "vllm" if provider == "llama_cpp" else "llama_cpp"
+E                   wrong_owner, _, _, _ = _verified_console_target(app, other)
+E                   attribute = "_llamacpp_connection_owner" if provider == "llama_cpp" else "_vllm_connection_owner"
+E                   monkeypatch.setattr(app, attribute, wrong_owner)
+E               elif outcome == "wrong_type":
+E                   claim = app.pending_handoffs.claim(channel)
+E                   # Corrupt only the detached payload, retaining the exact real token
+E                   # so the production release still proves claim ownership.
+E                   object.__setattr__(claim, "value", object())
+E                   monkeypatch.setattr(app.pending_handoffs, "claim", lambda selected: claim if selected is channel else None)
+E               consume = (console.consume_pending_llamacpp_console_intent
+E                          if provider == "llama_cpp" else console.consume_pending_vllm_console_intent)
+E               if outcome == "cancel":
+E                   with pytest.raises(asyncio.CancelledError) as caught:
+E                       consume()
+E                   assert caught.value is cancellation
+E               else:
+E                   assert consume() is (outcome == "success")
+E               target_url = target.base_url if provider == "llama_cpp" else target.api_url
+E               if outcome in {"success", "rollback", "cancel"}:
+E   >               assert entered, "the injected post-adoption boundary was not reached"
+E   E               AssertionError: the injected post-adoption boundary was not reached
+E   E               assert []
+E   
+E   Tests/UI/test_llamacpp_consumers.py:387: AssertionError
+E   --- child log tail ---
+E   ction level 2 on thread 8494865792.
+E   2026-10-04 02:51:43.350 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:43.352 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:43.353 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:43.361 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:43.377 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:43.378 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:43.385 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:43.385 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:43.386 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:43.411 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8286 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 77.
+E   2026-10-04 02:51:43.412 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:43.412 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2908 - CharactersRAGDB initialization completed successfully db_sha256=memory
+E   2026-10-04 02:51:43.461 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+E   2026-10-04 02:51:43.497 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:51:43.497 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:43.517 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+E   2026-10-04 02:51:43.661 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic
+E   2026-10-04 02:51:43.661 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai
+E   2026-10-04 02:51:43.661 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere
+E   2026-10-04 02:51:43.661 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google
+E   2026-10-04 02:51:43.662 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral
+E   2026-10-04 02:51:43.662 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai
+E   2026-10-04 02:51:43.662 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek
+E   2026-10-04 02:51:43.662 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E   2026-10-04 02:51:43.667 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable
+E   2026-10-04 02:51:43.667 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14128 - No Console workspace context tray available for sync
+E   2026-10-04 02:51:43.667 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E   2026-10-04 02:51:44.063 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6230077440
+E   2026-10-04 02:51:44.063 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6230077440.
+E   2026-10-04 02:51:44.074 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6230077440.
+E   2026-10-04 02:51:44.127 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E   2026-10-04 02:51:44.143 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption2/private-profile-process/profile/config/config.toml
+E   2026-10-04 02:51:44.147 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:51:44.147 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:51:44.148 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-10-04 02:51:44.148 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-10-04 02:51:44.203 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-10-04 02:51:44.203 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E   2026-10-04 02:51:44.204 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+E   2026-10-04 02:51:44.278 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+E   2026-10-04 02:51:44.295 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6196424704
+E   2026-10-04 02:51:44.296 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6196424704.
+E   2026-10-04 02:51:44.298 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6196424704.
+E   2026-10-04 02:51:44.362 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted
+E   2026-10-04 02:51:44.362 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:51:44.363 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:44.363 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:51:44.668 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6213251072
+E   2026-10-04 02:51:44.674 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6213251072.
+E   2026-10-04 02:51:44.675 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6213251072.
+E   2026-10-04 02:51:44.700 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6196424704.
+E   2026-10-04 02:51:44.701 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6196424704.
+E   2026-10-04 02:51:44.922 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:51:44.923 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:44.923 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:51:45.025 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6213251072.
+E   2026-10-04 02:51:45.029 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6213251072.
+E   2026-10-04 02:51:45.029 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10882 - Listing all active conversations: limit=1000, offset=0
+E   2026-10-04 02:51:45.033 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (test-client, 1000, 0)
+E   2026-10-04 02:51:45.034 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3632 - Query execution failed: 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Error: exception_type=OperationalError
+E   2026-10-04 02:51:45.034 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10940 - Database error listing all active conversations: exception_type=CharactersRAGDBError
+E   2026-10-04 02:51:45.034 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_prune_console_rail_preferences:13163 - Console rail preference prune skipped: Query execution failed: no such table: conversations
+E   2026-10-04 02:51:45.161 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6196424704.
+E   2026-10-04 02:51:45.179 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6196424704.
+E   2026-10-04 02:51:45.302 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25325 - No collapsible states to restore
+E   2026-10-04 02:51:45.312 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6213251072.
+E   2026-10-04 02:51:45.337 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6213251072.
+E   2026-10-04 02:51:45.349 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6213251072.
+E   2026-10-04 02:51:45.351 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6213251072.
+E   2026-10-04 02:51:45.927 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:51:45.928 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:45.929 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:add_conversation:10681 - Added conversation ID: 3750bf13-61b3-4f35-9d15-abf765316d6b.
+E   2026-10-04 02:51:45.929 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:51:45.929 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:45.929 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (3750bf13-61b3-4f35-9d15-abf765316d6b)
+E   2026-10-04 02:51:45.930 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:51:45.931 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:45.931 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (3750bf13-61b3-4f35-9d15-abf765316d6b)
+E   2026-10-04 02:51:45.932 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_consume_verified_console_intent:8143 - vLLM Console handoff will retry (channel=llamacpp_console, revision=1, exception_category=TypeError)
+E   2026-10-04 02:51:45.967 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:51:45.967 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:51:45.968 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/model-a, using defaults
+E   - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption2/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   3.95s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[rollback-llama_cpp]
+E   
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[rollback-llama_cpp]
+E   1 failed in 6.18s
+_ test_verified_console_adoption_exact_authority_and_compensation[cancel-llama_cpp] _
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:158: in wrapped
+    pytest.fail(
+E   Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption4/private-profile-process/pytest.log
+E   --- child failure: Failed: DID NOT RAISE <class 'asyncio.exceptions.CancelledError'>
+E   request = <FixtureRequest for <Coroutine test_verified_console_adoption_exact_authority_and_compensation[cancel-llama_cpp]>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111a2a450>
+E   provider = 'llama_cpp', outcome = 'cancel'
+E   
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       @pytest.mark.parametrize("provider", ("llama_cpp", "vllm"))
+E       @pytest.mark.parametrize("outcome", ("success", "rollback", "cancel", "stale", "wrong_owner", "wrong_type"))
+E       async def test_verified_console_adoption_exact_authority_and_compensation(
+E           request, monkeypatch, provider, outcome
+E       ):
+E           """Reach the real mutation, or prove exact authority rejects it first."""
+E           import asyncio
+E       
+E           app = _console_app()
+E           owner, target, channel, intent_type = _verified_console_target(app, provider)
+E           config_path = get_cli_config_path()
+E           async with _ConsoleFlowHarness(app).run_test(size=(120, 42)) as pilot:
+E               console = pilot.app.screen
+E               await _wait_for_selector(console, pilot, "#console-settings-summary")
+E               await pilot.pause(0.3)
+E               store = console._ensure_console_chat_store()
+E               session_id = store.active_session_id
+E               before = store.session_settings(session_id)
+E               conversation_id = store.persist_session_if_needed(session_id)
+E               row_before = app.chachanotes_db.get_conversation_by_id(conversation_id)
+E               metadata_before = row_before.get("metadata")
+E               config_before = config_path.read_bytes()
+E               entered = []
+E               original_sync = console._sync_console_chat_core_state
+E               cancellation = asyncio.CancelledError("controlled after adoption")
+E       
+E               adoption_completed = False
+E               original_adopt = store.adopt_session_ephemeral_endpoint
+E       
+E               def adopt_endpoint(*args, **kwargs):
+E                   nonlocal adoption_completed
+E                   receipt = original_adopt(*args, **kwargs)
+E                   adoption_completed = True
+E                   return receipt
+E       
+E               def sync_after_adoption():
+E                   original_sync()
+E                   if not adoption_completed:
+E                       return
+E                   entered.append(store.effective_session_settings(session_id))
+E                   if len(entered) == 1 and outcome == "rollback":
+E                       raise RuntimeError("controlled after adoption")
+E                   if len(entered) == 1 and outcome == "cancel":
+E                       raise cancellation
+E       
+E               monkeypatch.setattr(store, "adopt_session_ephemeral_endpoint", adopt_endpoint)
+E       
+E               monkeypatch.setattr(console, "_sync_console_chat_core_state", sync_after_adoption)
+E               app.pending_handoffs.stage(channel, intent_type.from_target(target))
+E               if outcome == "stale":
+E                   owner.invalidate("target_changed")
+E               elif outcome == "wrong_owner":
+E                   other = "vllm" if provider == "llama_cpp" else "llama_cpp"
+E                   wrong_owner, _, _, _ = _verified_console_target(app, other)
+E                   attribute = "_llamacpp_connection_owner" if provider == "llama_cpp" else "_vllm_connection_owner"
+E                   monkeypatch.setattr(app, attribute, wrong_owner)
+E               elif outcome == "wrong_type":
+E                   claim = app.pending_handoffs.claim(channel)
+E                   # Corrupt only the detached payload, retaining the exact real token
+E                   # so the production release still proves claim ownership.
+E                   object.__setattr__(claim, "value", object())
+E                   monkeypatch.setattr(app.pending_handoffs, "claim", lambda selected: claim if selected is channel else None)
+E               consume = (console.consume_pending_llamacpp_console_intent
+E                          if provider == "llama_cpp" else console.consume_pending_vllm_console_intent)
+E               if outcome == "cancel":
+E   >               with pytest.raises(asyncio.CancelledError) as caught:
+E                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   E               Failed: DID NOT RAISE <class 'asyncio.exceptions.CancelledError'>
+E   
+E   Tests/UI/test_llamacpp_consumers.py:380: Failed
+E   --- child log tail ---
+E    2 on thread 8494865792.
+E   2026-10-04 02:52:02.963 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:52:02.965 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:52:02.974 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:52:02.994 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:52:02.995 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:52:03.004 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:52:03.005 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:52:03.007 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:52:03.035 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8286 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 77.
+E   2026-10-04 02:52:03.036 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:52:03.036 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2908 - CharactersRAGDB initialization completed successfully db_sha256=memory
+E   2026-10-04 02:52:03.099 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+E   2026-10-04 02:52:03.150 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:52:03.151 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:52:03.176 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+E   2026-10-04 02:52:03.356 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic
+E   2026-10-04 02:52:03.383 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai
+E   2026-10-04 02:52:03.383 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere
+E   2026-10-04 02:52:03.384 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google
+E   2026-10-04 02:52:03.384 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral
+E   2026-10-04 02:52:03.384 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai
+E   2026-10-04 02:52:03.384 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek
+E   2026-10-04 02:52:03.384 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E   2026-10-04 02:52:03.389 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable
+E   2026-10-04 02:52:03.389 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14128 - No Console workspace context tray available for sync
+E   2026-10-04 02:52:03.390 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E   2026-10-04 02:52:03.934 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6233436160
+E   2026-10-04 02:52:03.934 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6233436160.
+E   2026-10-04 02:52:03.935 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6233436160.
+E   2026-10-04 02:52:03.970 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6233436160.
+E   2026-10-04 02:52:03.970 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6233436160.
+E   2026-10-04 02:52:04.041 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E   2026-10-04 02:52:04.062 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption4/private-profile-process/profile/config/config.toml
+E   2026-10-04 02:52:04.066 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:52:04.066 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:52:04.067 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-10-04 02:52:04.068 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-10-04 02:52:04.141 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption4/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-10-04 02:52:04.141 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E   2026-10-04 02:52:04.143 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+E   2026-10-04 02:52:04.230 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+E   2026-10-04 02:52:04.322 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted
+E   2026-10-04 02:52:04.324 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:52:04.327 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:52:04.334 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:52:04.703 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6216036352
+E   2026-10-04 02:52:04.703 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6216036352.
+E   2026-10-04 02:52:04.704 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6216036352.
+E   2026-10-04 02:52:04.724 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6199209984
+E   2026-10-04 02:52:04.737 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6199209984.
+E   2026-10-04 02:52:04.741 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6199209984.
+E   2026-10-04 02:52:04.984 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:52:04.985 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:52:04.985 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:52:05.093 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6216036352.
+E   2026-10-04 02:52:05.093 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6216036352.
+E   2026-10-04 02:52:05.094 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10882 - Listing all active conversations: limit=1000, offset=0
+E   2026-10-04 02:52:05.094 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (test-client, 1000, 0)
+E   2026-10-04 02:52:05.095 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3632 - Query execution failed: 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Error: exception_type=OperationalError
+E   2026-10-04 02:52:05.095 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10940 - Database error listing all active conversations: exception_type=CharactersRAGDBError
+E   2026-10-04 02:52:05.095 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_prune_console_rail_preferences:13163 - Console rail preference prune skipped: Query execution failed: no such table: conversations
+E   2026-10-04 02:52:05.165 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6199209984.
+E   2026-10-04 02:52:05.167 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6199209984.
+E   2026-10-04 02:52:05.340 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6250262528
+E   2026-10-04 02:52:05.361 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6250262528.
+E   2026-10-04 02:52:05.361 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6250262528.
+E   2026-10-04 02:52:05.366 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25325 - No collapsible states to restore
+E   2026-10-04 02:52:05.376 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6233436160.
+E   2026-10-04 02:52:05.376 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6233436160.
+E   2026-10-04 02:52:06.000 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:52:06.001 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:52:06.001 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:add_conversation:10681 - Added conversation ID: 7d8e76c1-d199-43d0-a8e8-7448a53b4f35.
+E   2026-10-04 02:52:06.002 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:52:06.002 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:52:06.002 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (7d8e76c1-d199-43d0-a8e8-7448a53b4f35)
+E   2026-10-04 02:52:06.004 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:52:06.005 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:52:06.006 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): SELECT * FROM conversations WHERE id = ? AND deleted = 0... Params: (7d8e76c1-d199-43d0-a8e8-7448a53b4f35)
+E   2026-10-04 02:52:06.006 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_consume_verified_console_intent:8143 - vLLM Console handoff will retry (channel=llamacpp_console, revision=1, exception_category=TypeError)
+E   2026-10-04 02:52:06.055 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:52:06.055 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:52:06.056 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/model-a, using defaults
+E   - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption4/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   4.68s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[cancel-llama_cpp]
+E   
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[cancel-llama_cpp]
+E   1 failed in 7.45s
+_____ test_verified_console_adoption_dispatches_on_real_resume[llama_cpp] ______
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:158: in wrapped
+    pytest.fail(
+E   Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption12/private-profile-process/pytest.log
+E   --- child failure: AssertionError: assert not True
+E    +  where True = has_pending(<HandoffChannel.LLAMACPP_CONSOLE: 'llamacpp_console'>)
+E    +    where has_pending = <tldw_chatbook.UI.Navigation.pending_handoff_store.PendingHandoffStore object at 0x111f227b0>.has_pending
+E    +      where <tldw_chatbook.UI.Navigation.pending_handoff_store.PendingHandoffStore object at 0x111f227b0> = TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'}).pending_handoffs
+E   request = <FixtureRequest for <Coroutine test_verified_console_adoption_dispatches_on_real_resume[llama_cpp]>>
+E   provider = 'llama_cpp'
+E   
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       @pytest.mark.parametrize("provider", ("llama_cpp", "vllm"))
+E       async def test_verified_console_adoption_dispatches_on_real_resume(request, provider):
+E           from textual.screen import Screen
+E       
+E           app = _console_app()
+E           _, target, channel, intent_type = _verified_console_target(app, provider)
+E           async with _ConsoleFlowHarness(app).run_test(size=(120, 42)) as pilot:
+E               console = pilot.app.screen
+E               await _wait_for_selector(console, pilot, "#console-settings-summary")
+E               await pilot.pause(0.3)
+E               await pilot.app.push_screen(Screen())
+E               app.pending_handoffs.stage(channel, intent_type.from_target(target))
+E               pilot.app.pop_screen()
+E               for _ in range(40):
+E                   await pilot.pause(0.025)
+E                   if not app.pending_handoffs.has_pending(channel):
+E                       break
+E               assert pilot.app.screen is console
+E   >           assert not app.pending_handoffs.has_pending(channel)
+E   E           AssertionError: assert not True
+E   E            +  where True = has_pending(<HandoffChannel.LLAMACPP_CONSOLE: 'llamacpp_console'>)
+E   E            +    where has_pending = <tldw_chatbook.UI.Navigation.pending_handoff_store.PendingHandoffStore object at 0x111f227b0>.has_pending
+E   E            +      where <tldw_chatbook.UI.Navigation.pending_handoff_store.PendingHandoffStore object at 0x111f227b0> = TldwCli(title='tldw chatbook', classes={'-dark-mode'}, pseudo_classes={'focus', 'nocolor', 'dark'}).pending_handoffs
+E   
+E   Tests/UI/test_llamacpp_consumers.py:425: AssertionError
+E   --- child log tail ---
+E   ction level 2 on thread 8494865792.
+E   2026-10-04 02:53:31.264 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:53:31.277 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:53:31.278 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:53:31.279 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:53:31.317 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8286 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 77.
+E   2026-10-04 02:53:31.317 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:53:31.317 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2908 - CharactersRAGDB initialization completed successfully db_sha256=memory
+E   2026-10-04 02:53:31.403 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+E   2026-10-04 02:53:31.469 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:53:31.469 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:53:31.501 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+E   2026-10-04 02:53:31.697 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic
+E   2026-10-04 02:53:31.698 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai
+E   2026-10-04 02:53:31.698 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere
+E   2026-10-04 02:53:31.698 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google
+E   2026-10-04 02:53:31.698 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral
+E   2026-10-04 02:53:31.698 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai
+E   2026-10-04 02:53:31.698 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek
+E   2026-10-04 02:53:31.698 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E   2026-10-04 02:53:31.705 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable
+E   2026-10-04 02:53:31.705 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14128 - No Console workspace context tray available for sync
+E   2026-10-04 02:53:31.717 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E   2026-10-04 02:53:31.977 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14128 - No Console workspace context tray available for sync
+E   2026-10-04 02:53:32.371 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E   2026-10-04 02:53:32.438 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6220001280
+E   2026-10-04 02:53:32.438 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6220001280.
+E   2026-10-04 02:53:32.438 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6220001280.
+E   2026-10-04 02:53:32.453 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6220001280.
+E   2026-10-04 02:53:32.453 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6220001280.
+E   2026-10-04 02:53:32.505 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption12/private-profile-process/profile/config/config.toml
+E   2026-10-04 02:53:32.510 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:53:32.510 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:53:32.511 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-10-04 02:53:32.512 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-10-04 02:53:32.589 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption12/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-10-04 02:53:32.589 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E   2026-10-04 02:53:32.591 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+E   2026-10-04 02:53:32.687 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+E   2026-10-04 02:53:32.755 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted
+E   2026-10-04 02:53:32.756 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:53:32.757 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:53:32.758 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:53:33.185 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6236827648
+E   2026-10-04 02:53:33.186 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6236827648.
+E   2026-10-04 02:53:33.204 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6236827648.
+E   2026-10-04 02:53:33.234 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6236827648.
+E   2026-10-04 02:53:33.235 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6236827648.
+E   2026-10-04 02:53:33.577 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:53:33.577 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:53:33.578 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:53:33.676 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6220001280.
+E   2026-10-04 02:53:33.677 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6220001280.
+E   2026-10-04 02:53:33.677 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10882 - Listing all active conversations: limit=1000, offset=0
+E   2026-10-04 02:53:33.677 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (test-client, 1000, 0)
+E   2026-10-04 02:53:33.677 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3632 - Query execution failed: 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Error: exception_type=OperationalError
+E   2026-10-04 02:53:33.677 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10940 - Database error listing all active conversations: exception_type=CharactersRAGDBError
+E   2026-10-04 02:53:33.677 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_prune_console_rail_preferences:13163 - Console rail preference prune skipped: Query execution failed: no such table: conversations
+E   2026-10-04 02:53:33.756 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6220001280.
+E   2026-10-04 02:53:33.756 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6220001280.
+E   2026-10-04 02:53:33.964 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6220001280.
+E   2026-10-04 02:53:33.964 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6220001280.
+E   2026-10-04 02:53:33.964 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25325 - No collapsible states to restore
+E   2026-10-04 02:53:34.014 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6203174912
+E   2026-10-04 02:53:34.014 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6203174912.
+E   2026-10-04 02:53:34.014 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6203174912.
+E   2026-10-04 02:53:34.716 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:53:34.717 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:53:34.720 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:53:34.748 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6253654016
+E   2026-10-04 02:53:34.748 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6253654016.
+E   2026-10-04 02:53:34.748 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6253654016.
+E   2026-10-04 02:53:34.753 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6220001280.
+E   2026-10-04 02:53:34.753 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6220001280.
+E   2026-10-04 02:53:34.915 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:53:34.915 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:53:34.916 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:53:34.944 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6203174912.
+E   2026-10-04 02:53:34.944 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6203174912.
+E   2026-10-04 02:53:34.952 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6253654016.
+E   2026-10-04 02:53:34.952 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6253654016.
+E   2026-10-04 02:53:37.128 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:53:37.128 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:53:37.128 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/model-a, using defaults
+E   - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption12/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   7.90s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_dispatches_on_real_resume[llama_cpp]
+E   
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_dispatches_on_real_resume[llama_cpp]
+E   1 failed in 11.12s
+_____ test_verified_console_adoption_rebases_a_dropped_sampler[llama_cpp] ______
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:158: in wrapped
+    pytest.fail(
+E   Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption14/private-profile-process/pytest.log
+E   --- child failure: assert False is True
+E    +  where False = consume_pending_llamacpp_console_intent()
+E   request = <FixtureRequest for <Coroutine test_verified_console_adoption_rebases_a_dropped_sampler[llama_cpp]>>
+E   provider = 'llama_cpp'
+E   
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       @pytest.mark.parametrize("provider", ("llama_cpp", "vllm"))
+E       async def test_verified_console_adoption_rebases_a_dropped_sampler(request, provider):
+E           """A valid source with no Top P can adopt a target that accepts it."""
+E           from dataclasses import replace
+E           from tldw_chatbook.Chat.console_session_settings import validate_console_session_settings
+E       
+E           app = _console_app()
+E           _, target, channel, intent_type = _verified_console_target(app, provider)
+E           async with _ConsoleFlowHarness(app).run_test(size=(120, 42)) as pilot:
+E               console = pilot.app.screen
+E               await _wait_for_selector(console, pilot, "#console-settings-summary")
+E               await pilot.pause(0.3)
+E               store = console._ensure_console_chat_store()
+E               session_id = store.active_session_id
+E               source = replace(store.session_settings(session_id), provider="custom-openai-api-2", model="source-model", top_p=None, source="user")
+E               assert validate_console_session_settings(source, app_config=app.app_config) == []
+E               store.replace_session_settings(session_id, source)
+E               config_before = get_cli_config_path().read_bytes()
+E               app.pending_handoffs.stage(channel, intent_type.from_target(target))
+E               consume = (console.consume_pending_llamacpp_console_intent if provider == "llama_cpp" else console.consume_pending_vllm_console_intent)
+E   >           assert consume() is True
+E   E           assert False is True
+E   E            +  where False = consume_pending_llamacpp_console_intent()
+E   
+E   Tests/UI/test_llamacpp_consumers.py:452: AssertionError
+E   --- child log tail ---
+E   - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:01.888 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:01.954 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:01.975 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.052 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.059 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.066 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 3 on thread 8494865792.
+E   2026-10-04 02:54:02.071 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 3 on thread 8494865792.
+E   2026-10-04 02:54:02.073 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.081 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.118 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.124 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.130 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.146 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.177 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.180 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.194 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.195 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.197 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:02.237 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8286 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 77.
+E   2026-10-04 02:54:02.237 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:02.237 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2908 - CharactersRAGDB initialization completed successfully db_sha256=memory
+E   2026-10-04 02:54:02.339 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+E   2026-10-04 02:54:02.399 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:54:02.399 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:02.412 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+E   2026-10-04 02:54:02.545 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic
+E   2026-10-04 02:54:02.546 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai
+E   2026-10-04 02:54:02.546 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere
+E   2026-10-04 02:54:02.546 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google
+E   2026-10-04 02:54:02.546 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral
+E   2026-10-04 02:54:02.546 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai
+E   2026-10-04 02:54:02.546 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek
+E   2026-10-04 02:54:02.546 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E   2026-10-04 02:54:02.554 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable
+E   2026-10-04 02:54:02.554 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14128 - No Console workspace context tray available for sync
+E   2026-10-04 02:54:02.557 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E   2026-10-04 02:54:02.846 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14128 - No Console workspace context tray available for sync
+E   2026-10-04 02:54:02.957 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E   2026-10-04 02:54:03.251 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption14/private-profile-process/profile/config/config.toml
+E   2026-10-04 02:54:03.258 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:54:03.258 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:54:03.260 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-10-04 02:54:03.272 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-10-04 02:54:03.477 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6130118656
+E   2026-10-04 02:54:03.478 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6130118656.
+E   2026-10-04 02:54:03.481 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6130118656.
+E   2026-10-04 02:54:03.568 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption14/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-10-04 02:54:03.569 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E   2026-10-04 02:54:03.577 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+E   2026-10-04 02:54:03.777 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+E   2026-10-04 02:54:03.823 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6146945024
+E   2026-10-04 02:54:03.823 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6146945024.
+E   2026-10-04 02:54:03.824 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6146945024.
+E   2026-10-04 02:54:03.950 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted
+E   2026-10-04 02:54:03.952 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:54:03.953 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:03.954 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:54:04.432 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6163771392
+E   2026-10-04 02:54:04.433 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6163771392.
+E   2026-10-04 02:54:04.446 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6163771392.
+E   2026-10-04 02:54:04.472 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6130118656.
+E   2026-10-04 02:54:04.472 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6130118656.
+E   2026-10-04 02:54:04.751 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:54:04.751 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:04.751 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:54:04.883 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6130118656.
+E   2026-10-04 02:54:04.883 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6130118656.
+E   2026-10-04 02:54:04.892 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10882 - Listing all active conversations: limit=1000, offset=0
+E   2026-10-04 02:54:04.892 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (test-client, 1000, 0)
+E   2026-10-04 02:54:04.892 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3632 - Query execution failed: 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Error: exception_type=OperationalError
+E   2026-10-04 02:54:04.892 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10940 - Database error listing all active conversations: exception_type=CharactersRAGDBError
+E   2026-10-04 02:54:04.892 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_prune_console_rail_preferences:13163 - Console rail preference prune skipped: Query execution failed: no such table: conversations
+E   2026-10-04 02:54:04.966 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6146945024.
+E   2026-10-04 02:54:04.966 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6146945024.
+E   2026-10-04 02:54:05.173 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6163771392.
+E   2026-10-04 02:54:05.173 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6163771392.
+E   2026-10-04 02:54:05.196 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25325 - No collapsible states to restore
+E   2026-10-04 02:54:05.210 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6130118656.
+E   2026-10-04 02:54:05.217 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6130118656.
+E   2026-10-04 02:54:05.946 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_consume_verified_console_intent:8143 - vLLM Console handoff will retry (channel=llamacpp_console, revision=1, exception_category=TypeError)
+E   2026-10-04 02:54:06.016 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:54:06.017 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:06.017 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/model-a, using defaults
+E   - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption14/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   6.33s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_rebases_a_dropped_sampler[llama_cpp]
+E   
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_rebases_a_dropped_sampler[llama_cpp]
+E   1 failed in 11.24s
+________ test_verified_console_adoption_rebases_a_dropped_sampler[vllm] ________
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:158: in wrapped
+    pytest.fail(
+E   Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption15/private-profile-process/pytest.log
+E   --- child failure: assert False is True
+E    +  where False = consume_pending_vllm_console_intent()
+E   request = <FixtureRequest for <Coroutine test_verified_console_adoption_rebases_a_dropped_sampler[vllm]>>
+E   provider = 'vllm'
+E   
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       @pytest.mark.parametrize("provider", ("llama_cpp", "vllm"))
+E       async def test_verified_console_adoption_rebases_a_dropped_sampler(request, provider):
+E           """A valid source with no Top P can adopt a target that accepts it."""
+E           from dataclasses import replace
+E           from tldw_chatbook.Chat.console_session_settings import validate_console_session_settings
+E       
+E           app = _console_app()
+E           _, target, channel, intent_type = _verified_console_target(app, provider)
+E           async with _ConsoleFlowHarness(app).run_test(size=(120, 42)) as pilot:
+E               console = pilot.app.screen
+E               await _wait_for_selector(console, pilot, "#console-settings-summary")
+E               await pilot.pause(0.3)
+E               store = console._ensure_console_chat_store()
+E               session_id = store.active_session_id
+E               source = replace(store.session_settings(session_id), provider="custom-openai-api-2", model="source-model", top_p=None, source="user")
+E               assert validate_console_session_settings(source, app_config=app.app_config) == []
+E               store.replace_session_settings(session_id, source)
+E               config_before = get_cli_config_path().read_bytes()
+E               app.pending_handoffs.stage(channel, intent_type.from_target(target))
+E               consume = (console.consume_pending_llamacpp_console_intent if provider == "llama_cpp" else console.consume_pending_vllm_console_intent)
+E   >           assert consume() is True
+E   E           assert False is True
+E   E            +  where False = consume_pending_vllm_console_intent()
+E   
+E   Tests/UI/test_llamacpp_consumers.py:452: AssertionError
+E   --- child log tail ---
+E   ed nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.296 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.304 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 3 on thread 8494865792.
+E   2026-10-04 02:54:16.304 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 3 on thread 8494865792.
+E   2026-10-04 02:54:16.305 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.310 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.349 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.354 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.356 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.383 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.414 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.415 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.427 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.429 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.432 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:16.469 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8286 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 77.
+E   2026-10-04 02:54:16.469 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:16.469 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2908 - CharactersRAGDB initialization completed successfully db_sha256=memory
+E   2026-10-04 02:54:16.543 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+E   2026-10-04 02:54:16.619 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:54:16.619 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:16.649 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+E   2026-10-04 02:54:16.830 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic
+E   2026-10-04 02:54:16.833 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai
+E   2026-10-04 02:54:16.833 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere
+E   2026-10-04 02:54:16.833 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google
+E   2026-10-04 02:54:16.834 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral
+E   2026-10-04 02:54:16.834 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai
+E   2026-10-04 02:54:16.834 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek
+E   2026-10-04 02:54:16.834 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E   2026-10-04 02:54:16.840 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable
+E   2026-10-04 02:54:16.842 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14128 - No Console workspace context tray available for sync
+E   2026-10-04 02:54:16.843 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E   2026-10-04 02:54:17.129 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E   2026-10-04 02:54:17.148 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14128 - No Console workspace context tray available for sync
+E   2026-10-04 02:54:17.240 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption15/private-profile-process/profile/config/config.toml
+E   2026-10-04 02:54:17.252 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:54:17.252 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:54:17.254 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-10-04 02:54:17.254 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-10-04 02:54:17.642 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6176567296
+E   2026-10-04 02:54:17.643 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6176567296.
+E   2026-10-04 02:54:17.643 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6176567296.
+E   2026-10-04 02:54:17.709 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption15/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-10-04 02:54:17.709 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E   2026-10-04 02:54:17.711 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+E   2026-10-04 02:54:17.856 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+E   2026-10-04 02:54:17.881 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6159740928
+E   2026-10-04 02:54:17.886 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6159740928.
+E   2026-10-04 02:54:17.887 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6159740928.
+E   2026-10-04 02:54:17.944 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted
+E   2026-10-04 02:54:17.949 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:54:17.950 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:17.953 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:54:18.408 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6176567296.
+E   2026-10-04 02:54:18.415 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6176567296.
+E   2026-10-04 02:54:18.442 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6176567296.
+E   2026-10-04 02:54:18.443 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6176567296.
+E   2026-10-04 02:54:18.686 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:54:18.686 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:18.688 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:54:18.787 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6159740928.
+E   2026-10-04 02:54:18.789 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10882 - Listing all active conversations: limit=1000, offset=0
+E   2026-10-04 02:54:18.789 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6159740928.
+E   2026-10-04 02:54:18.790 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6193393664
+E   2026-10-04 02:54:18.790 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (test-client, 1000, 0)
+E   2026-10-04 02:54:18.791 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3632 - Query execution failed: 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Error: exception_type=OperationalError
+E   2026-10-04 02:54:18.791 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10940 - Database error listing all active conversations: exception_type=CharactersRAGDBError
+E   2026-10-04 02:54:18.791 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:close_connection:3409 - Closed SQLite connection db_sha256=memory thread=6193393664.
+E   2026-10-04 02:54:18.791 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_prune_console_rail_preferences:13163 - Console rail preference prune skipped: Query execution failed: no such table: conversations
+E   2026-10-04 02:54:18.875 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6159740928.
+E   2026-10-04 02:54:18.875 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6159740928.
+E   2026-10-04 02:54:19.102 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6210220032
+E   2026-10-04 02:54:19.103 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6210220032.
+E   2026-10-04 02:54:19.111 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6210220032.
+E   2026-10-04 02:54:19.112 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25325 - No collapsible states to restore
+E   2026-10-04 02:54:19.244 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6193393664
+E   2026-10-04 02:54:19.249 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6193393664.
+E   2026-10-04 02:54:19.253 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6193393664.
+E   2026-10-04 02:54:19.849 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_consume_verified_console_intent:8143 - vLLM Console handoff will retry (channel=vllm_console, revision=1, exception_category=ValueError)
+E   2026-10-04 02:54:19.907 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:54:19.907 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:19.908 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/model-a, using defaults
+E   INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for custom_2/source-model, using defaults
+E   - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_verified_console_adoption15/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   5.65s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_rebases_a_dropped_sampler[vllm]
+E   
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_rebases_a_dropped_sampler[vllm]
+E   1 failed in 9.70s
+________ test_console_adopts_verified_llamacpp_for_active_session_only _________
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:158: in wrapped
+    pytest.fail(
+E   Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_console_adopts_verified_l0/private-profile-process/pytest.log
+E   --- child failure: AssertionError: assert ('llama_cpp', 'model-a') == ('llama_cpp', 'served-model')
+E     
+E     At index 1 diff: 'model-a' != 'served-model'
+E     Use -v to get more diff
+E   request = <FixtureRequest for <Coroutine test_console_adopts_verified_llamacpp_for_active_session_only>>
+E   
+E       @private_profile_test
+E       @pytest.mark.asyncio
+E       async def test_console_adopts_verified_llamacpp_for_active_session_only(request):
+E           app = _console_app()
+E           _, target = _ready_target(app)
+E           app.pending_handoffs.stage(
+E               HandoffChannel.LLAMACPP_CONSOLE, LlamaCppConsoleIntent.from_target(target)
+E           )
+E           async with _ConsoleFlowHarness(app).run_test(size=(120, 42)) as pilot:
+E               console = pilot.app.screen
+E               await _wait_for_selector(console, pilot, "#console-settings-summary")
+E               await pilot.pause(0.3)
+E               settings = console._session._active_console_session_settings()
+E               assert settings is not None
+E   >           assert (settings.provider, settings.model) == ("llama_cpp", "served-model")
+E   E           AssertionError: assert ('llama_cpp', 'model-a') == ('llama_cpp', 'served-model')
+E   E             
+E   E             At index 1 diff: 'model-a' != 'served-model'
+E   E             Use -v to get more diff
+E   
+E   Tests/UI/test_llamacpp_consumers.py:106: AssertionError
+E   --- child log tail ---
+E       | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.073 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.107 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.114 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.150 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.152 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.159 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 3 on thread 8494865792.
+E   2026-10-04 02:54:29.160 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 3 on thread 8494865792.
+E   2026-10-04 02:54:29.161 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.167 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.212 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.219 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.225 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.241 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.274 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.279 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.292 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.295 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.297 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24026 - Entered nested transaction level 2 on thread 8494865792.
+E   2026-10-04 02:54:29.333 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8286 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 77.
+E   2026-10-04 02:54:29.334 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:29.334 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2908 - CharactersRAGDB initialization completed successfully db_sha256=memory
+E   2026-10-04 02:54:29.433 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+E   2026-10-04 02:54:29.503 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:54:29.503 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:29.544 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+E   2026-10-04 02:54:29.740 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 10 pricing patterns for provider anthropic
+E   2026-10-04 02:54:29.741 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 18 pricing patterns for provider openai
+E   2026-10-04 02:54:29.741 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider cohere
+E   2026-10-04 02:54:29.741 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 5 pricing patterns for provider google
+E   2026-10-04 02:54:29.741 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistral
+E   2026-10-04 02:54:29.741 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 4 pricing patterns for provider mistralai
+E   2026-10-04 02:54:29.741 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:702 - Compiled 2 pricing patterns for provider deepseek
+E   2026-10-04 02:54:29.741 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:675 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E   2026-10-04 02:54:29.749 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3818 - Local persisted conversation service is unavailable
+E   2026-10-04 02:54:29.749 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14128 - No Console workspace context tray available for sync
+E   2026-10-04 02:54:29.749 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9432 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E   2026-10-04 02:54:30.051 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14128 - No Console workspace context tray available for sync
+E   2026-10-04 02:54:30.104 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8739 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E   2026-10-04 02:54:30.384 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8794 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_console_adopts_verified_l0/private-profile-process/profile/config/config.toml
+E   2026-10-04 02:54:30.397 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:54:30.397 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E   2026-10-04 02:54:30.399 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E   2026-10-04 02:54:30.399 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E   2026-10-04 02:54:30.472 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_console_adopts_verified_l0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E   2026-10-04 02:54:30.472 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+E   2026-10-04 02:54:30.474 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8822 - Global configuration caches invalidated and reloaded.
+E   2026-10-04 02:54:30.605 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6219280384
+E   2026-10-04 02:54:30.605 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6219280384.
+E   2026-10-04 02:54:30.605 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6219280384.
+E   2026-10-04 02:54:30.646 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6202454016
+E   2026-10-04 02:54:30.647 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6202454016.
+E   2026-10-04 02:54:30.647 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6202454016.
+E   2026-10-04 02:54:30.746 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+E   2026-10-04 02:54:30.834 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:631 - Screen chat mounted
+E   2026-10-04 02:54:30.839 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:54:30.840 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:30.841 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:54:31.298 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6219280384.
+E   2026-10-04 02:54:31.298 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6219280384.
+E   2026-10-04 02:54:31.305 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6219280384.
+E   2026-10-04 02:54:31.305 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6219280384.
+E   2026-10-04 02:54:31.639 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:54:31.639 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:31.639 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23712 - Chat screen resuming
+E   2026-10-04 02:54:31.729 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6219280384.
+E   2026-10-04 02:54:31.729 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10882 - Listing all active conversations: limit=1000, offset=0
+E   2026-10-04 02:54:31.730 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3556 - Executing SQL (script=False): 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (test-client, 1000, 0)
+E   2026-10-04 02:54:31.730 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6219280384.
+E   2026-10-04 02:54:31.730 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:3632 - Query execution failed: 
+E                   SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Error: exception_type=OperationalError
+E   2026-10-04 02:54:31.730 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:10940 - Database error listing all active conversations: exception_type=CharactersRAGDBError
+E   2026-10-04 02:54:31.730 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_prune_console_rail_preferences:13163 - Console rail preference prune skipped: Query execution failed: no such table: conversations
+E   2026-10-04 02:54:31.808 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6252933120
+E   2026-10-04 02:54:31.809 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6252933120.
+E   2026-10-04 02:54:31.809 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6252933120.
+E   2026-10-04 02:54:32.006 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3063 - Opened/Reopened SQLite connection db_sha256=memory thread=6236106752
+E   2026-10-04 02:54:32.006 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6236106752.
+E   2026-10-04 02:54:32.007 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6236106752.
+E   2026-10-04 02:54:32.038 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25325 - No collapsible states to restore
+E   2026-10-04 02:54:32.040 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 6202454016.
+E   2026-10-04 02:54:32.041 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24159 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6202454016.
+E   2026-10-04 02:54:32.802 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24057 - Started outermost transaction on thread 8494865792.
+E   2026-10-04 02:54:32.802 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24122 - Transaction (outermost) committed successfully on thread 8494865792.
+E   2026-10-04 02:54:32.803 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:662 - Screen chat unmounted
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1094 No capability information found for llama_cpp/model-a, using defaults
+E   - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red-profile-uanliwbn/pytest/test_console_adopts_verified_l0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   5.63s call     Tests/UI/test_llamacpp_consumers.py::test_console_adopts_verified_llamacpp_for_active_session_only
+E   
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_llamacpp_consumers.py::test_console_adopts_verified_llamacpp_for_active_session_only
+E   1 failed in 9.53s
+___________ test_resume_timer_list_registers_every_expected_consumer ___________
+Tests/UI/test_chat_screen_resume_handoff_registration.py:68: in test_resume_timer_list_registers_every_expected_consumer
+    assert not missing, (
+E   AssertionError: on_screen_resume's tracked timer list no longer schedules: ['self.consume_pending_llamacpp_console_intent'] — the task-31808 omission class. If removal is deliberate, update EXPECTED_RESUME_HANDOFF_CONSUMERS in the same commit.
+E   assert not {'self.consume_pending_llamacpp_console_intent'}
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-authority-corrected-red.xml -
+============================= slowest 25 durations =============================
+14.89s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_rebases_a_dropped_sampler[llama_cpp]
+14.08s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_dispatches_on_real_resume[llama_cpp]
+13.93s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_dispatches_on_real_resume[vllm]
+13.45s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_rebases_a_dropped_sampler[vllm]
+12.62s call     Tests/UI/test_llamacpp_consumers.py::test_console_adopts_verified_llamacpp_for_active_session_only
+11.58s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[wrong_type-vllm]
+11.21s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[wrong_type-llama_cpp]
+11.12s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[wrong_owner-llama_cpp]
+11.08s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[stale-vllm]
+11.00s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[wrong_owner-vllm]
+10.58s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[stale-llama_cpp]
+10.15s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[cancel-llama_cpp]
+9.80s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[rollback-vllm]
+9.65s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[cancel-vllm]
+9.05s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[success-llama_cpp]
+8.46s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[rollback-llama_cpp]
+8.37s call     Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[success-vllm]
+
+(8 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[success-llama_cpp]
+FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[rollback-llama_cpp]
+FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_exact_authority_and_compensation[cancel-llama_cpp]
+FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_dispatches_on_real_resume[llama_cpp]
+FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_rebases_a_dropped_sampler[llama_cpp]
+FAILED Tests/UI/test_llamacpp_consumers.py::test_verified_console_adoption_rebases_a_dropped_sampler[vllm]
+FAILED Tests/UI/test_llamacpp_consumers.py::test_console_adopts_verified_llamacpp_for_active_session_only
+FAILED Tests/UI/test_chat_screen_resume_handoff_registration.py::test_resume_timer_list_registers_every_expected_consumer
+8 failed, 11 passed in 196.74s (0:03:16)

@@ -1,0 +1,11 @@
+from common import *
+import xml.etree.ElementTree as ET
+r=json.loads((O/'selected-result.json').read_text());assert r['exit']==0 and r['source_hashes_stable']
+root=ET.parse(O/'selected.xml').getroot();cases=[{'classname':c.attrib.get('classname'),'name':c.attrib['name'],'seconds':c.attrib.get('time'),'outcome':'failure' if c.find('failure') is not None else 'error' if c.find('error') is not None else 'skipped' if c.find('skipped') is not None else 'passed'} for c in root.iter('testcase')];assert len(cases)==57 and all(c['outcome']=='passed' for c in cases)
+dump('actual-case-outcomes.json',{'cases':cases,'case_count':57,'behavior_count':53,'ratchet_count':4,'preflight_estimate':55,'difference':'native literal/dual-receipt selector has three parameterizations (hello,/help,@file), two more than estimated. Exact selectors unchanged.','warnings':[{'category':'UserWarning','origin':'Tests/conftest.py:609 session-end FD check','start':14,'end':383,'growth':369,'limit':200,'attribution':'Session aggregate; warning reported on final screen ratchet node. No per-case cause established. No suppression, threshold change or replay.'}]})
+paths=['tldw_chatbook/Chat/console_chat_controller.py','Tests/Architecture/test_module_size_ratchet.py'];assert set(git('diff','--name-only').decode().splitlines())==set(paths);assert not git('diff','--cached','--name-only').strip()
+assert all(sha((W/p).read_bytes())==h for p,h in json.loads((O/'selected-argv.json').read_text())['source_hashes'].items())
+git('add','--',*paths)
+argv=['git','-c','gc.auto=0','commit','-m','style(console): normalize incoming trace-row calls and bank controller headroom'];dump('commit-argv.json',{'argv':argv,'staged_paths':paths})
+r=subprocess.run(argv,cwd=W,capture_output=True,text=True);(O/'commit.log').write_text(r.stdout+r.stderr);print(r.stdout+r.stderr);assert r.returncode==0
+dump('commit-and-clean-status.json',{'head':git('rev-parse','HEAD').decode().strip(),'parent':git('rev-parse','HEAD^').decode().strip(),'status':git('status','--porcelain').decode(),'source_hashes_match_execution':all(sha((W/p).read_bytes())==h for p,h in json.loads((O/'selected-argv.json').read_text())['source_hashes'].items())});assert not git('status','--porcelain').strip()

@@ -1,0 +1,181 @@
+........................................................................ [ 22%]
+........................................................................ [ 45%]
+..................FFFFF................................................. [ 67%]
+........................................................................ [ 90%]
+................................                                         [100%]
+=================================== FAILURES ===================================
+_ test_guarded_setup_rejects_completed_relevant_config_write[moonshot-region] __
+Tests/Chat/test_provider_setup_persistence.py:1927: in test_guarded_setup_rejects_completed_relevant_config_write
+    snapshot = config_module.get_atomic_config_snapshot()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7665: in get_atomic_config_snapshot
+    with _config_write_lock(config_path):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7168: in _config_write_lock
+    with _config_participants.operation(sys.modules[__name__], target=config_path):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_ test_guarded_setup_rejects_completed_relevant_config_write[huggingface-router] _
+Tests/Chat/test_provider_setup_persistence.py:1927: in test_guarded_setup_rejects_completed_relevant_config_write
+    snapshot = config_module.get_atomic_config_snapshot()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7665: in get_atomic_config_snapshot
+    with _config_write_lock(config_path):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7168: in _config_write_lock
+    with _config_participants.operation(sys.modules[__name__], target=config_path):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_ test_guarded_setup_rejects_completed_relevant_config_write[custom-endpoint] __
+Tests/Chat/test_provider_setup_persistence.py:1927: in test_guarded_setup_rejects_completed_relevant_config_write
+    snapshot = config_module.get_atomic_config_snapshot()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7665: in get_atomic_config_snapshot
+    with _config_write_lock(config_path):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7168: in _config_write_lock
+    with _config_participants.operation(sys.modules[__name__], target=config_path):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+______ test_guarded_setup_rejects_completed_stored_credential_replacement ______
+Tests/Chat/test_provider_setup_persistence.py:1975: in test_guarded_setup_rejects_completed_stored_credential_replacement
+    snapshot = config_module.get_atomic_config_snapshot()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7665: in get_atomic_config_snapshot
+    with _config_write_lock(config_path):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7168: in _config_write_lock
+    with _config_participants.operation(sys.modules[__name__], target=config_path):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+____________ test_guarded_setup_allows_unrelated_generation_advance ____________
+Tests/Chat/test_provider_setup_persistence.py:2029: in test_guarded_setup_allows_unrelated_generation_advance
+    snapshot = config_module.get_atomic_config_snapshot()
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7665: in get_atomic_config_snapshot
+    with _config_write_lock(config_path):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7168: in _config_write_lock
+    with _config_participants.operation(sys.modules[__name__], target=config_path):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-auth.xml -
+============================= slowest 25 durations =============================
+6.61s call     Tests/UI/test_settings_anthropic_auth_source.py::test_saving_the_subscription_writes_only_auth_source
+6.41s call     Tests/UI/test_settings_anthropic_auth_source.py::test_an_unsaved_subscription_choice_shows_in_the_credential_status
+6.35s call     Tests/UI/test_settings_anthropic_auth_source.py::test_revert_discards_an_unsaved_choice
+5.47s call     Tests/UI/test_settings_anthropic_auth_source.py::test_only_anthropic_shows_the_sign_in_select
+5.11s call     Tests/UI/test_settings_anthropic_auth_source.py::test_switching_a_saved_subscription_back_to_api_key_shows_the_stored_key
+5.06s call     Tests/UI/test_settings_anthropic_auth_source.py::test_an_unsaved_choice_survives_a_provider_switch
+4.84s call     Tests/UI/test_settings_anthropic_auth_source.py::test_a_saved_subscription_loads_and_readiness_previews_a_draft
+4.70s call     Tests/UI/test_settings_anthropic_auth_source.py::test_subscription_disables_but_keeps_the_key_rows_and_switching_back_restores_them
+4.69s call     Tests/UI/test_settings_anthropic_auth_source.py::test_an_untouched_select_creates_no_draft
+
+(16 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_provider_setup_persistence.py::test_guarded_setup_rejects_completed_relevant_config_write[moonshot-region]
+FAILED Tests/Chat/test_provider_setup_persistence.py::test_guarded_setup_rejects_completed_relevant_config_write[huggingface-router]
+FAILED Tests/Chat/test_provider_setup_persistence.py::test_guarded_setup_rejects_completed_relevant_config_write[custom-endpoint]
+FAILED Tests/Chat/test_provider_setup_persistence.py::test_guarded_setup_rejects_completed_stored_credential_replacement
+FAILED Tests/Chat/test_provider_setup_persistence.py::test_guarded_setup_allows_unrelated_generation_advance
+5 failed, 315 passed in 109.13s (0:01:49)

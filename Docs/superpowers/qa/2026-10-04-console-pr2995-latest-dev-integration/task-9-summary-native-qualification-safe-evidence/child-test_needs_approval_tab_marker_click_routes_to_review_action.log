@@ -1,0 +1,7 @@
+.                                                                        [100%]
+- generated xml file: /private/tmp/task9-native-green/test_needs_approval_tab_marker0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+4.31s call     Tests/UI/test_console_parallel_runs.py::test_needs_approval_tab_marker_click_routes_to_review_action
+
+(2 durations < 1s hidden.)
+1 passed in 6.08s

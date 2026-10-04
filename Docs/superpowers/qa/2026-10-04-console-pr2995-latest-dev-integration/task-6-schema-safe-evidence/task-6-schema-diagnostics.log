@@ -1,0 +1,2 @@
+no drift: the committed inventory matches the rebuild exactly.
+diagnostic inventory verified: 643 owners, 1434 TASK-492 calls, 56 TASK-31551 calls, 7610 TASK-494 calls, 16 sink files

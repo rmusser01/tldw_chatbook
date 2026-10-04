@@ -1,0 +1,21 @@
+{
+  "pinned_source": "df2ba424de63576d36d9c3e38387c84285303f1c",
+  "cwd": "/private/tmp/pr2995-task6/modelconfig-df2-baseline",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_console_native_chat_flow.py::test_conversation_settings_return_real_navigation_restores_fresh_console_modal",
+    "-q",
+    "--timeout=180",
+    "--tb=short",
+    "--basetemp=/private/tmp/pr2995-task6/modelconfig-df2-baseline/private-profile/pytest",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-modelconfig-settings-return-upstream-red.xml"
+  ],
+  "exit": 1,
+  "seconds": 10.217287082981784,
+  "test_sha256": "dc7fb3a3b2b29a32c2c89ec0b65b333d4f439be1b33689563ebd328809e0ff7d",
+  "source_unchanged": true,
+  "log": "task-6-modelconfig-settings-return-upstream-red.log",
+  "profile": "/private/tmp/pr2995-task6/modelconfig-df2-baseline/private-profile"
+}

@@ -1,0 +1,86 @@
+{
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "task9_sha256": "79ef60ea42e432ab007fbd60a05ab3484e0abfa1f24ea2239f38cbc4a272483b",
+    "current_sha256": "c69f2bfa373098ddcf181282de28fc6b04b7c143a11efed39f1ce586dacd85f8",
+    "bytes_exact": false,
+    "AST_exact": true,
+    "lines": 29327
+  },
+  "tldw_chatbook/Chat/console_interrupt_rounds.py": {
+    "task9_sha256": "d9d391123e31a409e000293acb1b335b423ddec0c0bd2ba9b81cc679def63487",
+    "current_sha256": "d9d391123e31a409e000293acb1b335b423ddec0c0bd2ba9b81cc679def63487",
+    "bytes_exact": true,
+    "AST_exact": true,
+    "lines": 6479
+  },
+  "tldw_chatbook/Chat/console_context_compaction.py": {
+    "task9_sha256": "652cf911ab2656063ee111de37f9576931873f01f4187890306c2c443e05326c",
+    "current_sha256": "652cf911ab2656063ee111de37f9576931873f01f4187890306c2c443e05326c",
+    "bytes_exact": true,
+    "AST_exact": true,
+    "lines": 4185
+  },
+  "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "task9_sha256": "614d8d266f6c69a7d7b0e59d682800b5709f4f45f3095c1c1d7ccaa32f8a5de8",
+    "current_sha256": "614d8d266f6c69a7d7b0e59d682800b5709f4f45f3095c1c1d7ccaa32f8a5de8",
+    "bytes_exact": true,
+    "AST_exact": true,
+    "lines": 25192
+  },
+  "tldw_chatbook/UI/Console_Modules/session.py": {
+    "task9_sha256": "9a6c31fdf30b3d478686d90a32775ce927002544ef428ec4b16bcaf43b30011f",
+    "current_sha256": "9a6c31fdf30b3d478686d90a32775ce927002544ef428ec4b16bcaf43b30011f",
+    "bytes_exact": true,
+    "AST_exact": true,
+    "lines": 6293
+  },
+  "tldw_chatbook/Chat/console_chat_fork.py": {
+    "task9_sha256": "55a16b1eefe7d9d50ef46644f4dbb7a760c7fc7a13c64ee1a088570c7d1cbc72",
+    "current_sha256": "55a16b1eefe7d9d50ef46644f4dbb7a760c7fc7a13c64ee1a088570c7d1cbc72",
+    "bytes_exact": true,
+    "AST_exact": true,
+    "lines": 1584
+  },
+  "Tests/Chat/console_interrupt_test_bindings.py": {
+    "task9_sha256": "19958b333dca44cbaf3cfbf7b078188729cb157e0565f33a574bd5a07a313b29",
+    "current_sha256": "19958b333dca44cbaf3cfbf7b078188729cb157e0565f33a574bd5a07a313b29",
+    "bytes_exact": true,
+    "AST_exact": true,
+    "lines": 324
+  },
+  "Tests/Chat/test_console_video_actions.py": {
+    "task9_sha256": "b226d1489d9248de9fe8976a599f8d7fea67185c05eacb1cf5397410b7b1fa3d",
+    "current_sha256": "b226d1489d9248de9fe8976a599f8d7fea67185c05eacb1cf5397410b7b1fa3d",
+    "bytes_exact": true,
+    "AST_exact": true,
+    "lines": 315
+  },
+  "Tests/private_profile.py": {
+    "bytes_exact": true,
+    "sha256": "ebf5502df17040c96ca88ff0dc0dd1a166a8870975de760600d9f5aa7af45539"
+  },
+  "Tests/conftest.py": {
+    "bytes_exact": true,
+    "sha256": "a065da11e2d3d6b6a5bda42f52e537c7619dc0bee509bf2d5669491c143fa148"
+  },
+  "Tests/UI/conftest.py": {
+    "bytes_exact": true,
+    "sha256": "200c8be77e4b91fa44b1d73502341fdffee9c6fa8c19e67e884a78d418920d9d"
+  },
+  "pyproject.toml": {
+    "bytes_exact": true,
+    "sha256": "5da3235e8cba334a49a99e9ef47b6cd23e7629a7ef854efe56d2db2450ef4b26"
+  },
+  "scripts/textual_await_dom_census.tsv": {
+    "bytes_exact": true,
+    "sha256": "ab293f1d5a812b69116256d79353b10d8ee2dec8fc44988f91c9de25dd74a085"
+  },
+  "scripts/textual_wait_push_census.tsv": {
+    "bytes_exact": true,
+    "sha256": "c66bf6bc25ceac6f7163e39e8e2ab6957664469e1191243ae0ccb04001d22cb9"
+  },
+  "Docs/security/production-diagnostic-inventory.json": {
+    "bytes_exact": true,
+    "sha256": "89a727133ab7e618f355f0e2d69f97af8d1ec1a8c44bc2a066feb73fe3eb6287"
+  }
+}

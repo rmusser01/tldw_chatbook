@@ -1,0 +1,131 @@
+{
+  "status": "Read-only proposal; NOT an implementation authorization or verified fix. Source/Git/tests unchanged in this follow-up.",
+  "source_freeze": "40b9aacaa21f7e8c6f2b1989efbb8e8021a1fe77",
+  "scope": "Only exact prepared new_chat record validation and its immediate fast-grant/final-decision callers; preserve raw fork and saved-draft/native acceptance behavior.",
+  "finding": {
+    "confirmed": "_chat_creation_record_locked calls _chat_creation_source_live while _pending_chat_create_lock is held. AgentRunsDB.get_run opens connection(), SELECTs agent_runs and hydrates the row; child validation calls it twice. This violates the literal no-registry-lock-spans-SQLite wording in the expanded brief and dated ADR219 clarification.",
+    "historical_caveat": "The feature wrapper already read these rows under this lock before factoring. Factoring removed recursive lock acquisition, but did not remove the inherited I/O critical section.",
+    "memory_only": "ConsoleAgentBridge.live_primary_run_id reads _live_primary_runs; _chat_create_source_is_open checks disposed, committed Close generations and store.sessions() without SQLite.",
+    "references": [
+      "tldw_chatbook/Chat/console_chat_controller.py:19268",
+      "tldw_chatbook/Chat/console_chat_controller.py:19517",
+      "tldw_chatbook/Chat/console_chat_controller.py:19870",
+      "tldw_chatbook/Chat/console_chat_controller.py:19999",
+      "tldw_chatbook/DB/AgentRuns_DB.py:2645",
+      "tldw_chatbook/Chat/console_agent_bridge.py:9321",
+      "backlog/decisions/219-console-chat-destinations-and-bounded-starts.md:145"
+    ]
+  },
+  "smallest_candidate": {
+    "representation": "Private per-call evidence object containing exact record identity, canonical captured payload, source object/incarnation/conversation identity, bridge/runs_db identity and copied run/parent row fields. It is created only inside controller validation, never a caller-provided authority boolean. No registry/global cache, new lock or RLock.",
+    "call_lock_graph": [
+      "A: acquire pending lock -> look up token, exact-compare all canonical payload fields, capture record/source/bridge/database identities and the canonical run/parent keys -> release. No storage calls or callbacks.",
+      "B: with NO registry lock held -> read run row and, for a child, parent row from captured runs_db using existing get_run behavior; copy needed values into private local evidence. Missing rows or exceptions fail closed. Do not carry evidence across human approval waits, durable writes, owner-loop scheduling or native acceptance.",
+      "C: acquire pending lock -> _chat_creation_record_locked(payload, evidence) compares current token entry IS captured record, exact payload equality again, same source/bridge/database/conversation/incarnation identity, and every live memory predicate plus captured row predicates -> either deny or atomically approve record and insert exact remembered grant -> release. No storage/callback/token.close in C.",
+      "Public _chat_creation_record orchestrates A -> B -> C and returns the record only after C. _chat_creation_source_live remains an unlocked storage-reading wrapper over the same split row/memory predicates; the locked validator must never invoke that wrapper.",
+      "request_chat_create_confirm fast grant obtains fresh A/B evidence immediately before its existing C decision/grant block. Final post-wait approval obtains NEW A/B evidence before its existing C block and compares against the original armed record identity; never reuse fast-grant evidence. A denied fork/round keeps existing behavior. Cleanup/token.close stays outside C.",
+      "Immediate pre-save record validation and later native currentness calls obtain fresh evidence through their existing entry points. Do not hold a registry lock during persistence or change the saved-draft/acceptance boundary."
+    ],
+    "predicate_inventory": [
+      "Every record payload key/value and exact creation token/record identity; source exists; source workspace equals captured source_workspace_id; captured source_cancel_event remains unset.",
+      "disposed/committed Close/run-revocation checks; source incarnation equals captured incarnation; captured run conversation equals current source persisted conversation; same current bridge/database/source identities across unlocked read.",
+      "Primary: current cancel event exists and is unset, current assistant ownership matches captured source_message_id, live_primary_run_id equals captured source_run_id, row agent_kind is primary, row status not in the existing exact set {done,error,cancelled,abandoned}. Do not silently extend that set.",
+      "Child: current_run_actor remains the actual actor, actor kind equals row kind equals subagent, actor run equals captured run, actor parent equals row parent equals captured parent, row status equals running, parent exists and parent conversation equals source conversation, destination same_workspace and mode draft. If child owns parent turn, the current parent cancel must exist and be unset; otherwise preserve surviving-child permission. Also preserve separately captured parent cancel event check.",
+      "Keep current_run_id()==source_run_id at actual preparation and all existing requester-kind/primary-only remembered grant checks; do not invent broader authority from a snapshot."
+    ]
+  },
+  "race_analysis": [
+    {
+      "race": "Close, _signal_stop, token retirement, explicit run revocation during B",
+      "handling": "C rechecks committed Close/revoked set and exact record identity. _signal_stop retires records under pending lock; _revoke_chat_create_rounds adds run fence and retires records under that lock. Atomic decision/grant insertion stays in the same C block as those final checks. No permit survives a completed retirement."
+    },
+    {
+      "race": "source replacement, incarnation/workspace/conversation change, bridge replacement, actor/assistant ownership/current primary/cancel change during B",
+      "handling": "C rereads those live values and rejects incompatible identities/values. A local copy of the old source is not sufficient. No SQL is needed for those checks."
+    },
+    {
+      "race": "run status or parent/run durable fields change after B reads but before C, without a controller revocation fence",
+      "handling": "UNRESOLVED for a strict current-at-decision requirement. Copied rows cannot detect this. Existing original lock also did not serialize database writers after SELECT, but moving SELECT outside adds a wait interval. Do not claim unchanged atomic database currentness or a proven no-widening result merely because all predicates were copied."
+    },
+    {
+      "race": "ordinary terminal writer vs explicit cancellation",
+      "evidence": "AgentService._cancel_fleet_handles revokes approvals; abandonment revokes before _set_terminal_status. But _set_terminal_status itself persists through set_terminal_with_step/set_status without a mandatory controller revocation call. AgentRunsDB.set_status does not acquire the registry lock. The inspected code does not establish a universal in-memory status generation/fence."
+    },
+    {
+      "race": "row reads from a held SQLite connection may themselves be stale",
+      "handling": "AgentRunsDB.get_run_fresh documents pinned-reader snapshots. This predates this proposal. Do not silently switch getter/connection contracts or claim repeat SELECT eliminates staleness."
+    }
+  ],
+  "decision_needed_before_implementation": {
+    "narrow_candidate": "If the intended existing contract is fresh per-phase durable observation plus atomic in-memory Close/revocation/exact-record checks, A/B/C is the smallest local refactor. Root/reviewer must explicitly accept its observation boundary before code changes; all memory and row checks remain present.",
+    "strict_alternative": "If latest database status must be guaranteed at the exact registry decision, A/B/C alone is insufficient. That requires a coordinated lifecycle invalidation/version contract or storage transaction protocol involving writers, beyond this scoped local correction. No such expansion is proposed as authorized work.",
+    "rejected_shortcuts": [
+      "Boolean source_live captured before lock",
+      "Trusting approved flag or old record after unlocked I/O",
+      "Reusing evidence across approval wait",
+      "Double SELECT or bounded retries presented as atomic proof",
+      "Holding registry lock during SELECT, transaction, save or UI callbacks",
+      "New lock/RLock/global cache",
+      "Broadening child/primary policy or suppressing failures"
+    ]
+  },
+  "deterministic_controls_proposed_not_run": [
+    {
+      "name": "storage_reads_never_hold_pending_lock",
+      "setup": "Real SQLite primary and surviving-child fixtures; instrument the actual get_run entry/connection call to record pending_lock.locked(); exercise wrapper, remembered-grant fast path and real post-wait exact approval. Assert every read observes unlocked registry, existing outcomes and exact grants unchanged."
+    },
+    {
+      "name": "close_and_revoke_finish_while_sql_read_is_parked",
+      "setup": "Park real get_run with Events before return; from another bounded worker perform real committed Close or revoke_approval_rounds_for_run. Assert Close/revoke completes before releasing SQL barrier, then confirmation denies, creates no grant, retires token and all workers terminate. Parameterize primary and trusted surviving child where relevant."
+    },
+    {
+      "name": "snapshot_to_decision_memory_invalidation",
+      "setup": "Park immediately after actual row read and before C. Use real token retirement/Close/revocation and separately mutate source incarnation/workspace/current ownership/cancel through existing test seams. C must deny each; positive same-actor primary and live surviving-child controls must allow with identical exact field checks."
+    },
+    {
+      "name": "post_wait_uses_new_rows",
+      "setup": "Arm actual prepared card, change real child row to terminal before approving, then release decision; the new post-wait B must observe terminal and deny with no standing grant. Independently test missing child/parent row, wrong conversation/parent and SQL error without bypassing preparation."
+    },
+    {
+      "name": "database_only_change_after_snapshot_characterization",
+      "setup": "Read actual running child row then park before C; set_status(done) on a separate real connection without controller revocation; release C. A/B/C alone can accept stale evidence. Treat this as an explicit contract blocker/characterization, not a passing denial test or a claim that Close fences cover every writer. If strict denial is required, obtain expanded scope before changing writers."
+    },
+    {
+      "name": "bounded_termination_and_existing_controls",
+      "setup": "Reuse the real worker decision/Close termination control and exact remembered-grant interleave test; use bounded subprocess teardown on failure. Preserve all original RED receipts. Requalify only changed validation callers plus directly affected saved-draft/native liveness controls after any authorized implementation; no broad suites."
+    }
+  ],
+  "fd_warnings": [
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-affected-v7sf5zvm/pytest/test_session_owned_pending_pro0/private-profile-process/pytest.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/907b89d38dec3bf3-pytest.log",
+      "sha256": "907b89d38dec3bf3d1719c6b70978c6bbd6509c2e3308e70e5f2d4af37347d0f",
+      "bytes": 2419,
+      "fd_delta": 265,
+      "start": 14,
+      "end": 279,
+      "limit": 200,
+      "node": "Tests/UI/test_console_pending_interrupt_projection.py::test_session_owned_pending_projection_journeys",
+      "interpretation": "Observed child-process warning; cause uninvestigated. No claim of a leak cause, no suppression or threshold change. Original receipt remains immutable.",
+      "copy_hash_verified": true
+    },
+    {
+      "original": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-surviving-child-hvhsq26a/pytest/test_session_close_pending_rac0/private-profile-process/pytest.log",
+      "copy": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/4ecf6a78f65b90b5-pytest.log",
+      "sha256": "4ecf6a78f65b90b56bd8c88007c6b078adc2a4938e59d3deb0183c715b9c66c8",
+      "bytes": 1208,
+      "fd_delta": 233,
+      "start": 14,
+      "end": 247,
+      "limit": 200,
+      "node": "Tests/UI/test_console_session_tab_close.py::test_session_close_pending_race_and_fleet_journeys",
+      "interpretation": "Observed child-process warning; cause uninvestigated. No claim of a leak cause, no suppression or threshold change. Original receipt remains immutable.",
+      "copy_hash_verified": true
+    }
+  ],
+  "limitations": [
+    "No tests executed in this follow-up. No source, Git, original report or safe manifest mutation. Only this requested proposal is written.",
+    "FD warning causes have not been investigated; passing child tests still emitted these warnings. Both original safe copies remain available.",
+    "This proposal is conditional, not proof that the strictest database/currentness interpretation can be achieved under the current local scope."
+  ]
+}

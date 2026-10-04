@@ -1,0 +1,35 @@
+{
+  "path": "Tests/Chat/test_provider_setup_persistence.py",
+  "before_sha256": "74a129d7cd862088088f668f648a91ff7f0b07b66b138a9b2c9727243f25d18c",
+  "after_sha256": "b5fcad63bf91636d2890b5ec90c19fe8218af6e9f66e5496661bbc535cb6821e",
+  "functions": [
+    "test_guarded_setup_rejects_completed_relevant_config_write",
+    "test_guarded_setup_rejects_completed_stored_credential_replacement",
+    "test_guarded_setup_allows_unrelated_generation_advance"
+  ],
+  "original_assertions_unchanged": true,
+  "assertions": {
+    "test_guarded_setup_rejects_completed_relevant_config_write": [
+      "Assert(test=Attribute(value=Call(func=Attribute(value=Name(id='config_module', ctx=Load()), attr='apply_settings_mutation_to_cli_config', ctx=Load()), args=[Dict(keys=[JoinedStr(values=[Constant(value='api_settings.'), FormattedValue(value=Name(id='provider', ctx=Load()), conversion=-1)])], values=[Name(id='changed_values', ctx=Load())])], keywords=[]), attr='fully_applied', ctx=Load()))",
+      "Assert(test=Compare(left=Attribute(value=Name(id='result', ctx=Load()), attr='conflict', ctx=Load()), ops=[Is()], comparators=[Constant(value=True)]))",
+      "Assert(test=Compare(left=Attribute(value=Name(id='result', ctx=Load()), attr='conflict_reason', ctx=Load()), ops=[Eq()], comparators=[Constant(value='identity_changed')]))",
+      "Assert(test=Compare(left=Subscript(value=Subscript(value=Subscript(value=Name(id='saved', ctx=Load()), slice=Constant(value='api_settings'), ctx=Load()), slice=Name(id='provider', ctx=Load()), ctx=Load()), slice=Name(id='changed_key', ctx=Load()), ctx=Load()), ops=[Eq()], comparators=[Subscript(value=Name(id='changed_values', ctx=Load()), slice=Name(id='changed_key', ctx=Load()), ctx=Load())]))",
+      "Assert(test=Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='saved', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='chat_defaults'), Dict(keys=[], values=[])], keywords=[]), attr='get', ctx=Load()), args=[Constant(value='model')], keywords=[]), ops=[NotEq()], comparators=[Constant(value='selected-model')]))"
+    ],
+    "test_guarded_setup_rejects_completed_stored_credential_replacement": [
+      "Assert(test=Compare(left=Attribute(value=Name(id='result', ctx=Load()), attr='conflict', ctx=Load()), ops=[Is()], comparators=[Constant(value=True)]))",
+      "Assert(test=Compare(left=Name(id='first_secret', ctx=Load()), ops=[NotIn()], comparators=[Name(id='rendered', ctx=Load())]))",
+      "Assert(test=Compare(left=Name(id='second_secret', ctx=Load()), ops=[NotIn()], comparators=[Name(id='rendered', ctx=Load())]))",
+      "Assert(test=Compare(left=Subscript(value=Subscript(value=Subscript(value=Name(id='saved', ctx=Load()), slice=Constant(value='api_settings'), ctx=Load()), slice=Constant(value='custom'), ctx=Load()), slice=Constant(value='api_key'), ctx=Load()), ops=[Eq()], comparators=[Name(id='second_secret', ctx=Load())]))",
+      "Assert(test=Compare(left=Name(id='first_secret', ctx=Load()), ops=[NotIn()], comparators=[Call(func=Attribute(value=Name(id='config_path', ctx=Load()), attr='read_text', ctx=Load()), args=[], keywords=[keyword(arg='encoding', value=Constant(value='utf-8'))])]))",
+      "Assert(test=Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='saved', ctx=Load()), attr='get', ctx=Load()), args=[Constant(value='chat_defaults'), Dict(keys=[], values=[])], keywords=[]), attr='get', ctx=Load()), args=[Constant(value='model')], keywords=[]), ops=[NotEq()], comparators=[Constant(value='selected-model')]))",
+      "Assert(test=Attribute(value=Call(func=Attribute(value=Name(id='config_module', ctx=Load()), attr='apply_settings_mutation_to_cli_config', ctx=Load()), args=[Dict(keys=[Constant(value='api_settings.custom')], values=[Dict(keys=[Constant(value='api_key')], values=[Name(id='second_secret', ctx=Load())])])], keywords=[]), attr='fully_applied', ctx=Load()))"
+    ],
+    "test_guarded_setup_allows_unrelated_generation_advance": [
+      "Assert(test=Attribute(value=Call(func=Attribute(value=Name(id='config_module', ctx=Load()), attr='apply_settings_mutation_to_cli_config', ctx=Load()), args=[Dict(keys=[Constant(value='general')], values=[Dict(keys=[Constant(value='users_name')], values=[Constant(value='after')])])], keywords=[]), attr='fully_applied', ctx=Load()))",
+      "Assert(test=Compare(left=Attribute(value=Name(id='result', ctx=Load()), attr='fully_applied', ctx=Load()), ops=[Is()], comparators=[Constant(value=True)]))",
+      "Assert(test=Compare(left=Subscript(value=Subscript(value=Name(id='saved', ctx=Load()), slice=Constant(value='general'), ctx=Load()), slice=Constant(value='users_name'), ctx=Load()), ops=[Eq()], comparators=[Constant(value='after')]))",
+      "Assert(test=Compare(left=Subscript(value=Subscript(value=Name(id='saved', ctx=Load()), slice=Constant(value='chat_defaults'), ctx=Load()), slice=Constant(value='model'), ctx=Load()), ops=[Eq()], comparators=[Constant(value='selected-model')]))"
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+.                                                                        [100%]
+- generated xml file: /private/tmp/task9-remaining-safe/test_park_toast_survives_a_pos0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+4.39s call     Tests/UI/test_console_parallel_runs.py::test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_round
+
+(2 durations < 1s hidden.)
+1 passed in 6.60s

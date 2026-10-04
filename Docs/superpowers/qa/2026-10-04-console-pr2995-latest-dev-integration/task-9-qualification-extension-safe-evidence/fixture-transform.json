@@ -1,0 +1,36 @@
+{
+  "metadata_head": "6c9b5aa1c7cfc53f85dae7e6b1d2aad8db30714f",
+  "checks": [
+    {
+      "path": "Tests/Chat/test_console_interrupt_attention.py",
+      "before_sha256": "bae938d98f425d0102517fd3d574cdb85dfb4dad4020120c961bbf815d43b1b0",
+      "after_sha256": "a3b0b09a9c7bfec4efef440b6f2efecf8651ab65d397b824914c095c042df376",
+      "selected_functions": 5,
+      "reverse_authorized_edits_entire_module_ast_equal": true
+    },
+    {
+      "path": "Tests/Chat/test_console_ask_user_round.py",
+      "before_sha256": "605b0fe6b2b2b00074ad719e8c7d98424f7b354c9c2b3a7902a5d04c5d33209e",
+      "after_sha256": "cdade2bf2cf82cd76ba52905498068d255087d35ef57dc304267d5433d0ffde3",
+      "selected_functions": 9,
+      "reverse_authorized_edits_entire_module_ast_equal": true
+    },
+    {
+      "path": "Tests/Chat/test_console_skill_script_confirm.py",
+      "before_sha256": "854e8d8fa1986fb3bb7d1a256975186afa4d84245415b629092274aabe7f3f07",
+      "after_sha256": "2a9168251952823fb550c10dbe1484886e58c5f40187d571394726964a55a44f",
+      "selected_functions": 14,
+      "reverse_authorized_edits_entire_module_ast_equal": true
+    },
+    {
+      "path": "Tests/Chat/test_console_worktree_merge_confirm.py",
+      "before_sha256": "f482f439c9a842c11922bf549c5b223a6ed8b7c435e8db89cd042af3a6a7fcf1",
+      "after_sha256": "ae6072085f9b3d5f380d81650dc85bd925887e2d671ef72243af8a7c8ed445d5",
+      "selected_functions": 6,
+      "reverse_authorized_edits_entire_module_ast_equal": true
+    }
+  ],
+  "original_38_pins_verified": true,
+  "reader_decorators": 32,
+  "private_profile_decorators_and_request_and_witnesses": 2
+}

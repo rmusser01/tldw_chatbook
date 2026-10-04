@@ -1,0 +1,32 @@
+{
+  "commits": [
+    {
+      "sha": "0b95d7aedb47a3bb82d5d58d52030496581e555f",
+      "subject": "fix(console): fence public fork mutations and drain name persistence",
+      "paths": [
+        "A\tTests/Chat/test_console_fork_public_boundaries.py",
+        "M\tTests/Chat/test_console_fork_transition_census.py",
+        "M\ttldw_chatbook/Chat/console_chat_controller.py",
+        "M\ttldw_chatbook/Chat/console_chat_store.py",
+        "M\ttldw_chatbook/UI/Screens/chat_screen.py"
+      ]
+    },
+    {
+      "sha": "4a769ebb5353a68dc69c42d9d16042e2afa58833",
+      "subject": "docs(console): allocate ADR219 for bounded chat starts",
+      "paths": [
+        "M\tDocs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md",
+        "R099\tbacklog/decisions/211-console-chat-destinations-and-bounded-starts.md\tbacklog/decisions/219-console-chat-destinations-and-bounded-starts.md",
+        "M\tbacklog/decisions/README.md",
+        "M\ttldw_chatbook/Backup_Recovery/sqlite_validation.py",
+        "M\ttldw_chatbook/DB/AgentRuns_DB.py",
+        "M\ttldw_chatbook/DB/migrations/agent_runs_v21_to_v22_chat_starts.sql",
+        "M\ttldw_chatbook/DB/recovery_core_schema.py",
+        "M\ttldw_chatbook/DB/recovery_operations.py"
+      ]
+    }
+  ],
+  "git_warnings": "First source commit emitted existing gc.log / too many unreachable loose objects warnings. No cleanup, gc or prune command was performed. Subsequent commit disabled automatic gc with -c gc.auto=0.",
+  "active_test_sessions": [],
+  "pending": "root metadata checkpoint before latest-dev rebase"
+}

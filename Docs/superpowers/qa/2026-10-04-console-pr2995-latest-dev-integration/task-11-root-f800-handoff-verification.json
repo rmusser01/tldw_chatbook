@@ -1,0 +1,9 @@
+{
+  "head": "084b5618ded0f144ae01e643a224d09c554abe3d",
+  "safe_files": 122,
+  "top_hashes": 3,
+  "exact_union_paths": 29797,
+  "qa_paths": 12337,
+  "all_exact": true,
+  "tests_rerun": false
+}

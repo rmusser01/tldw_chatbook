@@ -1,0 +1,10 @@
+{
+  "owned_pytest_matches": [],
+  "owned_batch_sessions_completed": [
+    29549,
+    21630
+  ],
+  "failed_parent_pid_closed": 74436,
+  "failed_child_pid_closed": 77232,
+  "other_agents_processes_untouched": true
+}

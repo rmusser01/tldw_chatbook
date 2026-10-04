@@ -1,0 +1,87 @@
+{
+  "base": "67fc5310471823262eb6ce344a539e699784bed8",
+  "head": "f1f80847a410525ce1b00d27ea0e8be824a98422",
+  "ahead_by": 9,
+  "files": [
+    {
+      "filename": "Docs/User_Guide/library/media-and-conversations.md",
+      "status": "modified",
+      "additions": 7,
+      "deletions": 0
+    },
+    {
+      "filename": "Docs/security/production-diagnostic-inventory.json",
+      "status": "modified",
+      "additions": 7,
+      "deletions": 0
+    },
+    {
+      "filename": "Tests/Architecture/test_library_modules_size_ratchet.py",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 1
+    },
+    {
+      "filename": "Tests/UI/test_library_conversation_reader.py",
+      "status": "modified",
+      "additions": 9,
+      "deletions": 1
+    },
+    {
+      "filename": "Tests/UI/test_library_conversation_reader_freshness.py",
+      "status": "added",
+      "additions": 489,
+      "deletions": 0
+    },
+    {
+      "filename": "Tests/UI/test_library_reader_console_delete_refresh.py",
+      "status": "added",
+      "additions": 297,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-33628.10 - Library-reader-keeps-a-stale-view-after-a-Console-Delete-until-restart.md",
+      "status": "modified",
+      "additions": 87,
+      "deletions": 4
+    },
+    {
+      "filename": "scripts/ui_pr_gate_census.txt",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 0
+    },
+    {
+      "filename": "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 17
+    },
+    {
+      "filename": "tldw_chatbook/UI/Library_Modules/library_conversation_reader_freshness.py",
+      "status": "added",
+      "additions": 180,
+      "deletions": 0
+    },
+    {
+      "filename": "tldw_chatbook/UI/Library_Modules/library_conversations_state.py",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 0
+    }
+  ],
+  "production_patches": [
+    {
+      "filename": "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py",
+      "patch": "@@ -462,26 +462,14 @@ def _conversation_reader_service(self) -> Any | None:\n         return None\n \n     def _ensure_library_conversation_reader_selection(self) -> None:\n-        \"\"\"Start the initial selected-row read once the permanent pane mounts.\"\"\"\n+        \"\"\"Load the selected row, or re-check its loaded transcript.\"\"\"\n         conversation_id = self._selected_conversation_id\n         if not conversation_id or self._library_conversations_select_mode:\n             return\n-        state = self._library_conversation_reader_state\n-        record_version = self._conversation_reader_record_version(\n-            self._conversation_reader_record(conversation_id)\n-        )\n-        if state.selected_id == conversation_id and (\n-            (\n-                state.loading\n-                and (record_version is None or state.selected_version == record_version)\n-            )\n-            or (\n-                state.loaded_actions_eligible\n-                and (record_version is None or state.loaded_version == record_version)\n-            )\n-        ):\n-            return\n-        self._start_library_conversation_reader_selection(conversation_id)\n+        # Off the boot path: Library's reader is the only caller.\n+        from .library_conversation_reader_freshness import ensure_reader_current\n+\n+        ensure_reader_current(self, conversation_id)\n \n     def _start_library_conversation_reader_selection(\n         self, conversation_id: str\n@@ -767,6 +755,9 @@ async def _load_library_conversation_reader(\n \n             state = self._library_conversation_reader_state\n             if state.complete:\n+                from .library_conversation_reader_freshness import recheck_settled_load\n+\n+                recheck_settled_load(self)\n                 return\n             next_offset = len(state.messages)\n             if next_offset <= request.message_offset:"
+    },
+    {
+      "filename": "tldw_chatbook/UI/Library_Modules/library_conversation_reader_freshness.py",
+      "patch": "@@ -0,0 +1,180 @@\n+\"\"\"Keep an open Conversations transcript current with the list beside it.\n+\n+TASK-33628.10. Library is a reused screen, so every return visit re-reads\n+the Conversations list (``on_screen_resume`` -> page request -> apply ->\n+``_ensure_library_conversation_reader_selection``). The reader skipped its\n+own re-read whenever the list record's conversation ``version`` matched the\n+loaded one. A message delete, Undo, edit or send never changes that\n+version, so after a Console Delete the list showed the new count while the\n+reader kept its earlier load (\"4 of 4 messages\") until restart.\n+\n+The saved transcript carries its own change token: ``message_epoch`` (a hash\n+of the conversation's message row count and version sum, which every\n+reader-visible message write moves) beside the exact ``message_total``. Once\n+per list read, a loaded transcript is re-checked with a one-message,\n+one-character read of those two values. When either moved, the reader's\n+existing fenced pipeline reloads it in place, keeping Read/Info and the Find\n+query. A load started during this list read is normally not re-checked: it is\n+already current. (One narrow exception: a row press that lands while a version\n+bootstrap is still pending sits below that bootstrap's +2 mark, so it costs one\n+extra bounded re-check and no reload when nothing moved.) The mark is ``(list request generation, reader generation)``, and a\n+loaded generation at or past the mark's covers loads this module started and\n+loads a row press started straight through the reader pipeline alike. A load\n+already in flight when the list read applies may have read its pages before\n+the write, so the mark is set just past it and ``recheck_settled_load`` (which\n+the reader pipeline calls when a load completes) re-checks it once it settles.\n+\"\"\"\n+\n+from __future__ import annotations\n+\n+from collections.abc import Mapping\n+from typing import Any\n+\n+from loguru import logger\n+\n+from ...Library.library_conversation_reader_state import ConversationReaderState\n+from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_CONVERSATIONS\n+\n+#: Worker group for the re-check; a newer re-check replaces an older one.\n+RECHECK_WORKER_GROUP = \"library_conversation_reader_recheck\"\n+\n+\n+def ensure_reader_current(controller: Any, conversation_id: str) -> None:\n+    \"\"\"Load the selected conversation, or re-check the transcript loaded for it.\n+\n+    Args:\n+        controller: The ``LibraryConversationReaderController``.\n+        conversation_id: The list's selected conversation.\n+    \"\"\"\n+    state = controller._library_conversation_reader_state\n+    record_version = controller._conversation_reader_record_version(\n+        controller._conversation_reader_record(conversation_id)\n+    )\n+    list_read = controller._library_conversation_request_generation\n+    if state.selected_id == conversation_id and (\n+        (\n+            state.loading\n+            and (record_version is None or state.selected_version == record_version)\n+        )\n+        or (\n+            state.loaded_actions_eligible\n+            and (record_version is None or state.loaded_version == record_version)\n+        )\n+    ):\n+        checked = controller._library_conversation_reader_checked_read\n+        if state.loading and not (\n+            checked is not None\n+            and checked[0] == list_read\n+            and state.generation >= checked[1]\n+        ):\n+            # This load predates the list read, so its pages may have been\n+            # read before a Console write. ``recheck_settled_load`` re-checks\n+            # it when it settles; a version bootstrap selects once more first.\n+            controller._library_conversation_reader_checked_read = (\n+                list_read,\n+                state.generation + (1 if state.selected_version is not None else 2),\n+            )\n+        elif state.loaded_actions_eligible and not (\n+            checked is not None\n+            and checked[0] == list_read\n+            and state.loaded_generation >= checked[1]\n+        ):\n+            _start_recheck(controller, list_read, state)\n+        return\n+    controller._start_library_conversation_reader_selection(conversation_id)\n+    controller._library_conversation_reader_checked_read = (\n+        list_read,\n+        controller._library_conversation_reader_state.generation,\n+    )\n+\n+\n+def recheck_settled_load(controller: Any) -> None:\n+    \"\"\"Re-check a just-settled load that predates the current list read.\n+\n+    The reader pipeline calls this when a load completes. A load the current\n+    list read found already in flight sits below its mark; so does a row press\n+    that lands while a version bootstrap is still pending (the +2 mark), which\n+    costs one extra bounded re-check and no reload when nothing moved. Every\n+    other load is at or past the mark and needs nothing.\n+\n+    Args:\n+        controller: The ``LibraryConversationReaderController``.\n+    \"\"\"\n+    state = controller._library_conversation_reader_state\n+    checked = controller._library_conversation_reader_checked_read\n+    list_read = controller._library_conversation_request_generation\n+    if (\n+        checked is not None\n+        and checked[0] == list_read\n+        and state.loaded_actions_eligible\n+        and state.loaded_generation < checked[1]\n+    ):\n+        _start_recheck(controller, list_read, state)\n+\n+\n+def _start_recheck(\n+    controller: Any, list_read: int, state: ConversationReaderState\n+) -> None:\n+    \"\"\"Mark ``state``'s transcript checked for ``list_read`` and re-check it.\"\"\"\n+    controller._library_conversation_reader_checked_read = (\n+        list_read,\n+        state.loaded_generation,\n+    )\n+    controller.run_worker(\n+        recheck_loaded_transcript(controller, state),\n+        exclusive=True,\n+        group=RECHECK_WORKER_GROUP,\n+    )\n+\n+\n+async def recheck_loaded_transcript(\n+    controller: Any, checked: ConversationReaderState\n+) -> None:\n+    \"\"\"Reload ``checked``'s transcript when its saved epoch or total moved.\n+\n+    A failed or missing read keeps the transcript on screen and shows the\n+    user nothing: the next list read re-checks, a deleted conversation is\n+    the list's own absence check to settle, and the reader reports failures\n+    of the reload it starts. A failed read logs one warning naming only the\n+    exception type: storage errors can quote saved message text, so neither\n+    the exception's message nor its traceback is logged.\n+\n+    Args:\n+        controller: The ``LibraryConversationReaderController``.\n+        checked: The eligible reader state the re-check was started for.\n+    \"\"\"\n+    service = controller._conversation_reader_service()\n+    read = getattr(service, \"get_library_conversation_messages\", None)\n+    if not callable(read) or checked.loaded_id is None:\n+        return\n+    try:\n+        saved = await controller._run_library_service_call(\n+            read,\n+            checked.loaded_id,\n+            message_offset=0,\n+            message_limit=1,\n+            max_chars=1,\n+        )\n+    except Exception as exc:  # noqa: BLE001 - the next list read re-checks again\n+        logger.warning(\n+            \"Library conversation reader re-check failed; exception_type={}\",\n+            type(exc).__name__,\n+        )\n+        return\n+    current = controller._library_conversation_reader_state\n+    if not (\n+        controller._library_conversation_reader_mounted_authority\n+        and controller._library_selected_row_id == LIBRARY_ROW_BROWSE_CONVERSATIONS\n+        and not controller._library_conversations_select_mode\n+        and current.loaded_actions_eligible\n+        and current.loaded_id == checked.loaded_id\n+        and current.loaded_generation == checked.loaded_generation\n+        and isinstance(saved, Mapping)\n+    ):\n+        return\n+    if (\n+        saved.get(\"message_epoch\") == current.message_epoch\n+        and saved.get(\"message_total\") == current.message_total\n+    ):\n+        return\n+    controller._start_library_conversation_reader_selection(checked.loaded_id)"
+    },
+    {
+      "filename": "tldw_chatbook/UI/Library_Modules/library_conversations_state.py",
+      "patch": "@@ -121,6 +121,10 @@ class LibraryConversationsState:\n     reader_loaded_metadata: Mapping[str, Any] = field(default_factory=dict)\n     reader_selected_metadata: Mapping[str, Any] = field(default_factory=dict)\n     find_focus_intent: tuple[int, int, str] | None = None\n+    #: (list request generation, reader generation): a transcript loaded at\n+    #: or past that reader generation is current for that list read\n+    #: (TASK-33628.10).\n+    reader_checked_read: tuple[int, int] | None = None\n     reader_mounted_authority: bool = False\n     deleted_selection_id: str = \"\"\n     projection: str = \"\""
+    }
+  ]
+}

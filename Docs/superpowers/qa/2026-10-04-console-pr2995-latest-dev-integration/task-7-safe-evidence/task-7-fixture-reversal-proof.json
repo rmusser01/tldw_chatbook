@@ -1,0 +1,38 @@
+{
+  "Tests/UI/test_console_provider_apply_defaults_flow.py": {
+    "before": "9c688ff6ed2ae513e2a705fff980d5431c49288cc156666d21ba10c4fd5d44f7",
+    "after": "70d8b8ba2400f6fc86241475938fcbbe2a76d424d8f9ef43ba74eae7e6cf701b",
+    "full_ast_reversal_exact": true,
+    "functions": [
+      "test_vllm_console_handoff_replaces_only_active_session_without_config_write",
+      "test_vllm_console_session_endpoint_never_enters_conversation_metadata",
+      "test_vllm_console_unsaved_session_first_persistence_excludes_endpoint",
+      "test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_defaults",
+      "test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy",
+      "test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure",
+      "test_vllm_console_handoff_blocks_endpoint_when_durable_rollback_fails",
+      "test_vllm_console_real_metadata_conflict_blocks_detached_send",
+      "test_vllm_console_handoff_restores_projections_when_rollback_sync_fails",
+      "test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay",
+      "test_vllm_console_failed_release_survives_for_later_readoption"
+    ]
+  },
+  "Tests/UI/test_llamacpp_consumers.py": {
+    "before": "24cb3ec726a7a3ab0a57f3d3de79f9e8aee9b8768e1510ae04777937a8b65a40",
+    "after": "81e80ad4f2a5ae5e8b9362be6c3ca64811762d409a82a24363fb88fc3bb3cfe0",
+    "full_ast_reversal_exact": true,
+    "functions": [
+      "test_console_adopts_verified_llamacpp_for_active_session_only",
+      "test_stale_llamacpp_target_cannot_change_console_or_settings",
+      "test_llamacpp_console_adoption_failure_restores_session_and_requeues"
+    ]
+  },
+  "Tests/UI/test_llamacpp_setup_view.py": {
+    "before": "a7b76c358b39acfdded4373e5d18b94e3d283e8e727478deb8c439adec9c00f1",
+    "after": "d5c82fbc427e5eaf95e861b2bb8d1520469ae5ae1f35ddf4670d711f34f86cc7",
+    "full_ast_reversal_exact": true,
+    "functions": [
+      "test_real_models_pane_preserves_sources_snapshots_and_navigates_to_console"
+    ]
+  }
+}

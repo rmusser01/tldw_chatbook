@@ -1,0 +1,30 @@
+........................................................................ [ 96%]
+...                                                                      [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-queue.xml -
+============================= slowest 25 durations =============================
+22.01s call     Tests/UI/test_console_prompt_queue.py::test_shelf_pause_after_shelf_resume_lets_the_queued_turn_finish
+17.93s call     Tests/UI/test_console_prompt_queue.py::test_dirty_queue_edit_vetoes_navigation_and_preserves_text
+16.67s call     Tests/UI/test_console_prompt_queue.py::test_mounted_shelf_naming_a_failed_turn_keeps_retry_on_screen[size1-False]
+14.94s call     Tests/UI/test_console_prompt_queue.py::test_mounted_shelf_and_neighboring_composer_fit_terminal[size1]
+14.78s call     Tests/UI/test_console_prompt_queue.py::test_wired_queue_rejects_wrong_owner_before_draft_or_queue_mutation[race]
+14.37s call     Tests/UI/test_console_prompt_queue.py::test_mounted_shelf_and_neighboring_composer_fit_terminal[size3]
+14.20s call     Tests/UI/test_console_prompt_queue.py::test_wired_queue_admission_freezes_view_source_filter[busy]
+14.00s call     Tests/UI/test_console_prompt_queue.py::test_wired_queue_admission_freezes_view_source_filter[edit]
+13.90s call     Tests/UI/test_console_prompt_queue.py::test_mounted_shelf_naming_a_failed_turn_keeps_retry_on_screen[size0-True]
+13.67s call     Tests/UI/test_console_prompt_queue.py::test_mounted_shelf_and_neighboring_composer_fit_terminal[size4]
+13.29s call     Tests/UI/test_console_prompt_queue.py::test_wired_queue_rejects_wrong_owner_before_draft_or_queue_mutation[busy]
+13.25s call     Tests/UI/test_console_prompt_queue.py::test_navigation_confirmation_is_pure_and_preserves_manager_edit
+13.06s call     Tests/UI/test_console_prompt_queue.py::test_mounted_shelf_and_neighboring_composer_fit_terminal[size2]
+12.87s call     Tests/UI/test_console_prompt_queue.py::test_full_console_manager_mounts_entry_children_before_live_list_insert
+12.68s call     Tests/UI/test_console_prompt_queue.py::test_wired_queue_rejects_wrong_owner_before_draft_or_queue_mutation[edit]
+12.51s call     Tests/UI/test_console_prompt_queue.py::test_mounted_shelf_and_neighboring_composer_fit_terminal[size0]
+12.42s call     Tests/UI/test_console_prompt_queue.py::test_wired_queue_admission_freezes_view_source_filter[race]
+12.15s call     Tests/UI/test_console_prompt_queue.py::test_mounted_shelf_naming_a_failed_turn_keeps_retry_on_screen[size2-False]
+2.12s call     Tests/Chat/test_console_dispatch_queue_recovery.py::test_ephemeral_recovery_is_lost_only_with_app_runtime_store
+1.88s call     Tests/Chat/test_console_dispatch_queue_recovery.py::test_ephemeral_send_crosses_started_before_provider_then_settles_in_memory
+1.57s call     Tests/Chat/test_console_dispatch_queue_recovery.py::test_ephemeral_recovery_is_store_owned_and_writes_no_checkpoint
+1.53s call     Tests/Chat/test_console_dispatch_queue_recovery.py::test_ephemeral_discard_settles_in_memory_without_checkpoint_write
+1.32s call     Tests/Chat/test_console_dispatch_queue_recovery.py::test_unresolved_ephemeral_recovery_blocks_promotion_before_any_write
+
+(2 durations < 1s hidden.)
+75 passed in 294.84s (0:04:54)

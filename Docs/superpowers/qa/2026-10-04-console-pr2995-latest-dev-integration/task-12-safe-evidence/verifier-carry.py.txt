@@ -1,0 +1,33 @@
+import sys,json,hashlib,ast,importlib.util
+sys.path.insert(0,'/private/tmp/pr2995-task12');from run import W,S,O,dump,git
+F='99bd5b13db620435a8824b7599708e85ca8009d9';D='7d155170dc95557736a239a1ce7427981f4d50ec'
+def sha(b):return hashlib.sha256(b).hexdigest()
+def load_script(name):
+ p=W/'scripts'/name;spec=importlib.util.spec_from_file_location(name[:-3],p);m=importlib.util.module_from_spec(spec);sys.modules[spec.name]=m;spec.loader.exec_module(m);return m
+m=json.loads((S/'task-12-preflight-overlap-map.json').read_text());files=[r['path'] for r in m['paths'] if r['path'].startswith('tldw_chatbook/')]
+diag=load_script('check_persistent_diagnostic_inventory.py');worker=load_script('check_textual_worker_contract.py');rows={}
+for p in files:
+ original=git('show',F+':'+p).decode();current=(W/p).read_text();sources=[original,current];projections=[];wr=[]
+ for src in sources:
+  tree=ast.parse(src);projections.append(diag._scan_parsed_source(src,tree));wr.append({'W001':worker.collect_w001(tree,W/p),'W002':worker.collect_w002(tree,W/p),'screen_worker_calls':sorted(ast.dump(n,include_attributes=False) for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr in ('push_screen','push_screen_wait','run_worker'))})
+ rows[p]={'diagnostic_counts':[list(map(len,x)) for x in projections],'diagnostic_exact':projections[0]==projections[1],'diagnostic_projection_sha256':[sha(json.dumps(x,sort_keys=True).encode()) for x in projections],'worker_projection_exact':wr[0]==wr[1],'worker_projections':wr}
+ assert rows[p]['diagnostic_exact'],('diagnostic',p)
+ assert rows[p]['worker_projection_exact'],('worker',p)
+ print('Completed source projection:',p,flush=True)
+dump('diagnostic-worker-intersection-carry.json',{'rows':rows,'meaning':'Only the eleven changed production modules scanned. Exact diagnostic/sink/path projections and W001/W002 plus screen/worker call ASTs carry earlier source qualification. Root owns final full worker/loading check.'})
+q=json.loads((S/'task-11-safe-evidence/final-historical-qa-carry.json').read_text());rt={x.split(b'\t')[1].decode():x.split(b'\t')[0].split()[2].decode() for x in git('ls-tree','-rz','HEAD').split(b'\0') if x};qr={};target='Docs/QA/task-31245/switcher-reuse-and-mode-follow-up.md'
+for p,r in q['paths'].items():
+ qr[p]={'historical_blob':r['head'],'final_blob':rt[p],'exact':r['head']==rt[p]};assert qr[p]['exact'] or p==target,p
+old=git('show',F+':'+target);new=(W/target).read_bytes();up=git('show',D+':'+target);assert new==up and new.startswith(old) and len(old)==7982 and len(new[len(old):])==4417
+dump('historical-qa-carry.json',{'count':len(qr),'unaffected_exact':sum(x['exact'] for x in qr.values()),'paths':qr,'exception':{'path':target,'original_bytes':len(old),'original_sha256':sha(old),'original_exact_prefix':True,'append_bytes':len(new)-len(old),'append_lines':len(new[len(old):].splitlines()),'append_sha256':sha(new[len(old):]),'final_exact_upstream':True,'final_sha256':sha(new)}})
+pins=json.loads((O/'initial-task9-pins.json').read_text());allpins=dict(pins); groups={'Task9':len(pins)}
+for fn in ['task-10-safe-evidence-map.json','task-11-safe-evidence-manifest.json','task-11-newest-dev-safe-evidence-manifest.json']:
+ v=json.loads((S/fn).read_text());print('MANIFEST',fn,list(v)[:5]);group={}
+ for field in ['files','top_level']:
+  for p,row in v.get(field,{}).items():
+   h=row['sha256'] if isinstance(row,dict) else row;group[p]=h
+ for p,h in group.items():assert sha((S/p).read_bytes())==h,p
+ allpins.update(group);allpins[fn]=sha((S/fn).read_bytes());groups[fn]=len(group)
+for p,h in allpins.items():assert sha((S/p).read_bytes())==h,p
+dump('prior-safe-artifact-carry.json',{'groups':groups,'count':len(allpins),'all_exact':True,'pins':allpins})
+print('CARRY',groups,'QA',len(qr),'DIAGNOSTICS',len(rows))

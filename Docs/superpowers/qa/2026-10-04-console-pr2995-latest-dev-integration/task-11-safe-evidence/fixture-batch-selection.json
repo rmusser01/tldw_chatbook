@@ -1,0 +1,17 @@
+{
+  "nodes": [
+    "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_survives_preaccept_failure",
+    "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_never_releases_newer_launch",
+    "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance",
+    "Tests/Chat/test_console_automatic_library_preparation.py::test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch",
+    "Tests/Chat/test_console_automatic_library_preparation.py::test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged",
+    "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_releases_only_its_frozen_evidence_lease",
+    "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_scrubs_content_when_evidence_release_raises",
+    "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_discard_releases_only_exact_frozen_evidence_once",
+    "Tests/Chat/test_console_durable_turn_fix_round1.py::test_explicit_frozen_evidence_makes_checkpoint_unreconstructable",
+    "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_release_fault_cannot_skip_owner_cleanup",
+    "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_releases_exact_evidence_once_and_preserves_replacement"
+  ],
+  "parameter_expansion": "recovery retry and bypass both; 11 functions / 12 cases",
+  "reason": "First completed qualification of remaining selected owners after bounded canonical profile repair; existing bootstrap durable node unchanged"
+}

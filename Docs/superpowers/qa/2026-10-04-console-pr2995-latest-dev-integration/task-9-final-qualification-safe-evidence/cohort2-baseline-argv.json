@@ -1,0 +1,74 @@
+{
+  "cwd": "/private/tmp/task9-original-cd15",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:randomly",
+    "--basetemp=/private/tmp/task9-final-baseline-attribution",
+    "Tests/Chat/test_permission_summary_wiring.py::test_fallback_fires_when_missing_and_always_fires",
+    "Tests/Chat/test_permission_summary_wiring.py::test_parked_round_fires_once_on_attach_remount",
+    "Tests/Chat/test_permission_summary_wiring.py::test_consumed_flag_prevents_refire_on_attach_remount",
+    "Tests/Chat/test_permission_summary_wiring.py::test_switch_session_promotes_parked_round_and_fires_once",
+    "Tests/Chat/test_permission_summary_wiring.py::test_remount_head_helper_fires_promoted_sibling_once",
+    "Tests/Chat/test_console_local_review_hook.py::test_default_chat_local_provider_uses_scratch_not_config_or_cwd",
+    "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_wires_the_sessions_exact_todo_store",
+    "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_without_bridge_registers_no_todo_spec",
+    "Tests/Chat/test_console_local_review_hook.py::test_hook_clears_stamps_before_gating",
+    "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_eligible",
+    "Tests/Agents/test_builtin_gate_real_tool_coverage.py::test_create_note_persists_through_a_real_db_on_a_worker_thread",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-9-final-qualification-safe-evidence/cohort2-baseline.xml"
+  ],
+  "environment_override": {
+    "PYTHONPATH": "/private/tmp/task9-original-cd15"
+  },
+  "recorded_before_execution": true,
+  "representative_unchanged_assertion_maps": [
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_fallback_fires_when_missing_and_always_fires",
+      "original_test_ast_equal": true
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_parked_round_fires_once_on_attach_remount",
+      "original_test_ast_equal": true
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_consumed_flag_prevents_refire_on_attach_remount",
+      "original_test_ast_equal": true
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_switch_session_promotes_parked_round_and_fires_once",
+      "original_test_ast_equal": true
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_remount_head_helper_fires_promoted_sibling_once",
+      "original_test_ast_equal": true
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_default_chat_local_provider_uses_scratch_not_config_or_cwd",
+      "original_test_ast_equal": true
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_wires_the_sessions_exact_todo_store",
+      "original_test_ast_equal": true
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_without_bridge_registers_no_todo_spec",
+      "original_test_ast_equal": true
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_hook_clears_stamps_before_gating",
+      "original_test_ast_equal": true
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_eligible",
+      "original_test_ast_equal": true
+    },
+    {
+      "node": "Tests/Agents/test_builtin_gate_real_tool_coverage.py::test_create_note_persists_through_a_real_db_on_a_worker_thread",
+      "original_test_ast_equal": true
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "pinned_dev": "67fc5310471823262eb6ce344a539e699784bed8",
+  "archive_file_equal_git_blob": true,
+  "case": "test_session_identity_survives_a_navigation_for_an_unsaved_chat",
+  "case_AST_equal_pinned_dev": true,
+  "current_file_sha256": "866206da3c37096903476093191bc4372fa9d03192741933cdea7befe12a7499",
+  "baseline_file_sha256": "49651a2e7796c9b6c37cde396a9284caf0b4a640024d13b5bf753b902398d2cd",
+  "original_assertions": [
+    "Assert(test=Compare(left=Attribute(value=Name(id='first', ctx=Load()), attr='persisted_conversation_id', ctx=Load()), ops=[In()], comparators=[Tuple(elts=[Constant(value=None), Constant(value='')], ctx=Load())]), msg=Constant(value='this test is about an UNSAVED conversation'))",
+    "Assert(test=Compare(left=Name(id='chat2', ctx=Load()), ops=[IsNot()], comparators=[Name(id='chat', ctx=Load())]))",
+    "Assert(test=Compare(left=Call(func=Name(id='list', ctx=Load()), args=[Name(id='after', ctx=Load())], keywords=[]), ops=[Eq()], comparators=[Name(id='before_ids', ctx=Load())]), msg=JoinedStr(values=[Constant(value='session identity changed across the navigation: '), FormattedValue(value=Name(id='before_ids', ctx=Load()), conversion=-1), Constant(value=' -> '), FormattedValue(value=Call(func=Name(id='list', ctx=Load()), args=[Name(id='after', ctx=Load())], keywords=[]), conversion=-1)]))",
+    "Assert(test=Compare(left=Attribute(value=Name(id='store2', ctx=Load()), attr='active_session_id', ctx=Load()), ops=[Eq()], comparators=[Attribute(value=Name(id='first', ctx=Load()), attr='id', ctx=Load())]), msg=Constant(value='the active session changed across the navigation'))",
+    "Assert(test=Compare(left=Attribute(value=Subscript(value=Name(id='after', ctx=Load()), slice=Attribute(value=Name(id='first', ctx=Load()), attr='id', ctx=Load()), ctx=Load()), attr='draft', ctx=Load()), ops=[Eq()], comparators=[Constant(value='half')]), msg=JoinedStr(values=[Constant(value=\"an unsaved session's draft did not survive the navigation: \"), FormattedValue(value=Attribute(value=Subscript(value=Name(id='after', ctx=Load()), slice=Attribute(value=Name(id='first', ctx=Load()), attr='id', ctx=Load()), ctx=Load()), attr='draft', ctx=Load()), conversion=114)]))",
+    "Assert(test=Compare(left=Attribute(value=Subscript(value=Name(id='after', ctx=Load()), slice=Attribute(value=Name(id='second', ctx=Load()), attr='id', ctx=Load()), ctx=Load()), attr='title', ctx=Load()), ops=[Eq()], comparators=[Constant(value='Second')]))",
+    "Assert(test=Compare(left=Subscript(value=Name(id='after', ctx=Load()), slice=Attribute(value=Name(id='first', ctx=Load()), attr='id', ctx=Load()), ctx=Load()), ops=[Is()], comparators=[Name(id='first', ctx=Load())]), msg=Constant(value='the returning Console got a REBUILT session object for an unsaved conversation -- a staged wake holding the old reference would target a dead id'))"
+  ],
+  "failure": "raw_source_selection_changed before app construction; both integrated and immutable pinned-dev receipts retained",
+  "shared_fixtures": {
+    "Tests/conftest.py": "bc80d81eac678770afa35d364429849613428c8f81aa3f513d2317c29865203c",
+    "Tests/UI/conftest.py": "200c8be77e4b91fa44b1d73502341fdffee9c6fa8c19e67e884a78d418920d9d",
+    "Tests/UI/app_factory.py": "cad6360a8ee103a0f41c1cd4930e604efa8040f271a2df1ee0f4066351f30905",
+    "Tests/private_profile.py": "ebf5502df17040c96ca88ff0dc0dd1a166a8870975de760600d9f5aa7af45539"
+  },
+  "repair": {
+    "before_sha256": "866206da3c37096903476093191bc4372fa9d03192741933cdea7befe12a7499",
+    "after_sha256": "5150c0b901793b795643a4672e2dad49e5705b20b19beac6cdb1f9159564078f",
+    "entire_function_body_AST_unchanged": true,
+    "all_other_function_ASTs_unchanged": true,
+    "all_other_function_count": 14,
+    "delta": "existing private_profile_test import/decorator; request fixture parameter on exact one function"
+  }
+}

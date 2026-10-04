@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="33.186" timestamp="2026-10-04T04:22:52.625386-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.UI.test_console_session_tab_close" name="test_session_close_pending_race_and_fleet_journeys" time="31.933"><failure message="AttributeError: 'NoneType' object has no attribute 'create_conversation'">request = &lt;FixtureRequest for &lt;Coroutine test_session_close_pending_race_and_fleet_journeys&gt;&gt;
+tmp_path = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...llowup-uukh3i4r/pytest/test_session_close_pending_rac0/private-profile-process/pytest/test_session_close_pending_rac0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x1135ee630&gt;
+
+    @pytest.mark.asyncio
+    @private_profile_test
+    async def test_session_close_pending_race_and_fleet_journeys(
+        request: pytest.FixtureRequest,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -&gt; None:
+        """Run pending, race, geometry and fleet scenarios with fresh owners.
+    
+        Args:
+            request: Pytest request selecting the isolated private-profile child.
+            tmp_path: Parent directory for the fleet scenarios' private databases.
+            monkeypatch: Fixture providing a separate patch context per scenario.
+        """
+        fleet_dir = tmp_path / "fleet-close"
+        fleet_dir.mkdir()
+        for verify, kwargs in (
+            (
+                _verify_background_pending_close_names_consequences_and_cancels_only_its_owner,
+                {},
+            ),
+            (_verify_background_pending_close_releases_round_without_an_active_turn, {}),
+            (
+                _verify_chat_create_enrichment_cannot_arm_after_its_session_closes,
+                {"monkeypatch": monkeypatch},
+            ),
+            (
+                _verify_all_close_consequences_keep_named_title_and_actions_painted_at_80x24,
+                {},
+            ),
+            (
+                _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry,
+                {"tmp_path": fleet_dir, "monkeypatch": monkeypatch},
+            ),
+        ):
+            try:
+                with monkeypatch.context() as patch:
+                    if "monkeypatch" in kwargs:
+                        kwargs["monkeypatch"] = patch
+&gt;                   await verify(request, **kwargs)
+
+Tests/UI/test_console_session_tab_close.py:1612: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/UI/test_console_session_tab_close.py:1011: in _verify_chat_create_enrichment_cannot_arm_after_its_session_closes
+    pending = await _arm_pending_round(controller, "chat_create", doomed.id)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Tests/UI/test_console_session_tab_close.py:702: in _arm_pending_round
+    prepared, creation_run = _prepare_close_new_chat(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+controller = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x122bb2ab0&gt;
+session_id = 'b8443b26-b6cb-4086-920d-bef05ce1b663'
+title = 'private close chat'
+
+    def _prepare_close_new_chat(controller, session_id, title):
+        """Prepare the exact live primary request used by Close integration fixtures."""
+        from types import SimpleNamespace
+        from tldw_chatbook.Agents.run_context import use_run_id
+        from tldw_chatbook.Chat.console_chat_store import ConsoleMessageRole
+        from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    
+        source = controller.store._sessions[session_id]
+        if not source.persisted_conversation_id:
+&gt;           source.persisted_conversation_id = controller.store.persistence.create_conversation(
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                conversation_title=source.title
+            )
+E           AttributeError: 'NoneType' object has no attribute 'create_conversation'
+
+Tests/Chat/test_console_chat_create_integration.py:829: AttributeError</failure></testcase></testsuite></testsuites>

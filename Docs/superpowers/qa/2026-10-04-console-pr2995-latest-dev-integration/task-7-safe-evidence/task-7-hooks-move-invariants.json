@@ -1,0 +1,22 @@
+{
+  "base": "1ce569523be10db32d07976e694ead217f6f562b",
+  "adapter_body_AST_exact_after_screen_parameter_rename": true,
+  "all_other_screen_methods_AST_exact": true,
+  "only_changed_remaining_screen_method": "on_console_workbench_action_requested",
+  "removed_methods": [
+    "_open_console_hooks_review",
+    "_request_console_hooks_review"
+  ],
+  "all_original_hooks_test_functions_AST_exact_after_direct_callback_retarget": true,
+  "ChatScreen": {
+    "lines": 25188,
+    "caps": [
+      25218,
+      759
+    ],
+    "unique_method_names": 725,
+    "method_definitions": 759,
+    "metric_note": "The ratchet counts definitions including getter/setter pairs; 725 unique names is not the method-cap metric."
+  },
+  "hooks_controller_blob_exact": true
+}

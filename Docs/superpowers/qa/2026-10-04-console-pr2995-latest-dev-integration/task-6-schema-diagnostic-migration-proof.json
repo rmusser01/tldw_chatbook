@@ -1,0 +1,35 @@
+{
+  "base": "392655567f7754a394ea1e7aba8d75e81d2cadb2",
+  "dev": "057e62eaec5343ffce9445cfb32881e756dd7634",
+  "inventory_sha256": "178c5aa054211076d7d1a9088e35e96f9a00a22e13f79916f34e324c433909fd",
+  "owner_union_exact": true,
+  "retained_feature_overrides": [
+    {
+      "call_count": 90,
+      "diagnostic_digest": "a4d37de7d146dc4948a7",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    },
+    {
+      "call_count": 6,
+      "diagnostic_digest": "ec602b5bd3b0fafe72cc",
+      "owner": "TASK-492",
+      "path": "tldw_chatbook/Chat/console_chat_start.py",
+      "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+    }
+  ],
+  "other_top_level_fields_equal_dev": {
+    "classification_rules": true,
+    "path_privacy_candidates": true,
+    "path_privacy_rules": true,
+    "persistent_sink_topology": true,
+    "reviewed_exclusions": true,
+    "schema_version": true,
+    "scope": true
+  },
+  "upstream_notes_method_byte_exact": true,
+  "native_sql_delta": "filename and temporary table suffix v76\u2192v77 only",
+  "shipped_notes_sql_sha256": "93b669a6caf9ce6e967c4eba7d23f2b1b7efdaf4db2a2cbf504304351b625d59",
+  "native_sql_sha256": "423978f7c23189e36ce4c5172cfd6d2b887abcc1f6abc057f86f61e55ca17fa8"
+}

@@ -1,0 +1,10 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.                                                                        [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-modelconfig-ui-seams-profile-r2qcyu4j/pytest/test_session_identity_survives0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+10.29s call     Tests/UI/test_console_store_continuity.py::test_session_identity_survives_a_navigation_for_an_unsaved_chat
+
+(2 durations < 1s hidden.)
+1 passed in 12.68s

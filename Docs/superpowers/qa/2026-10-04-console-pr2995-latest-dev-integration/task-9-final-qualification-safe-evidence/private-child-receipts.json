@@ -1,0 +1,89 @@
+{
+  "copies": [
+    {
+      "source_report": "/private/tmp/task9-final-4/test_a_window_the_reservation_0/private-profile-process/pytest.xml",
+      "destination_stem": "cohort4-private-child-001",
+      "case_names": [
+        "test_a_window_the_reservation_fills_alerts_with_max_tokens[False]"
+      ]
+    },
+    {
+      "source_report": "/private/tmp/task9-final-4/test_a_window_the_reservation_1/private-profile-process/pytest.xml",
+      "destination_stem": "cohort4-private-child-002",
+      "case_names": [
+        "test_a_window_the_reservation_fills_alerts_with_max_tokens[True]"
+      ]
+    },
+    {
+      "source_report": "/private/tmp/task9-final-4/test_an_estimated_window_takes0/private-profile-process/pytest.xml",
+      "destination_stem": "cohort4-private-child-003",
+      "case_names": [
+        "test_an_estimated_window_takes_the_same_route_as_a_verified_one[ask]"
+      ]
+    },
+    {
+      "source_report": "/private/tmp/task9-final-4/test_an_estimated_window_takes1/private-profile-process/pytest.xml",
+      "destination_stem": "cohort4-private-child-004",
+      "case_names": [
+        "test_an_estimated_window_takes_the_same_route_as_a_verified_one[automatic]"
+      ]
+    },
+    {
+      "source_report": "/private/tmp/task9-final-4/test_mandatory_context_over_th0/private-profile-process/pytest.xml",
+      "destination_stem": "cohort4-private-child-005",
+      "case_names": [
+        "test_mandatory_context_over_the_window_alerts_with_what_fills_it[False]"
+      ]
+    },
+    {
+      "source_report": "/private/tmp/task9-final-4/test_mandatory_context_over_th1/private-profile-process/pytest.xml",
+      "destination_stem": "cohort4-private-child-006",
+      "case_names": [
+        "test_mandatory_context_over_the_window_alerts_with_what_fills_it[True]"
+      ]
+    },
+    {
+      "source_report": "/private/tmp/task9-final-4/test_the_hold_calls_its_budget0/private-profile-process/pytest.xml",
+      "destination_stem": "cohort4-private-child-007",
+      "case_names": [
+        "test_the_hold_calls_its_budget_an_estimate_only_when_the_window_sets_it[custom-False]"
+      ]
+    },
+    {
+      "source_report": "/private/tmp/task9-final-4/test_the_hold_calls_its_budget1/private-profile-process/pytest.xml",
+      "destination_stem": "cohort4-private-child-008",
+      "case_names": [
+        "test_the_hold_calls_its_budget_an_estimate_only_when_the_window_sets_it[automatic-True]"
+      ]
+    },
+    {
+      "source_report": "/private/tmp/task9-final-5/test_an_ask_hold_shows_the_car0/private-profile-process/pytest.xml",
+      "destination_stem": "cohort5-private-child-001",
+      "case_names": [
+        "test_an_ask_hold_shows_the_card_and_each_action_completes[compact_and_send]"
+      ]
+    },
+    {
+      "source_report": "/private/tmp/task9-final-5/test_an_ask_hold_shows_the_car1/private-profile-process/pytest.xml",
+      "destination_stem": "cohort5-private-child-002",
+      "case_names": [
+        "test_an_ask_hold_shows_the_card_and_each_action_completes[send_without_compacting]"
+      ]
+    },
+    {
+      "source_report": "/private/tmp/task9-final-5/test_an_ask_hold_shows_the_car2/private-profile-process/pytest.xml",
+      "destination_stem": "cohort5-private-child-003",
+      "case_names": [
+        "test_an_ask_hold_shows_the_card_and_each_action_completes[cancel]"
+      ]
+    },
+    {
+      "source_report": "/private/tmp/task9-final-5/test_session_owned_pending_pro0/private-profile-process/pytest.xml",
+      "destination_stem": "cohort5-private-child-004",
+      "case_names": [
+        "test_session_owned_pending_projection_journeys"
+      ]
+    }
+  ],
+  "all_child_logs_and_warnings_retained": true
+}

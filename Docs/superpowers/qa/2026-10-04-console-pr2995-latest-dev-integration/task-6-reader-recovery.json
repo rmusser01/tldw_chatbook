@@ -1,0 +1,27 @@
+{
+  "base": "fb43008890e6e406505ede734633b01402bab4ec",
+  "olddev": "67fc5310471823262eb6ce344a539e699784bed8",
+  "dev": "f1f80847a410525ce1b00d27ea0e8be824a98422",
+  "ref": "refs/heads/codex/pr2995-task6-pre-reader-fb43008890",
+  "bundle": "/private/tmp/pr2995-task6/pre-reader-fb43008890.bundle",
+  "mode": "0o600",
+  "verify_stdout": "The bundle contains this ref:\nfb43008890e6e406505ede734633b01402bab4ec refs/heads/codex/pr2995-task6-pre-reader-fb43008890\nThe bundle records a complete history.\nThe bundle uses this hash algorithm: sha1\n",
+  "verify_stderr": "/private/tmp/pr2995-task6/pre-reader-fb43008890.bundle is okay\n",
+  "verify_exit": 0,
+  "overlaps": [
+    "Docs/security/production-diagnostic-inventory.json"
+  ],
+  "upstream_paths": [
+    "Docs/User_Guide/library/media-and-conversations.md",
+    "Docs/security/production-diagnostic-inventory.json",
+    "Tests/Architecture/test_library_modules_size_ratchet.py",
+    "Tests/UI/test_library_conversation_reader.py",
+    "Tests/UI/test_library_conversation_reader_freshness.py",
+    "Tests/UI/test_library_reader_console_delete_refresh.py",
+    "backlog/tasks/task-33628.10 - Library-reader-keeps-a-stale-view-after-a-Console-Delete-until-restart.md",
+    "scripts/ui_pr_gate_census.txt",
+    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py",
+    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_freshness.py",
+    "tldw_chatbook/UI/Library_Modules/library_conversations_state.py"
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "extra_actual": [
+    {
+      "name": "commit_console_settings_live",
+      "line": 8616,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    },
+    {
+      "name": "persist_console_settings_commit_serialized",
+      "line": 8790,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    },
+    {
+      "name": "prepare_session_user_display_name_override_for_commit",
+      "line": 12793,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    },
+    {
+      "name": "publish_durable_voice_pair",
+      "line": 16363,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    },
+    {
+      "name": "publish_first_persisted_conversation",
+      "line": 8479,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    },
+    {
+      "name": "publish_temporary_voice_pair",
+      "line": 16325,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    },
+    {
+      "name": "rebind_persisted_conversation",
+      "line": 8498,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    },
+    {
+      "name": "reconcile_durable_turn_settings",
+      "line": 6754,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    },
+    {
+      "name": "retry_console_settings_persistence",
+      "line": 8829,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    },
+    {
+      "name": "retry_voice_promotion_recovery",
+      "line": 16141,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    },
+    {
+      "name": "seed_persona_roleplay",
+      "line": 12964,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    },
+    {
+      "name": "set_session_assistant_name",
+      "line": 13161,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    },
+    {
+      "name": "set_session_user_display_name_override_for_commit",
+      "line": 12770,
+      "ast_equal_dev": true,
+      "has_boundary": false,
+      "transitioned": false
+    }
+  ],
+  "missing_actual": [],
+  "current_external_failure": "controller new-chat restore created_session.project_instruction_state",
+  "dev_external_failure": "hydration rollback call count 3 != 2"
+}

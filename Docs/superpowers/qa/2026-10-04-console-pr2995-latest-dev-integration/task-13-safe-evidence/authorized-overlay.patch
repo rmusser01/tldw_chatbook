@@ -1,0 +1,37 @@
+diff --git a/Tests/Architecture/test_module_size_ratchet.py b/Tests/Architecture/test_module_size_ratchet.py
+index ecd1540b50..6e3ab3ed44 100644
+--- a/Tests/Architecture/test_module_size_ratchet.py
++++ b/Tests/Architecture/test_module_size_ratchet.py
+@@ -97,7 +97,7 @@ _BUDGETS: dict[str, int] = {
+     # TASK-33011: TldwCli's per-feature glue moved verbatim out of app.py
+     # (FeatureGlueMixin); governed there, so governed here.
+     "tldw_chatbook/app_feature_glue.py": 742,
+-    "tldw_chatbook/Chat/console_chat_controller.py": 29367,
++    "tldw_chatbook/Chat/console_chat_controller.py": 29301,
+     # ADR-220: existing interrupt and compaction owners gain explicit coordination.
+     "tldw_chatbook/Chat/console_interrupt_rounds.py": 6479,
+     "tldw_chatbook/Chat/console_context_compaction.py": 4185,
+diff --git a/tldw_chatbook/Chat/console_chat_controller.py b/tldw_chatbook/Chat/console_chat_controller.py
+index bd5000c48f..16c2d8c721 100644
+--- a/tldw_chatbook/Chat/console_chat_controller.py
++++ b/tldw_chatbook/Chat/console_chat_controller.py
+@@ -2718,7 +2718,7 @@ def _build_speculative_voice_capture_request(
+     """Build one durable provisional request with complete capture provenance."""
+     from .console_trace_row_sources import unsaved_trace_artifact_source
+ 
+-    rows =tuple(dict(row) for row in messages)
++    rows = tuple(dict(row) for row in messages)
+     if not rows or rows[-1].get("role") != ConsoleMessageRole.USER.value:
+         raise TraceProvenancePersistenceError()
+     descriptors: list[TraceProvenance] = []
+@@ -11835,7 +11835,9 @@ class ConsoleChatController:
+                 persisted_id = committed_user_id
+             else:
+                 try:  # TASK-33621.2: a row that omits saved media is not that revision
+-                    persisted_id = saved_message_id(self.store.get_message(owner_id), visible)
++                    persisted_id = saved_message_id(
++                        self.store.get_message(owner_id), visible
++                    )
+                 except KeyError:
+                     persisted_id = None
+             if type(persisted_id) is str and persisted_id:

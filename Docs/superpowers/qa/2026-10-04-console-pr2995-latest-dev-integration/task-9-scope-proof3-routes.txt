@@ -1,0 +1,79 @@
+f800952214:Tests/Backup_Recovery/test_console_maintenance.py:81:        assert (await controller.compact_context_now(session))[0] is False
+f800952214:Tests/Chat/test_console_automatic_library_preparation.py:1419:        controller, "_apply_conversation_memory_preflight", refuse_preflight
+f800952214:Tests/Chat/test_console_automatic_library_preparation.py:2254:            controller, "_apply_conversation_memory_preflight", hold_preflight
+f800952214:Tests/Chat/test_console_automatic_library_preparation.py:2366:            controller, "_apply_conversation_memory_preflight", hold_preflight
+f800952214:Tests/Chat/test_console_automatic_library_preparation.py:2670:            controller, "_apply_conversation_memory_preflight", hold_preflight
+f800952214:Tests/Chat/test_console_automatic_library_preparation.py:2751:                controller, "_apply_conversation_memory_preflight", hold_preflight
+f800952214:Tests/Chat/test_console_automatic_library_preparation.py:2939:        controller, "_apply_conversation_memory_preflight", hold_preflight
+f800952214:Tests/Chat/test_console_automatic_library_preparation.py:3024:        controller, "_apply_conversation_memory_preflight", hold_preflight
+f800952214:Tests/Chat/test_console_automatic_library_preparation.py:3236:            controller, "_apply_conversation_memory_preflight", hold_preflight
+f800952214:Tests/Chat/test_console_compaction_live_session.py:271:    succeeded, copy = await controller.compact_context_now("session-1")
+f800952214:Tests/Chat/test_console_compaction_live_session.py:350:    succeeded, copy = await controller.compact_context_now("session-1")
+f800952214:Tests/Chat/test_console_compaction_live_session.py:434:    succeeded, copy = await controller.compact_context_now("session-1")
+f800952214:Tests/Chat/test_console_compaction_live_session.py:455:    succeeded, _copy = await controller.compact_context_now("session-1")
+f800952214:Tests/Chat/test_console_compaction_live_session.py:491:    succeeded, _copy = await controller.compact_context_now("session-1")
+f800952214:Tests/Chat/test_console_compaction_live_session.py:520:    succeeded, copy = await controller.compact_context_now("session-1")
+f800952214:Tests/Chat/test_console_compaction_live_session.py:623:    await controller.compact_context_now("session-1", micro=True)
+f800952214:Tests/Chat/test_console_compaction_live_session.py:625:    await controller.compact_context_now("session-1", micro=True)
+f800952214:Tests/Chat/test_console_compaction_live_session.py:681:    await controller.compact_context_now("session-1", micro=micro)
+f800952214:Tests/Chat/test_console_compaction_live_session.py:694:        await controller.compact_context_now("session-1", micro=True)
+f800952214:Tests/Chat/test_console_compaction_live_session.py:719:    succeeded, _copy = await controller.compact_context_now("session-1")
+f800952214:Tests/Chat/test_console_compaction_live_session.py:744:    succeeded, _copy = await controller.compact_context_now("session-1")
+f800952214:Tests/Chat/test_console_compaction_live_session.py:776:    succeeded, _copy = await controller.compact_context_now("session-1")
+f800952214:Tests/Chat/test_console_compaction_live_session.py:816:    succeeded, _copy = await controller.compact_context_now("session-1")
+f800952214:Tests/Chat/test_console_context_budget_routes.py:8:These drive the real ``_apply_conversation_memory_preflight`` with the real
+f800952214:Tests/Chat/test_console_context_budget_routes.py:32:    return await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_budget_routes.py:167:    await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:3571:    output, result = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:3630:    baseline, baseline_result = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:3641:    output, result = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:3673:    output, result = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:3708:    output, result = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:3759:    output, result = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:3800:    output, result = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:3838:    output, result = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:3861:    _output, result = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:3892:    output, result = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:3908:        ) = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:3933:        await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_context_compaction.py:4006:    succeeded, visible_copy = await controller.compact_context_now(session.id)
+f800952214:Tests/Chat/test_console_first_chat_handoff.py:140:        controller.compact_context_now(session.id), timeout=5.0
+f800952214:Tests/Chat/test_console_local_citation_boundary.py:1762:            "_apply_conversation_memory_preflight",
+f800952214:Tests/Chat/test_console_rewind_summarize.py:883:    preflight, blocked = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_rewind_summarize.py:925:    projected, blocked = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_rewind_summarize.py:982:    projected, blocked = await controller._apply_conversation_memory_preflight(
+f800952214:Tests/Chat/test_console_rewind_summarize.py:989:    compacted, _copy = await controller.compact_context_now(session.id)
+f800952214:Tests/Chat/test_console_session_settings.py:3858:            monkeypatch.setattr(controller, "compact_context_now", compact_now)
+f800952214:Tests/UI/test_console_session_settings.py:1189:        compact_context_now=lambda _session_id: None,
+f800952214:Tests/UI/test_console_session_settings.py:1257:        compact_context_now=lambda _session_id: None,
+f800952214:Tests/UI/test_console_session_settings.py:1334:        compact_context_now=lambda _session_id: None,
+f800952214:Tests/UI/test_console_session_settings.py:1433:        compact_context_now=lambda _session_id: None,
+f800952214:Tests/UI/test_console_session_settings.py:1487:        compact_context_now=lambda _session_id: None,
+f800952214:Tests/UI/test_console_session_settings.py:1559:        compact_context_now=lambda _session_id: None,
+f800952214:Tests/UI/test_console_session_settings.py:1608:        compact_context_now=lambda _session_id: None,
+f800952214:Tests/UI/test_console_session_settings.py:1683:        compact_context_now=lambda _session_id: None,
+f800952214:Tests/UI/test_console_session_settings.py:7999:        compact_context_now=lambda _session_id: None,
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:275:# inside `_apply_conversation_memory_preflight`, its only user, so it stays
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:9123:        compacted, visible_copy = await self.compact_context_now(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:26814:                await self.compact_context_now(session_id, micro=True)
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:26827:    async def compact_context_now(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:26876:        _messages, blocked_result = await self._apply_conversation_memory_preflight(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:26969:    def _context_overflow_alert(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:27024:    def _assess_request_capacity_only(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:27089:            self._context_overflow_alert(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:27122:        hold, alert = await self._assess_context_compaction(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:27158:    async def _assess_context_compaction(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:27192:            await self._apply_conversation_memory_preflight(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:27271:    async def _apply_conversation_memory_preflight(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:27339:                self._assess_request_capacity_only(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:27501:                self._context_overflow_alert(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:27539:            alert = self._context_overflow_alert(
+f800952214:tldw_chatbook/Chat/console_chat_controller.py:28094:            ) = await self._apply_conversation_memory_preflight(
+f800952214:tldw_chatbook/UI/Screens/chat_screen.py:3415:            compact_now=lambda: controller.compact_context_now(session_id),
+f800952214:tldw_chatbook/UI/Screens/chat_screen.py:16096:    async def _dispatch_console_trace_recovery(
+f800952214:tldw_chatbook/UI/Screens/chat_screen.py:16131:    def _console_trace_recovery_state(self) -> Any:
+f800952214:tldw_chatbook/UI/Screens/chat_screen.py:16171:            trace_recovery_state_builder=self._console_trace_recovery_state,
+f800952214:tldw_chatbook/UI/Screens/chat_screen.py:16172:            on_trace_recovery_action=self._dispatch_console_trace_recovery,
+f800952214:tldw_chatbook/Widgets/Console/console_settings_modal.py:3745:    def _compact_context_now(self, event: Button.Pressed) -> None:
+f800952214:tldw_chatbook/Widgets/Console/console_settings_modal.py:3756:            self._compact_context_now_worker(),
+f800952214:tldw_chatbook/Widgets/Console/console_settings_modal.py:3762:    async def _compact_context_now_worker(self) -> None:

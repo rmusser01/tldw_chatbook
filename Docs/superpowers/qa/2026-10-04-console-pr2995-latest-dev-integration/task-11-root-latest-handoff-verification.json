@@ -1,0 +1,10 @@
+{
+  "head": "a5bce3259069cf5bf59aba8b9a8f9cf025dcfd75",
+  "extension_safe_files": 21,
+  "extension_top_hashes": 2,
+  "original_safe_files": 122,
+  "original_top_hashes": 3,
+  "all_hashes_exact": true,
+  "tests_rerun": false,
+  "tool_note": "Initial verifier assumed row objects; extension manifest uses digest strings. Failure occurred before tracked mutations; corrected and verified every hash."
+}

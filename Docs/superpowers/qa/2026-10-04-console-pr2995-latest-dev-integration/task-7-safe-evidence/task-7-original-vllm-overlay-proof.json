@@ -1,0 +1,26 @@
+{
+  "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "source": "df2ba424de63576d36d9c3e38387c84285303f1c",
+    "sha256": "a68562f22131de43b22809a49feb162bdeca938c8ee4c07cdf94835338d926d8"
+  },
+  "tldw_chatbook/UI/Console_Modules/session.py": {
+    "source": "df2ba424de63576d36d9c3e38387c84285303f1c",
+    "sha256": "8e33e9bab83559396016ca30f8c3f8d0303b1a8076f31ff9dd2af4b603e37102"
+  },
+  "tldw_chatbook/UI/Console_Modules/wiring.py": {
+    "source": "df2ba424de63576d36d9c3e38387c84285303f1c",
+    "sha256": "ac845d46de21dfc2c8e9784e7c73063a420f32c4b4a4b8fe6525e751d1e75c0a"
+  },
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "source": "df2ba424de63576d36d9c3e38387c84285303f1c",
+    "sha256": "fb467f22fdf387ebbe983cb3ed4f990738b602c2199f7f7e7384fdc98c3288ac"
+  },
+  "tldw_chatbook/Chat/console_chat_store.py": {
+    "source": "df2ba424de63576d36d9c3e38387c84285303f1c",
+    "sha256": "522e9a9f641656c5fcaa12300d86abab9fbd07b38324fdec60dd34c34abcd8b1"
+  },
+  "Tests/UI/test_console_provider_apply_defaults_flow.py": {
+    "overlay": "approved private_profile_test/request prologues only; exact original function body/assertions proved task-7-functional-test-source-proof.json",
+    "sha256": "ae770fa91f94874fdee70afdd22be0a573f0af81b7b7a349d6f1e51450c2bb4f"
+  }
+}

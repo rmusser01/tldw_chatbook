@@ -1,0 +1,171 @@
+[
+  {
+    "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_never_releases_newer_launch",
+    "exit": 2,
+    "observations": [
+      {
+        "kind": "TASK11_SNAPSHOT",
+        "exception_type": "RecoveryRequired",
+        "fixed_reason_equal": true
+      },
+      {
+        "kind": "TASK11_ADMISSION",
+        "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_never_releases_newer_launch",
+        "admitted": false,
+        "fixed_unavailable_copy_equal": true
+      }
+    ]
+  },
+  {
+    "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance",
+    "exit": 2,
+    "observations": [
+      {
+        "kind": "TASK11_SNAPSHOT",
+        "exception_type": "RecoveryRequired",
+        "fixed_reason_equal": true
+      },
+      {
+        "kind": "TASK11_ADMISSION",
+        "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance",
+        "admitted": false,
+        "fixed_unavailable_copy_equal": true
+      }
+    ]
+  },
+  {
+    "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch",
+    "exit": 2,
+    "observations": [
+      {
+        "kind": "TASK11_SNAPSHOT",
+        "exception_type": "RecoveryRequired",
+        "fixed_reason_equal": true
+      },
+      {
+        "kind": "TASK11_ADMISSION",
+        "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch",
+        "admitted": false,
+        "fixed_unavailable_copy_equal": true
+      }
+    ]
+  },
+  {
+    "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged[retry]",
+    "exit": 2,
+    "observations": [
+      {
+        "kind": "TASK11_SNAPSHOT",
+        "exception_type": "RecoveryRequired",
+        "fixed_reason_equal": true
+      },
+      {
+        "kind": "TASK11_ADMISSION",
+        "node": "Tests/Chat/test_console_automatic_library_preparation.py::test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged[retry]",
+        "admitted": false,
+        "fixed_unavailable_copy_equal": true
+      }
+    ]
+  },
+  {
+    "node": "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_releases_only_its_frozen_evidence_lease",
+    "exit": 2,
+    "observations": [
+      {
+        "kind": "TASK11_SNAPSHOT",
+        "exception_type": "RecoveryRequired",
+        "fixed_reason_equal": true
+      },
+      {
+        "kind": "TASK11_ADMISSION",
+        "node": "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_releases_only_its_frozen_evidence_lease",
+        "admitted": false,
+        "fixed_unavailable_copy_equal": true
+      }
+    ]
+  },
+  {
+    "node": "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_scrubs_content_when_evidence_release_raises",
+    "exit": 2,
+    "observations": [
+      {
+        "kind": "TASK11_SNAPSHOT",
+        "exception_type": "RecoveryRequired",
+        "fixed_reason_equal": true
+      },
+      {
+        "kind": "TASK11_ADMISSION",
+        "node": "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_scrubs_content_when_evidence_release_raises",
+        "admitted": false,
+        "fixed_unavailable_copy_equal": true
+      }
+    ]
+  },
+  {
+    "node": "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_discard_releases_only_exact_frozen_evidence_once",
+    "exit": 2,
+    "observations": [
+      {
+        "kind": "TASK11_SNAPSHOT",
+        "exception_type": "RecoveryRequired",
+        "fixed_reason_equal": true
+      },
+      {
+        "kind": "TASK11_ADMISSION",
+        "node": "Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_discard_releases_only_exact_frozen_evidence_once",
+        "admitted": false,
+        "fixed_unavailable_copy_equal": true
+      }
+    ]
+  },
+  {
+    "node": "Tests/Chat/test_console_durable_turn_fix_round1.py::test_explicit_frozen_evidence_makes_checkpoint_unreconstructable",
+    "exit": 2,
+    "observations": [
+      {
+        "kind": "TASK11_SNAPSHOT",
+        "snapshot_admitted": true
+      },
+      {
+        "kind": "TASK11_ADMISSION",
+        "node": "Tests/Chat/test_console_durable_turn_fix_round1.py::test_explicit_frozen_evidence_makes_checkpoint_unreconstructable",
+        "admitted": true,
+        "fixed_unavailable_copy_equal": false
+      }
+    ]
+  },
+  {
+    "node": "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_release_fault_cannot_skip_owner_cleanup",
+    "exit": 2,
+    "observations": [
+      {
+        "kind": "TASK11_SNAPSHOT",
+        "exception_type": "RecoveryRequired",
+        "fixed_reason_equal": true
+      },
+      {
+        "kind": "TASK11_ADMISSION",
+        "node": "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_release_fault_cannot_skip_owner_cleanup",
+        "admitted": false,
+        "fixed_unavailable_copy_equal": true
+      }
+    ]
+  },
+  {
+    "node": "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_releases_exact_evidence_once_and_preserves_replacement",
+    "exit": 2,
+    "observations": [
+      {
+        "kind": "TASK11_SNAPSHOT",
+        "exception_type": "RecoveryRequired",
+        "fixed_reason_equal": true
+      },
+      {
+        "kind": "TASK11_ADMISSION",
+        "node": "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_releases_exact_evidence_once_and_preserves_replacement",
+        "admitted": false,
+        "fixed_unavailable_copy_equal": true
+      }
+    ]
+  }
+]

@@ -1,0 +1,63 @@
+{
+  "head": "3025df959c0dbd25d761095816b42938631960af",
+  "files": {
+    "task-9-video-observer-safe-evidence/closed-owned-processes.json": {
+      "sha256": "2534afed360203d8974332fb6fac56416bf886e776129b8842888b3f688fde83",
+      "bytes": 107
+    },
+    "task-9-video-observer-safe-evidence/commit-and-clean-status.json": {
+      "sha256": "3466df5b3b6d44fb829dd92c2bdb2cda9a1572ca0f34174cdf7b16df2f5b60ab",
+      "bytes": 759
+    },
+    "task-9-video-observer-safe-evidence/exact-outcomes.json": {
+      "sha256": "80aef6c405a41614e27ec525300147300459cc9f0cc08c94c6b14c0302fa71aa",
+      "bytes": 622
+    },
+    "task-9-video-observer-safe-evidence/exact-preservation-map.json": {
+      "sha256": "b7a5bbadad2a460a375ff9c5bbb3670d0d5da70ed60af417f13f5bf7f58cddbe",
+      "bytes": 800
+    },
+    "task-9-video-observer-safe-evidence/fatal-ruff-argv.json": {
+      "sha256": "6c9c50eacce7ccc465860db3459ddaafd7017f25c96068f02ebaa1b71aec6ade",
+      "bytes": 326
+    },
+    "task-9-video-observer-safe-evidence/fatal-ruff.log": {
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "bytes": 19
+    },
+    "task-9-video-observer-safe-evidence/initial-pins.json": {
+      "sha256": "0d40b72ab62a6156a381b9ffd4071c260a8028cc01c0bd662e7c9546ce9799c9",
+      "bytes": 33544
+    },
+    "task-9-video-observer-safe-evidence/prior-pins-verification.json": {
+      "sha256": "1e0aea6367affaec9669972c596c87a1cbd6476e214e21652bbffdb83e548fb6",
+      "bytes": 34047
+    },
+    "task-9-video-observer-safe-evidence/video4-argv.json": {
+      "sha256": "a0c565b279751253538dbcd8adc9e8cfbc12c59a0bfed26de9364b65f7f969ae",
+      "bytes": 1488
+    },
+    "task-9-video-observer-safe-evidence/video4-result.json": {
+      "sha256": "5803503adc164f1901bacbff496dd7336578bb2161895802161ccff88c2e0992",
+      "bytes": 63
+    },
+    "task-9-video-observer-safe-evidence/video4.log": {
+      "sha256": "ea8a8b00a76e62b45c9aa1aac24218430baaf772e11e5bfb5b462d9573e8d8e8",
+      "bytes": 409
+    },
+    "task-9-video-observer-safe-evidence/video4.xml": {
+      "sha256": "f94332362434446f07d074c81340050c3247bace947dad436437a46e77482b3c",
+      "bytes": 859
+    },
+    "task-9-video-observer-safe-evidence/whitespace-argv.json": {
+      "sha256": "24bafd2aad6e453f6be1102f16f850aa196d4972934d58638a735242aa09da45",
+      "bytes": 176
+    },
+    "task-9-video-observer-safe-evidence/whitespace.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  },
+  "original232_pins_unchanged": true,
+  "selected_qualification_complete": true
+}

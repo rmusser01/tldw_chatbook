@@ -1,0 +1,30 @@
+{
+  "proposed_only": true,
+  "failed_nodes": [
+    "Tests/Chat/test_console_video_actions.py::test_handle_console_message_action_routes_video_play_with_persisted_storage_id",
+    "Tests/Chat/test_console_video_actions.py::test_handle_console_message_action_routes_video_save_with_persisted_storage_id",
+    "Tests/Chat/test_console_video_actions.py::test_video_play_resolves_webm_from_metadata",
+    "Tests/Chat/test_console_video_actions.py::test_video_save_copy_preserves_webm_extension_and_collision_names"
+  ],
+  "actual_observation": "all four original resolver call-list assertions see[]; action handled True; save worker scheduled/drained; webm first export bytes assertion passes before original final call-list failure",
+  "source_reason": "Both native action methods call VideoStore.resolve_state directly. VideoStore.resolve delegates down to resolve_state, so an override of resolve is not on these action routes. Native _console_video_store screen property forwards to _video; store identity is not lost.",
+  "original_BASE_methods_AST_exact": [
+    "_play_console_video",
+    "_save_console_video_copy"
+  ],
+  "BASE": "cd15d174553bf77583a3b0894da245cd991bd1fe",
+  "exact_helper": "Tests/Chat/test_console_video_actions.py::_video_action_screen",
+  "exact_substitutions": [
+    {
+      "before": "real_resolve = video_store.resolve",
+      "after": "real_resolve = video_store.resolve_state"
+    },
+    {
+      "before": "video_store.resolve = _resolve",
+      "after": "video_store.resolve_state = _resolve"
+    }
+  ],
+  "preserve": "Original _resolve body/argument recorder/return forwarding remains exact, now forwarding the native(status,path) result; every original assertion, action and wait exact. Only rerun these four failed nodes.",
+  "optional_comment_correction_to_scope": "Existing helper comment still says native build runs too late after the approved move. Replace only that stale explanatory sentence to say real Session is also initialized before store attachment; no production docs/cap adjustment.",
+  "safe_diagnosis": "Source/callback method identity and assertion receipts only; no configuration or prompt body probes."
+}

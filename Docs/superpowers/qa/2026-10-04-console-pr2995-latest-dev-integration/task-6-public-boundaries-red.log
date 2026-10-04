@@ -1,0 +1,454 @@
+FFFFFFFFFFFFFF..F.                                                       [100%]
+=================================== FAILURES ===================================
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-publish-persisted_conversation_id] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d197d40>
+route = 'publish', field = 'persisted_conversation_id', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+>       assert store.fork_eligibility(other.id).eligible
+E       AssertionError: assert False
+E        +  where False = ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.').eligible
+E        +    where ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.') = fork_eligibility('7cd291c6-0945-482e-aeeb-a749cfe22d91')
+E        +      where fork_eligibility = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10e707470>.fork_eligibility
+E        +      and   '7cd291c6-0945-482e-aeeb-a749cfe22d91' = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Answer', id='7cd291c6-0945-482e-aeeb-a74...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:34: AssertionError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 23:43:13.036 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-03 23:43:13.122 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-03 23:43:13.209 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-03 23:43:13.215 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-rebind-persisted_conversation_id] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf54410>
+route = 'rebind', field = 'persisted_conversation_id', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+>       assert store.fork_eligibility(other.id).eligible
+E       AssertionError: assert False
+E        +  where False = ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.').eligible
+E        +    where ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.') = fork_eligibility('790a9405-d0eb-4b60-95f4-14e9ed356297')
+E        +      where fork_eligibility = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10cf55340>.fork_eligibility
+E        +      and   '790a9405-d0eb-4b60-95f4-14e9ed356297' = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Answer', id='790a9405-d0eb-4b60-95f4-14e...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:34: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-settings-context_policy_overrides] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf54620>
+route = 'settings', field = 'context_policy_overrides', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+>       assert store.fork_eligibility(other.id).eligible
+E       AssertionError: assert False
+E        +  where False = ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.').eligible
+E        +    where ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.') = fork_eligibility('cbd8ccfd-1d40-4b37-ba5f-897f9e4eedc2')
+E        +      where fork_eligibility = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10cf57500>.fork_eligibility
+E        +      and   'cbd8ccfd-1d40-4b37-ba5f-897f9e4eedc2' = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Answer', id='cbd8ccfd-1d40-4b37-ba5f-897...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:34: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-display_name-user_display_name_override] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf562a0>
+route = 'display_name', field = 'user_display_name_override', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+>       assert store.fork_eligibility(other.id).eligible
+E       AssertionError: assert False
+E        +  where False = ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.').eligible
+E        +    where ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.') = fork_eligibility('7e2d2c58-c398-4467-bffb-8591604dd299')
+E        +      where fork_eligibility = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10cf55760>.fork_eligibility
+E        +      and   '7e2d2c58-c398-4467-bffb-8591604dd299' = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Answer', id='7e2d2c58-c398-4467-bffb-859...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:34: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-persona-persona_system_template] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf56900>
+route = 'persona', field = 'persona_system_template', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+>       assert store.fork_eligibility(other.id).eligible
+E       AssertionError: assert False
+E        +  where False = ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.').eligible
+E        +    where ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.') = fork_eligibility('ff963c85-5771-4f61-99e5-a740d2c4d40f')
+E        +      where fork_eligibility = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10cf576b0>.fork_eligibility
+E        +      and   'ff963c85-5771-4f61-99e5-a740d2c4d40f' = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Answer', id='ff963c85-5771-4f61-99e5-a74...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:34: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-assistant-assistant_name] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf542f0>
+route = 'assistant', field = 'assistant_name', fail = False
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+>       assert store.fork_eligibility(other.id).eligible
+E       AssertionError: assert False
+E        +  where False = ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.').eligible
+E        +    where ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.') = fork_eligibility('f5e428cc-1762-469f-9dc2-53b74054a11a')
+E        +      where fork_eligibility = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10cf56090>.fork_eligibility
+E        +      and   'f5e428cc-1762-469f-9dc2-53b74054a11a' = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Answer', id='f5e428cc-1762-469f-9dc2-53b...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:34: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-publish-persisted_conversation_id] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf57c20>
+route = 'publish', field = 'persisted_conversation_id', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+>       assert store.fork_eligibility(other.id).eligible
+E       AssertionError: assert False
+E        +  where False = ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.').eligible
+E        +    where ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.') = fork_eligibility('6db490b0-194f-4795-97be-67e11cfc7949')
+E        +      where fork_eligibility = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10cf57740>.fork_eligibility
+E        +      and   '6db490b0-194f-4795-97be-67e11cfc7949' = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Answer', id='6db490b0-194f-4795-97be-67e...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:34: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-rebind-persisted_conversation_id] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf56090>
+route = 'rebind', field = 'persisted_conversation_id', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+>       assert store.fork_eligibility(other.id).eligible
+E       AssertionError: assert False
+E        +  where False = ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.').eligible
+E        +    where ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.') = fork_eligibility('67a8cb47-cbca-4f76-9ec2-67c99f5f64f5')
+E        +      where fork_eligibility = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10cf56a80>.fork_eligibility
+E        +      and   '67a8cb47-cbca-4f76-9ec2-67c99f5f64f5' = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Answer', id='67a8cb47-cbca-4f76-9ec2-67c...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:34: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-settings-context_policy_overrides] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf54500>
+route = 'settings', field = 'context_policy_overrides', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+>       assert store.fork_eligibility(other.id).eligible
+E       AssertionError: assert False
+E        +  where False = ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.').eligible
+E        +    where ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.') = fork_eligibility('c6448e8c-3500-47e8-9139-45b99aae9c1e')
+E        +      where fork_eligibility = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10cf56840>.fork_eligibility
+E        +      and   'c6448e8c-3500-47e8-9139-45b99aae9c1e' = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Answer', id='c6448e8c-3500-47e8-9139-45b...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:34: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-display_name-user_display_name_override] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf567b0>
+route = 'display_name', field = 'user_display_name_override', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+>       assert store.fork_eligibility(other.id).eligible
+E       AssertionError: assert False
+E        +  where False = ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.').eligible
+E        +    where ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.') = fork_eligibility('5756188a-2771-477c-9cc0-8266dac1ba21')
+E        +      where fork_eligibility = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10cf56ea0>.fork_eligibility
+E        +      and   '5756188a-2771-477c-9cc0-8266dac1ba21' = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Answer', id='5756188a-2771-477c-9cc0-826...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:34: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-persona-persona_system_template] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf548c0>
+route = 'persona', field = 'persona_system_template', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+>       assert store.fork_eligibility(other.id).eligible
+E       AssertionError: assert False
+E        +  where False = ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.').eligible
+E        +    where ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.') = fork_eligibility('e5da21e6-e527-4c88-8b4a-167ba7a066da')
+E        +      where fork_eligibility = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10cf562a0>.fork_eligibility
+E        +      and   'e5da21e6-e527-4c88-8b4a-167ba7a066da' = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Answer', id='e5da21e6-e527-4c88-8b4a-167...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:34: AssertionError
+_ test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-assistant-assistant_name] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf7f380>
+route = 'assistant', field = 'assistant_name', fail = True
+
+    @pytest.mark.parametrize("route,field", (
+        ("publish", "persisted_conversation_id"),
+        ("rebind", "persisted_conversation_id"),
+        ("settings", "context_policy_overrides"),
+        ("display_name", "user_display_name_override"),
+        ("persona", "persona_system_template"),
+        ("assistant", "assistant_name"),
+    ))
+    @pytest.mark.parametrize("fail", (False, True))
+    def test_public_mutation_blocks_eligible_fork_at_actual_assignment(monkeypatch, route, field, fail):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        other = _other_selection(store)
+        submission = _submission(store, session.id, submission_id="settings", model="new-model")
+        commit = store.commit_console_settings_live(submission) if route == "display_name" else None
+        assert store.fork_eligibility(selected.id).eligible
+>       assert store.fork_eligibility(other.id).eligible
+E       AssertionError: assert False
+E        +  where False = ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.').eligible
+E        +    where ConsoleForkEligibility(eligible=False, reason='Console fork settings are unavailable.') = fork_eligibility('9da2a6a3-e78f-41c8-9e8e-2b9dc537cd6e')
+E        +      where fork_eligibility = <tldw_chatbook.Chat.console_chat_store.ConsoleChatStore object at 0x10cf55d60>.fork_eligibility
+E        +      and   '9da2a6a3-e78f-41c8-9e8e-2b9dc537cd6e' = ConsoleChatMessage(role=<ConsoleMessageRole.ASSISTANT: 'assistant'>, content='Answer', id='9da2a6a3-e78f-41c8-9e8e-2b9...ion=None, generation_projection_quarantine_reason=None, video_metadata=None, live_activity='', live_activity_action='').id
+
+Tests/Chat/test_console_fork_public_boundaries.py:34: AssertionError
+_____________ test_display_name_plan_exact_lease_lifetime[accept] ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf57200>
+outcome = 'accept'
+
+    @pytest.mark.parametrize("outcome", ("accept", "abandon", "noop", "stale", "materialize_none", "materialize_error"))
+    def test_display_name_plan_exact_lease_lifetime(monkeypatch, outcome):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        commit = store.commit_console_settings_live(_submission(store, session.id, submission_id="name", model="new"))
+        if outcome == "stale":
+            commit = replace(commit, conversation_binding_revision=-1)
+        if outcome.startswith("materialize_"):
+            def materialize(*args, **kwargs):
+                if outcome == "materialize_error":
+                    raise RuntimeError("projection failed")
+                return None
+            monkeypatch.setattr(store, "_materialize_roleplay_projections_live", materialize)
+        if outcome == "materialize_error":
+            with pytest.raises(RuntimeError, match="projection failed"):
+                store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+        else:
+            _, plan = store.prepare_session_user_display_name_override_for_commit(commit, "Riley" if outcome == "noop" else "Taylor", global_default="Riley")
+            if outcome in {"noop", "stale"}:
+                assert plan is None
+            else:
+>               assert plan is not None and plan.fork_transition_token is not None
+E               AssertionError: assert (ConsoleRoleplayProjectionPersistencePlan(session_id='afab2eef-248d-4add-aa6c-f4cb033c6aeb', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None) is not None and None is not None)
+E                +  where None = ConsoleRoleplayProjectionPersistencePlan(session_id='afab2eef-248d-4add-aa6c-f4cb033c6aeb', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None).fork_transition_token
+
+Tests/Chat/test_console_fork_public_boundaries.py:111: AssertionError
+_____________ test_display_name_plan_exact_lease_lifetime[abandon] _____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf57d10>
+outcome = 'abandon'
+
+    @pytest.mark.parametrize("outcome", ("accept", "abandon", "noop", "stale", "materialize_none", "materialize_error"))
+    def test_display_name_plan_exact_lease_lifetime(monkeypatch, outcome):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        commit = store.commit_console_settings_live(_submission(store, session.id, submission_id="name", model="new"))
+        if outcome == "stale":
+            commit = replace(commit, conversation_binding_revision=-1)
+        if outcome.startswith("materialize_"):
+            def materialize(*args, **kwargs):
+                if outcome == "materialize_error":
+                    raise RuntimeError("projection failed")
+                return None
+            monkeypatch.setattr(store, "_materialize_roleplay_projections_live", materialize)
+        if outcome == "materialize_error":
+            with pytest.raises(RuntimeError, match="projection failed"):
+                store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+        else:
+            _, plan = store.prepare_session_user_display_name_override_for_commit(commit, "Riley" if outcome == "noop" else "Taylor", global_default="Riley")
+            if outcome in {"noop", "stale"}:
+                assert plan is None
+            else:
+>               assert plan is not None and plan.fork_transition_token is not None
+E               AssertionError: assert (ConsoleRoleplayProjectionPersistencePlan(session_id='dead6c68-0af4-4aca-8293-fde8573f7fba', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None) is not None and None is not None)
+E                +  where None = ConsoleRoleplayProjectionPersistencePlan(session_id='dead6c68-0af4-4aca-8293-fde8573f7fba', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None).fork_transition_token
+
+Tests/Chat/test_console_fork_public_boundaries.py:111: AssertionError
+________ test_display_name_plan_exact_lease_lifetime[materialize_none] _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cf7ea50>
+outcome = 'materialize_none'
+
+    @pytest.mark.parametrize("outcome", ("accept", "abandon", "noop", "stale", "materialize_none", "materialize_error"))
+    def test_display_name_plan_exact_lease_lifetime(monkeypatch, outcome):
+        store, _, session, _, _, _, selected, _ = _fork_store()
+        commit = store.commit_console_settings_live(_submission(store, session.id, submission_id="name", model="new"))
+        if outcome == "stale":
+            commit = replace(commit, conversation_binding_revision=-1)
+        if outcome.startswith("materialize_"):
+            def materialize(*args, **kwargs):
+                if outcome == "materialize_error":
+                    raise RuntimeError("projection failed")
+                return None
+            monkeypatch.setattr(store, "_materialize_roleplay_projections_live", materialize)
+        if outcome == "materialize_error":
+            with pytest.raises(RuntimeError, match="projection failed"):
+                store.prepare_session_user_display_name_override_for_commit(commit, "Taylor", global_default="Riley")
+        else:
+            _, plan = store.prepare_session_user_display_name_override_for_commit(commit, "Riley" if outcome == "noop" else "Taylor", global_default="Riley")
+            if outcome in {"noop", "stale"}:
+                assert plan is None
+            else:
+>               assert plan is not None and plan.fork_transition_token is not None
+E               AssertionError: assert (ConsoleRoleplayProjectionPersistencePlan(session_id='c28f3f60-0d66-4e4b-b134-ff7cd9561288', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None) is not None and None is not None)
+E                +  where None = ConsoleRoleplayProjectionPersistencePlan(session_id='c28f3f60-0d66-4e4b-b134-ff7cd9561288', generation=1, persisted_co...sation_binding_revision=0, system_prompt_write=None, message_writes=(), fork_transition_token=None, context_write=None).fork_transition_token
+
+Tests/Chat/test_console_fork_public_boundaries.py:111: AssertionError
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-public-boundaries-red.xml -
+============================= slowest 25 durations =============================
+
+(25 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-publish-persisted_conversation_id]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-rebind-persisted_conversation_id]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-settings-context_policy_overrides]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-display_name-user_display_name_override]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-persona-persona_system_template]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[False-assistant-assistant_name]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-publish-persisted_conversation_id]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-rebind-persisted_conversation_id]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-settings-context_policy_overrides]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-display_name-user_display_name_override]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-persona-persona_system_template]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_public_mutation_blocks_eligible_fork_at_actual_assignment[True-assistant-assistant_name]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_display_name_plan_exact_lease_lifetime[accept]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_display_name_plan_exact_lease_lifetime[abandon]
+FAILED Tests/Chat/test_console_fork_public_boundaries.py::test_display_name_plan_exact_lease_lifetime[materialize_none]
+15 failed, 3 passed in 2.34s

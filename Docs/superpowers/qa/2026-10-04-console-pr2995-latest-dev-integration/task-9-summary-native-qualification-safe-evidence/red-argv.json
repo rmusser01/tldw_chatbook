@@ -1,0 +1,24 @@
+{
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:randomly",
+    "--basetemp=/private/tmp/task9-native-red",
+    "Tests/Chat/test_permission_summary_wiring.py::test_legacy_session_reprojection_fires_summary_once_for_same_payload",
+    "Tests/Chat/test_permission_summary_wiring.py::test_legacy_session_reprojection_clears_no_payload_without_summary",
+    "Tests/Chat/test_permission_summary_wiring.py::test_unified_session_reprojection_returns_before_legacy_summary",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-9-summary-native-safe-evidence/red.xml"
+  ],
+  "recorded_before_execution": true,
+  "environment_override": {
+    "PYTHONPATH": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook"
+  },
+  "source_hashes": {
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": "6dad71a115045a57bce67b98a54c313f37b31712b0de37e86741c2622f49882c",
+    "Tests/Chat/test_permission_summary_wiring.py": "e436ce0254a8efe8b8f58dc01d1978d017d1e2d0fa4a622875258e0cf2a40768"
+  }
+}

@@ -1,0 +1,38 @@
+--- b265d5bd2c2f5a28e4f56c2115f6247988d29ac2:tldw_chatbook/DB/ChaChaNotes_DB.py
++++ HEAD:tldw_chatbook/DB/ChaChaNotes_DB.py
+@@ -4485,7 +4485,7 @@
+             params += (thinking_history_policy,)
+         query = f'INSERT INTO conversations ({insert_columns}) VALUES ({placeholders})'
+         try:
+-            with self.transaction() as conn:
++            with self.transaction(immediate=True) as conn:
+                 conn.execute(query, params)
+             logger.debug(f'Added conversation ID: {conv_id}.')
+             duration = time.time() - start_time
+@@ -5180,7 +5180,7 @@
+             thinking_history_policy = _validated_thinking_history_policy(update_data['thinking_history_policy'])
+         now = self._get_current_utc_timestamp_iso()
+         try:
+-            with self.transaction() as conn:
++            with self.transaction(immediate=True) as conn:
+                 current_state = conn.execute('\n                    SELECT rowid, title, version, deleted, character_id, assistant_kind, assistant_id,\n                           assistant_authority_id,\n                           persona_memory_mode, scope_type, workspace_id, state, topic_label,\n                           topic_label_source, topic_last_tagged_at, topic_last_tagged_message_id,\n                           cluster_id, source, external_ref,\n                           runtime_backend, discovery_owner, discovery_entity_id, system_prompt\n                    FROM conversations\n                    WHERE id = ?\n                    ', (conversation_id,)).fetchone()
+                 if not current_state:
+                     raise ConflictError(f'Conversation ID {conversation_id} not found for update.', entity='conversations', entity_id=conversation_id)
+@@ -5458,7 +5458,7 @@
+         query = 'UPDATE conversations SET deleted = 1, last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0'
+         params = (now, next_version_val, self.client_id, conversation_id, expected_version)
+         try:
+-            with self.transaction() as conn:
++            with self.transaction(immediate=True) as conn:
+                 try:
+                     current_db_version = self._get_current_db_version(conn, 'conversations', 'id', conversation_id)
+                 except ConflictError as e:
+@@ -5506,7 +5506,7 @@
+         query = 'UPDATE conversations SET deleted = 0, last_modified = ?, version = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 1'
+         params = (now, next_version_val, self.client_id, conversation_id, expected_version)
+         try:
+-            with self.transaction() as conn:
++            with self.transaction(immediate=True) as conn:
+                 current_state = conn.execute('SELECT deleted, version FROM conversations WHERE id = ?', (conversation_id,)).fetchone()
+                 if not current_state:
+                     raise ConflictError(f'Conversation ID {conversation_id} not found for restore.', entity='conversations', entity_id=conversation_id)

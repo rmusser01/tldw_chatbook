@@ -1,0 +1,21 @@
+{
+  "pinned_source": "df2ba424de63576d36d9c3e38387c84285303f1c",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/UI/test_task6_llama_adoption_diagnostic.py",
+    "-q",
+    "-s",
+    "--tb=short",
+    "--timeout=90",
+    "--basetemp=/private/tmp/pr2995-task6/modelconfig-df2-baseline/llama-private-profile-cos7exl_/pytest",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-screen-cap-llama-private-diagnostic.xml"
+  ],
+  "exit": 0,
+  "production_sha256": "a68562f22131de43b22809a49feb162bdeca938c8ee4c07cdf94835338d926d8",
+  "probe_sha256": "00ba88ce48ba2d5fc8b53931eb74078543a774e603eae84f598ec52e217a4749",
+  "probe_source": "import pytest\nfrom Tests.private_profile import private_profile_test\n\n@pytest.mark.asyncio\n@private_profile_test\nasync def test_exact_llama_adoption_diagnostic(request):\n    import json\n    from functools import partial\n    from types import SimpleNamespace\n    from loguru import logger\n    from tldw_chatbook.LLM_Management.llamacpp_connection import LlamaCppConnectionOwner,LlamaCppProbeResult\n    from tldw_chatbook.UI.Navigation.llamacpp_handoff import LlamaCppConsoleIntent,owner_has_current_intent\n    from tldw_chatbook.UI.Navigation.pending_handoff_store import PendingHandoffStore,HandoffChannel\n    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen\n    owner=LlamaCppConnectionOwner();request=owner.begin('http://127.0.0.1:8001',runtime_owner='external_server',model_id='served-model');assert owner.accept(LlamaCppProbeResult(request,'ready',('served-model',),'served-model'));target=owner.snapshot().target;intent=LlamaCppConsoleIntent.from_target(target);assert owner_has_current_intent(owner,intent)\n    store=PendingHandoffStore();revision=store.stage(HandoffChannel.LLAMACPP_CONSOLE,intent);entered=[];notices=[];logs=[]\n    def ensure():entered.append(True);raise AssertionError('mutation path unexpectedly entered')\n    app=SimpleNamespace(pending_handoffs=store,_llamacpp_connection_owner=owner,notify=lambda *a,**k:notices.append(a[0]))\n    screen=SimpleNamespace(app_instance=app,is_attached=True,_ensure_console_chat_store=ensure)\n    screen._consume_verified_console_intent=partial(ChatScreen._consume_verified_console_intent,screen)\n    sink=logger.add(lambda m:logs.append(str(m)),format='{message}')\n    try:result=ChatScreen.consume_pending_llamacpp_console_intent(screen)\n    finally:logger.remove(sink)\n    assert result is False and not entered and store.has_pending(HandoffChannel.LLAMACPP_CONSOLE)\n    print(json.dumps(dict(exact_current_llama_intent=True,result=result,mutation_path_entries=len(entered),claim_remains_pending=store.has_pending(HandoffChannel.LLAMACPP_CONSOLE),revision=revision,notices=notices,logs=logs),indent=2))\n",
+  "profile": "/private/tmp/pr2995-task6/modelconfig-df2-baseline/llama-private-profile-cos7exl_",
+  "log": "task-6-screen-cap-llama-private-diagnostic.log"
+}

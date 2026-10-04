@@ -1,0 +1,21 @@
+{
+  "dev": "ca2992cb10b24307fbae050643472ffb0a4388e7",
+  "cwd": "/private/tmp/pr2995-task6/dev-auth-baseline",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_provider_setup_persistence.py",
+    "Tests/UI/test_settings_anthropic_auth_source.py",
+    "-k",
+    "test_guarded_setup_rejects_completed_relevant_config_write or test_guarded_setup_rejects_completed_stored_credential_replacement or test_guarded_setup_allows_unrelated_generation_advance",
+    "-q",
+    "--timeout=180",
+    "--tb=short",
+    "--basetemp=/private/tmp/pr2995-task6/auth-baseline-profile-46h2ihs9/pytest"
+  ],
+  "exit": 1,
+  "seconds": 44.910667999996804,
+  "archive_sha256": "108f390cd8253bc896b155c1d757bf1d80d5616ce9db72c9694294d2f3027ace",
+  "log_sha256": "5fa7fb6e68adcd32a0b20cec30bed6b542988b7047a8f4fb7fde748f2f18aca1"
+}

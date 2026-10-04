@@ -1,0 +1,87 @@
+[
+  {
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "before_diagnostics": 93,
+    "after_diagnostics": 71,
+    "before_sinks": [],
+    "after_sinks": [],
+    "before_candidates": [
+      {
+        "method": "warning",
+        "call_digest": "dc480264ebaf7878",
+        "scope": "_remote_instruction_io_for_selection",
+        "path_expressions": [
+          "binding_id"
+        ],
+        "status": "legacy_unreviewed"
+      }
+    ],
+    "after_candidates": [
+      {
+        "method": "warning",
+        "call_digest": "dc480264ebaf7878",
+        "scope": "_remote_instruction_io_for_selection",
+        "path_expressions": [
+          "binding_id"
+        ],
+        "status": "legacy_unreviewed"
+      }
+    ]
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "before_diagnostics": 4,
+    "after_diagnostics": 21,
+    "before_sinks": [],
+    "after_sinks": [],
+    "before_candidates": [],
+    "after_candidates": []
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_context_compaction.py",
+    "before_diagnostics": 16,
+    "after_diagnostics": 21,
+    "before_sinks": [],
+    "after_sinks": [],
+    "before_candidates": [],
+    "after_candidates": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/session.py",
+    "before_diagnostics": 28,
+    "after_diagnostics": 28,
+    "before_sinks": [],
+    "after_sinks": [],
+    "before_candidates": [],
+    "after_candidates": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "before_diagnostics": 122,
+    "after_diagnostics": 122,
+    "before_sinks": [],
+    "after_sinks": [],
+    "before_candidates": [
+      {
+        "method": "error",
+        "call_digest": "1654c8f3ddd90aa4",
+        "scope": "ChatScreen._process_console_attachment",
+        "path_expressions": [
+          "file_path"
+        ],
+        "status": "legacy_unreviewed"
+      }
+    ],
+    "after_candidates": [
+      {
+        "method": "error",
+        "call_digest": "1654c8f3ddd90aa4",
+        "scope": "ChatScreen._process_console_attachment",
+        "path_expressions": [
+          "file_path"
+        ],
+        "status": "legacy_unreviewed"
+      }
+    ]
+  }
+]

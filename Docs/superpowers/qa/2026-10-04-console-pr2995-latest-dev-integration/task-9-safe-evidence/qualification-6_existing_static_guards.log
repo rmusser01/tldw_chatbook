@@ -1,0 +1,59 @@
+.........F....                                                           [100%]
+=================================== FAILURES ===================================
+_______________ test_no_unbounded_resolve_for_send_awaits_remain _______________
+
+    def test_no_unbounded_resolve_for_send_awaits_remain():
+        """Every gateway resolve must go through the bounded seam.
+    
+        A source-level assertion (not a behavioral one) because the hazard is
+        "someone adds await self.provider_gateway.resolve_for_send(...) again":
+        only the text can catch that before it ships.
+        """
+        import ast
+        from pathlib import Path
+    
+        source = Path("tldw_chatbook/Chat/console_chat_controller.py").read_text()
+        tree = ast.parse(source)
+        offenders: list[int] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Await):
+                continue
+            call = node.value
+            if not isinstance(call, ast.Call):
+                continue
+            func = call.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "resolve_for_send"
+                and isinstance(func.value, ast.Attribute)
+                and func.value.attr == "provider_gateway"
+            ):
+                offenders.append(node.lineno)
+    
+        # The single sanctioned call is inside _resolve_for_send_bounded itself,
+        # where asyncio.wait_for supplies the deadline.
+        bounded = next(
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "_resolve_for_send_bounded"
+        )
+        allowed = {n.lineno for n in ast.walk(bounded) if isinstance(n, ast.Await)}
+        unbounded = sorted(set(offenders) - allowed)
+>       assert not unbounded, (
+            "unbounded provider_gateway.resolve_for_send await(s) at line(s) "
+            f"{unbounded} — route them through self._resolve_for_send_bounded "
+            "so no surface can hang (TASK-21150 item c / UAT H-3)"
+        )
+E       AssertionError: unbounded provider_gateway.resolve_for_send await(s) at line(s) [7538, 20507] — route them through self._resolve_for_send_bounded so no surface can hang (TASK-21150 item c / UAT H-3)
+E       assert not [7538, 20507]
+
+Tests/Chat/test_console_first_chat_handoff.py:123: AssertionError
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-9-safe-evidence/qualification-6_existing_static_guards.xml -
+============================= slowest 25 durations =============================
+60.04s call     Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged
+2.82s call     Tests/Architecture/test_persistent_diagnostic_inventory.py::test_reviewed_diagnostic_changes_are_metadata_only
+
+(23 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_first_chat_handoff.py::test_no_unbounded_resolve_for_send_awaits_remain
+1 failed, 13 passed in 64.89s (0:01:04)

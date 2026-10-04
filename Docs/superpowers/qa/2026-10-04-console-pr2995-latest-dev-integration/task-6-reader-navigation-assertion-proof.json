@@ -1,0 +1,13 @@
+{
+  "path": "Tests/UI/test_console_store_continuity.py",
+  "base": "38f8e81336d58d7b17befa6333045dc5ce7d3f74",
+  "before_sha256": "80fc5237809a45d7b83985a0d63456e8f75a94f8990f001c127ad4aa209534b2",
+  "after_sha256": "d83adebdcb70ad4cb5285950f2778d0efd100474021312d68fa8e60fc5a38a9f",
+  "all_other_functions_exact": true,
+  "entire_function_exact_after_removing_two_added_assertions": true,
+  "all_previous_assertions_exact": true,
+  "added_assertions": [
+    "Assert(test=Compare(left=Attribute(value=Name(id='store', ctx=Load()), attr='active_session_id', ctx=Load()), ops=[Eq()], comparators=[Attribute(value=Name(id='first', ctx=Load()), attr='id', ctx=Load())]))",
+    "Assert(test=Compare(left=Attribute(value=Name(id='chat', ctx=Load()), attr='_console_visible_draft_session_id', ctx=Load()), ops=[Eq()], comparators=[Attribute(value=Name(id='first', ctx=Load()), attr='id', ctx=Load())]))"
+  ]
+}

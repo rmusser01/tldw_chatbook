@@ -1,0 +1,26 @@
+{
+  "source_head": "9445ed93ed430ba0e3660ad2008621f6a809bd0e",
+  "dev": "8f83422dde2a5b95da648882b8f7e09da5b41f08",
+  "clean_source": true,
+  "safe_pins_verified": 567,
+  "manifest_pinned": true,
+  "git_source_union_rows": 29864,
+  "source_hashes_verified": 8123,
+  "qualification_cases": 57,
+  "failures_errors_skips": 0,
+  "historical_qa_final_blobs_verified": 12337,
+  "original_qa_whole_files_exact": 12336,
+  "one_exact_original_prefix_and_upstream_append": {
+    "path": "Docs/QA/task-31245/switcher-reuse-and-mode-follow-up.md",
+    "original_bytes": 7982,
+    "original_sha256": "db7d9edb09f65f5132aa06d98dfe48932a6528a9407db62e156042b463841505",
+    "original_exact_prefix": true,
+    "append_bytes": 4417,
+    "append_lines": 70,
+    "append_sha256": "281ec403c258c1210dac8b710e603d35eec99712ad7fbdc6cdcfe60d4a88a8d3",
+    "final_exact_upstream": true,
+    "final_sha256": "356b47f7fe349cb19f12bb432efaf44e52c59e89eb40d772ac54627e68904e49"
+  },
+  "new_dev_ancestor": true,
+  "source_union_path_serialization": "Frozen C-quoted keys verified against exact Git serialization; actual path QA checks use NUL-delimited Git output."
+}

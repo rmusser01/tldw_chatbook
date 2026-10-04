@@ -1,0 +1,374 @@
+ 1:  6e3fc7dd1a =  1:  fd384549b6 docs: plan dev integration for Console chat starts PR
+ 2:  44b1df1df3 !  2:  52a9140959 Integrate Console bounded chat starts with current dev owners
+    @@ Docs/User_Guide/console/agent-runs-and-tools.md: source ▸ Tool gates ▸ **Cha
+     -  and any instructions. When the agent didn't name the new chat, the card
+     -  shows the default title it would get ("Fork of <source chat>" for a fork,
+     -  "New Chat" otherwise). Buttons: **Allow** / **Allow for this session** /
+    --  **Deny**. A round that never gets answered — you stop the run, or the
+    --  card is torn down — fails closed as a denial: nothing is created.
+    +-  **Deny**. Stopping the run or closing its source tab cancels the
+    +-  confirmation: nothing is created. Switching tabs keeps the decision with
+    +-  its source tab; return there to answer it. Delayed updates from that tab
+    +-  cannot replace another tab's live confirmation.
+     -- **"Allow for this session" is per tool and ends with the session.**
+     -  `fork_chat` and `new_chat` are remembered separately, a remembered tool
+     -  skips its card for the rest of the Console session, and the next session
+    @@ Docs/User_Guide/console/agent-runs-and-tools.md: source ▸ Tool gates ▸ **Cha
+     +  standing instructions, labeling supplied instructions as an explicit override.
+     +  An unavailable workspace Persona falls back to the plain assistant with a notice.
+     +  Choose **Allow**, **Allow for this session**, or
+    -+  **Deny**. A stale decision after Stop cannot create a chat.
+    ++  **Deny**. A stale decision after Stop cannot create a chat. Closing the source tab
+    ++  cancels its pending confirmation. Switching tabs keeps the decision with its
+    ++  source tab; delayed updates cannot replace another tab's live confirmation.
+     +- **Remembered approval is specific.** For `new_chat`, it covers the same live
+     +  source session, resolved destination and mode, including later supplied opening
+     +  prompts and instructions without another card. Allowing a workspace draft
+    @@ Tests/Chat/test_console_chat_create_confirm.py: def test_remember_grants_session
+     -    t2.start()
+     -    _wait_until(lambda: len(controller.pending_chat_create_ids()) > 0)
+     -    controller.resolve_pending_chat_create(True, False, request_id=controller.pending_chat_create_ids()[-1])
+    --    t2.join(timeout=5)
+    +-    t2.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+     -    assert results[-1] == {"allow": True, "remember": False}
+     +    # A fork grant cannot authorize an unprepared new-chat payload.
+     +    assert controller.request_chat_create_confirm(
+    @@ Tests/Chat/test_console_chat_create_integration.py: def test_execute_routing_rej
+          assert not outcome["ok"] and outcome["kind"] == "invalid_args"
+      
+      
+    -@@ Tests/Chat/test_console_chat_create_integration.py: def test_fork_from_child_run_context_copies_parent_conversation(real_db_controll
+    -     assert [m["content"] for m in copied] == ["root"]
+    -     handoff = completed[0]
+    -     assert handoff["conversation_id"] == outcome["conversation_id"]
+    +@@ Tests/Chat/test_console_chat_create_integration.py: def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
+    +     assert len(placed) == 1
+    +     assert placed[0] in controller.store.sessions()
+    +     assert db.get_conversation_by_id(placed[0].persisted_conversation_id) is not None
+     +
+     +
+     +def test_prepared_new_chat_destination_routing_disclosed_and_durable(
+    @@ backlog/docs/lessons-backlog-hygiene.md: merge, force-push):**
+     +**What to do.** Before deleting plan scratch, verify every preserved or linked artifact against the Git index or HEAD. A filesystem check alone cannot establish that an ignored artifact will survive checkout. Use an explicit file list when force-adding QA logs so unrelated ignored files stay outside the commit.
+     
+      ## backlog/docs/lessons-testing-evidence.md ##
+    -@@ backlog/docs/lessons-testing-evidence.md: a clean `origin/dev` worktree and on the branch and diff the failing ids (about
+    - ratchet rows are already red on `dev`, so only the difference means anything); search
+    - the test suite's string literals for text the reformat removed from a source line; and
+    - grep `Tests/` for doubles of the changed method, then run those files on both trees.
+    +@@ backlog/docs/lessons-testing-evidence.md: test ASTs restore after removing only scoped harness/cleanup substitutions.
+    + **PR #2953, 2026-10-04.** On identical sources, Linux credential polling measured 10.125 os.open/tick against a 6.75 ceiling, then its same-head retry passed at 6.75 in both variants. A local call-through audit attributed every traced idle open to storage_admission._local_pause_requested / Admission.pause_requested on executor threads: each native backup-pause probe opened 37 descriptors on that private macOS path, and two or three probes landed in the idle phase. Those are real guard costs, not additional credential-poll admissions. No stack was captured in the failing Linux job, so the local attribution does not prove that job's exact cause.
+    + 
+    + Before attributing a timing-dependent storage count to the UI callback, trace all threads and retain the failed census, successful repeat and exact source identities. Keep actual native pause/admission checks and the existing ceilings intact; an observed passing repeat is not a universal flake repair.
+    ++
+     +
+     +## Visible Stop needs an inside-parent geometry assertion (TASK-33805, 2026-10-02)
+     +
+    @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+                  ):
+                      self.store.register_ephemeral_dispatch_recovery(
+     @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+    - 
+    -         if error is not None:
+    -             logger.warning(
+    --                "Console trace provenance could not be saved; "
+    --                "exception_type={}",
+    -+                "Console trace provenance could not be saved; exception_type={}",
+    -                 type(error).__name__,
+    -             )
+    -         visible_copy = (
+    -@@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+                  provider_started=False,
+              )
+      
+    @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+     -        # with the primary, so the user's session grant must not silently
+     -        # auto-allow child-run chat creation; every child call confirms.
+     +        # pair short-circuits -- no card is armed at all.
+    +         with self._pending_chat_create_lock:
+    +             if owning_session_id in self._session_close_generations:
+    +                 return {"allow": False, "remember": False}
+    +-            if (
+    +-                requesting_kind == AGENT_KIND_PRIMARY
+    +-                and tool
+    +-                in self._chat_create_session_grants.get(owning_session_id, set())
+    +-            ):
+    +-                return {"allow": True, "remember": True}
+     +        record = self._chat_creation_record(payload) if tool == "new_chat" else None
+     +        if tool == "new_chat" and record is None:
+     +            token = payload.get("_creation_token")
+    @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+     +                token.close()
+     +            return {"allow": False, "remember": False}
+     +        grant = payload["_grant_scope"] if record is not None else tool
+    -         if (
+    -             requesting_kind == AGENT_KIND_PRIMARY
+    --            and tool in self._chat_create_session_grants.get(owning_session_id, set())
+    ++        if (
+    ++            requesting_kind == AGENT_KIND_PRIMARY
+     +            and grant in self._chat_create_session_grants.get(owning_session_id, set())
+    -         ):
+    ++        ):
+     +            if record is not None:
+     +                record["approved"] = True
+    -             return {"allow": True, "remember": True}
+    ++            return {"allow": True, "remember": True}
+     +        if self.app is None or self.set_pending_chat_create is None:
+     +            if record is not None:
+     +                payload["_creation_token"].close()
+    @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+              # Final-review fix wave (Finding 1): enrich the payload BEFORE the
+              # round is armed -- fork_source_title/fork_message_count (the card's
+     @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+    -             # Record a standing grant only on an allow that ALSO asked to
+    -             # be remembered -- a remembered deny must not poison later
+    -             # rounds into auto-allowing.
+    -+            if allow and tool == "new_chat":
+    -+                allow = self._chat_creation_record(payload) is record
+    -+                if allow:
+    -+                    record["approved"] = True
+    -             if allow and remember:
+    -                 self._chat_create_session_grants.setdefault(
+    -                     owning_session_id, set()
+    --                ).add(tool)
+    -+                ).add(grant)
+    -             return {"allow": allow, "remember": remember}
+    +                 remember = bool(decision.get("remember", False))
+    +                 # Decide and remember atomically with the Close/revocation sweep.
+    +                 # A remembered deny must never become a standing grant.
+    ++                if allow and tool == "new_chat":
+    ++                    allow = self._chat_creation_record(payload) is record
+    ++                    if allow:
+    ++                        record["approved"] = True
+    +                 if allow and remember:
+    +                     self._chat_create_session_grants.setdefault(
+    +                         owning_session_id, set()
+    +-                    ).add(tool)
+    ++                    ).add(grant)
+    +                 return {"allow": allow, "remember": remember}
+              finally:
+     +            if record is not None and not record["approved"]:
+     +                payload["_creation_token"].close()
+    @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+     +
+              tool = str(payload.get("tool") or "")
+              session_id = str(payload.get("session_id") or "")
+    -         session = next((s for s in self.store.sessions() if s.id == session_id), None)
+    +         # A committed Close retains its source during drain; an earlier Allow
+     @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+              if self.prompt_queue_coordinator.stop_pending_continuation(session_id):
+                  self._signal_stop(session_id=session_id)
+    @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+              self._fleet_wake.dispose()
+              self._shutdown_requested.set()
+              unreachable_preparations = self._detach_closed_submit_tasks()
+    -@@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+    -             )
+    -             return self._block(session_id, visible_copy)
+    -         assert turn_context is not None
+    --        if resend and (
+    --            thinking_block := self._thinking_persistence_preflight(
+    --                session_id=session_id, resolution=resolution
+    -+        if (
+    -+            resend
+    -+            and (
+    -+                thinking_block := self._thinking_persistence_preflight(
+    -+                    session_id=session_id, resolution=resolution
+    -+                )
+    -             )
+    --        ) is not None:
+    -+            is not None
+    -+        ):
+    -             return thinking_block
+    -         provider_messages = self._provider_messages_through_message(
+    -             session_id,
+    -@@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+    -     def _hook_authority_values(self, session_id: str) -> dict[str, Any]:
+    -         """Read current hook authority without assembling unrelated catalogs."""
+    -         keys = (
+    --            "workspace_roots", "project_authority", "tool_policy_profile_id",
+    -+            "workspace_roots",
+    -+            "project_authority",
+    -+            "tool_policy_profile_id",
+    -             "persona_policy_rules",
+    -         )
+    -         if self._turn_context_provider is not None:
+    -@@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+    -             return {key: getattr(snapshot, key) for key in keys}
+    -         session = next(item for item in self.store.sessions() if item.id == session_id)
+    -         workspace_id = self.store.session_workspace_id(session_id)
+    --        roots, _aliases, _skipped = capture_change_review_admission(self.app, workspace_id)
+    -+        roots, _aliases, _skipped = capture_change_review_admission(
+    -+            self.app, workspace_id
+    -+        )
+    -         return {
+    -             "workspace_roots": roots,
+    -             "project_authority": capture_project_instruction_authority(
+    --                session, getattr(self.app, "workspace_registry_service", None),
+    -+                session,
+    -+                getattr(self.app, "workspace_registry_service", None),
+    -                 include_bindings=self._agent_dispatch_is_eligible(
+    -                     session, prefill=self.store.session_one_shot_prefill(session_id)
+    -                 ),
+    -             ),
+    --            "tool_policy_profile_id": resolve_turn_tool_policy_profile_id(self.app, workspace_id),
+    --            "persona_policy_rules": resolve_turn_persona_policy_rules(self.app, session),
+    -+            "tool_policy_profile_id": resolve_turn_tool_policy_profile_id(
+    -+                self.app, workspace_id
+    -+            ),
+    -+            "persona_policy_rules": resolve_turn_persona_policy_rules(
+    -+                self.app, session
+    -+            ),
+    -         }
+    - 
+    -     def resolve_turn_configuration_snapshot(
+    -@@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+    -             session_id,
+    -             resolution,
+    -             reason="automatic",
+    --            current=lambda: self._compaction_admission(
+    --                session_id=session_id,
+    --                resolution=resolution,
+    --                prompt=prompt,
+    --            )
+    --            == admission,
+    -+            current=lambda: (
+    -+                self._compaction_admission(
+    -+                    session_id=session_id,
+    -+                    resolution=resolution,
+    -+                    prompt=prompt,
+    -+                )
+    -+                == admission
+    -+            ),
+    -         )
+    -         transaction = await service.compact(
+    -             admission=admission,
+    -@@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+    -             prepare_main=prepare_main,
+    -             prefix_messages=snapshots[: boundary_index + 1],
+    -             retry_fence=compaction_retry_fence(
+    --                conversation_id, resolution, prompt, resolved, effective, snapshots,
+    -+                conversation_id,
+    -+                resolution,
+    -+                prompt,
+    -+                resolved,
+    -+                effective,
+    -+                snapshots,
+    -                 active_request=not manual_action,
+    -             ),
+    -             honor_failure_latch=micro_compaction or not manual_action,
+     @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+                      ):
+                          project_selection = None
+ 3:  1bf44e36fc =  3:  0e4c06477f Retire unshipped predecessor chat-start migration names
+ 4:  aad8491c4b =  4:  78052a4266 docs: record current-dev compatibility requirements and verification scope
+ 5:  521bb024b1 !  5:  371e994109 Reject mixed native replay and preserve child chat drafts
+    @@ Tests/Chat/test_console_chat_create_confirm.py: from tldw_chatbook.Chat.chat_per
+     +)
+      
+      
+    - @pytest.fixture
+    -@@ Tests/Chat/test_console_chat_create_confirm.py: def test_primary_requester_still_rides_session_grant(make_controller):
+    -     with use_run_id("run-9"):
+    -         decision = controller.request_chat_create_confirm(_payload(), session_id=sid)
+    -     assert decision == {"allow": True, "remember": True}
+    + #: Event waits and worker joins share the existing bounded race-test deadline.
+    +@@ Tests/Chat/test_console_chat_create_confirm.py: def test_legacy_chat_create_marshal_keeps_its_unscoped_contract(
+    +         release.set()
+    +         controller.begin_shutdown()
+    +         worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+    ++
+    ++
+     +
+     +
+     +# Genuine child preparation uses the same native fixture as execution controls.
+    @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+              # reason the run's cancel event is -- see `_bind_visit_cancel_signal`.
+              visit_cancel_event = self._bind_visit_cancel_signal()
+     @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+    -             "revoked": False,
+    -         }
+    -         with self._pending_chat_create_lock:
+    +             # Enrichment can finish after Close has swept the standalone rounds.
+    +             if owning_session_id in self._session_close_generations:
+    +                 return {"allow": False, "remember": False}
+     +            if record is not None and (
+     +                true_run_id in self._chat_creation_revoked_runs
+     +                or self._chat_creation_records.get(payload["_creation_token"])
+    @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+      
+              timeout_seconds = (
+     @@ tldw_chatbook/Chat/console_chat_controller.py: class ConsoleChatController:
+    -             if was_revoked:
+    -                 return {"allow": False, "remember": False}
+    -             allow = bool(decision.get("allow", False))
+    --            remember = bool(decision.get("remember", False))
+    -+            remember = requesting_kind == AGENT_KIND_PRIMARY and bool(
+    -+                decision.get("remember", False)
+    -+            )
+    -             # Record a standing grant only on an allow that ALSO asked to
+    -             # be remembered -- a remembered deny must not poison later
+    -             # rounds into auto-allowing.
+    +                 ):
+    +                     return {"allow": False, "remember": False}
+    +                 allow = bool(decision.get("allow", False))
+    +-                remember = bool(decision.get("remember", False))
+    ++                remember = requesting_kind == AGENT_KIND_PRIMARY and bool(
+    ++                    decision.get("remember", False)
+    ++                )
+    +                 # Decide and remember atomically with the Close/revocation sweep.
+    +                 # A remembered deny must never become a standing grant.
+    +                 if allow and tool == "new_chat":
+     
+      ## tldw_chatbook/Chat/console_dispatch_repository.py ##
+     @@ tldw_chatbook/Chat/console_dispatch_repository.py: class ConsoleDispatchRepository:
+ 6:  7b28e10fe0 =  6:  a28101a41b docs: reconcile Console chat task identities and qualification scope
+ 7:  46fd8d0d0c =  7:  4be7961ca8 fix(console): cancel idle spend refresh under turn custody
+ 8:  876a56a20a =  8:  b5da3d69d8 fix(console): preserve child approval and consume mounted handoffs
+ 9:  171999acec =  9:  f65431d10e docs(console): preserve qualification and draft review blockers
+10:  f3caf738b7 = 10:  2127d8155d docs(console): verify artifact integrity and publication payload
+11:  9187a81a79 = 11:  e6a824a2bd docs(console): record attached draft PR and remaining gate
+12:  451128443f = 12:  1281e199e5 fix(console): preserve accepted handoffs through composer navigation
+13:  9f459f76df = 13:  100cd7a394 docs(console): record authorized PR review and merge follow-up
+14:  ccd65ce09d = 14:  fea5ddc5cd fix(console): preserve grants when close tickets are refused
+15:  05aeed840b = 15:  80520b96dd docs(console): retain PR rebase and review repair evidence
+16:  9d4b80a7ad = 16:  a8f7a5b015 docs(console): qualify latest dev and retain complete review logs
+17:  bc7033f226 = 17:  b6dba99920 fix(console): validate chat creation and preserve handoff labels
+18:  5933b08a12 = 18:  b329ac36d2 fix(console): settle uncertain chat starts and retain commit ownership
+19:  e2730ba9b3 = 19:  1ba0f0c436 fix(ledger): fence recovery cleanup to committed restriction entries
+20:  0eadb757ed = 20:  b025387cdf test(console): claim manual screen startup before mounting
+21:  e7a6018245 = 21:  77b6b33216 docs(console): retain Qodo and ownership repair evidence before dev integration
+22:  220a577013 ! 22:  2e8780fccb fix(console): retain integration diagnostics and private provider tests
+    @@ Commit message
+     
+      ## Docs/security/production-diagnostic-inventory.json ##
+     @@
+    -     },
+    -     {
+    -       "call_count": 90,
+    --      "diagnostic_digest": "f6cc31a7f2a7205adb83",
+    -+      "diagnostic_digest": "a4d37de7d146dc4948a7",
+    -       "owner": "TASK-492",
+            "path": "tldw_chatbook/Chat/console_chat_controller.py",
+            "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"
+          },
+23:  a056323258 = 23:  9cc0133ee3 fix(console): fence public fork mutations and drain name persistence
+24:  492b86c3cb = 24:  3078576465 docs(console): allocate ADR219 for bounded chat starts
+25:  14e1983aad = 25:  c846931111 docs: checkpoint console integration and ADR219 references
+26:  70d2214456 = 26:  b1648fc381 test(console): own startup before navigation continuity mount
+27:  3633071edb = 27:  6d5ac5303e docs: record navigation ownership proof and reader integration scope
+28:  12e5246164 = 28:  cb59d525cb test(library): qualify reader fixtures and preserve size guards
+29:  e4c53a204b = 29:  02db1692fa test(console): detect setattr publication in fork census
+30:  d93823616d = 30:  0c53748df9 docs: scope current-dev schema integration for console PR
+31:  f1ffbfd7ad = 31:  1735e04f63 docs: retain exact legacy receipt schemas during latest-dev rebase
+32:  6beb77cf6a = 32:  edef473aa4 fix(db): preserve native receipt archives across schema 77 integration
+33:  6323ff208b = 33:  f603f70872 docs: checkpoint schema qualification and next dev integration scope
+34:  9ed370f566 = 34:  50432f4ce8 test(console): isolate the settings return profile after dev integration
+35:  223c4db6d1 = 35:  fc2e918249 docs: scope inherited Console adoption and ownership baseline repairs
+36:  9319d87acf = 36:  94c9963f2f fix(console): honor verified provider adoption and canonical rebase
+37:  1ce569523b = 37:  ef23778e0d refactor(console): move verified adoption into Session owner
+38:  d05a98c766 = 38:  550a45ced6 refactor(console): keep hooks review UI adapter in wiring
+39:  b6990a3a75 = 39:  c53dfadd4e chore(console): reconcile reviewed diagnostic owner moves
+40:  19f2904496 = 40:  db1e16134a docs(tests): clarify verified adoption configuration contract
+41:  8bd3c9f5e5 = 41:  08a37bb661 docs(console): checkpoint provider adoption qualification and final dev scope
+42:  edaeececfb = 42:  bc184be782 docs: scope latest dev Console Close integration

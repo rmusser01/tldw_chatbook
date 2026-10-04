@@ -1,0 +1,7 @@
+.                                                                        [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-final-adoption-profile-u_04joyy/pytest/test_vllm_console_handoff_bloc0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+5.13s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_handoff_blocks_endpoint_when_durable_rollback_fails
+
+(2 durations < 1s hidden.)
+1 passed in 8.04s

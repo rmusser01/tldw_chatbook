@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="125" time="127.415" timestamp="2026-10-04T09:18:31.178868-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_automatic_compaction_commits_memory_and_the_send_replies" time="3.267" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_compact_now_succeeds_after_real_durable_sends" time="1.290" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_failed_compaction_records_reason_and_discloses_spend" time="2.436" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_failed_compact_now_says_nothing_changed" time="1.234" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_failure_is_not_rebilled_until_the_policy_changes[custom-32000]" time="2.948" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_failure_is_not_rebilled_until_the_policy_changes[automatic-2400]" time="2.827" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_compact_now_retries_once_after_an_automatic_failure" time="2.435" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_failed_compact_now_pauses_automatic_compaction" time="2.744" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_failed_auxiliary_compact_now_keeps_the_send_pause" time="2.601" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_failed_compact_now_under_omit_still_reports_the_failure" time="1.267" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_failed_automatic_compaction_under_omit_is_disclosed_once" time="3.161" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_recovery_fallback_keeps_only_the_preflight_blocks_own_copy" time="2.336" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_failed_micro_compaction_is_not_rebilled_by_the_next_tick" time="0.967" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_edit_to_the_latest_exchange_lifts_the_pause[edited-compact-now-micro-tick]" time="0.983" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_edit_to_the_latest_exchange_lifts_the_pause[edited-compact-now-send]" time="2.536" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_edit_to_the_latest_exchange_lifts_the_pause[edited-micro-tick-micro-tick]" time="0.997" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_edit_to_the_latest_exchange_lifts_the_pause[edited-micro-tick-send]" time="2.706" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_edit_to_the_latest_exchange_lifts_the_pause[unchanged-compact-now-micro-tick]" time="0.943" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_edit_to_the_latest_exchange_lifts_the_pause[unchanged-compact-now-send]" time="2.816" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_edit_to_the_latest_exchange_lifts_the_pause[unchanged-micro-tick-micro-tick]" time="1.068" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_edit_to_the_latest_exchange_lifts_the_pause[unchanged-micro-tick-send]" time="2.668" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_compact_now_beside_an_unsent_turn_keeps_its_retry_paused" time="2.492" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_compact_now_beside_an_unsent_turn_keeps_a_fresh_send_paused" time="2.787" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_failed_compact_now_pauses_a_continue_of_the_latest_reply" time="2.585" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_failed_compact_now_pauses_a_continue_under_stop_and_ask[unchanged]" time="2.744" /><testcase classname="Tests.Chat.test_console_compaction_live_session" name="test_live_failed_compact_now_pauses_a_continue_under_stop_and_ask[reply-edited]" time="2.905" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_automatic_failure_copy_names_cause_spend_and_next_step" time="0.027" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_manual_failure_copy_says_nothing_changed" time="0.028" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_suppressed_copy_says_no_new_call_was_made" time="0.031" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_stale_copy_invites_a_resend_instead_of_a_settings_change" time="0.029" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_spend_copy_never_fabricates_a_price[None-False-]" time="0.032" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_spend_copy_never_fabricates_a_price[None-True-reported no token usage]" time="0.031" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_spend_copy_never_fabricates_a_price[usage2-True-2,000 input + 50 output tokens.]" time="0.033" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_manual_compact_now_with_nothing_to_summarize_says_so_plainly" time="0.040" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_manual_compact_now_with_no_useful_summary_gives_a_next_step" time="0.042" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_saved_range_faults_are_not_worded_as_a_size_problem" time="0.044" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_omitted_copy_discloses_a_billed_failure_the_send_survived[invalid_summary_output-True]" time="0.038" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_omitted_copy_discloses_a_billed_failure_the_send_survived[branch_memory_changed_before_commit-False]" time="0.047" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_every_known_reason_has_specific_copy" time="0.038" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_failed_attempt_suppresses_rebilling_until_the_fence_changes" time="0.037" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_each_route_keeps_its_own_pause" time="0.041" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_a_commit_that_can_never_land_fails_before_the_billed_call" time="0.041" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_success_clears_the_latch" time="0.042" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_changing_the_legacy_summary_text_lifts_the_pause" time="0.043" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[continue-True]" time="0.045" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[regenerate-True]" time="0.042" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[retry-failed-regenerate-sibling-True]" time="0.038" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[send-True]" time="0.043" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[send-after-deleting-the-latest-exchange-False]" time="0.044" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[regenerate-after-editing-the-question-False]" time="0.043" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[continue-after-editing-the-reply-False]" time="0.039" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[regenerate-an-earlier-reply-False]" time="0.043" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_a_send_pause_covers_the_previous_reply_after_a_discard[continue]" time="0.042" /><testcase classname="Tests.Chat.test_console_compaction_failure" name="test_a_send_pause_covers_the_previous_reply_after_a_discard[regenerate]" time="0.041" /><testcase classname="Tests.Chat.test_console_trace_compaction_admission" name="test_compaction_policy_resolves_explicit_bounded_config" time="0.040" /><testcase classname="Tests.Chat.test_console_trace_compaction_admission" name="test_provider_dispatch_gate_yields_until_maintenance_resumes" time="0.091" /><testcase classname="Tests.Chat.test_console_trace_compaction_admission" name="test_admission_requires_a_successful_durable_logical_gc" time="0.509" /><testcase classname="Tests.Chat.test_console_trace_compaction_admission" name="test_admission_defers_for_provider_activity_and_always_resumes_dispatch" time="0.474" /><testcase classname="Tests.Chat.test_console_trace_compaction_admission" name="test_admission_defers_for_activity_and_size_thresholds" time="0.575" /><testcase classname="Tests.Chat.test_console_trace_compaction_admission" name="test_admission_rechecks_live_storage_thresholds_for_the_same_gc_result" time="0.722" /><testcase classname="Tests.Chat.test_console_trace_compaction_admission" name="test_admission_defers_when_another_maintenance_owner_holds_the_lease" time="0.503" /><testcase classname="Tests.Chat.test_console_trace_compaction_admission" name="test_wal_disk_and_lease_failures_remain_pending_and_retryable" time="0.885" /><testcase classname="Tests.Chat.test_console_trace_compaction_admission" name="test_retry_backoff_prevents_an_immediate_second_attempt" time="0.703" /><testcase classname="Tests.Chat.test_console_trace_compaction_admission" name="test_expired_compaction_lease_recovers_and_can_retry" time="0.741" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_actual_compaction_commit_and_required_input_fence[none-False]" time="0.641" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_actual_compaction_commit_and_required_input_fence[none-True]" time="0.606" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_actual_compaction_commit_and_required_input_fence[pre-False]" time="0.311" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_actual_compaction_commit_and_required_input_fence[pre-True]" time="0.296" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_actual_compaction_commit_and_required_input_fence[post-False]" time="0.634" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_actual_compaction_commit_and_required_input_fence[post-True]" time="0.553" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_focused_fallback_gets_its_actual_required_candidate" time="0.499" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_console_compaction_real_sqlite_commit_and_provider_fence[False-False-False-False]" time="1.287" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_console_compaction_real_sqlite_commit_and_provider_fence[False-True-False-False]" time="1.275" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_console_compaction_real_sqlite_commit_and_provider_fence[True-False-False-False]" time="1.438" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_console_compaction_real_sqlite_commit_and_provider_fence[True-True-False-False]" time="1.227" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_console_compaction_real_sqlite_commit_and_provider_fence[True-False-True-False]" time="1.390" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_console_compaction_real_sqlite_commit_and_provider_fence[False-False-False-True]" time="0.972" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_console_compaction_real_sqlite_commit_and_provider_fence[True-False-False-True]" time="0.841" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_manual_post_requirement_precedes_next_input_and_late_effects_are_discarded[False]" time="0.311" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_manual_post_requirement_precedes_next_input_and_late_effects_are_discarded[True]" time="0.305" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_successful_manual_post_checkpoints_retire_with_consumed_handoffs" time="0.176" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_previous_manual_handoff_does_not_keep_failed_operation_live[False]" time="0.796" /><testcase classname="Tests.Chat.test_hooks_v2_compaction" name="test_previous_manual_handoff_does_not_keep_failed_operation_live[True]" time="0.829" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_an_ask_hold_pauses_the_send_before_it_is_committed" time="2.277" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_compact_and_send_summarizes_then_sends_the_held_message_once" time="2.380" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_send_without_compacting_sends_with_no_summary_call" time="2.470" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_cancel_sends_nothing_and_returns_the_message_to_the_composer" time="2.195" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_a_failed_compaction_keeps_the_hold_and_says_why" time="2.262" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_a_runtime_held_send_is_not_also_a_turn_recovery" time="2.931" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_a_runtime_held_send_resumes_and_replies[compact_and_send]" time="3.421" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_a_runtime_held_send_resumes_and_replies[send_without_compacting]" time="3.322" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_a_send_that_cannot_fit_is_refused_before_commit_with_the_alert[True]" time="0.476" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_a_send_that_cannot_fit_is_refused_before_commit_with_the_alert[False]" time="0.797" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_a_runtime_send_that_cannot_fit_keeps_the_message_recoverable" time="0.488" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_send_without_compacting_holds_even_if_the_policy_turned_automatic" time="2.366" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_an_abandoned_resumed_hold_leaves_no_answered_id_behind" time="2.245" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_send_without_compacting_past_the_ceiling_drops_older_turns_to_fit" time="2.492" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_hook_context_that_cannot_fit_is_refused_before_commit" time="0.870" /><testcase classname="Tests.Chat.test_console_compaction_ask_hold" name="test_a_hold_after_hooks_resumes_without_repeating_its_side_effects" time="1.403" /><testcase classname="Tests.Chat.test_console_context_budget_routes" name="test_a_window_the_reservation_fills_alerts_with_max_tokens[False]" time="1.759" /><testcase classname="Tests.Chat.test_console_context_budget_routes" name="test_a_window_the_reservation_fills_alerts_with_max_tokens[True]" time="1.540" /><testcase classname="Tests.Chat.test_console_context_budget_routes" name="test_mandatory_context_over_the_window_alerts_with_what_fills_it[False]" time="1.561" /><testcase classname="Tests.Chat.test_console_context_budget_routes" name="test_mandatory_context_over_the_window_alerts_with_what_fills_it[True]" time="1.577" /><testcase classname="Tests.Chat.test_console_context_budget_routes" name="test_an_estimated_window_takes_the_same_route_as_a_verified_one[ask]" time="1.550" /><testcase classname="Tests.Chat.test_console_context_budget_routes" name="test_an_estimated_window_takes_the_same_route_as_a_verified_one[automatic]" time="1.511" /><testcase classname="Tests.Chat.test_console_context_budget_routes" name="test_the_hold_calls_its_budget_an_estimate_only_when_the_window_sets_it[custom-False]" time="1.462" /><testcase classname="Tests.Chat.test_console_context_budget_routes" name="test_the_hold_calls_its_budget_an_estimate_only_when_the_window_sets_it[automatic-True]" time="1.437" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_unknown_model_automatic_budget_does_not_block_unverified_send" time="0.045" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_memory_preflight_counts_and_preserves_private_owner_group" time="0.055" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_unknown_model_uses_bounded_custom_budget_for_compaction" time="0.052" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_visual_policy_falls_back_to_text_for_text_only_model" time="0.051" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_automatic_preflight_uses_active_model_visual_limit" time="0.046" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_automatic_preflight_refuses_selected_non_image_attachment_before_dispatch" time="0.048" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_bounded_budget_without_older_units_does_not_block_fitting_send" time="0.043" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_known_overflow_still_blocks_when_compaction_is_unavailable" time="0.052" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_controller_preflight_routes_off_ask_and_automatic_once[off-0-False]" time="0.055" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_controller_preflight_routes_off_ask_and_automatic_once[ask-0-True]" time="0.051" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_controller_preflight_routes_off_ask_and_automatic_once[automatic-1-False]" time="0.047" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_controller_decision_diagnostic_is_event_only" time="0.049" /><testcase classname="Tests.Chat.test_console_context_compaction" name="test_manual_compact_now_is_explicit_and_transcript_neutral" time="0.050" /><testcase classname="Tests.Chat.test_console_rewind_summarize" name="test_range_projection_is_shared_by_preflight_and_next_send_preview" time="0.533"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">tmp_path = PosixPath('/private/tmp/task9-final-4/test_range_projection_is_share0')
+
+    @pytest.mark.asyncio
+    async def test_range_projection_is_shared_by_preflight_and_next_send_preview(
+        tmp_path,
+    ) -&gt; None:
+&gt;       controller, store, session, gateway, _db = _durable_controller(
+            tmp_path, gateway=SummaryGateway(summary="RANGE-MEMORY")
+        )
+
+Tests/Chat/test_console_rewind_summarize.py:851: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_rewind_summarize.py:1045: in _durable_controller
+    controller = ConsoleChatController(
+tldw_chatbook/Chat/console_chat_controller.py:4183: in __init__
+    auxiliary_timeout_seconds=get_cli_setting(
+tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c5bb6b0&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired</failure></testcase><testcase classname="Tests.Chat.test_console_rewind_summarize" name="test_preview_duplicates_complete_system_and_memory_dispatch_block" time="0.457"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">tmp_path = PosixPath('/private/tmp/task9-final-4/test_preview_duplicates_comple0')
+
+    @pytest.mark.asyncio
+    async def test_preview_duplicates_complete_system_and_memory_dispatch_block(
+        tmp_path,
+    ) -&gt; None:
+&gt;       controller, store, session, gateway, _db = _durable_controller(
+            tmp_path, gateway=SummaryGateway(summary="RANGE-MEMORY")
+        )
+
+Tests/Chat/test_console_rewind_summarize.py:912: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_rewind_summarize.py:1045: in _durable_controller
+    controller = ConsoleChatController(
+tldw_chatbook/Chat/console_chat_controller.py:4183: in __init__
+    auxiliary_timeout_seconds=get_cli_setting(
+tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c5bb6b0&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired</failure></testcase><testcase classname="Tests.Chat.test_console_rewind_summarize" name="test_effective_legacy_memory_makes_automatic_and_compact_now_zero_call" time="0.455"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">tmp_path = PosixPath('/private/tmp/task9-final-4/test_effective_legacy_memory_m0')
+
+    @pytest.mark.asyncio
+    async def test_effective_legacy_memory_makes_automatic_and_compact_now_zero_call(
+        tmp_path,
+    ) -&gt; None:
+&gt;       controller, store, session, gateway, _db = _durable_controller(
+            tmp_path, gateway=SummaryGateway(summary="MUST-NOT-BE-CALLED")
+        )
+
+Tests/Chat/test_console_rewind_summarize.py:961: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_rewind_summarize.py:1045: in _durable_controller
+    controller = ConsoleChatController(
+tldw_chatbook/Chat/console_chat_controller.py:4183: in __init__
+    auxiliary_timeout_seconds=get_cli_setting(
+tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10c5bb6b0&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired</failure></testcase><testcase classname="Tests.Chat.test_console_first_chat_handoff" name="test_compaction_reaches_a_terminal_answer_when_the_gateway_hangs" time="0.041" /><testcase classname="Tests.Backup_Recovery.test_console_maintenance" name="test_console_maintenance_preserves_admitted_turns_and_queued_prompts[refusal]" time="0.796" /></testsuite></testsuites>

@@ -1,0 +1,542 @@
+[
+  {
+    "path": "Tests/Architecture/test_module_size_ratchet.py",
+    "base_edits": [],
+    "final_inherited_edits": [],
+    "new_edits": []
+  },
+  {
+    "path": "Tests/Chat/test_console_fork_transition_census.py",
+    "base_edits": [],
+    "final_inherited_edits": [],
+    "new_edits": []
+  },
+  {
+    "path": "Tests/Chat/test_console_interrupt_attention.py",
+    "base_edits": [
+      [
+        "        lambda section, key, default=None: value\n        if (section, key) == (\"console\", \"interrupt_bell\")\n        else default,\n",
+        "        lambda section, key, default=None: (\n            value if (section, key) == (\"console\", \"interrupt_bell\") else default\n        ),\n"
+      ],
+      [
+        "    _controller(app, attached=False, pending=1).on_pending_rounds_changed(1, \"approval\", True)\n",
+        "    _controller(app, attached=False, pending=1).on_pending_rounds_changed(\n        1, \"approval\", True\n    )\n"
+      ],
+      [
+        "    assert _rings(monkeypatch, env=\"maybe\", config=None) == 0  # app-wide bool rule: not truthy -> off\n",
+        "    assert (\n        _rings(monkeypatch, env=\"maybe\", config=None) == 0\n    )  # app-wide bool rule: not truthy -> off\n"
+      ],
+      [
+        "        controller._interrupt_host.registries[\"question\"][\"r1\"] = {\"event\": threading.Event()}\n",
+        "        controller._interrupt_host.registries[\"question\"][\"r1\"] = {\n            \"event\": threading.Event()\n        }\n"
+      ],
+      [
+        "    _controller(app, attached=False).on_pending_rounds_changed(1, \"approval\", True)  # must not raise\n",
+        "    _controller(app, attached=False).on_pending_rounds_changed(\n        1, \"approval\", True\n    )  # must not raise\n"
+      ],
+      [
+        "        \"question\", \"r1\", {\"round_id\": \"r1\", \"session_id\": \"s1\"}, state,\n        session_id=\"s1\", owning_session_id=\"s1\", deadline=None, is_parked=False,\n",
+        "        \"question\",\n        \"r1\",\n        {\"round_id\": \"r1\", \"session_id\": \"s1\"},\n        state,\n        session_id=\"s1\",\n        owning_session_id=\"s1\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "    state = {\"event\": threading.Event(), \"session_id\": \"s1\", \"run_id\": \"run-1\", \"revoked\": False}\n",
+        "    state = {\n        \"event\": threading.Event(),\n        \"session_id\": \"s1\",\n        \"run_id\": \"run-1\",\n        \"revoked\": False,\n    }\n"
+      ],
+      [
+        "        \"question\", \"r1\", {\"round_id\": \"r1\", \"session_id\": \"s1\"}, state,\n        session_id=\"s1\", owning_session_id=\"s1\", deadline=None, is_parked=False,\n",
+        "        \"question\",\n        \"r1\",\n        {\"round_id\": \"r1\", \"session_id\": \"s1\"},\n        state,\n        session_id=\"s1\",\n        owning_session_id=\"s1\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "    assert host.run_round(\n        \"question\", \"r1\", {\"round_id\": \"r1\", \"session_id\": \"s1\"}, state,\n        session_id=\"s1\", owning_session_id=\"s1\", deadline=None, is_parked=False,\n    ) == \"decided\"\n",
+        "    assert (\n        host.run_round(\n            \"question\",\n            \"r1\",\n            {\"round_id\": \"r1\", \"session_id\": \"s1\"},\n            state,\n            session_id=\"s1\",\n            owning_session_id=\"s1\",\n            deadline=None,\n            is_parked=False,\n        )\n        == \"decided\"\n    )\n"
+      ]
+    ],
+    "final_inherited_edits": [
+      [
+        "        lambda section, key, default=None: value\n        if (section, key) == (\"console\", \"interrupt_bell\")\n        else default,\n",
+        "        lambda section, key, default=None: (\n            value if (section, key) == (\"console\", \"interrupt_bell\") else default\n        ),\n"
+      ],
+      [
+        "    _controller(app, attached=False, pending=1).on_pending_rounds_changed(1, \"approval\", True)\n",
+        "    _controller(app, attached=False, pending=1).on_pending_rounds_changed(\n        1, \"approval\", True\n    )\n"
+      ],
+      [
+        "    assert _rings(monkeypatch, env=\"maybe\", config=None) == 0  # app-wide bool rule: not truthy -> off\n",
+        "    assert (\n        _rings(monkeypatch, env=\"maybe\", config=None) == 0\n    )  # app-wide bool rule: not truthy -> off\n"
+      ],
+      [
+        "        controller._interrupt_host.registries[\"question\"][\"r1\"] = {\"event\": threading.Event()}\n",
+        "        controller._interrupt_host.registries[\"question\"][\"r1\"] = {\n            \"event\": threading.Event()\n        }\n"
+      ],
+      [
+        "    _controller(app, attached=False).on_pending_rounds_changed(1, \"approval\", True)  # must not raise\n",
+        "    _controller(app, attached=False).on_pending_rounds_changed(\n        1, \"approval\", True\n    )  # must not raise\n"
+      ],
+      [
+        "        \"question\", \"r1\", {\"round_id\": \"r1\", \"session_id\": \"s1\"}, state,\n        session_id=\"s1\", owning_session_id=\"s1\", deadline=None, is_parked=False,\n",
+        "        \"question\",\n        \"r1\",\n        {\"round_id\": \"r1\", \"session_id\": \"s1\"},\n        state,\n        session_id=\"s1\",\n        owning_session_id=\"s1\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "    state = {\"event\": threading.Event(), \"session_id\": \"s1\", \"run_id\": \"run-1\", \"revoked\": False}\n",
+        "    state = {\n        \"event\": threading.Event(),\n        \"session_id\": \"s1\",\n        \"run_id\": \"run-1\",\n        \"revoked\": False,\n    }\n"
+      ],
+      [
+        "        \"question\", \"r1\", {\"round_id\": \"r1\", \"session_id\": \"s1\"}, state,\n        session_id=\"s1\", owning_session_id=\"s1\", deadline=None, is_parked=False,\n",
+        "        \"question\",\n        \"r1\",\n        {\"round_id\": \"r1\", \"session_id\": \"s1\"},\n        state,\n        session_id=\"s1\",\n        owning_session_id=\"s1\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "    assert host.run_round(\n        \"question\", \"r1\", {\"round_id\": \"r1\", \"session_id\": \"s1\"}, state,\n        session_id=\"s1\", owning_session_id=\"s1\", deadline=None, is_parked=False,\n    ) == \"decided\"\n",
+        "    assert (\n        host.run_round(\n            \"question\",\n            \"r1\",\n            {\"round_id\": \"r1\", \"session_id\": \"s1\"},\n            state,\n            session_id=\"s1\",\n            owning_session_id=\"s1\",\n            deadline=None,\n            is_parked=False,\n        )\n        == \"decided\"\n    )\n"
+      ]
+    ],
+    "new_edits": []
+  },
+  {
+    "path": "Tests/Chat/test_console_interrupt_rounds.py",
+    "base_edits": [
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=time.monotonic() - 1.0, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=time.monotonic() - 1.0,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\", session_id=\"\"), state,\n        session_id=None, owning_session_id=\"\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\", session_id=\"\"),\n        state,\n        session_id=None,\n        owning_session_id=\"\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", payload, state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\", deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        payload,\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "    assert host.head_round_payload(\"approval\", \"sess-A\") is payload, \"retained past teardown\"\n",
+        "    assert host.head_round_payload(\"approval\", \"sess-A\") is payload, (\n        \"retained past teardown\"\n    )\n"
+      ],
+      [
+        "    for kind, rid, run in [(\"approval\", \"a1\", \"run-x\"), (\"question\", \"q1\", \"run-x\"), (\"skill_script\", \"s1\", \"run-y\"), (\"skill_install\", \"i1\", \"run-x\")]:\n        host.registries[kind][rid] = {\"event\": threading.Event(), \"run_id\": run, \"session_id\": \"sess-A\", \"revoked\": False}\n",
+        "    for kind, rid, run in [\n        (\"approval\", \"a1\", \"run-x\"),\n        (\"question\", \"q1\", \"run-x\"),\n        (\"skill_script\", \"s1\", \"run-y\"),\n        (\"skill_install\", \"i1\", \"run-x\"),\n    ]:\n        host.registries[kind][rid] = {\n            \"event\": threading.Event(),\n            \"run_id\": run,\n            \"session_id\": \"sess-A\",\n            \"revoked\": False,\n        }\n"
+      ],
+      [
+        "    swept = host.revoke_for_run(\"run-x\", {\"approval\": lambda st: stamped.append(\"a\"), \"question\": lambda st: stamped.append(\"q\"), \"skill_script\": lambda st: stamped.append(\"s\")})\n    assert swept == {\"approval\": [(\"a1\", \"sess-A\")], \"question\": [(\"q1\", \"sess-A\")], \"skill_script\": []}\n",
+        "    swept = host.revoke_for_run(\n        \"run-x\",\n        {\n            \"approval\": lambda st: stamped.append(\"a\"),\n            \"question\": lambda st: stamped.append(\"q\"),\n            \"skill_script\": lambda st: stamped.append(\"s\"),\n        },\n    )\n    assert swept == {\n        \"approval\": [(\"a1\", \"sess-A\")],\n        \"question\": [(\"q1\", \"sess-A\")],\n        \"skill_script\": [],\n    }\n"
+      ],
+      [
+        "    assert \"a1\" not in host.registries[\"approval\"] and host.head_round_payload(\"approval\", \"sess-A\") is None\n",
+        "    assert (\n        \"a1\" not in host.registries[\"approval\"]\n        and host.head_round_payload(\"approval\", \"sess-A\") is None\n    )\n"
+      ],
+      [
+        "    assert \"i1\" in host.registries[\"skill_install\"], \"kind not in the stamp map is never swept\"\n",
+        "    assert \"i1\" in host.registries[\"skill_install\"], (\n        \"kind not in the stamp map is never swept\"\n    )\n"
+      ],
+      [
+        "    host.remount_for_session(\"sess-A\", after={\"approval\": hooked.append, \"question\": hooked.append})\n",
+        "    host.remount_for_session(\n        \"sess-A\", after={\"approval\": hooked.append, \"question\": hooked.append}\n    )\n"
+      ],
+      [
+        "    assert [p[\"round_id\"] for p in hooked] == [\"r1\"], \"hook fires only for a pushed head\"\n",
+        "    assert [p[\"round_id\"] for p in hooked] == [\"r1\"], (\n        \"hook fires only for a pushed head\"\n    )\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\", deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        seen.append((outcome, \"r1\" in host.registries[\"approval\"], \"r1\" in host.payloads[\"approval\"]))\n",
+        "        seen.append(\n            (\n                outcome,\n                \"r1\" in host.registries[\"approval\"],\n                \"r1\" in host.payloads[\"approval\"],\n            )\n        )\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False, on_outcome=_on_outcome,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n        on_outcome=_on_outcome,\n"
+      ],
+      [
+        "            \"approval\", \"r1\", _payload(\"r1\"), state,\n            session_id=\"sess-A\", owning_session_id=\"sess-A\",\n            deadline=None, is_parked=False,\n",
+        "            \"approval\",\n            \"r1\",\n            _payload(\"r1\"),\n            state,\n            session_id=\"sess-A\",\n            owning_session_id=\"sess-A\",\n            deadline=None,\n            is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False, on_outcome=outcomes.append,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n        on_outcome=outcomes.append,\n"
+      ]
+    ],
+    "final_inherited_edits": [
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=time.monotonic() - 1.0, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=time.monotonic() - 1.0,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\", session_id=\"\"), state,\n        session_id=None, owning_session_id=\"\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\", session_id=\"\"),\n        state,\n        session_id=None,\n        owning_session_id=\"\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", payload, state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\", deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        payload,\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "    assert host.head_round_payload(\"approval\", \"sess-A\") is payload, \"retained past teardown\"\n",
+        "    assert host.head_round_payload(\"approval\", \"sess-A\") is payload, (\n        \"retained past teardown\"\n    )\n"
+      ],
+      [
+        "    for kind, rid, run in [(\"approval\", \"a1\", \"run-x\"), (\"question\", \"q1\", \"run-x\"), (\"skill_script\", \"s1\", \"run-y\"), (\"skill_install\", \"i1\", \"run-x\")]:\n        host.registries[kind][rid] = {\"event\": threading.Event(), \"run_id\": run, \"session_id\": \"sess-A\", \"revoked\": False}\n",
+        "    for kind, rid, run in [\n        (\"approval\", \"a1\", \"run-x\"),\n        (\"question\", \"q1\", \"run-x\"),\n        (\"skill_script\", \"s1\", \"run-y\"),\n        (\"skill_install\", \"i1\", \"run-x\"),\n    ]:\n        host.registries[kind][rid] = {\n            \"event\": threading.Event(),\n            \"run_id\": run,\n            \"session_id\": \"sess-A\",\n            \"revoked\": False,\n        }\n"
+      ],
+      [
+        "    swept = host.revoke_for_run(\"run-x\", {\"approval\": lambda st: stamped.append(\"a\"), \"question\": lambda st: stamped.append(\"q\"), \"skill_script\": lambda st: stamped.append(\"s\")})\n    assert swept == {\"approval\": [(\"a1\", \"sess-A\")], \"question\": [(\"q1\", \"sess-A\")], \"skill_script\": []}\n",
+        "    swept = host.revoke_for_run(\n        \"run-x\",\n        {\n            \"approval\": lambda st: stamped.append(\"a\"),\n            \"question\": lambda st: stamped.append(\"q\"),\n            \"skill_script\": lambda st: stamped.append(\"s\"),\n        },\n    )\n    assert swept == {\n        \"approval\": [(\"a1\", \"sess-A\")],\n        \"question\": [(\"q1\", \"sess-A\")],\n        \"skill_script\": [],\n    }\n"
+      ],
+      [
+        "    assert \"a1\" not in host.registries[\"approval\"] and host.head_round_payload(\"approval\", \"sess-A\") is None\n",
+        "    assert (\n        \"a1\" not in host.registries[\"approval\"]\n        and host.head_round_payload(\"approval\", \"sess-A\") is None\n    )\n"
+      ],
+      [
+        "    assert \"i1\" in host.registries[\"skill_install\"], \"kind not in the stamp map is never swept\"\n",
+        "    assert \"i1\" in host.registries[\"skill_install\"], (\n        \"kind not in the stamp map is never swept\"\n    )\n"
+      ],
+      [
+        "    host.remount_for_session(\"sess-A\", after={\"approval\": hooked.append, \"question\": hooked.append})\n",
+        "    host.remount_for_session(\n        \"sess-A\", after={\"approval\": hooked.append, \"question\": hooked.append}\n    )\n"
+      ],
+      [
+        "    assert [p[\"round_id\"] for p in hooked] == [\"r1\"], \"hook fires only for a pushed head\"\n",
+        "    assert [p[\"round_id\"] for p in hooked] == [\"r1\"], (\n        \"hook fires only for a pushed head\"\n    )\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\", deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n"
+      ],
+      [
+        "        seen.append((outcome, \"r1\" in host.registries[\"approval\"], \"r1\" in host.payloads[\"approval\"]))\n",
+        "        seen.append(\n            (\n                outcome,\n                \"r1\" in host.registries[\"approval\"],\n                \"r1\" in host.payloads[\"approval\"],\n            )\n        )\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False, on_outcome=_on_outcome,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n        on_outcome=_on_outcome,\n"
+      ],
+      [
+        "            \"approval\", \"r1\", _payload(\"r1\"), state,\n            session_id=\"sess-A\", owning_session_id=\"sess-A\",\n            deadline=None, is_parked=False,\n",
+        "            \"approval\",\n            \"r1\",\n            _payload(\"r1\"),\n            state,\n            session_id=\"sess-A\",\n            owning_session_id=\"sess-A\",\n            deadline=None,\n            is_parked=False,\n"
+      ],
+      [
+        "        \"approval\", \"r1\", _payload(\"r1\"), state,\n        session_id=\"sess-A\", owning_session_id=\"sess-A\",\n        deadline=None, is_parked=False, on_outcome=outcomes.append,\n",
+        "        \"approval\",\n        \"r1\",\n        _payload(\"r1\"),\n        state,\n        session_id=\"sess-A\",\n        owning_session_id=\"sess-A\",\n        deadline=None,\n        is_parked=False,\n        on_outcome=outcomes.append,\n"
+      ]
+    ],
+    "new_edits": []
+  },
+  {
+    "path": "Tests/Chat/test_console_local_review_hook.py",
+    "base_edits": [
+      [
+        "    verdicts = hook(\n        [ToolCall(name=\"fs_list\", args={\"path\": \".\"}, call_id=\"c-1\")], RUN\n    )\n",
+        "    verdicts = hook([ToolCall(name=\"fs_list\", args={\"path\": \".\"}, call_id=\"c-1\")], RUN)\n"
+      ],
+      [
+        "        \"the user's Deny left no row in the execution log: \" f\"{recorded}\"\n",
+        "        f\"the user's Deny left no row in the execution log: {recorded}\"\n"
+      ],
+      [
+        "    decisions = controller.request_mcp_approvals(\n        [pending], session_id=background.id\n    )\n",
+        "    decisions = controller.request_mcp_approvals([pending], session_id=background.id)\n"
+      ]
+    ],
+    "final_inherited_edits": [
+      [
+        "    verdicts = hook(\n        [ToolCall(name=\"fs_list\", args={\"path\": \".\"}, call_id=\"c-1\")], RUN\n    )\n",
+        "    verdicts = hook([ToolCall(name=\"fs_list\", args={\"path\": \".\"}, call_id=\"c-1\")], RUN)\n"
+      ],
+      [
+        "        \"the user's Deny left no row in the execution log: \" f\"{recorded}\"\n",
+        "        f\"the user's Deny left no row in the execution log: {recorded}\"\n"
+      ],
+      [
+        "    decisions = controller.request_mcp_approvals(\n        [pending], session_id=background.id\n    )\n",
+        "    decisions = controller.request_mcp_approvals([pending], session_id=background.id)\n"
+      ]
+    ],
+    "new_edits": []
+  },
+  {
+    "path": "Tests/Chat/test_console_video_actions.py",
+    "base_edits": [],
+    "final_inherited_edits": [],
+    "new_edits": []
+  },
+  {
+    "path": "Tests/Chat/test_console_virtual_cli_approval.py",
+    "base_edits": [],
+    "final_inherited_edits": [],
+    "new_edits": []
+  },
+  {
+    "path": "Tests/Chat/test_permission_summary_wiring.py",
+    "base_edits": [
+      [
+        "        \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "        \"event\": threading.Event(),\n        \"summary_fired\": False,\n"
+      ],
+      [
+        "        \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "        \"event\": threading.Event(),\n        \"summary_fired\": False,\n"
+      ],
+      [
+        "        \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "        \"event\": threading.Event(),\n        \"summary_fired\": False,\n"
+      ],
+      [
+        "            \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "            \"event\": threading.Event(),\n            \"summary_fired\": False,\n"
+      ],
+      [
+        "        \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "        \"event\": threading.Event(),\n        \"summary_fired\": False,\n"
+      ],
+      [
+        "        \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "        \"event\": threading.Event(),\n        \"summary_fired\": False,\n"
+      ],
+      [
+        "        \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "        \"event\": threading.Event(),\n        \"summary_fired\": False,\n"
+      ]
+    ],
+    "final_inherited_edits": [
+      [
+        "        \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "        \"event\": threading.Event(),\n        \"summary_fired\": False,\n"
+      ],
+      [
+        "        \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "        \"event\": threading.Event(),\n        \"summary_fired\": False,\n"
+      ],
+      [
+        "        \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "        \"event\": threading.Event(),\n        \"summary_fired\": False,\n"
+      ],
+      [
+        "            \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "            \"event\": threading.Event(),\n            \"summary_fired\": False,\n"
+      ],
+      [
+        "        \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "        \"event\": threading.Event(),\n        \"summary_fired\": False,\n"
+      ],
+      [
+        "        \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "        \"event\": threading.Event(),\n        \"summary_fired\": False,\n"
+      ],
+      [
+        "        \"event\": threading.Event(), \"summary_fired\": False,\n",
+        "        \"event\": threading.Event(),\n        \"summary_fired\": False,\n"
+      ]
+    ],
+    "new_edits": []
+  },
+  {
+    "path": "Tests/UI/test_console_auto_speak_wiring.py",
+    "base_edits": [],
+    "final_inherited_edits": [],
+    "new_edits": []
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "base_edits": [
+      [
+        "            and preparation.pause_kind\n            is ConsolePreparationPauseKind.CONTEXT_COMPACTION\n",
+        "            and preparation.pause_kind is ConsolePreparationPauseKind.CONTEXT_COMPACTION\n"
+      ],
+      [
+        "        if preparation_id is None or preparation_id not in self._compaction_hold_answered:\n",
+        "        if (\n            preparation_id is None\n            or preparation_id not in self._compaction_hold_answered\n        ):\n"
+      ],
+      [
+        "        compacted, visible_copy = await self.compact_context_now(\n            preparation.session_id\n        )\n",
+        "        compacted, visible_copy = await self.compact_context_now(preparation.session_id)\n"
+      ],
+      [
+        "    async def send_without_compacting(\n        self, preparation_id: str\n    ) -> ConsoleSubmitResult:\n",
+        "    async def send_without_compacting(self, preparation_id: str) -> ConsoleSubmitResult:\n"
+      ],
+      [
+        "    async def _resume_compaction_hold(\n        self, preparation_id: str\n    ) -> ConsoleSubmitResult:\n",
+        "    async def _resume_compaction_hold(self, preparation_id: str) -> ConsoleSubmitResult:\n"
+      ],
+      [
+        "                \"Console compaction hold assessment unavailable; \"\n                \"exception_type={}\",\n",
+        "                \"Console compaction hold assessment unavailable; exception_type={}\",\n"
+      ],
+      [
+        "\n\n\n",
+        ""
+      ]
+    ],
+    "final_inherited_edits": [
+      [
+        "            and preparation.pause_kind\n            is ConsolePreparationPauseKind.CONTEXT_COMPACTION\n",
+        "            and preparation.pause_kind is ConsolePreparationPauseKind.CONTEXT_COMPACTION\n"
+      ],
+      [
+        "        if preparation_id is None or preparation_id not in self._compaction_hold_answered:\n",
+        "        if (\n            preparation_id is None\n            or preparation_id not in self._compaction_hold_answered\n        ):\n"
+      ],
+      [
+        "        compacted, visible_copy = await self.compact_context_now(\n            preparation.session_id\n        )\n",
+        "        compacted, visible_copy = await self.compact_context_now(preparation.session_id)\n"
+      ],
+      [
+        "    async def send_without_compacting(\n        self, preparation_id: str\n    ) -> ConsoleSubmitResult:\n",
+        "    async def send_without_compacting(self, preparation_id: str) -> ConsoleSubmitResult:\n"
+      ],
+      [
+        "    async def _resume_compaction_hold(\n        self, preparation_id: str\n    ) -> ConsoleSubmitResult:\n",
+        "    async def _resume_compaction_hold(self, preparation_id: str) -> ConsoleSubmitResult:\n"
+      ],
+      [
+        "\n\n\n",
+        ""
+      ]
+    ],
+    "new_edits": []
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_context_compaction.py",
+    "base_edits": [
+      [
+        "    def from_fence(\n        cls, fence: CompactionRetryFence, reason: str\n    ) -> _FailedCompaction:\n",
+        "    def from_fence(cls, fence: CompactionRetryFence, reason: str) -> _FailedCompaction:\n"
+      ],
+      [
+        "        active_request\n        or not _is_complete_durable_unit(snapshots[user_positions[-1] :])\n",
+        "        active_request or not _is_complete_durable_unit(snapshots[user_positions[-1] :])\n"
+      ],
+      [
+        "            if without_old.provenance is not None else None\n",
+        "            if without_old.provenance is not None\n            else None\n"
+      ],
+      [
+        "                semantic.provenance, selected_units=removed_count,\n",
+        "                semantic.provenance,\n                selected_units=removed_count,\n"
+      ],
+      [
+        "            ) if semantic.provenance is not None else None\n",
+        "            )\n            if semantic.provenance is not None\n            else None\n"
+      ],
+      [
+        "                    if remaining_provenance is not None and summary_provenance is not None\n",
+        "                    if remaining_provenance is not None\n                    and summary_provenance is not None\n"
+      ]
+    ],
+    "final_inherited_edits": [
+      [
+        "    def from_fence(\n        cls, fence: CompactionRetryFence, reason: str\n    ) -> _FailedCompaction:\n",
+        "    def from_fence(cls, fence: CompactionRetryFence, reason: str) -> _FailedCompaction:\n"
+      ],
+      [
+        "        active_request\n        or not _is_complete_durable_unit(snapshots[user_positions[-1] :])\n",
+        "        active_request or not _is_complete_durable_unit(snapshots[user_positions[-1] :])\n"
+      ],
+      [
+        "            if without_old.provenance is not None else None\n",
+        "            if without_old.provenance is not None\n            else None\n"
+      ],
+      [
+        "                semantic.provenance, selected_units=removed_count,\n",
+        "                semantic.provenance,\n                selected_units=removed_count,\n"
+      ],
+      [
+        "            ) if semantic.provenance is not None else None\n",
+        "            )\n            if semantic.provenance is not None\n            else None\n"
+      ],
+      [
+        "                    if remaining_provenance is not None and summary_provenance is not None\n",
+        "                    if remaining_provenance is not None\n                    and summary_provenance is not None\n"
+      ]
+    ],
+    "new_edits": []
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_interrupt_rounds.py",
+    "base_edits": [],
+    "final_inherited_edits": [],
+    "new_edits": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/session.py",
+    "base_edits": [],
+    "final_inherited_edits": [],
+    "new_edits": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/wiring.py",
+    "base_edits": [],
+    "final_inherited_edits": [],
+    "new_edits": []
+  },
+  {
+    "path": "tldw_chatbook/UI/Screens/chat_screen.py",
+    "base_edits": [],
+    "final_inherited_edits": [],
+    "new_edits": []
+  },
+  {
+    "path": "Tests/Chat/console_interrupt_test_bindings.py",
+    "base_edits": [],
+    "final_inherited_edits": [],
+    "new_edits": []
+  },
+  {
+    "path": "Tests/Chat/test_console_owner_live_bindings.py",
+    "base_edits": [],
+    "final_inherited_edits": [],
+    "new_edits": []
+  },
+  {
+    "path": "Tests/UI/test_console_recovery_live_bindings.py",
+    "base_edits": [],
+    "final_inherited_edits": [],
+    "new_edits": []
+  }
+]

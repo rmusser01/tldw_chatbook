@@ -1,0 +1,43 @@
+{
+  "base": "1ab9bedf82931721289ae90479f549bc6df3105e",
+  "diagnosis": "task-9-await-guard-diagnosis.md",
+  "original_methods": [
+    "effective_thinking_history_policy_for_session",
+    "_build_personal_context_snapshot"
+  ],
+  "production_edit": "Only replace each direct provider_gateway.resolve_for_send call with existing _resolve_for_send_bounded; exact selection arguments, try/readiness/fallback/cancellation branches unchanged.",
+  "new_test_cases": [
+    {
+      "file": "Tests/Chat/test_console_context_policy_lifecycle.py",
+      "name": "test_effective_thinking_policy_uses_saved_policy_when_gateway_hangs",
+      "witnesses": "Actual gateway entry/requested-session selection; nondefault saved normalized policy returned unchanged; no continuation lookup."
+    },
+    {
+      "file": "Tests/Chat/test_console_personal_context_snapshot.py",
+      "name": "test_personal_context_snapshot_is_empty_when_gateway_hangs",
+      "witnesses": "Actual non-None service/builder/valid session/callable preview; entered gateway receives identical supplied selection; terminal empty snapshot; profile/tool composition and preview uncalled."
+    }
+  ],
+  "existing_selectors": [
+    "Tests/Chat/test_console_first_chat_handoff.py::test_no_unbounded_resolve_for_send_awaits_remain",
+    "Tests/Chat/test_console_first_chat_handoff.py::test_provider_validation_reaches_terminal_state_in_bounded_time",
+    "Tests/Chat/test_console_context_policy_lifecycle.py::test_effective_thinking_policy_uses_send_continuation_groups",
+    "Tests/Chat/test_console_personal_context_snapshot.py::test_agent_next_send_uses_one_pinned_snapshot_without_double_append",
+    "Tests/Chat/test_console_personal_context_snapshot.py::test_agent_next_send_reserves_the_live_library_schemas",
+    "Tests/Chat/test_console_personal_context_snapshot.py::test_agent_next_send_uses_selected_project_root_for_local_schemas",
+    "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Chat/console_chat_controller.py]",
+    "Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Chat/console_chat_controller.py]"
+  ],
+  "remaining_original_cohorts": [
+    "2_summary_review_builders",
+    "4_compaction_preflight",
+    "5_recovery_projection_UI"
+  ],
+  "limits": [
+    "No helper/timeout-constant/gateway/guard/schema/authority changes",
+    "No optional new cancellation test needed: helper contract plus preserved original catch structure carries",
+    "Short instance deadline in new tests exercises existing configurable seam; no production or existing test timeout-policy changes",
+    "No repeated passed unrelated cohorts",
+    "Two unmoved controller methods are explicit repair exceptions in final carry map; every other unchanged/moved method keeps exact map"
+  ]
+}

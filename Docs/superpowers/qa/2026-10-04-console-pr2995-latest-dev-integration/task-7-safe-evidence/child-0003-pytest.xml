@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="9.531" timestamp="2026-10-04T02:54:23.575168-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.UI.test_llamacpp_consumers" name="test_console_adopts_verified_llamacpp_for_active_session_only" time="6.028"><failure message="AssertionError: assert ('llama_cpp', 'model-a') == ('llama_cpp', 'served-model')&#10;  &#10;  At index 1 diff: 'model-a' != 'served-model'&#10;  Use -v to get more diff">request = &lt;FixtureRequest for &lt;Coroutine test_console_adopts_verified_llamacpp_for_active_session_only&gt;&gt;
+
+    @private_profile_test
+    @pytest.mark.asyncio
+    async def test_console_adopts_verified_llamacpp_for_active_session_only(request):
+        app = _console_app()
+        _, target = _ready_target(app)
+        app.pending_handoffs.stage(
+            HandoffChannel.LLAMACPP_CONSOLE, LlamaCppConsoleIntent.from_target(target)
+        )
+        async with _ConsoleFlowHarness(app).run_test(size=(120, 42)) as pilot:
+            console = pilot.app.screen
+            await _wait_for_selector(console, pilot, "#console-settings-summary")
+            await pilot.pause(0.3)
+            settings = console._session._active_console_session_settings()
+            assert settings is not None
+&gt;           assert (settings.provider, settings.model) == ("llama_cpp", "served-model")
+E           AssertionError: assert ('llama_cpp', 'model-a') == ('llama_cpp', 'served-model')
+E             
+E             At index 1 diff: 'model-a' != 'served-model'
+E             Use -v to get more diff
+
+Tests/UI/test_llamacpp_consumers.py:106: AssertionError</failure></testcase></testsuite></testsuites>

@@ -1,0 +1,7 @@
+.                                                                        [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-reader-repairs-green-profile-3gw90f9d/pytest/test_page_drift_confirms_exact0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+2.21s call     Tests/UI/test_library_conversation_reader.py::test_page_drift_confirms_exact_identity_before_declaring_deletion
+
+(2 durations < 1s hidden.)
+1 passed in 3.88s

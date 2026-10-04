@@ -1,0 +1,4016 @@
+{
+  "status": "FIT: proposal only; root selection and actual rebased qualification pending",
+  "inputs": {
+    "base": "5e0341d1ec701865e019eb2fd8a5e2028ab2d474",
+    "i1": "d3443b9e4297fa20897cf99e77a3ae2c8c562b10",
+    "dev": "f800952214844c3d41ddbe4b6522c93d4be25b7c"
+  },
+  "union": {
+    "controller": {
+      "merge_exit": 0,
+      "lines": 33695,
+      "stderr": "",
+      "methods": 494
+    },
+    "screen": {
+      "merge_exit": 0,
+      "lines": 25239,
+      "stderr": "",
+      "methods": 761
+    }
+  },
+  "projection": {
+    "controller_projection_lines": 29336,
+    "controller_headroom": 31,
+    "incoming_changed_definitions": [
+      "ConsoleChatController",
+      "ConsoleChatController.__init__",
+      "ConsoleChatController._apply_conversation_memory_preflight",
+      "ConsoleChatController._assess_context_compaction",
+      "ConsoleChatController._assess_request_capacity_only",
+      "ConsoleChatController._cancel_context_compaction_hold",
+      "ConsoleChatController._capture_frozen_rag_context",
+      "ConsoleChatController._compaction_admission_check",
+      "ConsoleChatController._compaction_mode_for",
+      "ConsoleChatController._consume_compaction_hold_answer",
+      "ConsoleChatController._context_overflow_alert",
+      "ConsoleChatController._drop_preparation",
+      "ConsoleChatController._durable_context_snapshots",
+      "ConsoleChatController._has_explicit_staged_evidence",
+      "ConsoleChatController._held_for_compaction",
+      "ConsoleChatController._held_send_echo_id",
+      "ConsoleChatController._hold_send_for_compaction",
+      "ConsoleChatController._resume_compaction_hold",
+      "ConsoleChatController._snapshot_staged_evidence",
+      "ConsoleChatController._stream_assistant_response",
+      "ConsoleChatController._stream_assistant_response_inner",
+      "ConsoleChatController._submit_draft_body",
+      "ConsoleChatController.cancel_library_preparation",
+      "ConsoleChatController.compact_and_send",
+      "ConsoleChatController.context_compaction_hold",
+      "ConsoleChatController.resume_durable_postcommit",
+      "ConsoleChatController.send_without_compacting",
+      "ConsoleChatController.trace_call_recovery_preparation",
+      "_PreparedEvidenceLease",
+      "_PreparedEvidenceLease.__post_init__",
+      "_context_overflow_cause",
+      "_request_fingerprint"
+    ],
+    "ours_changed_definitions": [
+      "ConsoleChatController",
+      "ConsoleChatController.__init__",
+      "ConsoleChatController._accept_durable_turn",
+      "ConsoleChatController._admit_capture_policy",
+      "ConsoleChatController._apply_conversation_memory_preflight",
+      "ConsoleChatController._capture_chat_creation_source",
+      "ConsoleChatController._chat_creation_destination_available",
+      "ConsoleChatController._chat_creation_record",
+      "ConsoleChatController._chat_creation_record_locked",
+      "ConsoleChatController._chat_creation_source_live",
+      "ConsoleChatController._chat_creation_source_matches",
+      "ConsoleChatController._execute_prepared_chat_create",
+      "ConsoleChatController._native_start_project_required_action",
+      "ConsoleChatController._observe_chat_creation_record",
+      "ConsoleChatController._ordinary_library_text",
+      "ConsoleChatController._read_chat_creation_source",
+      "ConsoleChatController._resolve_new_chat_routing",
+      "ConsoleChatController._revoke_chat_create_rounds",
+      "ConsoleChatController._run_agent_reply",
+      "ConsoleChatController._signal_stop",
+      "ConsoleChatController._start_created_chat",
+      "ConsoleChatController._submit_draft_body",
+      "ConsoleChatController._submit_draft_inner",
+      "ConsoleChatController._submit_draft_lifecycle",
+      "ConsoleChatController.activity_for",
+      "ConsoleChatController.begin_shutdown",
+      "ConsoleChatController.build_transcript_note",
+      "ConsoleChatController.execute_agent_chat_create",
+      "ConsoleChatController.maintenance_drain",
+      "ConsoleChatController.prepare_agent_chat_create",
+      "ConsoleChatController.request_chat_create_confirm",
+      "ConsoleChatController.request_mcp_approvals",
+      "ConsoleChatController.resume_durable_postcommit",
+      "ConsoleChatController.retry_dispatch_recovery",
+      "ConsoleChatController.send_refusal_copy",
+      "ConsoleChatController.session_shutdown_tasks",
+      "ConsoleChatController.shutdown",
+      "ConsoleChatController.stop_active_run",
+      "ConsoleChatController.submit_draft",
+      "_ChatCreationObservation",
+      "_ChatCreationToken",
+      "_ChatCreationToken.__init__",
+      "_ChatCreationToken.close",
+      "_DurablePostcommitContinuation"
+    ],
+    "overlap_definitions": [
+      "ConsoleChatController",
+      "ConsoleChatController.__init__",
+      "ConsoleChatController._apply_conversation_memory_preflight",
+      "ConsoleChatController._submit_draft_body",
+      "ConsoleChatController.resume_durable_postcommit"
+    ],
+    "compaction_owner_projected_module_lines": 4175,
+    "prior_immutable_files_sha256": {
+      "task-9-scope-proof-controller.py": "67e181595b6cbfb928ffe0988112eab9d76d99867340a3ac41ec19b685cfbb78",
+      "task-9-scope-proof-test-adapter.py": "a0dcf4a20057cd5751620639747e59c33c778096d31e2c250cdb94c9d21464ae",
+      "task-9-scope-proof-controller-relocated-docs.py": "fe788c2074c76e2f357a0c7cfe13d92e6d2f19cbb7ce452a9f8d9cd15175fbdf",
+      "task-9-scope-proof-host-contract.py": "ff457b1ceecf18e42b3bbec5d969175e42e90c5aad6993e4695523d44a9dc8c5",
+      "task-9-scope-proof2-controller.py": "006f5e943e6afe06eefaa093c5a5048f9771ada3a1d60a1bfab7091f02ef1006",
+      "task-9-scope-proof2-host-contract.py": "6ff57d12546d2c60b8ff71d6f7618ce199eb192e5f9bea805f7e60f94b768e40",
+      "task-9-scope-proof-brief.md": "544eb98d5e4811aa91be37a378e2b3f7e60c3398bb0e89504770928161a5356c",
+      "task-9-scope-proof-map.json": "a47ff72352b389317711ebe9f74624aaf9b8dc052c66cd651c8ab9920c033564",
+      "task-9-scope-proof-report.md": "3d587e3f7b4159ddc6ac590a9e0117eb2f08072ac07e9246ade2b457eef0a04d",
+      "task-9-scope-proof2-function-contracts.py": "5612ff53b4d7c86c9a08f8041565321c7c4bcf8edbbd83a8d929a536b6c4d631",
+      "task-9-scope-proof-function-contracts.py": "15431403b5b3fc70fb888008ee5909f91b4a417a14569e7be98e99f33d415d82",
+      "task-9-scope-proof2-map.json": "2b935dee97e0c9c6cfd5867cf61f0365f517eec13f9d5c396e373fae9a3d8d77",
+      "task-9-scope-proof2-brief.md": "b1cd118eb840a85a76d7e9fcda34f20587a6e26df24989e76ca3a7e34daf30a1",
+      "task-9-scope-proof2-report.md": "8d1ee7ac0f73dafd34459ae4e1e1605afbaea3e7feaf048eb7614fa5ff6eb733"
+    }
+  },
+  "compaction": {
+    "selected": [
+      {
+        "name": "compact_context_now",
+        "span": [
+          27823,
+          27904
+        ],
+        "lines": 82,
+        "controller_reads": [
+          "_apply_conversation_memory_preflight",
+          "_auxiliary_compaction_resolution",
+          "_blocked_visible_copy",
+          "_provider_continuation_history_for_resolution",
+          "_provider_messages_for_session",
+          "_provider_selection_for_session",
+          "_resolve_for_send_bounded",
+          "context_control_inputs",
+          "run_state_for",
+          "store"
+        ],
+        "global_reads": [
+          "ContextCompactionRepresentation",
+          "ContinuationConflictError",
+          "EffectiveMemoryKind",
+          "PROVIDER_CONTINUATION_RECOVERY_REQUIRED",
+          "effective_memory_identity",
+          "is_vision_capable",
+          "merge_context_policy"
+        ],
+        "binding_replacements": 19
+      },
+      {
+        "name": "_apply_conversation_memory_preflight",
+        "span": [
+          28268,
+          28858
+        ],
+        "lines": 591,
+        "controller_reads": [
+          "_agent_bridge",
+          "_append_failure_system_row",
+          "_assess_request_capacity_only",
+          "_automatic_memory_admission",
+          "_block_context_preflight",
+          "_compaction_admission",
+          "_compaction_service",
+          "_context_accounting_by_session",
+          "_context_overflow_alert",
+          "_context_repository",
+          "_durable_context_snapshots",
+          "_global_context_policy_overrides",
+          "_hooks_for_compaction",
+          "_select_session_effective_memory",
+          "provider_gateway",
+          "store"
+        ],
+        "global_reads": [
+          "Any",
+          "CompactionDecision",
+          "CompactionFailureBehavior",
+          "CompactionPromptSnapshot",
+          "CompactionTerminal",
+          "ConsoleContextCapacity",
+          "ConsoleSubmitResult",
+          "ContextCarryForwardMode",
+          "ContextCompactionHold",
+          "ContextCompactionRepresentation",
+          "EffectiveMemoryKind",
+          "Mapping",
+          "NATIVE_MESSAGE_ID_KEY",
+          "PreparedConsoleRequest",
+          "ProviderArtifactTraceProvenance",
+          "TraceProvenanceSource",
+          "TraceTransformKind",
+          "_flatten_preflight_messages",
+          "asyncio",
+          "compactable_units_after",
+          "compaction_retry_fence",
+          "compaction_transform_provenance",
+          "complete_durable_units",
+          "decide_compaction",
+          "frozen_policy_from_provenance",
+          "get_internal_prompt",
+          "is_vision_capable",
+          "logger",
+          "max_history_images",
+          "plan_compaction",
+          "project_effective_memory",
+          "replace",
+          "resolve_context_policy",
+          "resolve_micro_escalation",
+          "tagged_memory_message",
+          "tagged_visual_memory_message"
+        ],
+        "binding_replacements": 105
+      },
+      {
+        "name": "_assess_context_compaction",
+        "span": [
+          28155,
+          28214
+        ],
+        "lines": 60,
+        "controller_reads": [
+          "_agent_bridge",
+          "_agent_runtime_enabled",
+          "_apply_conversation_memory_preflight",
+          "_provider_continuation_history_for_resolution"
+        ],
+        "global_reads": [
+          "CompactionDecision",
+          "ContextCompactionHold",
+          "logger"
+        ],
+        "binding_replacements": 8
+      },
+      {
+        "name": "_assess_request_capacity_only",
+        "span": [
+          28021,
+          28089
+        ],
+        "lines": 69,
+        "controller_reads": [
+          "_agent_bridge",
+          "_context_overflow_alert",
+          "_global_context_policy_overrides"
+        ],
+        "global_reads": [
+          "Any",
+          "ConsoleContextCapacity",
+          "ContextCompactionHold",
+          "Mapping",
+          "decide_compaction",
+          "resolve_context_policy"
+        ],
+        "binding_replacements": 10
+      },
+      {
+        "name": "_context_overflow_alert",
+        "span": [
+          27966,
+          28019
+        ],
+        "lines": 54,
+        "controller_reads": [],
+        "global_reads": [
+          "CompactionDecision",
+          "CompactionFailureBehavior",
+          "_context_overflow_cause"
+        ],
+        "binding_replacements": 4
+      }
+    ],
+    "named_controller_reads": [
+      "_agent_bridge",
+      "_agent_runtime_enabled",
+      "_append_failure_system_row",
+      "_apply_conversation_memory_preflight",
+      "_assess_request_capacity_only",
+      "_automatic_memory_admission",
+      "_auxiliary_compaction_resolution",
+      "_block_context_preflight",
+      "_blocked_visible_copy",
+      "_compaction_admission",
+      "_compaction_service",
+      "_context_accounting_by_session",
+      "_context_overflow_alert",
+      "_context_repository",
+      "_durable_context_snapshots",
+      "_global_context_policy_overrides",
+      "_hooks_for_compaction",
+      "_provider_continuation_history_for_resolution",
+      "_provider_messages_for_session",
+      "_provider_selection_for_session",
+      "_resolve_for_send_bounded",
+      "_select_session_effective_memory",
+      "context_control_inputs",
+      "provider_gateway",
+      "run_state_for",
+      "store"
+    ],
+    "named_global_reads": [
+      "Any",
+      "CompactionDecision",
+      "CompactionFailureBehavior",
+      "CompactionPromptSnapshot",
+      "CompactionTerminal",
+      "ConsoleContextCapacity",
+      "ConsoleSubmitResult",
+      "ContextCarryForwardMode",
+      "ContextCompactionHold",
+      "ContextCompactionRepresentation",
+      "ContinuationConflictError",
+      "EffectiveMemoryKind",
+      "Mapping",
+      "NATIVE_MESSAGE_ID_KEY",
+      "PROVIDER_CONTINUATION_RECOVERY_REQUIRED",
+      "PreparedConsoleRequest",
+      "ProviderArtifactTraceProvenance",
+      "TraceProvenanceSource",
+      "TraceTransformKind",
+      "_context_overflow_cause",
+      "_flatten_preflight_messages",
+      "asyncio",
+      "compactable_units_after",
+      "compaction_retry_fence",
+      "compaction_transform_provenance",
+      "complete_durable_units",
+      "decide_compaction",
+      "effective_memory_identity",
+      "frozen_policy_from_provenance",
+      "get_internal_prompt",
+      "is_vision_capable",
+      "logger",
+      "max_history_images",
+      "merge_context_policy",
+      "plan_compaction",
+      "project_effective_memory",
+      "replace",
+      "resolve_context_policy",
+      "resolve_micro_escalation",
+      "tagged_memory_message",
+      "tagged_visual_memory_message"
+    ],
+    "removed_ast_lines": 856,
+    "formatted_wrapper_ast_lines": 93,
+    "formatted_construction_lines": 115,
+    "projected_controller_lines": 29336,
+    "headroom": 31,
+    "owner_class_lines": 1139,
+    "owner_snippet_lines": 1143,
+    "global_local_shadow_conflicts": {
+      "compact_context_now": [],
+      "_apply_conversation_memory_preflight": [],
+      "_assess_context_compaction": [],
+      "_assess_request_capacity_only": [],
+      "_context_overflow_alert": []
+    },
+    "construction_separator_lines": 1
+  },
+  "screen": {
+    "selected": [
+      {
+        "name": "_dispatch_console_trace_recovery",
+        "span": [
+          15875,
+          15908
+        ],
+        "removed_lines": 34
+      },
+      {
+        "name": "_console_trace_recovery_state",
+        "span": [
+          15910,
+          15922
+        ],
+        "removed_lines": 13
+      }
+    ],
+    "base_lines": 25239,
+    "base_methods": 761,
+    "construction_delta": 2,
+    "projected_lines": 25194,
+    "projected_methods": 759,
+    "session_body_lines": 47,
+    "session_constructor_parameter_additions": 4,
+    "session_constructor_assignment_additions": 4,
+    "wiring_new_build_parameters": 2,
+    "wiring_new_session_keywords": 4,
+    "wiring_fragment_lines": 17,
+    "fixture_adaptations": [
+      "Tests/Chat/test_console_video_actions.py:96",
+      "Tests/UI/test_console_auto_speak_wiring.py:160"
+    ],
+    "callback_identity_change": "The two region callbacks bind to screen._session instead of screen; on_started/on_finished still receive the screen methods read at dispatch time."
+  },
+  "body_equivalence": [
+    {
+      "method": "compact_context_now",
+      "body_inverse_binding_ast_equal": true,
+      "args_equal": true,
+      "docstring_raw_equal": true,
+      "owner_decorators": [],
+      "controller_original_decorators": [
+        "_maintenance_boundary('compact')"
+      ]
+    },
+    {
+      "method": "_apply_conversation_memory_preflight",
+      "body_inverse_binding_ast_equal": true,
+      "args_equal": true,
+      "docstring_raw_equal": true,
+      "owner_decorators": [],
+      "controller_original_decorators": []
+    },
+    {
+      "method": "_assess_context_compaction",
+      "body_inverse_binding_ast_equal": true,
+      "args_equal": true,
+      "docstring_raw_equal": true,
+      "owner_decorators": [],
+      "controller_original_decorators": []
+    },
+    {
+      "method": "_assess_request_capacity_only",
+      "body_inverse_binding_ast_equal": true,
+      "args_equal": true,
+      "docstring_raw_equal": true,
+      "owner_decorators": [],
+      "controller_original_decorators": []
+    },
+    {
+      "method": "_context_overflow_alert",
+      "body_inverse_binding_ast_equal": true,
+      "args_equal": true,
+      "docstring_raw_equal": true,
+      "owner_decorators": [],
+      "controller_original_decorators": []
+    }
+  ],
+  "prior_binding_proof": {
+    "map": "task-9-scope-proof2-map.json",
+    "report": "task-9-scope-proof2-report.md",
+    "all_105_selected_asts_unchanged": true,
+    "exact_callback_identity_contract": {
+      "path": "Tests/Chat/test_console_interrupt_host_wiring.py",
+      "test": "test_approvals_register_the_permission_summary_as_the_after_remount_hook",
+      "span": [
+        62,
+        66
+      ],
+      "assertions": [
+        {
+          "line": 65,
+          "text": "assert hook.__func__ is ConsoleChatController._maybe_fire_permission_summary"
+        },
+        {
+          "line": 66,
+          "text": "assert set(controller._interrupt_host.after_remount) == {'approval'}"
+        }
+      ],
+      "requirement": "Keep the existing bound ConsoleChatController._maybe_fire_permission_summary wrapper as after_remount[approval]; do not replace it with an anonymous lambda. The wrapper may forward to owned behavior."
+    },
+    "legacy_host_seams_sites": [
+      {
+        "line": 267,
+        "expression": "self._seams.store",
+        "dependency": "store"
+      },
+      {
+        "line": 290,
+        "expression": "self._seams.store",
+        "dependency": "store"
+      },
+      {
+        "line": 304,
+        "expression": "self._seams.store",
+        "dependency": "store"
+      },
+      {
+        "line": 328,
+        "expression": "getattr(self._seams, '_refresh_answerable_decision', None)",
+        "dependency": "_refresh_answerable_decision"
+      },
+      {
+        "line": 337,
+        "expression": "self._seams.store",
+        "dependency": "store"
+      },
+      {
+        "line": 387,
+        "expression": "getattr(self._seams, 'announce_hidden_decision', None)",
+        "dependency": "announce_hidden_decision"
+      },
+      {
+        "line": 411,
+        "expression": "self._seams._announce_hidden_decision",
+        "dependency": "_announce_hidden_decision"
+      },
+      {
+        "line": 416,
+        "expression": "getattr(self._seams, KIND_SETTER_ATTRS[kind], None)",
+        "dependency": "five individual KIND_SETTER_ATTRS getter callables"
+      },
+      {
+        "line": 419,
+        "expression": "getattr(self._seams, 'store', None)",
+        "dependency": "store"
+      },
+      {
+        "line": 470,
+        "expression": "getattr(self._seams, 'app', None)",
+        "dependency": "app"
+      },
+      {
+        "line": 513,
+        "expression": "getattr(self._seams, 'on_pending_rounds_changed', None)",
+        "dependency": "on_pending_rounds_changed"
+      },
+      {
+        "line": 745,
+        "expression": "getattr(self._seams, '_notify_run_hook_approval', None)",
+        "dependency": "_notify_run_hook_approval"
+      },
+      {
+        "line": 752,
+        "expression": "getattr(self._seams, '_publish_pending_decision', None)",
+        "dependency": "_publish_pending_decision"
+      },
+      {
+        "line": 787,
+        "expression": "getattr(self._seams, 'add_pending_round', None)",
+        "dependency": "add_pending_round"
+      },
+      {
+        "line": 802,
+        "expression": "getattr(self._seams, 'app', None)",
+        "dependency": "app"
+      },
+      {
+        "line": 803,
+        "expression": "getattr(self._seams, 'park_pending_approval', None)",
+        "dependency": "park_pending_approval"
+      },
+      {
+        "line": 807,
+        "expression": "self._seams._approval_view_is_detached",
+        "dependency": "_approval_view_is_detached"
+      },
+      {
+        "line": 808,
+        "expression": "self._seams._announce_hidden_decision",
+        "dependency": "_announce_hidden_decision"
+      },
+      {
+        "line": 811,
+        "expression": "getattr(self._seams, 'set_pending_decision', None)",
+        "dependency": "set_pending_decision"
+      },
+      {
+        "line": 812,
+        "expression": "self._seams._marshal_pending_decision_projection",
+        "dependency": "_marshal_pending_decision_projection"
+      },
+      {
+        "line": 864,
+        "expression": "self._seams._is_session_cancelled",
+        "dependency": "_is_session_cancelled"
+      },
+      {
+        "line": 873,
+        "expression": "self._seams.expire_pending_decisions",
+        "dependency": "expire_pending_decisions"
+      },
+      {
+        "line": 886,
+        "expression": "self._seams._is_session_cancelled",
+        "dependency": "_is_session_cancelled"
+      },
+      {
+        "line": 904,
+        "expression": "self._seams._forget_hidden_decision",
+        "dependency": "_forget_hidden_decision"
+      },
+      {
+        "line": 914,
+        "expression": "getattr(self._seams, 'discard_pending_round', None)",
+        "dependency": "discard_pending_round"
+      },
+      {
+        "line": 920,
+        "expression": "getattr(self._seams, 'set_pending_decision', None)",
+        "dependency": "set_pending_decision"
+      },
+      {
+        "line": 922,
+        "expression": "self._seams._marshal_pending_decision_projection",
+        "dependency": "_marshal_pending_decision_projection"
+      }
+    ],
+    "private_wrappers_removed": [
+      "_expire_answerable_decision_if_due",
+      "_mutate_exact_pending_decision",
+      "_pause_answerable_decision",
+      "_pause_pending_decision_state_locked",
+      "_pending_decision_payloads_locked",
+      "_pending_round_states_snapshot",
+      "_settle_pending_decision_timeout_locked"
+    ],
+    "prior_patch_and_assignment_sites": [
+      {
+        "path": "Tests/Agents/test_builtin_tool_gate.py",
+        "line": 780,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(config_module, 'get_cli_setting', _no_per_key)"
+      },
+      {
+        "path": "Tests/Agents/test_local_tool_provider.py",
+        "line": 3724,
+        "names": [
+          "tldw_chatbook.Agents.local_tool_provider.get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr('tldw_chatbook.Agents.local_tool_provider.get_cli_setting', lambda section, key, default=None: True if (section, key) == ('tools', 'web_deep_search_enabled') else default)"
+      },
+      {
+        "path": "Tests/Agents/test_local_tool_provider.py",
+        "line": 3766,
+        "names": [
+          "tldw_chatbook.Agents.local_tool_provider.get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr('tldw_chatbook.Agents.local_tool_provider.get_cli_setting', lambda section, key, default=None: raw_value if (section, key) == ('tools', 'web_deep_search_enabled') else default)"
+      },
+      {
+        "path": "Tests/Agents/test_local_tool_provider.py",
+        "line": 3946,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(config_module, 'get_cli_setting', fake_get_cli_setting)"
+      },
+      {
+        "path": "Tests/Agents/test_local_tool_provider.py",
+        "line": 4768,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(local_tool_provider, 'get_cli_setting', lambda *args, **kwargs: False)"
+      },
+      {
+        "path": "Tests/Chat/test_console_ask_user_round.py",
+        "line": 186,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(module, 'get_cli_setting', lambda section, key, default=None: 7 if (section, key) == ('console', 'ask_user_timeout_seconds') else default)"
+      },
+      {
+        "path": "Tests/Chat/test_console_ask_user_round.py",
+        "line": 195,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(module, 'get_cli_setting', lambda s, k, d=None: 'garbage')"
+      },
+      {
+        "path": "Tests/Chat/test_console_ask_user_round.py",
+        "line": 262,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(module, 'get_cli_setting', lambda section, key, default=None: 7 if (section, key) == ('console', 'ask_user_timeout_seconds') else default)"
+      },
+      {
+        "path": "Tests/Chat/test_console_ask_user_round.py",
+        "line": 454,
+        "names": [
+          "uuid4"
+        ],
+        "call": "monkeypatch.setattr(module, 'uuid4', before_registration)"
+      },
+      {
+        "path": "Tests/Chat/test_console_attachment_riders.py",
+        "line": 183,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(message_module, 'get_cli_setting', lambda section, key=None, default=None: str(markup_dir))"
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_swap.py",
+        "line": 1836,
+        "names": [
+          "request_mcp_approvals"
+        ],
+        "assignment_target": "controller.request_mcp_approvals"
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_swap.py",
+        "line": 2232,
+        "names": [
+          "request_mcp_approvals"
+        ],
+        "assignment_target": "controller.request_mcp_approvals"
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_swap.py",
+        "line": 352,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_module, 'get_cli_setting', _small_catalog)"
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_swap.py",
+        "line": 1840,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(config, 'get_cli_setting', enable_read_file)"
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_swap.py",
+        "line": 1842,
+        "names": [
+          "path_precheck_failed"
+        ],
+        "call": "monkeypatch.setattr(controller_module, 'path_precheck_failed', record_precheck)"
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_bridge.py",
+        "line": 1624,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(config, 'get_cli_setting', enable_read_file)"
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_bridge.py",
+        "line": 1740,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(config_module, 'get_cli_setting', lambda section, key=None, default=None: True if section == 'tools' and key == 'write_file_enabled' else default)"
+      },
+      {
+        "path": "Tests/Chat/test_console_provider_gateway.py",
+        "line": 7737,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(mistral, 'get_runtime_config_snapshot', lambda : RuntimeConfigSnapshotStub(config))"
+      },
+      {
+        "path": "Tests/Chat/test_console_provider_gateway.py",
+        "line": 7843,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(LLM_API_Calls_Local, 'get_runtime_config_snapshot', lambda : RuntimeConfigSnapshotStub(legacy_values))"
+      },
+      {
+        "path": "Tests/Chat/test_console_provider_gateway.py",
+        "line": 7943,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(LLM_API_Calls_Local, 'get_runtime_config_snapshot', lambda : RuntimeConfigSnapshotStub(legacy_values))"
+      },
+      {
+        "path": "Tests/Chat/test_console_provider_gateway.py",
+        "line": 8040,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(LLM_API_Calls_Local, 'get_runtime_config_snapshot', lambda : RuntimeConfigSnapshotStub(legacy_values))"
+      },
+      {
+        "path": "Tests/Chat/test_console_provider_gateway.py",
+        "line": 8096,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(LLM_API_Calls_Local, 'get_runtime_config_snapshot', lambda : RuntimeConfigSnapshotStub())"
+      },
+      {
+        "path": "Tests/Chat/test_console_interrupt_host_wiring.py",
+        "line": 165,
+        "names": [
+          "_interrupt_bell_enabled"
+        ],
+        "assignment_target": "controller._interrupt_bell_enabled"
+      },
+      {
+        "path": "Tests/Chat/test_console_run_hooks_regressions.py",
+        "line": 393,
+        "names": [
+          "on_pending_rounds_changed"
+        ],
+        "assignment_target": "controller.on_pending_rounds_changed"
+      },
+      {
+        "path": "Tests/Chat/test_console_turn_execution_context.py",
+        "line": 612,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_module, 'get_cli_setting', setting)"
+      },
+      {
+        "path": "Tests/Chat/test_console_turn_execution_context.py",
+        "line": 2365,
+        "names": [
+          "tldw_chatbook.Chat.console_chat_controller.get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr('tldw_chatbook.Chat.console_chat_controller.get_cli_setting', setting)"
+      },
+      {
+        "path": "Tests/Chat/test_custom_endpoint_engine_swap.py",
+        "line": 735,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(engine, 'get_runtime_config_snapshot', lambda : _Snapshot)"
+      },
+      {
+        "path": "Tests/Chat/test_console_settings_defaults.py",
+        "line": 1750,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(config_module, 'get_runtime_config_snapshot', lambda : config_module.RuntimeConfigSnapshot(7, {}))"
+      },
+      {
+        "path": "Tests/Chat/test_console_settings_defaults.py",
+        "line": 1788,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(config_module, 'get_runtime_config_snapshot', lambda : config_module.RuntimeConfigSnapshot(7, {'api_settings': {'openai': {'api_base_url': secret_endpoint}}}))"
+      },
+      {
+        "path": "Tests/Chat/test_console_settings_defaults.py",
+        "line": 1852,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(config_module, 'get_runtime_config_snapshot', lambda : config_module.RuntimeConfigSnapshot(7, {'current': 'a'}))"
+      },
+      {
+        "path": "Tests/Chat/test_console_ssh_composition.py",
+        "line": 216,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(provider_module, 'get_cli_setting', lambda section, key=None, default=None: default)"
+      },
+      {
+        "path": "Tests/Chat/test_console_interrupt_attention.py",
+        "line": 75,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(ccc, 'get_cli_setting', lambda section, key, default=None: value if (section, key) == ('console', 'interrupt_bell') else default)"
+      },
+      {
+        "path": "Tests/Chat/test_console_fleet_wake_safety.py",
+        "line": 81,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_module, 'get_cli_setting', _small_catalog)"
+      },
+      {
+        "path": "Tests/Chat/test_console_voice_preflight.py",
+        "line": 105,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(config, 'get_runtime_config_snapshot', lambda : SimpleNamespace(generation=generation[0]))"
+      },
+      {
+        "path": "Tests/Chat/test_console_voice_preflight.py",
+        "line": 150,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(config, 'get_runtime_config_snapshot', blocked_snapshot)"
+      },
+      {
+        "path": "Tests/Chat/test_console_voice_factory_composition.py",
+        "line": 41,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(config, 'get_cli_setting', lambda _section, _key, default=None: default)"
+      },
+      {
+        "path": "Tests/Chat/test_permission_summary_wiring.py",
+        "line": 182,
+        "names": [
+          "_remount_parked_skill_install"
+        ],
+        "assignment_target": "ctrl._remount_parked_skill_install"
+      },
+      {
+        "path": "Tests/Chat/test_permission_summary_wiring.py",
+        "line": 183,
+        "names": [
+          "_remount_parked_skill_script"
+        ],
+        "assignment_target": "ctrl._remount_parked_skill_script"
+      },
+      {
+        "path": "Tests/Chat/test_permission_summary_wiring.py",
+        "line": 285,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(ccc, 'get_runtime_config_snapshot', lambda : SimpleNamespace(values={}), raising=False)"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 803,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(enabled=False))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 820,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', missing_master_setting)"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 842,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(enabled='false'))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 853,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(enabled='true', workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 867,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings())"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 875,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings())"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 886,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings())"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 901,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 940,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(enabled=True, workspace_root=str(configured)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 998,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1066,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1130,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1183,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1238,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1328,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings())"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1387,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(fallback)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1415,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings())"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1453,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root='~/repo'))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1473,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1496,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1517,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1610,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1631,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1665,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "line": 1685,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', _console_settings(workspace_root=str(tmp_path)))"
+      },
+      {
+        "path": "Tests/Chat/test_console_run_state_per_session.py",
+        "line": 171,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(ccc, 'get_cli_setting', lambda *a, **k: 0, raising=False)"
+      },
+      {
+        "path": "Tests/Chat/test_console_run_state_per_session.py",
+        "line": 173,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(ccc, 'get_cli_setting', lambda *a, **k: None, raising=False)"
+      },
+      {
+        "path": "Tests/Chat/test_console_chat_create_confirm.py",
+        "line": 520,
+        "names": [
+          "_marshal_pending_chat_create"
+        ],
+        "call": "monkeypatch.setattr(controller, '_marshal_pending_chat_create', delayed_marshal)"
+      },
+      {
+        "path": "Tests/integration/test_speculative_voice_pipeline.py",
+        "line": 2465,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(config_module, 'get_cli_setting', lambda _section, _key=None, default=None: default)"
+      },
+      {
+        "path": "Tests/integration/test_console_library_control_integration.py",
+        "line": 340,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_module, 'get_cli_setting', lambda section, key, default=None: False if (section, key) == ('console', 'direct_library_tools') else real_get_cli_setting(section, key, default))"
+      },
+      {
+        "path": "Tests/MCP/test_character_tool_permission_rows.py",
+        "line": 115,
+        "names": [
+          "request_mcp_approvals"
+        ],
+        "assignment_target": "controller.request_mcp_approvals"
+      },
+      {
+        "path": "Tests/MCP/test_character_tool_permission_rows.py",
+        "line": 52,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(ltp, 'get_cli_setting', tool_setting)"
+      },
+      {
+        "path": "Tests/MCP/test_character_tool_permission_rows.py",
+        "line": 53,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(control_plane_module, 'get_cli_setting', lambda s, k, d=None: d)"
+      },
+      {
+        "path": "Tests/MCP/test_character_tool_permission_rows.py",
+        "line": 91,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(controller_mod, 'get_cli_setting', lambda s, k=None, d=None: True if (s, k) == ('console', 'local_tools_enabled') else d)"
+      },
+      {
+        "path": "Tests/MCP/test_control_plane_tool_execute.py",
+        "line": 364,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(control_plane_module, 'get_cli_setting', lambda section, key, default=None: 0.05 if key == 'hub_lifecycle_timeout_seconds' else default)"
+      },
+      {
+        "path": "Tests/MCP/test_control_plane_tool_execute.py",
+        "line": 559,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(ucps, 'get_cli_setting', fake_get_cli_setting)"
+      },
+      {
+        "path": "Tests/MCP/test_control_plane_tool_execute.py",
+        "line": 1545,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(control_plane_module, 'get_cli_setting', lambda *a, **k: True)"
+      },
+      {
+        "path": "Tests/MCP/test_control_plane_tool_execute.py",
+        "line": 1696,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(control_plane_module, 'get_cli_setting', lambda *a, **k: True)"
+      },
+      {
+        "path": "Tests/MCP/test_control_plane_tool_execute.py",
+        "line": 3492,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(control_plane_module, 'get_cli_setting', _setting)"
+      },
+      {
+        "path": "Tests/MCP/test_control_plane_tool_execute.py",
+        "line": 3574,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(control_plane_module, 'get_cli_setting', lambda section, key, default=None: state['enabled'] if (section, key) == ('console', 'local_tools_enabled') else default)"
+      },
+      {
+        "path": "Tests/MCP/test_control_plane_tool_execute.py",
+        "line": 3663,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(control_plane_module, 'get_cli_setting', lambda section, key, default=None: enabled['value'] if (section, key) == ('console', 'local_tools_enabled') else default)"
+      },
+      {
+        "path": "Tests/MCP/test_control_plane_permissions.py",
+        "line": 1324,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(service_module, 'get_cli_setting', lambda *a, **k: True)"
+      },
+      {
+        "path": "Tests/MCP/test_control_plane_permissions.py",
+        "line": 1420,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(service_module, 'get_cli_setting', lambda section, key, default=None: True if (section, key) == ('console', 'local_tools_enabled') else default)"
+      },
+      {
+        "path": "Tests/UI/test_console_native_chat_flow.py",
+        "line": 13919,
+        "names": [
+          "tldw_chatbook.UI.Console_Modules.message.get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr('tldw_chatbook.UI.Console_Modules.message.get_cli_setting', lambda section, key, default=None: str(tmp_path) if (section, key) == ('chat.images', 'save_location') else default)"
+      },
+      {
+        "path": "Tests/UI/test_console_native_chat_flow.py",
+        "line": 13962,
+        "names": [
+          "tldw_chatbook.UI.Console_Modules.message.get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr('tldw_chatbook.UI.Console_Modules.message.get_cli_setting', lambda section, key, default=None: str(tmp_path) if (section, key) == ('chat.images', 'save_location') else default)"
+      },
+      {
+        "path": "Tests/UI/test_console_native_chat_flow.py",
+        "line": 14835,
+        "names": [
+          "tldw_chatbook.UI.Console_Modules.message.get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr('tldw_chatbook.UI.Console_Modules.message.get_cli_setting', lambda section, key, default=None: str(tmp_path) if (section, key) == ('chat.images', 'save_location') else default)"
+      },
+      {
+        "path": "Tests/UI/test_console_parked_payload_rekey.py",
+        "line": 324,
+        "names": [
+          "_publish_pending_decision"
+        ],
+        "assignment_target": "ctrl._publish_pending_decision"
+      },
+      {
+        "path": "Tests/UI/test_change_review_current_mode.py",
+        "line": 96,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(config_module, 'get_cli_setting', fake)"
+      },
+      {
+        "path": "Tests/UI/test_change_review_current_mode.py",
+        "line": 285,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(config_module, 'get_cli_setting', fake_setting)"
+      },
+      {
+        "path": "Tests/UI/test_change_review_current_mode.py",
+        "line": 1409,
+        "names": [
+          "tldw_chatbook.config.get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr('tldw_chatbook.config.get_cli_setting', lambda section, key, default=None: str(writable) if (section, key) == ('console', 'workspace_root') else real_get(section, key, default) if real_get else default)"
+      },
+      {
+        "path": "Tests/UI/test_change_review_current_mode.py",
+        "line": 1451,
+        "names": [
+          "tldw_chatbook.config.get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr('tldw_chatbook.config.get_cli_setting', lambda section, key, default=None: '' if (section, key) == ('console', 'workspace_root') else default)"
+      },
+      {
+        "path": "Tests/UI/test_change_review_current_mode.py",
+        "line": 1481,
+        "names": [
+          "tldw_chatbook.config.get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr('tldw_chatbook.config.get_cli_setting', lambda section, key, default=None: '' if (section, key) == ('console', 'workspace_root') else default)"
+      },
+      {
+        "path": "Tests/UI/test_console_pending_interrupt_projection.py",
+        "line": 575,
+        "names": [
+          "_marshal_pending_chat_create"
+        ],
+        "assignment_target": "controller._marshal_pending_chat_create"
+      },
+      {
+        "path": "Tests/UI/test_console_pending_interrupt_projection.py",
+        "line": 669,
+        "names": [
+          "_marshal_pending_chat_create"
+        ],
+        "assignment_target": "controller._marshal_pending_chat_create"
+      },
+      {
+        "path": "Tests/UI/test_console_headless_approval.py",
+        "line": 772,
+        "names": [
+          "add_pending_round"
+        ],
+        "assignment_target": "controller.add_pending_round"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 2775,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 2804,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : RuntimeConfigSnapshot(24, snapshot.values), raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 2825,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 2871,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 2895,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 2932,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 2986,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3065,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : current[0], raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3118,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : current[0], raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3166,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : current[0], raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3212,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : current[0], raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3263,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3317,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3386,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3455,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3528,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3619,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3672,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3730,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3787,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : RuntimeConfigSnapshot(999, _first_chat_config()), raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3830,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 3923,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 4020,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : current[0], raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 4096,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : current[0], raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 4165,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_settings.py",
+        "line": 4217,
+        "names": [
+          "get_runtime_config_snapshot"
+        ],
+        "call": "monkeypatch.setattr(session_module, 'get_runtime_config_snapshot', lambda : snapshot, raising=False)"
+      },
+      {
+        "path": "Tests/UI/test_console_session_tab_close.py",
+        "line": 1133,
+        "names": [
+          "_enrich_chat_create_confirm_payload"
+        ],
+        "call": "monkeypatch.setattr(controller, '_enrich_chat_create_confirm_payload', paused_enrichment)"
+      },
+      {
+        "path": "Tests/UI/test_console_mcp_approval.py",
+        "line": 4956,
+        "names": [
+          "_maybe_fire_permission_summary"
+        ],
+        "assignment_target": "ctrl._maybe_fire_permission_summary"
+      },
+      {
+        "path": "Tests/UI/test_console_mcp_approval.py",
+        "line": 4345,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(config_module, 'get_cli_setting', _tools_setting)"
+      },
+      {
+        "path": "Tests/UI/test_console_mcp_approval.py",
+        "line": 4757,
+        "names": [
+          "get_cli_setting"
+        ],
+        "call": "monkeypatch.setattr(cc_module, 'get_cli_setting', lambda section, key, default: default)"
+      }
+    ],
+    "prior_test_references": [
+      {
+        "path": "Tests/Agents/test_local_tool_provider.py",
+        "names": [
+          "build_local_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Agents/test_pending_call_context_fields.py",
+        "names": [
+          "_collect_mcp_pending"
+        ]
+      },
+      {
+        "path": "Tests/Agents/test_builtin_gate_real_tool_coverage.py",
+        "names": [
+          "build_tool_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Agents/test_agent_lessons_end_to_end.py",
+        "names": [
+          "build_tool_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Agents/test_virtual_cli_provider.py",
+        "names": [
+          "build_virtual_cli_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Agents/test_mcp_tool_provider.py",
+        "names": [
+          "build_tool_review_hook",
+          "request_mcp_approvals"
+        ]
+      },
+      {
+        "path": "Tests/Agents/test_trace_approval_capture.py",
+        "names": [
+          "_approval_decision_fact",
+          "build_tool_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Agents/test_approval_denial_reasons.py",
+        "names": [
+          "_review_decision"
+        ]
+      },
+      {
+        "path": "Tests/Agents/test_agent_service_review_state_scope.py",
+        "names": [
+          "build_mcp_review_hook",
+          "build_tool_review_hook",
+          "request_mcp_approvals"
+        ]
+      },
+      {
+        "path": "Tests/Agents/test_fleet_runtime.py",
+        "names": [
+          "request_worktree_merge_confirm",
+          "revoke_approval_rounds_for_run"
+        ]
+      },
+      {
+        "path": "Tests/Agents/test_local_tools_integration.py",
+        "names": [
+          "build_local_review_hook",
+          "build_mcp_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Agents/test_denial_circuit_breaker.py",
+        "names": [
+          "build_virtual_cli_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Agents/test_raw_shell_integration.py",
+        "names": [
+          "build_raw_shell_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_worktree_recovery_lifetime.py",
+        "names": [
+          "_console_tool_kill_switch_reader",
+          "_remount_parked_worktree_merge",
+          "capture_worktree_recovery_intent",
+          "pending_decision_projection",
+          "pending_worktree_merge_ids",
+          "project_pending_decision_for_active_session",
+          "request_worktree_merge_confirm"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_raw_shell_revocation.py",
+        "names": [
+          "request_mcp_approvals"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_ask_user_round.py",
+        "names": [
+          "_resolve_ask_user_timeout_seconds",
+          "pending_question_ids",
+          "request_user_questions",
+          "resolve_pending_question",
+          "revoke_approval_rounds_for_run"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_skill_script_concurrent_confirms.py",
+        "names": [
+          "_head_round_payload",
+          "_remount_head",
+          "pending_skill_script_ids",
+          "request_skill_script_confirm",
+          "resolve_pending_skill_script"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_chat_create_confirm_card.py",
+        "names": [
+          "resolve_pending_chat_create"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_lesson_approval.py",
+        "names": [
+          "build_tool_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_denial_reason_flow.py",
+        "names": [
+          "build_local_review_hook",
+          "build_virtual_cli_review_hook",
+          "request_mcp_approvals",
+          "resolve_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_swap.py",
+        "names": [
+          "build_tool_review_hook",
+          "request_mcp_approvals",
+          "resolve_pending_approval",
+          "set_answerable_decision"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_bridge.py",
+        "names": [
+          "request_skill_install_confirm"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_chat_models.py",
+        "names": [
+          "pending_round_kinds"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_interrupt_host_wiring.py",
+        "names": [
+          "_announce_hidden_decision",
+          "_forget_hidden_decision",
+          "_head_round_payload",
+          "_interrupt_bell_enabled",
+          "_maybe_fire_permission_summary",
+          "_park_round_payload",
+          "_publish_pending_decision",
+          "_session_round_payloads",
+          "_unpark_round_payload",
+          "on_pending_rounds_changed",
+          "pending_decision_projection",
+          "project_pending_decision_for_active_session",
+          "set_answerable_decision"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_run_hooks_regressions.py",
+        "names": [
+          "_notify_run_hook_approval",
+          "_remount_parked_worktree_merge",
+          "on_pending_rounds_changed",
+          "pending_worktree_merge_ids",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "request_worktree_merge_confirm",
+          "resolve_pending_skill_install",
+          "resolve_pending_skill_script",
+          "resolve_pending_worktree_merge"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_worktree_merge_confirm.py",
+        "names": [
+          "pending_worktree_merge_ids",
+          "request_skill_script_confirm",
+          "request_worktree_merge_confirm",
+          "resolve_pending_skill_script",
+          "resolve_pending_worktree_merge",
+          "worktree_confirmation_enabled"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_interrupt_attention.py",
+        "names": [
+          "add_pending_round",
+          "discard_pending_round",
+          "on_console_view_visibility_changed",
+          "on_pending_rounds_changed"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_prompt_queue_coordinator.py",
+        "names": [
+          "add_pending_round",
+          "discard_pending_round"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_fleet_wake_safety.py",
+        "names": [
+          "request_mcp_approvals",
+          "resolve_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_headless_wake_invariants.py",
+        "names": [
+          "request_mcp_approvals",
+          "resolve_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_raw_shell_approval.py",
+        "names": [
+          "build_raw_shell_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Chat/fleet_delivery_probe.py",
+        "names": [
+          "resolve_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_viewless_hooks.py",
+        "names": [
+          "_head_round_payload",
+          "has_pending_approval_round",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "resolve_pending_approval",
+          "resolve_pending_skill_install",
+          "resolve_pending_skill_script"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_runtime_lifetime.py",
+        "names": [
+          "request_mcp_approvals",
+          "resolve_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_run_markers.py",
+        "names": [
+          "add_pending_round",
+          "discard_pending_round",
+          "has_pending_approval_round",
+          "pending_round_kinds",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "set_run_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_lesson_promotion_approval.py",
+        "names": [
+          "build_local_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_persona_assignment.py",
+        "names": [
+          "add_pending_round"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_automatic_approval_dispatch.py",
+        "names": [
+          "request_skill_install_confirm",
+          "request_skill_script_confirm"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_lesson_skill_promotion_approval.py",
+        "names": [
+          "build_managed_skill_promotion_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_chat_start.py",
+        "names": [
+          "pending_chat_create_ids",
+          "request_chat_create_confirm",
+          "resolve_pending_chat_create"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_virtual_cli_approval.py",
+        "names": [
+          "build_virtual_cli_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_worktree_recovery_ui_errors.py",
+        "names": [
+          "capture_worktree_recovery_intent",
+          "request_worktree_merge_confirm"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_skill_script_confirm.py",
+        "names": [
+          "pending_skill_script_ids",
+          "request_mcp_approvals",
+          "request_skill_script_confirm",
+          "resolve_pending_skill_script",
+          "revoke_approval_rounds_for_run"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_permission_summary_wiring.py",
+        "names": [
+          "_deliver_permission_summary",
+          "_maybe_fire_permission_summary",
+          "_remount_head",
+          "_remount_parked_skill_install",
+          "_remount_parked_skill_script",
+          "remount_pending_approval_for_active_session"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_local_review_hook.py",
+        "names": [
+          "_approval_view_is_detached",
+          "approval_was_unanswered",
+          "build_combined_review_hook",
+          "build_local_review_hook",
+          "build_mcp_review_hook",
+          "request_mcp_approvals",
+          "resolve_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_chat_controller.py",
+        "names": [
+          "_marshal_pending_approval",
+          "build_mcp_review_hook",
+          "build_tool_review_hook",
+          "request_mcp_approvals"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_agent_bridge_local.py",
+        "names": [
+          "build_local_review_hook"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_chat_create_confirm.py",
+        "names": [
+          "_enrich_chat_create_confirm_payload",
+          "_marshal_pending_chat_create",
+          "pending_chat_create_ids",
+          "request_chat_create_confirm",
+          "resolve_pending_chat_create",
+          "revoke_approval_rounds_for_run"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_chat_create_integration.py",
+        "names": [
+          "pending_chat_create_ids",
+          "request_chat_create_confirm",
+          "resolve_pending_chat_create",
+          "revoke_approval_rounds_for_run"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_voice_ephemerality.py",
+        "names": [
+          "add_pending_round"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_approval_payload_summary.py",
+        "names": [
+          "_build_approval_payload"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_console_interrupt_rounds.py",
+        "names": [
+          "add_pending_round",
+          "discard_pending_round"
+        ]
+      },
+      {
+        "path": "Tests/Chat/test_hooks_v2_lifecycle.py",
+        "names": [
+          "request_mcp_approvals",
+          "resolve_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/integration/test_console_chat_fork_flow.py",
+        "names": [
+          "has_pending_approval_round",
+          "request_mcp_approvals",
+          "resolve_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/Plugins/test_revision_drain.py",
+        "names": [
+          "build_tool_review_hook",
+          "request_mcp_approvals",
+          "resolve_pending_approval",
+          "revoke_approval_rounds_for_run"
+        ]
+      },
+      {
+        "path": "Tests/MCP/test_character_tool_permission_rows.py",
+        "names": [
+          "build_local_review_hook",
+          "request_mcp_approvals"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_buddy_conversation_modal.py",
+        "names": [
+          "_cancel_pending_decisions_for_session",
+          "expire_pending_decisions",
+          "pending_decision_projection",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "request_user_questions",
+          "set_answerable_decision"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_status_chips.py",
+        "names": [
+          "add_pending_round",
+          "discard_pending_round"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_probe_headless_wake_p2_p3_p4.py",
+        "names": [
+          "_resolve_mcp_approval_timeout_seconds",
+          "build_tool_review_hook",
+          "request_mcp_approvals"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_skill_install_confirm.py",
+        "names": [
+          "_marshal_pending_skill_install",
+          "pending_skill_install_ids",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "resolve_pending_skill_install",
+          "resolve_pending_skill_script"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_probe_headless_approval_behaviour.py",
+        "names": [
+          "_head_round_payload",
+          "build_tool_review_hook",
+          "has_pending_approval_round",
+          "request_mcp_approvals",
+          "resolve_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_parked_payload_rekey.py",
+        "names": [
+          "_publish_pending_decision",
+          "on_console_view_visibility_changed",
+          "pending_decision_projection",
+          "pending_skill_install_ids",
+          "pending_skill_script_ids",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "resolve_pending_approval",
+          "resolve_pending_skill_install",
+          "resolve_pending_skill_script",
+          "set_answerable_decision"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_ask_user_typed_answers.py",
+        "names": [
+          "pending_question_ids",
+          "request_user_questions",
+          "resolve_pending_question"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_skill_script_confirm_card.py",
+        "names": [
+          "resolve_pending_skill_script"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_pending_interrupt_projection.py",
+        "names": [
+          "_marshal_pending_chat_create",
+          "pending_chat_create_ids",
+          "pending_round_count",
+          "pending_round_kinds",
+          "request_chat_create_confirm",
+          "request_user_questions",
+          "resolve_pending_approval",
+          "resolve_pending_chat_create",
+          "resolve_pending_question",
+          "resolve_pending_skill_install"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_parallel_runs.py",
+        "names": [
+          "_head_round_payload",
+          "_remount_head",
+          "add_pending_round",
+          "discard_pending_round",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "resolve_pending_approval",
+          "resolve_pending_skill_install",
+          "resolve_pending_skill_script",
+          "set_run_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_skill_controller.py",
+        "names": [
+          "resolve_pending_skill_install",
+          "resolve_pending_skill_script"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_turn_navigation_continuity.py",
+        "names": [
+          "has_pending_approval_round",
+          "resolve_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_task_panel.py",
+        "names": [
+          "_remount_task_panel"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_chat_question_card.py",
+        "names": [
+          "resolve_pending_question"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_skill_install_concurrent_confirms.py",
+        "names": [
+          "_head_round_payload",
+          "_remount_head",
+          "discard_pending_round",
+          "pending_skill_install_ids",
+          "request_skill_install_confirm",
+          "resolve_pending_skill_install",
+          "resolve_pending_skill_script"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_headless_approval.py",
+        "names": [
+          "_announce_hidden_decision",
+          "_cancel_pending_decisions_for_session",
+          "_head_round_payload",
+          "add_pending_round",
+          "announce_hidden_decision",
+          "build_tool_review_hook",
+          "expire_pending_decisions",
+          "has_pending_approval_round",
+          "on_console_view_visibility_changed",
+          "pending_decision_projection",
+          "pending_skill_install_ids",
+          "pending_skill_script_ids",
+          "project_pending_decision_for_active_session",
+          "remount_pending_approval_for_active_session",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "resolve_pending_approval",
+          "resolve_pending_skill_install",
+          "resolve_pending_skill_script",
+          "set_answerable_decision"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_approval_first_open_render.py",
+        "names": [
+          "remount_pending_approval_for_active_session"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_turn_activity_line.py",
+        "names": [
+          "has_pending_approval_round",
+          "pending_round_kinds"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_session_close_impact.py",
+        "names": [
+          "pending_round_kinds"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_worktree_recovery.py",
+        "names": [
+          "pending_worktree_merge_ids",
+          "request_worktree_merge_confirm",
+          "resolve_pending_worktree_merge"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_buddy_conversation_layout.py",
+        "names": [
+          "request_mcp_approvals"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_run_gate.py",
+        "names": [
+          "add_pending_round",
+          "discard_pending_round"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_navigation_decisions.py",
+        "names": [
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "resolve_pending_approval",
+          "resolve_pending_skill_install",
+          "resolve_pending_skill_script"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_session_tab_close.py",
+        "names": [
+          "_cancel_pending_decisions_for_session",
+          "_enrich_chat_create_confirm_payload",
+          "has_pending_approval_round",
+          "pending_chat_create_ids",
+          "pending_question_ids",
+          "pending_round_kinds",
+          "request_chat_create_confirm",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "request_user_questions",
+          "request_worktree_merge_confirm",
+          "revoke_approval_rounds_for_run"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_turn_attention.py",
+        "names": [
+          "add_pending_round"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_console_mcp_approval.py",
+        "names": [
+          "_collect_mcp_pending",
+          "_head_round_payload",
+          "_maybe_fire_permission_summary",
+          "_remount_head",
+          "_resolve_mcp_approval_timeout_seconds",
+          "_session_round_payloads",
+          "add_pending_round",
+          "approval_was_unanswered",
+          "build_local_review_hook",
+          "build_tool_review_hook",
+          "complete_definitive_run",
+          "complete_definitive_tool",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "resolve_pending_approval",
+          "resolve_pending_skill_install",
+          "resolve_pending_skill_script",
+          "revoke_approval_rounds_for_run"
+        ]
+      },
+      {
+        "path": "Tests/UI/test_probe_17500_first_open_ordering.py",
+        "names": [
+          "resolve_pending_approval"
+        ]
+      },
+      {
+        "path": "Tests/Skills/test_e2e_run_skill_script.py",
+        "names": [
+          "request_skill_script_confirm"
+        ]
+      },
+      {
+        "path": "Tests/Skills/test_skill_remote_fetch.py",
+        "names": [
+          "request_skill_install_confirm"
+        ]
+      }
+    ],
+    "dependency_dispositions": {
+      "_active_assistant_message_ids": {
+        "users": [
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__active_assistant_message_ids()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_advance_lifecycle_revision": {
+        "users": [
+          "add_pending_round",
+          "discard_pending_round"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__advance_lifecycle_revision()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_agent_bridge": {
+        "users": [
+          "request_chat_create_confirm",
+          "request_mcp_approvals",
+          "request_user_questions"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__agent_bridge()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_announce_detached_approval": {
+        "users": [
+          "announce_hidden_decision"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__announce_detached_approval()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_announce_hidden_decision": {
+        "users": [
+          "announce_hidden_decision",
+          "legacy",
+          "request_mcp_approvals"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__announce_hidden_decision()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_announced_pending_decision_ids": {
+        "users": [
+          "_announce_hidden_decision",
+          "_forget_hidden_decision"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__announced_pending_decision_ids()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_answerable_decision_by_session": {
+        "users": [
+          "_expire_answerable_decision_if_due",
+          "_pause_answerable_decision",
+          "_refresh_answerable_decision",
+          "active_session_changed",
+          "expire_pending_decisions"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__answerable_decision_by_session()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_approval_state_lock": {
+        "users": [
+          "_announce_hidden_decision",
+          "_cancel_pending_decisions_for_session",
+          "_deliver_permission_summary",
+          "_discard_approval_rows_for_closing_session",
+          "_forget_hidden_decision",
+          "_head_round_payload",
+          "_maybe_fire_permission_summary",
+          "_mutate_exact_pending_decision",
+          "_park_round_payload",
+          "_pause_answerable_decision",
+          "_pending_round_states_snapshot",
+          "_publish_pending_decision",
+          "_refresh_answerable_decision",
+          "_session_round_payloads",
+          "_unpark_round_payload",
+          "active_session_changed",
+          "add_pending_round",
+          "complete_definitive_run",
+          "complete_definitive_tool",
+          "discard_pending_round",
+          "expire_pending_decisions",
+          "has_pending_approval_round",
+          "pending_decision_projection",
+          "pending_round_count",
+          "pending_round_kinds",
+          "request_mcp_approvals",
+          "resolve_pending_approval",
+          "revoke_raw_shell_authority",
+          "set_answerable_decision"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.lock",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_approval_view_is_detached": {
+        "users": [
+          "legacy",
+          "on_pending_rounds_changed",
+          "request_mcp_approvals"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__approval_view_is_detached()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_bind_round_cancel_signal": {
+        "users": [
+          "request_chat_create_confirm",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "request_user_questions",
+          "request_worktree_merge_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__bind_round_cancel_signal()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_bind_visit_cancel_signal": {
+        "users": [
+          "request_chat_create_confirm",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "request_user_questions",
+          "request_worktree_merge_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__bind_visit_cancel_signal()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_buddy_sink": {
+        "users": [
+          "add_pending_round",
+          "discard_pending_round"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__buddy_sink()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_chat_create_session_grants": {
+        "users": [
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__chat_create_session_grants()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_chat_creation_record_locked": {
+        "users": [
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__chat_creation_record_locked()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_chat_creation_records": {
+        "users": [
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__chat_creation_records()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_chat_creation_revoked_runs": {
+        "users": [
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__chat_creation_revoked_runs()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_chat_start": {
+        "users": [
+          "request_mcp_approvals"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__chat_start()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_console_answerable_decision_by_session": {
+        "users": [
+          "_refresh_answerable_decision",
+          "active_session_changed",
+          "set_answerable_decision"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__console_answerable_decision_by_session()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_deliver_permission_summary": {
+        "users": [
+          "_permission_summary_worker"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__deliver_permission_summary()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_disposed": {
+        "users": [
+          "on_console_view_visibility_changed"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__disposed()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_enrich_chat_create_confirm_payload": {
+        "users": [
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__enrich_chat_create_confirm_payload()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_expire_answerable_decision_if_due": {
+        "users": [
+          "expire_pending_decisions"
+        ],
+        "disposition": "proven_repository_internal_moved_to_moved_private_route",
+        "target": "self._expire_answerable_decision_if_due",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_forget_hidden_decision": {
+        "users": [
+          "legacy"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__forget_hidden_decision()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_head_round_payload": {
+        "users": [
+          "_marshal_pending_chat_create",
+          "_remount_head",
+          "_remount_parked_chat_create",
+          "_remount_parked_question",
+          "_remount_parked_skill_install",
+          "_remount_parked_skill_script",
+          "_remount_parked_worktree_merge",
+          "_reproject_pending_decision_for_session",
+          "remount_pending_approval_for_active_session",
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__head_round_payload()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_interrupt_bell_enabled": {
+        "users": [
+          "on_pending_rounds_changed"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__interrupt_bell_enabled()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_interrupt_host": {
+        "users": [
+          "_approval_view_is_detached",
+          "_mutate_exact_pending_decision",
+          "_notify_run_hook_approval",
+          "_pause_answerable_decision",
+          "_refresh_answerable_decision",
+          "_remount_session_kinds",
+          "_revoke_skill_script_rounds",
+          "_revoke_tool_approval_rounds",
+          "active_session_changed",
+          "announce_hidden_decision",
+          "on_console_view_visibility_changed",
+          "on_pending_rounds_changed",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "request_user_questions",
+          "request_worktree_merge_confirm",
+          "revoke_approval_rounds_for_run",
+          "set_answerable_decision"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_is_session_cancelled": {
+        "users": [
+          "legacy",
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__is_session_cancelled()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_marshal_pending_chat_create": {
+        "users": [
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__marshal_pending_chat_create()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_marshal_pending_decision_projection": {
+        "users": [
+          "legacy"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__marshal_pending_decision_projection()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_maybe_fire_permission_summary": {
+        "users": [
+          "_marshal_pending_approval",
+          "_remount_head",
+          "project_pending_decision_for_active_session",
+          "remount_pending_approval_for_active_session",
+          "request_mcp_approvals"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__maybe_fire_permission_summary()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_mutate_exact_pending_decision": {
+        "users": [
+          "_expire_answerable_decision_if_due",
+          "_pause_answerable_decision",
+          "_refresh_answerable_decision"
+        ],
+        "disposition": "proven_repository_internal_moved_to_moved_private_route",
+        "target": "self._mutate_exact_pending_decision",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_notify_run_hook_approval": {
+        "users": [
+          "legacy"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__notify_run_hook_approval()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_observe_chat_creation_record": {
+        "users": [
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__observe_chat_creation_record()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_park_round_payload": {
+        "users": [
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__park_round_payload()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_parked_approval_payloads": {
+        "users": [
+          "_discard_approval_rows_for_closing_session",
+          "_pending_decision_payloads_locked",
+          "_reproject_pending_decision_for_session",
+          "complete_definitive_run",
+          "complete_definitive_tool",
+          "remount_pending_approval_for_active_session",
+          "request_mcp_approvals",
+          "revoke_raw_shell_authority"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.payloads[\"approval\"]",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_parked_chat_create_payloads": {
+        "users": [
+          "_marshal_pending_chat_create",
+          "_remount_parked_chat_create",
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__parked_chat_create_payloads()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_parked_question_payloads": {
+        "users": [
+          "_remount_parked_question"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.payloads[\"question\"]",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_parked_skill_install_payloads": {
+        "users": [
+          "_pending_decision_payloads_locked",
+          "_remount_parked_skill_install"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.payloads[\"skill_install\"]",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_parked_skill_script_payloads": {
+        "users": [
+          "_pending_decision_payloads_locked",
+          "_remount_parked_skill_script"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.payloads[\"skill_script\"]",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_parked_worktree_merge_payloads": {
+        "users": [
+          "_remount_parked_worktree_merge"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.payloads[\"worktree_merge\"]",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pause_answerable_decision": {
+        "users": [
+          "_refresh_answerable_decision"
+        ],
+        "disposition": "proven_repository_internal_moved_to_moved_private_route",
+        "target": "self._pause_answerable_decision",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pause_pending_decision_state_locked": {
+        "users": [
+          "_pause_answerable_decision"
+        ],
+        "disposition": "proven_repository_internal_moved_to_moved_private_route",
+        "target": "self._pause_pending_decision_state_locked",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_approval_rounds": {
+        "users": [
+          "_announce_hidden_decision",
+          "_cancel_pending_decisions_for_session",
+          "_deliver_permission_summary",
+          "_maybe_fire_permission_summary",
+          "_pending_round_states_snapshot",
+          "resolve_pending_approval",
+          "revoke_raw_shell_authority"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.registries[\"approval\"]",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_approvals": {
+        "users": [
+          "add_pending_round",
+          "discard_pending_round",
+          "has_pending_approval_round"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__pending_approvals()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_chat_create_lock": {
+        "users": [
+          "_cancel_pending_decisions_for_session",
+          "_marshal_pending_chat_create",
+          "pending_chat_create_ids",
+          "request_chat_create_confirm",
+          "resolve_pending_chat_create"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__pending_chat_create_lock()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_chat_create_rounds": {
+        "users": [
+          "_cancel_pending_decisions_for_session",
+          "_marshal_pending_chat_create",
+          "pending_chat_create_ids",
+          "request_chat_create_confirm",
+          "resolve_pending_chat_create"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__pending_chat_create_rounds()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_decision_order": {
+        "users": [
+          "_publish_pending_decision"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__pending_decision_order()",
+        "writes": "explicit write_controller callback; preserve existing augmented update order"
+      },
+      "_pending_decision_payloads_locked": {
+        "users": [
+          "_publish_pending_decision",
+          "_refresh_answerable_decision",
+          "pending_decision_projection"
+        ],
+        "disposition": "proven_repository_internal_moved_to_moved_private_route",
+        "target": "self._pending_decision_payloads_locked",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_question_lock": {
+        "users": [
+          "_cancel_pending_decisions_for_session",
+          "pending_question_ids",
+          "request_user_questions",
+          "resolve_pending_question",
+          "revoke_approval_rounds_for_run"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.lock",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_question_rounds": {
+        "users": [
+          "_cancel_pending_decisions_for_session",
+          "pending_question_ids",
+          "request_user_questions",
+          "resolve_pending_question"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.registries[\"question\"]",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_round_kinds": {
+        "users": [
+          "add_pending_round",
+          "discard_pending_round",
+          "pending_round_count",
+          "pending_round_kinds"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__pending_round_kinds()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_round_states_snapshot": {
+        "users": [
+          "pending_decision_projection"
+        ],
+        "disposition": "proven_repository_internal_moved_to_moved_private_route",
+        "target": "self._pending_round_states_snapshot",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_skill_install_lock": {
+        "users": [
+          "_announce_hidden_decision",
+          "_cancel_pending_decisions_for_session",
+          "_pending_round_states_snapshot",
+          "pending_skill_install_ids",
+          "request_skill_install_confirm",
+          "resolve_pending_skill_install"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.lock",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_skill_install_rounds": {
+        "users": [
+          "_announce_hidden_decision",
+          "_cancel_pending_decisions_for_session",
+          "_pending_round_states_snapshot",
+          "pending_skill_install_ids",
+          "request_skill_install_confirm",
+          "resolve_pending_skill_install"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.registries[\"skill_install\"]",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_skill_script_lock": {
+        "users": [
+          "_announce_hidden_decision",
+          "_cancel_pending_decisions_for_session",
+          "_pending_round_states_snapshot",
+          "pending_skill_script_ids",
+          "resolve_pending_skill_script"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.lock",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_skill_script_rounds": {
+        "users": [
+          "_announce_hidden_decision",
+          "_cancel_pending_decisions_for_session",
+          "_pending_round_states_snapshot",
+          "pending_skill_script_ids",
+          "resolve_pending_skill_script"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.registries[\"skill_script\"]",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_worktree_merge_lock": {
+        "users": [
+          "pending_worktree_merge_ids",
+          "request_worktree_merge_confirm",
+          "resolve_pending_worktree_merge"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.lock",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_pending_worktree_merge_rounds": {
+        "users": [
+          "pending_worktree_merge_ids",
+          "request_worktree_merge_confirm",
+          "resolve_pending_worktree_merge"
+        ],
+        "disposition": "native_host_ownership",
+        "target": "self.registries[\"worktree_merge\"]",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_permission_summary_worker": {
+        "users": [
+          "_maybe_fire_permission_summary"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__permission_summary_worker()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_provider_messages_for_session": {
+        "users": [
+          "_summary_tail_messages"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__provider_messages_for_session()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_publish_console_attention_change": {
+        "users": [
+          "add_pending_round",
+          "discard_pending_round"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__publish_console_attention_change()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_publish_pending_decision": {
+        "users": [
+          "legacy"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__publish_pending_decision()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_question_bounces": {
+        "users": [
+          "request_user_questions",
+          "revoke_approval_rounds_for_run"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__question_bounces()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_raw_shell_providers": {
+        "users": [
+          "revoke_raw_shell_authority"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__raw_shell_providers()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_record_cancelled_approval_decisions": {
+        "users": [
+          "request_mcp_approvals"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__record_cancelled_approval_decisions()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_refresh_answerable_decision": {
+        "users": [
+          "active_session_changed",
+          "expire_pending_decisions",
+          "legacy",
+          "set_answerable_decision"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__refresh_answerable_decision()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_remount_head": {
+        "users": [
+          "_discard_approval_rows_for_closing_session",
+          "complete_definitive_run",
+          "complete_definitive_tool",
+          "revoke_raw_shell_authority"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__remount_head()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_remount_parked_chat_create": {
+        "users": [
+          "_reproject_pending_decision_for_session"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__remount_parked_chat_create()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_remount_parked_skill_install": {
+        "users": [
+          "_reproject_pending_decision_for_session"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__remount_parked_skill_install()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_remount_parked_skill_script": {
+        "users": [
+          "_reproject_pending_decision_for_session"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__remount_parked_skill_script()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_remount_session_kinds": {
+        "users": [
+          "on_console_view_visibility_changed"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__remount_session_kinds()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_reproject_pending_decision_for_session": {
+        "users": [
+          "active_session_changed"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__reproject_pending_decision_for_session()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_resolve_ask_user_timeout_seconds": {
+        "users": [
+          "request_user_questions"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__resolve_ask_user_timeout_seconds()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_resolve_mcp_approval_timeout_seconds": {
+        "users": [
+          "request_mcp_approvals"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__resolve_mcp_approval_timeout_seconds()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_revoke_chat_create_rounds": {
+        "users": [
+          "revoke_approval_rounds_for_run"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__revoke_chat_create_rounds()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_run_hooks_engine": {
+        "users": [
+          "_notify_run_hook_approval"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__run_hooks_engine()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_session_close_generations": {
+        "users": [
+          "_marshal_pending_chat_create",
+          "request_chat_create_confirm",
+          "request_user_questions"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__session_close_generations()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_settle_pending_decision_timeout_locked": {
+        "users": [
+          "_expire_answerable_decision_if_due",
+          "_pause_answerable_decision"
+        ],
+        "disposition": "proven_repository_internal_moved_to_moved_private_route",
+        "target": "self._settle_pending_decision_timeout_locked",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_summary_tail_messages": {
+        "users": [
+          "_maybe_fire_permission_summary"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__summary_tail_messages()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "_unpark_round_payload": {
+        "users": [
+          "request_chat_create_confirm",
+          "revoke_raw_shell_authority"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller__unpark_round_payload()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "add_pending_round": {
+        "users": [
+          "legacy",
+          "request_chat_create_confirm",
+          "set_run_pending_approval"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_add_pending_round()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "announce_hidden_decision": {
+        "users": [
+          "legacy"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_announce_hidden_decision()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "app": {
+        "users": [
+          "_announce_detached_approval",
+          "_announce_hidden_decision",
+          "_console_tool_kill_switch_reader",
+          "_marshal_pending_approval",
+          "_marshal_pending_chat_create",
+          "_marshal_pending_decision_projection",
+          "_marshal_pending_question",
+          "_marshal_pending_skill_install",
+          "_marshal_pending_skill_script",
+          "_marshal_pending_worktree_merge",
+          "_marshal_task_panel",
+          "_permission_summary_worker",
+          "_record_cancelled_approval_decisions",
+          "_remount_head",
+          "legacy",
+          "on_pending_rounds_changed",
+          "request_chat_create_confirm",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "request_user_questions",
+          "request_worktree_merge_confirm",
+          "worktree_confirmation_enabled"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_app()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "ask_user_timeout_seconds": {
+        "users": [
+          "_resolve_ask_user_timeout_seconds"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_ask_user_timeout_seconds()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "chat_create_confirm_timeout_seconds": {
+        "users": [
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_chat_create_confirm_timeout_seconds()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "decision_monotonic_clock": {
+        "users": [
+          "_refresh_answerable_decision",
+          "expire_pending_decisions",
+          "pending_decision_projection"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_decision_monotonic_clock()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "discard_pending_round": {
+        "users": [
+          "legacy",
+          "request_chat_create_confirm",
+          "revoke_approval_rounds_for_run",
+          "revoke_raw_shell_authority",
+          "set_run_pending_approval"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_discard_pending_round()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "expire_pending_decisions": {
+        "users": [
+          "legacy"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_expire_pending_decisions()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "mcp_approval_timeout_seconds": {
+        "users": [
+          "_resolve_mcp_approval_timeout_seconds"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_mcp_approval_timeout_seconds()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "on_console_attention_changed": {
+        "users": [
+          "_publish_console_attention_change"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_on_console_attention_changed()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "on_pending_rounds_changed": {
+        "users": [
+          "legacy"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_on_pending_rounds_changed()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "park_pending_approval": {
+        "users": [
+          "_approval_view_is_detached",
+          "legacy",
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_park_pending_approval()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "pending_decision_projection": {
+        "users": [
+          "_refresh_answerable_decision",
+          "project_pending_decision_for_active_session",
+          "remount_pending_approval_for_active_session"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_pending_decision_projection()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "project_pending_decision_for_active_session": {
+        "users": [
+          "_marshal_pending_decision_projection",
+          "_remount_head",
+          "_remount_parked_skill_install",
+          "_remount_parked_skill_script",
+          "_reproject_pending_decision_for_session",
+          "remount_pending_approval_for_active_session"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_project_pending_decision_for_active_session()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "remount_pending_approval_for_active_session": {
+        "users": [
+          "on_console_view_visibility_changed"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_remount_pending_approval_for_active_session()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "set_answerable_decision": {
+        "users": [
+          "_cancel_pending_decisions_for_session"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_set_answerable_decision()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "set_pending_approval": {
+        "users": [
+          "_approval_view_is_detached",
+          "_discard_approval_rows_for_closing_session",
+          "_marshal_pending_approval",
+          "_reproject_pending_decision_for_session",
+          "complete_definitive_run",
+          "complete_definitive_tool",
+          "legacy:_setter",
+          "project_pending_decision_for_active_session",
+          "remount_pending_approval_for_active_session",
+          "revoke_raw_shell_authority"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_set_pending_approval()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "set_pending_chat_create": {
+        "users": [
+          "_marshal_pending_chat_create",
+          "_remount_parked_chat_create",
+          "request_chat_create_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_set_pending_chat_create()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "set_pending_decision": {
+        "users": [
+          "_approval_view_is_detached",
+          "_notify_run_hook_approval",
+          "_remount_head",
+          "_remount_parked_skill_install",
+          "_remount_parked_skill_script",
+          "_remount_session_kinds",
+          "_reproject_pending_decision_for_session",
+          "legacy",
+          "project_pending_decision_for_active_session",
+          "remount_pending_approval_for_active_session"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_set_pending_decision()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "set_pending_question": {
+        "users": [
+          "_marshal_pending_question",
+          "_remount_parked_question",
+          "legacy:_setter",
+          "request_user_questions"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_set_pending_question()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "set_pending_skill_install": {
+        "users": [
+          "_approval_view_is_detached",
+          "_marshal_pending_skill_install",
+          "_remount_parked_skill_install",
+          "legacy:_setter",
+          "project_pending_decision_for_active_session",
+          "request_skill_install_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_set_pending_skill_install()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "set_pending_skill_script": {
+        "users": [
+          "_approval_view_is_detached",
+          "_marshal_pending_skill_script",
+          "_remount_parked_skill_script",
+          "legacy:_setter",
+          "project_pending_decision_for_active_session",
+          "request_skill_script_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_set_pending_skill_script()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "set_pending_worktree_merge": {
+        "users": [
+          "_marshal_pending_worktree_merge",
+          "_remount_parked_worktree_merge",
+          "legacy:_setter",
+          "request_worktree_merge_confirm",
+          "worktree_confirmation_enabled"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_set_pending_worktree_merge()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "set_task_panel": {
+        "users": [
+          "_marshal_task_panel",
+          "_remount_task_panel"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_set_task_panel()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "skill_install_confirm_timeout_seconds": {
+        "users": [
+          "request_skill_install_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_skill_install_confirm_timeout_seconds()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "skill_script_confirm_timeout_seconds": {
+        "users": [
+          "request_skill_script_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_skill_script_confirm_timeout_seconds()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "store": {
+        "users": [
+          "_announce_detached_approval",
+          "_discard_approval_rows_for_closing_session",
+          "_enrich_chat_create_confirm_payload",
+          "_marshal_pending_chat_create",
+          "_notify_run_hook_approval",
+          "_refresh_answerable_decision",
+          "_remount_head",
+          "_remount_task_panel",
+          "active_session_changed",
+          "legacy",
+          "on_console_view_visibility_changed",
+          "project_pending_decision_for_active_session",
+          "remount_pending_approval_for_active_session",
+          "request_chat_create_confirm",
+          "request_mcp_approvals",
+          "request_skill_install_confirm",
+          "request_skill_script_confirm",
+          "request_user_questions",
+          "request_worktree_merge_confirm",
+          "set_answerable_decision"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_store()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "update_pending_approval_summary": {
+        "users": [
+          "_deliver_permission_summary"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_update_pending_approval_summary()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      },
+      "worktree_merge_confirm_timeout_seconds": {
+        "users": [
+          "request_worktree_merge_confirm"
+        ],
+        "disposition": "explicit_live_controller_getter",
+        "target": "self.read_controller_worktree_merge_confirm_timeout_seconds()",
+        "writes": "no direct self-attribute assignment in selected methods; mutation through retrieved live objects is preserved"
+      }
+    }
+  },
+  "current_routes": [
+    "f800952214:Tests/Backup_Recovery/test_console_maintenance.py:81:        assert (await controller.compact_context_now(session))[0] is False",
+    "f800952214:Tests/Chat/test_console_automatic_library_preparation.py:1419:        controller, \"_apply_conversation_memory_preflight\", refuse_preflight",
+    "f800952214:Tests/Chat/test_console_automatic_library_preparation.py:2254:            controller, \"_apply_conversation_memory_preflight\", hold_preflight",
+    "f800952214:Tests/Chat/test_console_automatic_library_preparation.py:2366:            controller, \"_apply_conversation_memory_preflight\", hold_preflight",
+    "f800952214:Tests/Chat/test_console_automatic_library_preparation.py:2670:            controller, \"_apply_conversation_memory_preflight\", hold_preflight",
+    "f800952214:Tests/Chat/test_console_automatic_library_preparation.py:2751:                controller, \"_apply_conversation_memory_preflight\", hold_preflight",
+    "f800952214:Tests/Chat/test_console_automatic_library_preparation.py:2939:        controller, \"_apply_conversation_memory_preflight\", hold_preflight",
+    "f800952214:Tests/Chat/test_console_automatic_library_preparation.py:3024:        controller, \"_apply_conversation_memory_preflight\", hold_preflight",
+    "f800952214:Tests/Chat/test_console_automatic_library_preparation.py:3236:            controller, \"_apply_conversation_memory_preflight\", hold_preflight",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:271:    succeeded, copy = await controller.compact_context_now(\"session-1\")",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:350:    succeeded, copy = await controller.compact_context_now(\"session-1\")",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:434:    succeeded, copy = await controller.compact_context_now(\"session-1\")",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:455:    succeeded, _copy = await controller.compact_context_now(\"session-1\")",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:491:    succeeded, _copy = await controller.compact_context_now(\"session-1\")",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:520:    succeeded, copy = await controller.compact_context_now(\"session-1\")",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:623:    await controller.compact_context_now(\"session-1\", micro=True)",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:625:    await controller.compact_context_now(\"session-1\", micro=True)",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:681:    await controller.compact_context_now(\"session-1\", micro=micro)",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:694:        await controller.compact_context_now(\"session-1\", micro=True)",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:719:    succeeded, _copy = await controller.compact_context_now(\"session-1\")",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:744:    succeeded, _copy = await controller.compact_context_now(\"session-1\")",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:776:    succeeded, _copy = await controller.compact_context_now(\"session-1\")",
+    "f800952214:Tests/Chat/test_console_compaction_live_session.py:816:    succeeded, _copy = await controller.compact_context_now(\"session-1\")",
+    "f800952214:Tests/Chat/test_console_context_budget_routes.py:8:These drive the real ``_apply_conversation_memory_preflight`` with the real",
+    "f800952214:Tests/Chat/test_console_context_budget_routes.py:32:    return await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_budget_routes.py:167:    await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:3571:    output, result = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:3630:    baseline, baseline_result = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:3641:    output, result = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:3673:    output, result = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:3708:    output, result = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:3759:    output, result = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:3800:    output, result = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:3838:    output, result = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:3861:    _output, result = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:3892:    output, result = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:3908:        ) = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:3933:        await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_context_compaction.py:4006:    succeeded, visible_copy = await controller.compact_context_now(session.id)",
+    "f800952214:Tests/Chat/test_console_first_chat_handoff.py:140:        controller.compact_context_now(session.id), timeout=5.0",
+    "f800952214:Tests/Chat/test_console_local_citation_boundary.py:1762:            \"_apply_conversation_memory_preflight\",",
+    "f800952214:Tests/Chat/test_console_rewind_summarize.py:883:    preflight, blocked = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_rewind_summarize.py:925:    projected, blocked = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_rewind_summarize.py:982:    projected, blocked = await controller._apply_conversation_memory_preflight(",
+    "f800952214:Tests/Chat/test_console_rewind_summarize.py:989:    compacted, _copy = await controller.compact_context_now(session.id)",
+    "f800952214:Tests/Chat/test_console_session_settings.py:3858:            monkeypatch.setattr(controller, \"compact_context_now\", compact_now)",
+    "f800952214:Tests/UI/test_console_session_settings.py:1189:        compact_context_now=lambda _session_id: None,",
+    "f800952214:Tests/UI/test_console_session_settings.py:1257:        compact_context_now=lambda _session_id: None,",
+    "f800952214:Tests/UI/test_console_session_settings.py:1334:        compact_context_now=lambda _session_id: None,",
+    "f800952214:Tests/UI/test_console_session_settings.py:1433:        compact_context_now=lambda _session_id: None,",
+    "f800952214:Tests/UI/test_console_session_settings.py:1487:        compact_context_now=lambda _session_id: None,",
+    "f800952214:Tests/UI/test_console_session_settings.py:1559:        compact_context_now=lambda _session_id: None,",
+    "f800952214:Tests/UI/test_console_session_settings.py:1608:        compact_context_now=lambda _session_id: None,",
+    "f800952214:Tests/UI/test_console_session_settings.py:1683:        compact_context_now=lambda _session_id: None,",
+    "f800952214:Tests/UI/test_console_session_settings.py:7999:        compact_context_now=lambda _session_id: None,",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:275:# inside `_apply_conversation_memory_preflight`, its only user, so it stays",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:9123:        compacted, visible_copy = await self.compact_context_now(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:26814:                await self.compact_context_now(session_id, micro=True)",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:26827:    async def compact_context_now(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:26876:        _messages, blocked_result = await self._apply_conversation_memory_preflight(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:26969:    def _context_overflow_alert(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:27024:    def _assess_request_capacity_only(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:27089:            self._context_overflow_alert(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:27122:        hold, alert = await self._assess_context_compaction(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:27158:    async def _assess_context_compaction(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:27192:            await self._apply_conversation_memory_preflight(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:27271:    async def _apply_conversation_memory_preflight(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:27339:                self._assess_request_capacity_only(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:27501:                self._context_overflow_alert(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:27539:            alert = self._context_overflow_alert(",
+    "f800952214:tldw_chatbook/Chat/console_chat_controller.py:28094:            ) = await self._apply_conversation_memory_preflight(",
+    "f800952214:tldw_chatbook/UI/Screens/chat_screen.py:3415:            compact_now=lambda: controller.compact_context_now(session_id),",
+    "f800952214:tldw_chatbook/UI/Screens/chat_screen.py:16096:    async def _dispatch_console_trace_recovery(",
+    "f800952214:tldw_chatbook/UI/Screens/chat_screen.py:16131:    def _console_trace_recovery_state(self) -> Any:",
+    "f800952214:tldw_chatbook/UI/Screens/chat_screen.py:16171:            trace_recovery_state_builder=self._console_trace_recovery_state,",
+    "f800952214:tldw_chatbook/UI/Screens/chat_screen.py:16172:            on_trace_recovery_action=self._dispatch_console_trace_recovery,",
+    "f800952214:tldw_chatbook/Widgets/Console/console_settings_modal.py:3745:    def _compact_context_now(self, event: Button.Pressed) -> None:",
+    "f800952214:tldw_chatbook/Widgets/Console/console_settings_modal.py:3756:            self._compact_context_now_worker(),",
+    "f800952214:tldw_chatbook/Widgets/Console/console_settings_modal.py:3762:    async def _compact_context_now_worker(self) -> None:"
+  ],
+  "new_reflection_candidates": [
+    {
+      "path": "Tests/Agents/test_agent_worktree_retire_race_copy.py",
+      "addition": "    shared.mkdir()"
+    },
+    {
+      "path": "Tests/Agents/test_agent_worktree_retire_race_copy.py",
+      "addition": "    worktree.mkdir()"
+    },
+    {
+      "path": "Tests/Agents/test_agent_worktree_retire_race_copy.py",
+      "addition": "        return worktree.is_dir()"
+    },
+    {
+      "path": "Tests/Agents/test_agent_worktree_retire_race_copy.py",
+      "addition": "        RUN, _worktree_authority(worktree, guard=lambda _write: worktree.is_dir())"
+    },
+    {
+      "path": "Tests/Chat/test_console_automatic_library_preparation.py",
+      "addition": "    on ``rag_capture_provider.__self__``; they are explicit dependencies now."
+    },
+    {
+      "path": "Tests/Chat/test_console_compaction_ask_hold.py",
+      "addition": "    result = await getattr(controller, action)(held.preparation_id)"
+    },
+    {
+      "path": "Tests/Chat/test_console_staged_evidence_dispatch_pin.py",
+      "addition": "    monkeypatch.setattr(controller, \"_stream_assistant_response\", stream)"
+    },
+    {
+      "path": "Tests/Chat/test_console_staged_evidence_dispatch_pin.py",
+      "addition": "    monkeypatch.setattr("
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "    was ``getattr(Stylesheet.apply, ...)`` colliding with an unrelated"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "        getattr(Stylesheet.apply, \"_marker\", False)"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "#: ``__self__``, a frame's ``f_locals`` and ``self.__dict__`` were silent at"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "#: 4c87eb4d3e (``vars()`` was a row there, but no case pinned it). Round 5"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "    \"vars\": \"screen.chain(**vars())\","
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "    \"a-bound-settle-methods-self\": \"screen.chain(closed.set_result.__self__, answer)\","
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "        'screen.chain(getattr(builtins, \"eval\")(\"closed\"), answer)'"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "        'screen.chain(getattr(screen.frame(), \"f_back\"), answer)'"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "    \"\"\"``vars()``/``locals()``, ``eval``/``exec`` (however reached), a frame"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "    ``__self__`` hand the settled future on without a plain load of its"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "        chain(inspect.getclosurevars(stop).nonlocals[\"other\"], answer)"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "        chain(getattr(stop, \"__closure__\")[0].cell_contents, answer)"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "        'screen.chain(getattr(self, \"_closed\"), self._answer)',"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "        \"self.screen.chain(self.__dict__)\","
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "    \"vars-of-self-in-the-pushing-function\": (\"self.screen.chain(vars(self))\", \"\"),"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "        \"screen.chain(self._closed.set_result.__self__, self._answer)\","
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "    with a constant name, a bound settle method's ``__self__``,"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "    ``self.__dict__`` or ``vars(self)``. All are rows on 5918cfd1df; all"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "    but ``vars(self)`` were silent at 4c87eb4d3e.\"\"\""
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "    settle.__self__.add_done_callback(lambda f: ANSWERS[0].set_result(f.result()))"
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "    (``settle.__self__``) to whatever settles the awaited future.\"\"\""
+    },
+    {
+      "path": "Tests/Scripts/test_check_textual_worker_contract.py",
+      "addition": "        callback.__self__.add_done_callback("
+    },
+    {
+      "path": "Tests/UI/test_console_compaction_hold_flow.py",
+      "addition": "            monkeypatch.setattr(gateway, \"_chat_api_call_fn\", adapter)"
+    },
+    {
+      "path": "Tests/UI/test_console_compaction_hold_flow.py",
+      "addition": "            monkeypatch.setattr(gateway, \"resolve_for_send\", resolve)"
+    },
+    {
+      "path": "Tests/UI/test_console_compaction_hold_flow.py",
+      "addition": "            monkeypatch.setattr(runtime, \"accept_turn\", capture_turn)"
+    },
+    {
+      "path": "Tests/UI/test_console_trace_call_recovery.py",
+      "addition": "        if hasattr(widget, \"render\") and widget.display"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "addition": "        # on `rag_capture_provider.__self__`, and a missing name silently"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_chat_controller.py",
+      "addition": "            preview = getattr(self._agent_bridge, \"preview_tool_schemas\", None)"
+    },
+    {
+      "path": "tldw_chatbook/Chat/console_runtime.py",
+      "addition": "        held_preparation_id = getattr(result, \"preparation_id\", None)"
+    }
+  ],
+  "compaction_dependency_users": {
+    "_agent_bridge": [
+      "_apply_conversation_memory_preflight",
+      "_assess_context_compaction",
+      "_assess_request_capacity_only"
+    ],
+    "_agent_runtime_enabled": [
+      "_assess_context_compaction"
+    ],
+    "_append_failure_system_row": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "_apply_conversation_memory_preflight": [
+      "compact_context_now",
+      "_assess_context_compaction"
+    ],
+    "_assess_request_capacity_only": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "_automatic_memory_admission": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "_auxiliary_compaction_resolution": [
+      "compact_context_now"
+    ],
+    "_block_context_preflight": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "_blocked_visible_copy": [
+      "compact_context_now"
+    ],
+    "_compaction_admission": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "_compaction_service": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "_context_accounting_by_session": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "_context_overflow_alert": [
+      "_apply_conversation_memory_preflight",
+      "_assess_request_capacity_only"
+    ],
+    "_context_repository": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "_durable_context_snapshots": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "_global_context_policy_overrides": [
+      "_apply_conversation_memory_preflight",
+      "_assess_request_capacity_only"
+    ],
+    "_hooks_for_compaction": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "_provider_continuation_history_for_resolution": [
+      "compact_context_now",
+      "_assess_context_compaction"
+    ],
+    "_provider_messages_for_session": [
+      "compact_context_now"
+    ],
+    "_provider_selection_for_session": [
+      "compact_context_now"
+    ],
+    "_resolve_for_send_bounded": [
+      "compact_context_now"
+    ],
+    "_select_session_effective_memory": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "context_control_inputs": [
+      "compact_context_now"
+    ],
+    "provider_gateway": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "run_state_for": [
+      "compact_context_now"
+    ],
+    "store": [
+      "compact_context_now",
+      "_apply_conversation_memory_preflight"
+    ]
+  },
+  "compaction_global_users": {
+    "Any": [
+      "_apply_conversation_memory_preflight",
+      "_assess_request_capacity_only"
+    ],
+    "CompactionDecision": [
+      "_apply_conversation_memory_preflight",
+      "_assess_context_compaction",
+      "_context_overflow_alert"
+    ],
+    "CompactionFailureBehavior": [
+      "_apply_conversation_memory_preflight",
+      "_context_overflow_alert"
+    ],
+    "CompactionPromptSnapshot": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "CompactionTerminal": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "ConsoleContextCapacity": [
+      "_apply_conversation_memory_preflight",
+      "_assess_request_capacity_only"
+    ],
+    "ConsoleSubmitResult": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "ContextCarryForwardMode": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "ContextCompactionHold": [
+      "_apply_conversation_memory_preflight",
+      "_assess_context_compaction",
+      "_assess_request_capacity_only"
+    ],
+    "ContextCompactionRepresentation": [
+      "compact_context_now",
+      "_apply_conversation_memory_preflight"
+    ],
+    "ContinuationConflictError": [
+      "compact_context_now"
+    ],
+    "EffectiveMemoryKind": [
+      "compact_context_now",
+      "_apply_conversation_memory_preflight"
+    ],
+    "Mapping": [
+      "_apply_conversation_memory_preflight",
+      "_assess_request_capacity_only"
+    ],
+    "NATIVE_MESSAGE_ID_KEY": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "PROVIDER_CONTINUATION_RECOVERY_REQUIRED": [
+      "compact_context_now"
+    ],
+    "PreparedConsoleRequest": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "ProviderArtifactTraceProvenance": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "TraceProvenanceSource": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "TraceTransformKind": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "_context_overflow_cause": [
+      "_context_overflow_alert"
+    ],
+    "_flatten_preflight_messages": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "asyncio": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "compactable_units_after": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "compaction_retry_fence": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "compaction_transform_provenance": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "complete_durable_units": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "decide_compaction": [
+      "_apply_conversation_memory_preflight",
+      "_assess_request_capacity_only"
+    ],
+    "effective_memory_identity": [
+      "compact_context_now"
+    ],
+    "frozen_policy_from_provenance": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "get_internal_prompt": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "is_vision_capable": [
+      "compact_context_now",
+      "_apply_conversation_memory_preflight"
+    ],
+    "logger": [
+      "_apply_conversation_memory_preflight",
+      "_assess_context_compaction"
+    ],
+    "max_history_images": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "merge_context_policy": [
+      "compact_context_now"
+    ],
+    "plan_compaction": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "project_effective_memory": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "replace": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "resolve_context_policy": [
+      "_apply_conversation_memory_preflight",
+      "_assess_request_capacity_only"
+    ],
+    "resolve_micro_escalation": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "tagged_memory_message": [
+      "_apply_conversation_memory_preflight"
+    ],
+    "tagged_visual_memory_message": [
+      "_apply_conversation_memory_preflight"
+    ]
+  },
+  "compaction_state": "No direct self-attribute assignments; mapping mutations use live getters. Controller maintains admission, cancellation, hold maps/sets, staged evidence and authority.",
+  "screen_routes": {
+    "definition_dev_lines": {
+      "_dispatch_console_trace_recovery": 16096,
+      "_console_trace_recovery_state": 16131
+    },
+    "region_callbacks_dev_lines": [
+      16171,
+      16172
+    ],
+    "build_center_callers_dev_lines": [
+      2348,
+      16489
+    ],
+    "downstream_file": "tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py",
+    "downstream_lines": [
+      686,
+      687,
+      696,
+      720,
+      729,
+      734
+    ],
+    "borrowed_named_adapter_uses": [],
+    "named_identity_assertions": [],
+    "computed_limit": "Prior census reused; new delta candidates inspected. Arbitrary external strings/eval/private reflection are not proven compatible.",
+    "d344_exact_name_caller_cross_check": "Same two direct build_console_controllers fixtures; no additional adapter/borrowed center route or direct Session construction."
+  },
+  "caps": {
+    "controller_lines": 29367,
+    "screen_lines": 25218,
+    "screen_methods": 759,
+    "ready_modules": 1033,
+    "preimports": 557
+  },
+  "qualification": "Syntax, AST inverse-binding equivalence and text counts only; no tests, production imports or behavior execution.",
+  "artifact_sha256": {
+    "task-9-scope-proof3-projection-map.json": "d0ae53028754612e70ddaa714943c45d8b5dcd1fac6bdfad17107d78d3f15464",
+    "task-9-scope-proof3-controller-union.py": "6803aa4a96e2abe583903298a8d54ac5e2852f227faa8278f11f68767501a7c6",
+    "task-9-scope-proof3-compaction-controller.py": "3d05c59bb9d33068b0895820a73991f71c47ca4b072ecbcb2801dbb2c802b004",
+    "task-9-scope-proof3-screen-session.py": "7831b105a06f59a50d3fcf815db43d38797f1e543edd6281ed1a599f46526f2e",
+    "task-9-scope-proof3-project.py": "c598b5b25187d41990af662fdfdb8aebdf6b62ea614be982971a206c1824fc7d",
+    "task-9-scope-proof3-new-reflection-map.json": "13354d6ee055cd02e8645034df5b208d34a7bb72f6feff38f378ec76a0b0a27c",
+    "task-9-scope-proof3-routes.txt": "9dfa0d5f1cd85b1c20f9d4806e51ec5b67c0db60cb5f7449538fe136b6974c24",
+    "task-9-scope-proof3-screen-measure.py": "ef480d7779621badc581b4e4a12dca14557fd4eb7b7b9499da8a9962d7a4c97e",
+    "task-9-scope-proof3-screen-base.py": "431aabb095d9079bd42958460de9565293b266ad89e53965356ac9602379cd99",
+    "task-9-scope-proof3-controller-projected.py": "800627fd0b45c86891476a4113307c8036d44aa80f41a25f17a6ff717a3ef482",
+    "task-9-scope-proof3-controller-base.py": "8797f0c70843919c61632c9ac2377235fd42f538918a1db0097133fba77d064b",
+    "task-9-scope-proof3-controller-dev.py": "b865b3d44c1d7afcf5956b5ec6c3bb7f5a0a1533f05bb1efd1dded5f6053a1d1",
+    "task-9-scope-proof3-screen-measure.json": "bc4703585cad9f59edec1447a17b47b41f07c589021917bffbcdb1fa74c76fa0",
+    "task-9-scope-proof3-union-map.json": "cd6afc1882d41a651f76686e5d78a8717b90426a627d97ea2a3349ff5e8e31e4",
+    "task-9-scope-proof3-screen-ours.py": "bb9fde7f9c609bdfe5be3a2e21ef114d25725ade2d69e498b563d6c1395e17db",
+    "task-9-scope-proof3-compaction-measure.json": "3c39b17a976f6b0f8fa00eefca60a9c7ddb7a4f521c4b411a1f4c3042ff8d4ff",
+    "task-9-scope-proof3-measure.py": "99f1f07e09a99fedee5780e17be11d437885bb03b3f925442f65a2cb116dc15d",
+    "task-9-scope-proof3-controller-ours.py": "8a9b447cdebd826ea310745f84370c0fe5dcade79b8cbdfa9acb4b081186a9e0",
+    "task-9-scope-proof3-report.md": "b4da2aab8a9b2a0e482e2d85b45aed42f844dd7d62af18b47e160ba4aa44f5c0",
+    "task-9-scope-proof3-compaction-owner.py": "afeeae5f2f7c2275f1c6b8431c5597d47418cb694169f2bf7d626844793de9ad",
+    "task-9-scope-proof3-screen-projected.py": "fce912bb037465c5c13b210c9e5636b47c91bdf0a4e888e3dc7b24252789fd23",
+    "task-9-scope-proof3-screen-dev.py": "c69854a471c0c59d2b3dd843d528dde057077c7eaa9856305718f22e5bc2664d",
+    "task-9-scope-proof3-equivalence-map.json": "61938802d60f4b48ee5ee70e528081ad4217dedd73970dc61bf2c82dc7c745ed",
+    "task-9-scope-proof3-screen-wiring.py": "5c56ae0617591858fc4771dcda46b3ed4ee64b6fe5fa28d30cd87d28c0a2e150",
+    "task-9-scope-proof3-brief.md": "3bf71a67b22c75541f16d1ec3c34d1cd5059345a7cbd22138a16cbfcec68447e",
+    "task-9-scope-proof3-screen-union.py": "e4941d8ea7077d58889e782315af6e73767f109ae29cb1588d0499aee7eeed42",
+    "task-9-scope-proof3-screen.py": "a9d4f9427006681bb0a15c046683ac950dcc5f8415053e808527b66627b8d037"
+  },
+  "format_check": {
+    "tool": "Ruff 0.16.6",
+    "command": "format --no-cache --check on five new snippets",
+    "exit_code": 0,
+    "output": "5 files already formatted",
+    "initial_check_note": "A prior check omitted --no-cache and failed to create a temporary cache file under sandbox permissions; the corrected check requires no cache writes."
+  }
+}

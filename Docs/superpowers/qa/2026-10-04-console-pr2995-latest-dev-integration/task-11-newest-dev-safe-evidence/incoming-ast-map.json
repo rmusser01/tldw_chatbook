@@ -1,0 +1,2702 @@
+{
+  "BASE": "2e12bfe61f0c943c11fa13a37218a569193de19a",
+  "olddev": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+  "dev": "9878fd251a01b9b65138316088af7bcee8c987b6",
+  "changed_paths": [
+    "Docs/User_Guide/console.md",
+    "Docs/User_Guide/console/branching-and-rewind.md",
+    "Docs/User_Guide/console/video.md",
+    "Docs/User_Guide/index.md",
+    "Docs/User_Guide/settings/personal-context-profile.md",
+    "Docs/superpowers/specs/2026-08-10-task-3401-20-video-store-cap-design.md",
+    "Tests/Architecture/test_guarded_modal_quit_census.py",
+    "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
+    "Tests/Chat/test_console_video_capacity.py",
+    "Tests/UI/modal_wide_tier_registry.py",
+    "Tests/UI/test_app_quit_in_flight_modals.py",
+    "Tests/UI/test_close_under_quit_question.py",
+    "Tests/UI/test_console_modal_dismissal.py",
+    "Tests/UI/test_console_prompts_modal.py",
+    "Tests/UI/test_console_video_picker_cancel.py",
+    "Tests/UI/test_modal_quit_discard_guards.py",
+    "Tests/UI/test_modal_quit_in_flight_hooks.py",
+    "backlog/docs/lessons-live-verification.md",
+    "backlog/docs/lessons-testing-evidence.md",
+    "backlog/tasks/task-33622.15 - CtrlQ-under-a-modal-in-flight-operations-and-the-video-save-picker-can-still-lose-work.md",
+    "backlog/tasks/task-33622.17 - Cancel-in-the-generated-video-Save-to-disk-picker-returns-to-the-storage-choice.md",
+    "scripts/check_ui_pr_gate_census.py",
+    "scripts/ui_pr_gate_census.txt",
+    "tldw_chatbook/UI/Console_Modules/video.py",
+    "tldw_chatbook/UI/Library_Modules/prompt_collection_manager_modal.py",
+    "tldw_chatbook/UI/Screens/profile_interview_screen.py",
+    "tldw_chatbook/UI/Watchlists_Modules/bulk_sources_modal.py",
+    "tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py",
+    "tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py",
+    "tldw_chatbook/Widgets/Console/console_fork_chat_modal.py",
+    "tldw_chatbook/Widgets/Console/console_model_popover.py",
+    "tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+    "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
+    "tldw_chatbook/Widgets/Console/console_video_capacity_modal.py",
+    "tldw_chatbook/Widgets/Console/console_video_save_screens.py",
+    "tldw_chatbook/Widgets/Console/trace_export_dialog.py",
+    "tldw_chatbook/Widgets/Console/trace_export_profile_ui.py",
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_character_review.py",
+    "tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py",
+    "tldw_chatbook/Widgets/modal_dismissal.py",
+    "tldw_chatbook/Widgets/project_skills_import_modal.py",
+    "tldw_chatbook/Widgets/quit_while_working.py"
+  ],
+  "overlap": [
+    "backlog/docs/lessons-testing-evidence.md",
+    "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py"
+  ],
+  "methods": {
+    "Tests/Architecture/test_guarded_modal_quit_census.py": {
+      "Guard": {
+        "olddev": null,
+        "dev": {
+          "ast": "15b0f4140964b0dce3342c989b1b3d6b9810c81eeb2f67f45a6465126b7c9265",
+          "source": "c80f6f90d5293765ae1bae41ff5636cab8efbc09b340e6a68343aaf4507605ac",
+          "line": 411
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_Analyzer": {
+        "olddev": null,
+        "dev": {
+          "ast": "70b7eb7b49408d9d6d5cf600b17eb7f6f99651e7f640f04a396bb6ab6ea3bbe0",
+          "source": "102bb21d68da1bddbf7cc025437cef08da40cc36cb391ca97f7b5e6f02b1b5fa",
+          "line": 301
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_Analyzer.__init__": {
+        "olddev": null,
+        "dev": {
+          "ast": "770d84b9da1ce23ca96b19a356d12dcd4e201911818a8ad9fb051dccb43b6df8",
+          "source": "bad1ecff66b3d0493552c15b7858532af1f32965b2be197ddd8a7934ecd693d7",
+          "line": 304
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_Analyzer._block": {
+        "olddev": null,
+        "dev": {
+          "ast": "805fedf9d2e80dc059d00c364a34302938cc32fa9dda0f0061bdd2a672dc020d",
+          "source": "0501b9f3e6666bc4806f9e1d8ed85936a9dc48f7aa3a2a173a4adbd5c8d1f772",
+          "line": 336
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_Analyzer._call_dismisses": {
+        "olddev": null,
+        "dev": {
+          "ast": "614384154db62d940a03994af0234ed313593572d2b6869d558515bcb6479489",
+          "source": "9fe19464c52cd5516184939eecc3e2d883213124e39a52ef308d9fecd6bda019",
+          "line": 308
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_Analyzer._expr_dismisses": {
+        "olddev": null,
+        "dev": {
+          "ast": "8ddda7291cc654df7a15491cfbd044a9d0a9dace4e5ca87cafe46eba1f9f0953",
+          "source": "9f4e7e5f7cf88dc514d001eaeef8c002b258e9bd53da16fcfde1df7fe934cd2f",
+          "line": 328
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_Analyzer.always_dismisses": {
+        "olddev": null,
+        "dev": {
+          "ast": "27ed4ed3e7d364061bd7e203e2573a447db31d2c5d236ab6bbd23b3ea08e144c",
+          "source": "e01c5517df4990c91a2567f68ea0a410d0b24e496ebaa372e46c94b9e4a4e135",
+          "line": 364
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_Analyzer.pushes_a_screen": {
+        "olddev": null,
+        "dev": {
+          "ast": "11b56fa708615b5e767196198e413fb97090cb5cf4c61cf457e33ad2c0176bd4",
+          "source": "e49fa62e2a7a2b26a6b616c685764f88c4121c02642bf7c6d01df70122f33051",
+          "line": 371
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_Class": {
+        "olddev": null,
+        "dev": {
+          "ast": "c917cbda481fd1f37ce3f89c7b9a1994b483d29dde7cc69e8b6f337684c3d417",
+          "source": "7d3ab8404f2c49186b33023d01db75b9b6ec0453da31ee27cc3e1067347a2970",
+          "line": 143
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_base_name": {
+        "olddev": null,
+        "dev": {
+          "ast": "39781e4d5b8aafbf54ba84836bdc76a866ef691f086672c8e22c8a5f1833f82d",
+          "source": "1b1d88576cf5e0de94a96ec261716dd45c7c16260c4e3b97a381aeb8febd5b9a",
+          "line": 157
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_entry_points": {
+        "olddev": null,
+        "dev": {
+          "ast": "bb579d6adfd29f3c6039730f29621c1397a02be62ddb6f4475d76fb856606be6",
+          "source": "5286593bb2f54cb2292993a5bf6c7c0e3a176487a5ce7349dbd27633ac4b7381",
+          "line": 394
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_escape_actions": {
+        "olddev": null,
+        "dev": {
+          "ast": "ea5ad7e9bd3fac584a0aedc93d77fe878faf75b90dcb0190aed701112a5b6735",
+          "source": "2a36ed7747442cb998c1189b35bad0fe3f80177ded38a15459fa31e53ef29007",
+          "line": 167
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_format": {
+        "olddev": null,
+        "dev": {
+          "ast": "15852f41aa521393492afbe52f60a88bbd84e27278215f715489650208db3299",
+          "source": "1223524d43e847549aefa440d739e140af6d58dc0545818fb7d452f38ba9b75c",
+          "line": 524
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_imports": {
+        "olddev": null,
+        "dev": {
+          "ast": "283e406b9285f5e23fa6d1f4936b675164b8878e1838b0775a587e7aa52677a3",
+          "source": "d8f656f0f10f510f5346ed7cca078c9ba702302130a75666670b5d31f0fc5013",
+          "line": 210
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_is_modal": {
+        "olddev": null,
+        "dev": {
+          "ast": "5b5dcd93fb65a32bddadd903048b921ed4bea9e220a9dbed4b17fbed766f34df",
+          "source": "2540c207f09723509c72ee1e70f336dcd533de995b88faaecb4c4af8d39325de",
+          "line": 288
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_lookup": {
+        "olddev": null,
+        "dev": {
+          "ast": "5d6ea7c0975e54d15a1258a03e6c91bbce9d030186bd467e2ea076c3486f81c9",
+          "source": "0593067694c240c96ba74eae70e98c1fd6698def8554a13ccda23048431a799a",
+          "line": 292
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_module_name": {
+        "olddev": null,
+        "dev": {
+          "ast": "7077d3689b16cc9a6506ae6559cfb3f444bbebeab5b809322486bc76f057fc90",
+          "source": "7bf6d56a485839a498f2b5def5ffa233b61f52e2c41f1735126af34d2d3f1c66",
+          "line": 206
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_mro": {
+        "olddev": null,
+        "dev": {
+          "ast": "ed9cc0fe954ae96106023257ec6b1c497de7bef2baa74dfce268f96b70ea7ba2",
+          "source": "5339a64dc9764fc705e40cb4c06ba6d62a48e08dfc06422aefb914d4c4707381",
+          "line": 273
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_mro.visit": {
+        "olddev": null,
+        "dev": {
+          "ast": "1fe034e631c1ac5c39c21d8fc233c68b721fd7e4a2cb9a98db68a9289da6eca4",
+          "source": "0078f6848166ab1b2e5952bb74f87927891063acccebcdba86940fd8ea10354c",
+          "line": 277
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_package_guards": {
+        "olddev": null,
+        "dev": {
+          "ast": "e036669095e2edccdc0f4ed4c6a929219e977ec68059ed4ee0114509a6298ea2",
+          "source": "9600305466cf3f57887458714b0f3675108d0b7bd08806bb199c0aa7975190dd",
+          "line": 519
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_package_sources": {
+        "olddev": null,
+        "dev": {
+          "ast": "c01568b4f71784e1d42e9a640fade9a9318a13a7025186068b0cf4e7bb037f84",
+          "source": "265c12265c21ac7eec82ae557000940600d272d3bea6ac900f003cfa364e7e1b",
+          "line": 463
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "collect_classes": {
+        "olddev": null,
+        "dev": {
+          "ast": "cef3a85c8cd4be4d7951f6f4b9f3c81b71a032f0fca9f8ce033ba96cd9b2f429",
+          "source": "180b07c8f9e66621d8cf354e5ffc6988ef0cdcb3e468f7e0009c81c3c20b725e",
+          "line": 226
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "find_guards": {
+        "olddev": null,
+        "dev": {
+          "ast": "408a3a79c3720f98db763c4dedf85ef111317874561b3dd5593422a63bc30ffa",
+          "source": "f9fb2fa5713b2c9876a2839f6572fdb83e4dedd1bc1ac46d2f861ae410a8c484",
+          "line": 419
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "modal_family_sources": {
+        "olddev": null,
+        "dev": {
+          "ast": "3c6d625001bdd07f3be1ee45836dd1f732fe9db92b76bf492a9c032e124f9d5e",
+          "source": "91d72371a9ae48904101bb2215b8a52a4b39f8fbec87d083055b2d853729fce3",
+          "line": 475
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_every_census_row_still_names_a_guarded_close": {
+        "olddev": null,
+        "dev": {
+          "ast": "542771a8384fb7cd62c0c4439cddbad8959e5773b7661180c564999dcc78886f",
+          "source": "e3a6d0c653bc0fc91bb18f80864980131f864fa8e243ab0974836500e48e927c",
+          "line": 545
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_every_confirm_quit_decision_is_backed_by_a_hook": {
+        "olddev": null,
+        "dev": {
+          "ast": "e22bf81bd0414d95654509c25457b118b918bea59c778015b86d3e976236f150",
+          "source": "591c5dc0aa9b747212f9977673ebb6a45f57cb3e623bd07be515f960157f4dd9",
+          "line": 555
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_every_exemption_says_why": {
+        "olddev": null,
+        "dev": {
+          "ast": "a43665b0a6161f4808d52bd3a8f623cfd95163cbcddabd9e9eec949bce004fc5",
+          "source": "b1c0525c84ea42093f87e188301a04b2a9e8d106aaba567e8a58ae2627a1889f",
+          "line": 571
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_every_guarded_modal_close_has_a_ctrl_q_decision": {
+        "olddev": null,
+        "dev": {
+          "ast": "f9d56757cd477398637fe758245e4888ffe9100d57f4cd42891193685a1d3d96",
+          "source": "2d8378ac4042887dd13cdd8caa4cd8dc0428f9f53182e0985c641e11c87025b0",
+          "line": 528
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_negative_control_the_census_finds_each_kind_of_guard": {
+        "olddev": null,
+        "dev": {
+          "ast": "e923698d81c8b89d0e0713c4be2eb20692f8d0acd248d5219b96f89f66630dc1",
+          "source": "afe7a2b585bdd7a5dc3811b1e83fe4dab19f8208ca46b8993771ec8cf6ad4419",
+          "line": 682
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_negative_control_the_live_census_reaches_known_guards": {
+        "olddev": null,
+        "dev": {
+          "ast": "7476404377562eb0924690f71852de4be2f0e1f6ce429e274151b529a32eeee9",
+          "source": "17274c37f6b3cc1e61f3bf78bd491e8f23e33e17b847b8d780769dad5ba154df",
+          "line": 710
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "Tests/Architecture/test_quit_flow_prompt_choke_point.py": {
+      "_scan_tree": {
+        "olddev": {
+          "ast": "41dae935bdef8f18db0075512d99265135de605275ae456004dd5202391be56c",
+          "source": "62afc612c4e987faee98f1a7d9195954ed9f9aee7671b7d5b1d6dbb4c3d14513",
+          "line": 178
+        },
+        "dev": {
+          "ast": "bf5e09b5cfb744f00cb457f05649be66617596f350c5ff06144ae30be1acc6f9",
+          "source": "436192045329ebb95c5015a39260ffecec44d5a2bcf4ce7e5b7bbdadc8d21a3e",
+          "line": 181
+        },
+        "BASE": {
+          "ast": "41dae935bdef8f18db0075512d99265135de605275ae456004dd5202391be56c",
+          "source": "62afc612c4e987faee98f1a7d9195954ed9f9aee7671b7d5b1d6dbb4c3d14513",
+          "line": 178
+        },
+        "feature_changed": false
+      },
+      "test_the_scan_reaches_the_quit_flow_it_guards": {
+        "olddev": {
+          "ast": "bebb5e272190f1d16410c66b10942faca118b99e991ec0ed35911e90815a5e65",
+          "source": "ce93da60ea304e29204336fed6b5c02cb493565ae84c11990cf517bb969b0e33",
+          "line": 220
+        },
+        "dev": {
+          "ast": "e7e40d557599f19831dbb592b88e5f4ea54fd3606f3758e85901451b7195f941",
+          "source": "2f6e7c255a7b777261bc7e8b1fbdacfc3bd4b77049bd4b62585eebda91493175",
+          "line": 224
+        },
+        "BASE": {
+          "ast": "bebb5e272190f1d16410c66b10942faca118b99e991ec0ed35911e90815a5e65",
+          "source": "ce93da60ea304e29204336fed6b5c02cb493565ae84c11990cf517bb969b0e33",
+          "line": 220
+        },
+        "feature_changed": false
+      }
+    },
+    "Tests/Chat/test_console_video_capacity.py": {
+      "_staged_stream_open_at_each_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "a4e4afd18f4d9b3e62dcab45245ac1b535099c85da46ede5f0f62d9c51a3d892",
+          "source": "96ad37b637fa0c67cca8b1a5e438008b13a3fd8eea7207b218d1423e684723a6",
+          "line": 1358
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_staged_stream_open_at_each_wait.recording_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "89a54f87e4db2626af7d41324fa7e09aed555b25e4678f1456a280d71a7e4ca0",
+          "source": "6c2a89d224f302759e4f5dcc7f12b7373551b59c1a9251be8a03e182e85d2a7f",
+          "line": 1365
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_concurrent_external_creator_is_confirmed_and_never_overwritten": {
+        "olddev": {
+          "ast": "6ee2cbe28aa9f43211e4bdc137e4c6d256e4cfbf46716c7cbe207163cedd25cc",
+          "source": "e51a5eb92da42a4c1b36c9d220ecdc5849d57d914d4fff44ed1888bf7c9799f8",
+          "line": 1760
+        },
+        "dev": {
+          "ast": "33bccaf9482f8bcdc79677ad8c5be97d509c969535f353fe68f83efe6d649e6b",
+          "source": "bf0d905bf0f63be915167f10f7e6caf182a348c474585a62bd04c210b1ae379b",
+          "line": 1838
+        },
+        "BASE": {
+          "ast": "6ee2cbe28aa9f43211e4bdc137e4c6d256e4cfbf46716c7cbe207163cedd25cc",
+          "source": "e51a5eb92da42a4c1b36c9d220ecdc5849d57d914d4fff44ed1888bf7c9799f8",
+          "line": 1760
+        },
+        "feature_changed": false
+      },
+      "test_confirmed_target_disappearing_requires_fresh_confirmation_before_save": {
+        "olddev": {
+          "ast": "e6b510bd6b0b34fb9c010af89e438930819bfea6dad2956934152ee0d494c515",
+          "source": "24a062bdbf697580e4f989220b892b34b1efae8663ec4147f03069970f3216a0",
+          "line": 1793
+        },
+        "dev": {
+          "ast": "0b856fd0742b5db3447c67c3b469c7c6d5db53b40b48b2000af3e27e00d7863b",
+          "source": "b7d88f534a04dae1c28d319de8ca9d0ce2fca2b24638551bf1c95e8c7a39fb2b",
+          "line": 1872
+        },
+        "BASE": {
+          "ast": "e6b510bd6b0b34fb9c010af89e438930819bfea6dad2956934152ee0d494c515",
+          "source": "24a062bdbf697580e4f989220b892b34b1efae8663ec4147f03069970f3216a0",
+          "line": 1793
+        },
+        "feature_changed": false
+      },
+      "test_existing_external_target_requires_confirmation_and_decline_repicks": {
+        "olddev": {
+          "ast": "c122a08af924df00b0b55138c6a13027d39e9acdf0ea912876c73ffdd00e7f3c",
+          "source": "6b367d6935e98a6e8a0c90df36577fca3f965254c984841403ad74bab0a0fb60",
+          "line": 1739
+        },
+        "dev": {
+          "ast": "475faa08f8884eaa0344dc5ba5f17871bf6f2e5a57d960a2d467579d8d2b7194",
+          "source": "fb965b632d202022092ebdf425a5fb4a79a39a583f866a62f05704c7045bec44",
+          "line": 1816
+        },
+        "BASE": {
+          "ast": "c122a08af924df00b0b55138c6a13027d39e9acdf0ea912876c73ffdd00e7f3c",
+          "source": "6b367d6935e98a6e8a0c90df36577fca3f965254c984841403ad74bab0a0fb60",
+          "line": 1739
+        },
+        "feature_changed": false
+      },
+      "test_external_picker_cancel_discards_without_card": {
+        "olddev": {
+          "ast": "f6a6f052ac00629787058a85e4cd64eef13fb1e624e8065fb6472e33727e5858",
+          "source": "acc4ac14e7659b93160d31c245e900e391808bfde1ddf7cd9804b39c2d5e0e5f",
+          "line": 1357
+        },
+        "dev": null,
+        "BASE": {
+          "ast": "f6a6f052ac00629787058a85e4cd64eef13fb1e624e8065fb6472e33727e5858",
+          "source": "acc4ac14e7659b93160d31c245e900e391808bfde1ddf7cd9804b39c2d5e0e5f",
+          "line": 1357
+        },
+        "feature_changed": false
+      },
+      "test_external_picker_cancel_returns_to_the_storage_choice": {
+        "olddev": null,
+        "dev": {
+          "ast": "7010422db3f6b5106105416dc448f778b7cff980090d41d5825cfc9b6ff9c4b9",
+          "source": "0813bb23fda886de65be4cc5ac445aafa2abe26baa0099b4572c9aa88e5f1c0c",
+          "line": 1374
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_external_picker_cancel_then_save_writes_the_same_staged_video": {
+        "olddev": null,
+        "dev": {
+          "ast": "6a491d18bb9af275408cffcc608ae61cbddf7b778624a96fba157bfeb5d8632e",
+          "source": "16aba6fc5d23abac1f8ff195f23122be0833933f9cf1db95097d52802d58dd7c",
+          "line": 1413
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_external_picker_reprompts_for_any_nonmatching_suffix": {
+        "olddev": {
+          "ast": "9dbb500cd1645f0440a43920363e9d88e7dd20505cb3f8cf7db84a738fd6919b",
+          "source": "882f382b805a9523f509da8ddac5cdab6f3d2182d8ed15353492985b663f5324",
+          "line": 1396
+        },
+        "dev": {
+          "ast": "c2980d0e5dc6c5201f3819663dc461ab074e00ed534e9c6faa5efc924f5a7bc0",
+          "source": "69954e68f35f762fc535bc4d647449eb24911394b5109aaf25d13a13dc3c5c0d",
+          "line": 1465
+        },
+        "BASE": {
+          "ast": "9dbb500cd1645f0440a43920363e9d88e7dd20505cb3f8cf7db84a738fd6919b",
+          "source": "882f382b805a9523f509da8ddac5cdab6f3d2182d8ed15353492985b663f5324",
+          "line": 1396
+        },
+        "feature_changed": false
+      },
+      "test_external_picker_validates_path_before_target_inspection": {
+        "olddev": {
+          "ast": "15baa8380d1009831ea9b9e34801665cbd376d4fe7c3e1dcb4daf734373812bf",
+          "source": "1c7212636902c3fe28708131988af4c5c1b58bd2bb23d9d5c4f218f0d91784d5",
+          "line": 1500
+        },
+        "dev": {
+          "ast": "ed2cd9d2c99855a19b6174ed62805819739cbbaf13bafa3b0e772c0c75c08464",
+          "source": "a841f873936cb1bfec07ad65d1f133159b63af43e0a595cd8de75fccb013e89a",
+          "line": 1572
+        },
+        "BASE": {
+          "ast": "15baa8380d1009831ea9b9e34801665cbd376d4fe7c3e1dcb4daf734373812bf",
+          "source": "1c7212636902c3fe28708131988af4c5c1b58bd2bb23d9d5c4f218f0d91784d5",
+          "line": 1500
+        },
+        "feature_changed": false
+      },
+      "test_generic_capacity_dismissal_guards_real_staged_artifact": {
+        "olddev": {
+          "ast": "295408cf9da6f40e8809c27d81d44845a4bed54de2375bfa2050ded3983347fd",
+          "source": "4d7c3b3b9afba34d9988eb46df5eb8391cf71b45001394b5122e621f7b742560",
+          "line": 308
+        },
+        "dev": {
+          "ast": "80622471388932e7031ae23b43ba213278245ff1ef05ea4dcd3161f4218c8125",
+          "source": "4d7c3b3b9afba34d9988eb46df5eb8391cf71b45001394b5122e621f7b742560",
+          "line": 310
+        },
+        "BASE": {
+          "ast": "295408cf9da6f40e8809c27d81d44845a4bed54de2375bfa2050ded3983347fd",
+          "source": "4d7c3b3b9afba34d9988eb46df5eb8391cf71b45001394b5122e621f7b742560",
+          "line": 308
+        },
+        "feature_changed": false
+      },
+      "test_managed_save_copy_failure_logs_and_notifies_without_private_details": {
+        "olddev": {
+          "ast": "3669a13fb9203e29a9ca28d80ad5794b1e5fdc36dbeffa020da75b088c6688ce",
+          "source": "a7f67930fee34113a16c7c0ffdd89db16cf98a7749d18affc5e97db1f5c2cb1e",
+          "line": 1640
+        },
+        "dev": {
+          "ast": "9618d41ff90dea6b4de3dbe58b989a6b84f91efbe86153ede25e9dd2eae67f8a",
+          "source": "93f4e922ba91ee604204ef0babf324926625035487020ad17d847ba7e95dad0e",
+          "line": 1714
+        },
+        "BASE": {
+          "ast": "3669a13fb9203e29a9ca28d80ad5794b1e5fdc36dbeffa020da75b088c6688ce",
+          "source": "a7f67930fee34113a16c7c0ffdd89db16cf98a7749d18affc5e97db1f5c2cb1e",
+          "line": 1640
+        },
+        "feature_changed": false
+      },
+      "test_managed_save_copy_failure_logs_and_notifies_without_private_details.Harness": {
+        "olddev": {
+          "ast": "8d8ad0b7a8168968cbfb8d97f8e1f2b5d6d45a0aef696aac0540cebbefe4034c",
+          "source": "fc915846773c326e1ce844b7ad4a726f388ee1a5934fab5a11c5a7f7fe8b4253",
+          "line": 1651
+        },
+        "dev": {
+          "ast": "5f524a4ad6b200b7b56a17e7c07182fae57e463ce74fc90c57a5a5cd99fe9bae",
+          "source": "6414f07fd4ca94c7583b8b6be2ec2a0f40335cd3fbca981e29e00966667a560a",
+          "line": 1725
+        },
+        "BASE": {
+          "ast": "8d8ad0b7a8168968cbfb8d97f8e1f2b5d6d45a0aef696aac0540cebbefe4034c",
+          "source": "fc915846773c326e1ce844b7ad4a726f388ee1a5934fab5a11c5a7f7fe8b4253",
+          "line": 1651
+        },
+        "feature_changed": false
+      },
+      "test_managed_save_copy_failure_logs_and_notifies_without_private_details.Harness._ensure_console_video_store": {
+        "olddev": {
+          "ast": "ee8fb4dc19cdfe1b975367bf28152120e2451dd7bfd4a43a0c7a7a606936d094",
+          "source": "2bcedbc26c91be63e1c955136c7680381294c207ea40718afc55ffdbe02a4d82",
+          "line": 1661
+        },
+        "dev": {
+          "ast": "9cab264b16982d9f46543b4a0485ca240327573da69421024070558b6213144e",
+          "source": "c31873e2da24816e5cea10dff472d77e3e23567e3db7f330db5b6a92029757cc",
+          "line": 1735
+        },
+        "BASE": {
+          "ast": "ee8fb4dc19cdfe1b975367bf28152120e2451dd7bfd4a43a0c7a7a606936d094",
+          "source": "2bcedbc26c91be63e1c955136c7680381294c207ea40718afc55ffdbe02a4d82",
+          "line": 1661
+        },
+        "feature_changed": false
+      },
+      "test_mounted_chat_screen_exit_drains_modal_and_picker_waiters": {
+        "olddev": {
+          "ast": "777cc5a098aa72bb754626c719fcc498b4e0a5ffd490554352114df26d7b63f7",
+          "source": "5d2e6330183d7aa9d6213b61cf5ea3a343d773ff6cd7247968921d673dd69b0c",
+          "line": 1923
+        },
+        "dev": {
+          "ast": "7ae4f9a5b6e79827e2dccc9ecae1a67352ae03556ecbaf55d3c04d717cd32fc2",
+          "source": "5d2e6330183d7aa9d6213b61cf5ea3a343d773ff6cd7247968921d673dd69b0c",
+          "line": 2024
+        },
+        "BASE": {
+          "ast": "777cc5a098aa72bb754626c719fcc498b4e0a5ffd490554352114df26d7b63f7",
+          "source": "5d2e6330183d7aa9d6213b61cf5ea3a343d773ff6cd7247968921d673dd69b0c",
+          "line": 1923
+        },
+        "feature_changed": false
+      }
+    },
+    "Tests/UI/modal_wide_tier_registry.py": {},
+    "Tests/UI/test_app_quit_in_flight_modals.py": {
+      "_assert_ctrl_q_asks_before_discarding_the_video": {
+        "olddev": null,
+        "dev": {
+          "ast": "a785cfbaaddaf9658959875fe3f5e218666b62e4b9b9f4afff70203abeed8b8b",
+          "source": "cfe4110b424a17a430b264ead8217f039e40c69b54c7b76f64d27431092b5c80",
+          "line": 490
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_assert_ctrl_q_quits": {
+        "olddev": null,
+        "dev": {
+          "ast": "cd2694211bb809fe43eef6ae5638f3bf9ca15986f2fc1d3b10e6a77f62723a9c",
+          "source": "96708f679f6ceb9f504b83f692c39077261f26b3021bf44f0233b89621b712c7",
+          "line": 134
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_assert_ctrl_q_waits_for": {
+        "olddev": null,
+        "dev": {
+          "ast": "f53f6d1e63463ebfcf53a8af13c90877110e65f8e0f7dcb95a0c1d72f663bd56",
+          "source": "b94d46fe35a2de32aa2661ddc8ec8eaa00d6992ebbc03fcdfc8f956eaf97cc42",
+          "line": 96
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_click_when_shown": {
+        "olddev": null,
+        "dev": {
+          "ast": "501d875c48f0f8b13b3294157d3b5367a7c05f40227654dcc7d01e3e75512b5c",
+          "source": "18db6dc459ad32e0dd0bea700e53e83b8499fea92be1391a545d84bd545fe105",
+          "line": 72
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_click_when_shown.shown": {
+        "olddev": null,
+        "dev": {
+          "ast": "07f1b98040392e838b465959ac267a87a36bbfebb40e33d928d37f6c71d3af80",
+          "source": "f2f0bfa92e9affe6af2bf8f86cd54a2254113d5be85c80d539db0f30d3905713",
+          "line": 88
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_interview_discarding": {
+        "olddev": null,
+        "dev": {
+          "ast": "5fa571c1761cf49ce2b5fa8c3195633a88828c2c73b1163060a54a5d720630dd",
+          "source": "e27954a792044c024851c35e5047e8bec915307897279120ec1fff1661c617b9",
+          "line": 613
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_recording_cleanup": {
+        "olddev": null,
+        "dev": {
+          "ast": "79ee5614e88eb327308846303bca19961e6861bf44c0a14417a003c6fe8fcbaf",
+          "source": "2b92020e216392801a5f40f688cb19bbcd90a2d77b2be3a5eb72aecd13c6562a",
+          "line": 55
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_recording_cleanup._record_cleanup": {
+        "olddev": null,
+        "dev": {
+          "ast": "e36ad962ae37fcc11fc8302817a029e057c90d2c7c6a6191800f57c701d9b28a",
+          "source": "dd8eb3c596089b1e635ec85a314672f062574a5dc0b814a2b3a149122f8c38ee",
+          "line": 59
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_still_working_notices": {
+        "olddev": null,
+        "dev": {
+          "ast": "1cef154f8c8b4092d58e28551a376c2958008b915e4ec5dba1dea7d7439fb0d8",
+          "source": "a37dd82ad0d44e38110e0ae7a7459e7a1cb5cbae9f2aa70b9cdfcea33a75da4f",
+          "line": 66
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_video_waiting_in_the_save_picker": {
+        "olddev": null,
+        "dev": {
+          "ast": "e72a4d22986ad72c816f4c76d58c8c58859762c820d66af3a13edeae1ddb015b",
+          "source": "7448d6ae7303ff193f842c676448725d1b1acd5e58ebcdbed34986afca50a3fa",
+          "line": 458
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "held_discard_coordinator": {
+        "olddev": null,
+        "dev": {
+          "ast": "e62a2a2140efee63083e09de9fa63ad8098829a35a8563a958b9c0d14d39e267",
+          "source": "d3b3c90342465a5a3611b863ea49804aa4ae828fe35ab63478e962d1315da0bf",
+          "line": 584
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "held_discard_coordinator._HeldDiscardCoordinator": {
+        "olddev": null,
+        "dev": {
+          "ast": "a6c15e55fb880d9e31012df5d01561d691859f9235e7b8e93b5115646e419829",
+          "source": "5b7927c6279ef776b067aa7c9e294fa8bf4972e5c65ed8fcd80f7a7096c60cf5",
+          "line": 591
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "held_discard_coordinator._HeldDiscardCoordinator.__init__": {
+        "olddev": null,
+        "dev": {
+          "ast": "19435a4307e1e5769473dd544508bcf787296e9eae8168a4bf1798b87013d5b5",
+          "source": "cae6d4d90ab3f58b7d7f452ea5756f2217c8ca040a900c72c64ed5b8dab9b580",
+          "line": 592
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "held_discard_coordinator._HeldDiscardCoordinator.discard": {
+        "olddev": null,
+        "dev": {
+          "ast": "98d73d2b055a7e24641deb8ac4d3b820994a77bb46ef70f07d1b91e66db55c5b",
+          "source": "71aa3c37c1f44ab1af93a1fec93588c299d28c059495b1dac4d59e2ec95ee3ff",
+          "line": 599
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_failed_interview_discard_lets_ctrl_q_ask_again": {
+        "olddev": null,
+        "dev": {
+          "ast": "58fa41710cfcfc494674fe2fec2eccd669f45cabbd7c387ecea46b14d339bb62",
+          "source": "4cd6c689830baf02beaa851496de994f99bd40411c2e7819255ec045a2babcde",
+          "line": 705
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_fork_that_finishes_under_the_quit_question_closes_after_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "4686827fd37c1affd6cb84c9a25d565358545c8814d6e569f45f09e830bcfc24",
+          "source": "dcd0d00217131beb3945a848b73ccdb2c84abb1130ab3ef450aa4ec632ec3665",
+          "line": 392
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_stuck_operation_still_lets_a_repeated_ctrl_q_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "b0f3bd36ea8dbb5369e81a3f314d91909f1439c58d9b3a6aa7923ce108402148",
+          "source": "b8febee3e7569f71a80ffbae2782adabbdc47c7915a7cbabb994f47e6d3076c8",
+          "line": 317
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_an_interview_discard_finishing_under_the_quit_question_closes_after_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "78104ede43e38ad8307acd2654ef7ccd40203d91e983d168c7c5be8f7e23c5f9",
+          "source": "be7d652b23a32adbbe4c46f5e23773d7fc004b63cf04d72c40eac16f9dde02d6",
+          "line": 811
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_an_interview_discard_finishing_while_covered_still_closes_it": {
+        "olddev": null,
+        "dev": {
+          "ast": "94b6fb8986f7cf9200652261aef05bab9b51890dc584100daac0889b4ba82f2e",
+          "source": "e1476b1eed1e5e34b36865e2475552a59e0127039b33dff9f6d77933d5f04bb2",
+          "line": 764
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_ctrl_q_over_the_video_replace_confirmation_asks_first": {
+        "olddev": null,
+        "dev": {
+          "ast": "a03ec61d9ad74faa3eb88735197ae2ee485d6ae2307e33ce77b88461722e8b1b",
+          "source": "2250f7707b29597e3212f9b258896451222a174bf55efa19f2ffed214f878e88",
+          "line": 552
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_ctrl_q_over_the_video_save_picker_asks_before_discarding_it": {
+        "olddev": null,
+        "dev": {
+          "ast": "c0dd24ae2eb6798728589f34ee6f025719542c2ebca0055e99addcd6cff78c98",
+          "source": "895b3f4abd0dfeeeb49b4b5afb24a797c8a4cc91590d8ef73ae400444b77fa59",
+          "line": 535
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_ctrl_q_waits_for_a_capture_policy_change_being_applied": {
+        "olddev": null,
+        "dev": {
+          "ast": "998a3a906c17a5b6b709ee64f8a74d5f6c592bf741b78c3fe2f857add654cc7d",
+          "source": "17cee0b4c747b80ea23594f4c0c5bf9d77959d04b615355009aa2cccdce2b51d",
+          "line": 174
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_ctrl_q_waits_for_a_capture_policy_change_being_applied.held_apply": {
+        "olddev": null,
+        "dev": {
+          "ast": "7cb55d77a5647fc088bc2d61c8410f59341120a4f2e4996c6d1d9659d87253aa",
+          "source": "341a5671de982e8cea7bc4a2e2fae5cfff2861b6e1a17d43b4cad9ec9f9e1bf3",
+          "line": 186
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_ctrl_q_waits_for_a_fork_that_is_committing": {
+        "olddev": null,
+        "dev": {
+          "ast": "8214e4905fe5ec7209d37b6fb85fc46fff72297f70b44d5716a4471fa7c4a8d8",
+          "source": "771ca6898e194750ee3f3bc3eb259dfb7bd986b099d2fbe1a27db0140c9a1b2a",
+          "line": 142
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_ctrl_q_waits_for_a_project_skills_import": {
+        "olddev": null,
+        "dev": {
+          "ast": "81f16ec3b206f180eadbd8941067da7c787ace88a78194e854297ef337b28334",
+          "source": "f2110976c44ee6227a0f667fde928dbe814d48167c666a03346086ba2120b7bf",
+          "line": 267
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_ctrl_q_waits_for_a_project_skills_import.held_importer": {
+        "olddev": null,
+        "dev": {
+          "ast": "2ffe30fb16432b9167328ac16da2f7a9f0a8ac258a47fa7e6df17c4859a9ed35",
+          "source": "b20f6f4f376dc81638ed1427066af1d09dd4297acbd5f8aac482a7d78fb02a04",
+          "line": 282
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_ctrl_q_waits_for_a_trace_privacy_change_being_applied": {
+        "olddev": null,
+        "dev": {
+          "ast": "29b9be83c5d0d372ca7184c6bbfc62f104e7f2bd648703bf4fb6e16f85f645d3",
+          "source": "b294fd9c841e5f7bc2d83ec6dc5d533cafbccf0d583f4530f385681425a1a0a3",
+          "line": 216
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_ctrl_q_waits_for_a_trace_privacy_change_being_applied.held_privacy": {
+        "olddev": null,
+        "dev": {
+          "ast": "6bc7baffdc46f4cd2d343f08e93c41748421bbc69f4195bfe764d6db7c56cc1f",
+          "source": "6ef263d6185ed36f1203067ce208a8142cd11d482045f02133dc1388440332b8",
+          "line": 231
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_ctrl_q_while_the_interview_discard_runs_waits_then_quits": {
+        "olddev": null,
+        "dev": {
+          "ast": "8515f80353d5e8af6eb19162db558a4bf65d53d35433cd3965c5cf2fd0fac237",
+          "source": "f423ff4f8848771686a368a8b9439ea9576ebf6979810a843791e4aa306b378e",
+          "line": 648
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "Tests/UI/test_close_under_quit_question.py": {
+      "_Cover": {
+        "olddev": null,
+        "dev": {
+          "ast": "ce1c695764f35c6b213f6090cf3b6eafb852db8c378a5950f9b52dd52523fe1c",
+          "source": "e1097fa4a23ae426b3aae1bba3ff82653ea51f3598366991d137a3498b34b55c",
+          "line": 242
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_Cover.compose": {
+        "olddev": null,
+        "dev": {
+          "ast": "b624327162c05c436a9f0589f1a04d49b453f483bcf37ddac8cd382c1ead6cb7",
+          "source": "8b2a927876a8f885407a38ec6be72279d69144e2c6121d19572e1663fc7891f8",
+          "line": 245
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_HeldCleanupCoordinator": {
+        "olddev": null,
+        "dev": {
+          "ast": "c6aa16abbc85a9887e2ad141c59bbfea24c9ac42240e75be0675629038adbc65",
+          "source": "7fd7a789face7182fdf7e23338b121d1a07be95b329bdaa4c5b1ed9dca13f723",
+          "line": 416
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_HeldCleanupCoordinator.__init__": {
+        "olddev": null,
+        "dev": {
+          "ast": "b86874f96ad030babc381f4611f09b52ef0019117882d6b1c5f1536ee1c0d4b8",
+          "source": "13a0f7c302b892096a38370cdb99aaad84a0809527319145966ee183c2d5dc4d",
+          "line": 423
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_HeldCleanupCoordinator.commit": {
+        "olddev": null,
+        "dev": {
+          "ast": "e368fd9508c618c561ba439efde756e18e0216e3c3812120d4b4fd0f2ee6e284",
+          "source": "df7c09c22a18dba42f591b21ecd3dda634517e399a6f57d87816a42a344bd10d",
+          "line": 435
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_HeldCleanupCoordinator.retry_draft_cleanup": {
+        "olddev": null,
+        "dev": {
+          "ast": "60b512b1007e401fdfabc6a96286f9c9bac01bcea28b9d6b5cde8c7d55db8233",
+          "source": "c0113c0973fc1ab860581da7cc1220b096e8356227ccfced6ff3569cc3409926",
+          "line": 441
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_Host": {
+        "olddev": null,
+        "dev": {
+          "ast": "96c95a551054e108a99383bed07910071a83a8041957a3f876e682744f814022",
+          "source": "3858c372ddca20f64f54a0db7cec8a8c311219e67094e2b9919350860f00863c",
+          "line": 194
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_Host.__init__": {
+        "olddev": null,
+        "dev": {
+          "ast": "6307b2143e2367838bbeea5712fc13a8e145f28fdaff3b9c188ba66536e169ac",
+          "source": "aa04a7badb6a9f9c83ee8368042b234c0858e609f04a9eb0350f936bc3f5602d",
+          "line": 195
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_Host.compose": {
+        "olddev": null,
+        "dev": {
+          "ast": "95dfcbd5fb0259125c3bffc2cef65e87bfcbc146bcf0f52a576fe042763a4a6e",
+          "source": "5ba1dbece1c7f149ee3d181dc4753fd76d1da811fc5bd76f14f3b30cd679b036",
+          "line": 199
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_WorkingModal": {
+        "olddev": null,
+        "dev": {
+          "ast": "219c40b70ac00653b6f9954fd50d4131f095c592c4b1df9982262d951e19b07b",
+          "source": "7852e47a0d541f3f22037161c5b4e04709511759fcb8d6a804dc0edfbd870aba",
+          "line": 178
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_WorkingModal.__init__": {
+        "olddev": null,
+        "dev": {
+          "ast": "fa585512df7994a33ced8a7c24764b677ccbbf34efd402f2625e34ece49699ba",
+          "source": "ac9a0d504d759cd262c2bd406c47a1aa81e776e0b789021e2f457c6a65266065",
+          "line": 181
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_WorkingModal.compose": {
+        "olddev": null,
+        "dev": {
+          "ast": "0809886cbe90934597e04072f6fd825a14c6711578c90e6be5fb1f39cb665ce5",
+          "source": "60f4f985ecca3d5401b225636ca88c46f70f5659318f60dd05900062b0b3b473",
+          "line": 185
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_WorkingModal.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "dd9f6cd16e8a1b3b0256fed40fa7ec12eebcdd871e20d7ca87966389a0101f7f",
+          "source": "709c65ae2d5a0161a16fdbd332679d60529d8ca1f2aeca7622f3ef939fb132e2",
+          "line": 188
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_answer_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "a1d8b478956ed8a59588f1d02709e73dcf82231f620cdac50d2ef2709c22a184",
+          "source": "1c08bbc1c6d3317257c2c372c1d51df394297e107cec4af48a033f2c03add158",
+          "line": 167
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_ask_quit_anyway": {
+        "olddev": null,
+        "dev": {
+          "ast": "5f990e2831b7dcc82ce56342e1a83372f24dd2c63bd4ce25ea6ae14ec6d74fe7",
+          "source": "ca99d0d1f2cf294c8bee4825e05b1cb2f2662bdbd60c8eb096f271c47db181de",
+          "line": 135
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_review_retrying_cleanup": {
+        "olddev": null,
+        "dev": {
+          "ast": "142817bf3a161bcd1fdcd9e71beead1b901e84326037446360525519c4a09788",
+          "source": "32d31a891d428a2b389ded3d8fbbd606bea245446c67e9a8582054cd585efee1",
+          "line": 447
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_shown": {
+        "olddev": null,
+        "dev": {
+          "ast": "e5a97ed69cbaca65fec95b3aeef53bf42d00f640ad864bdb17fa8e8243902a21",
+          "source": "b01e417dfa33a3fea11bc8e6d75da2da187ee6b450743d2fa6a15c09e75bc0d8",
+          "line": 123
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_until": {
+        "olddev": null,
+        "dev": {
+          "ast": "e3c5fbf1fc5d57cc8cf4e65a18e3b80e31a56bfb39bddffc03229cda3307b01b",
+          "source": "3f848215f27026c73d6eb8f897a61c2cb988ee8b4a33de3c22940c7751424761",
+          "line": 97
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_until_closed": {
+        "olddev": null,
+        "dev": {
+          "ast": "b1ab49ae99a545269c604f21a3d6f720b5ddcca43b5d318f383d9fd20f6d3e87",
+          "source": "738989e1c2abbff21260d069ee5620ca13c3caef320d262b50333e97a84b20c2",
+          "line": 107
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_cleanup_after_an_unknown_save_closes_the_review_after_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "e42da8e01567c2eee479e978d6d7976c3124d4d1abe2bfe7948484fedaa818bd",
+          "source": "67a151316822196487ac5f77ccde654046c70ea282a3bc8824bf94291f5b0aa4",
+          "line": 502
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_cleanup_finished_under_the_question_closes_the_review_after_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "40cdf88f351b19f6efc6729259d586324cfb8b3f2ddb9a1cbf8590d3699510e7",
+          "source": "34058b8da3ac92254f786a6c8c5719df03c675c3ad3bae3cbef729c1d2807bfe",
+          "line": 475
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_close_refused_under_the_question_finishes_after_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "431f1bec7784434215cfdb9681cf8540589bede09d19a282df7369445f2f36c2",
+          "source": "10c76c7724cfacd3f8b1b46c09ae6167b511189c2dda6ee4773e3ddc15eb51a7",
+          "line": 203
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_kept_close_covered_again_before_it_runs_waits_for_the_next_resume": {
+        "olddev": null,
+        "dev": {
+          "ast": "8c8df1366a009591736696cebd9737380c0fbdd0d1e6e4750db6373ad6ce7f5b",
+          "source": "8bc161f96e1f3f109d018c44ded46a2442e5454f6cadb914892e5091007e1c78",
+          "line": 249
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_kept_close_covered_again_before_it_runs_waits_for_the_next_resume.recording_replay": {
+        "olddev": null,
+        "dev": {
+          "ast": "5b518304f5f1f5fc252fa10a97cdefdc3bcc89b5d26fa50e4a23e49c66a9c102",
+          "source": "0425c264122f66e2eb15f2299c2d810ac8441b5bcadae587e97f270a5c88ed6d",
+          "line": 268
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_prompts_apply_finished_under_the_question_closes_after_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "9a8bb91e6063660ab363eabb038ca8d3ca8f0aaff92b30a5795d53027a8ab89c",
+          "source": "d5bbf0010968fac36191a2fe096194a082a907cd2c15dd8229aa918bd9a6f9eb",
+          "line": 521
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_prompts_apply_finished_under_the_question_closes_after_wait.apply": {
+        "olddev": null,
+        "dev": {
+          "ast": "4e105d0652b4ed8acd280d3a7da7724957b1a457536cffcf2c10d3ac766e16c1",
+          "source": "ff7361b5de9c0fecf474a85d71ba6205194def6684dbe5fa1c42f20bd2f79dbc",
+          "line": 532
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_proposal_resolved_under_the_question_returns_its_result_after_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "a3d5cdfe6e618a05702a465b2e3c0284da836bb9478f3dc698f02caec9508805",
+          "source": "90579a168be3b9eaff6cdfb5a2df04bc902b396fb1e3091d82352526a0dab3e4",
+          "line": 352
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_review_committed_under_the_question_closes_after_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "97cb6437375620d6a2f14902cc6ecc2b58ff404081b05eedbb5d15848679b6a6",
+          "source": "5a899e9e624c488fa4023d80919afa28a7975bb0c0c6ad9de014b4f337eceaec",
+          "line": 388
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_switcher_library_recovery_accepted_under_the_question_closes": {
+        "olddev": null,
+        "dev": {
+          "ast": "f6686c55b852feddcb207cbc6dec43672ecdbec5a420a0551cea53e9bd1daa1e",
+          "source": "d24ae202668b9b90222254353f76145c922612c29c8a1b1cea688dfcfd111ea8",
+          "line": 612
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_switcher_library_recovery_accepted_under_the_question_closes.character_loader": {
+        "olddev": null,
+        "dev": {
+          "ast": "240df7ddadec9ac3c21778022f6b618c5d95df5da48b9274b55139bf88ac9c4b",
+          "source": "c9039c6e22e2e8884051cb12966867668786e5d23660b005e087ef86b7294207",
+          "line": 616
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_switcher_library_recovery_accepted_under_the_question_closes.recover": {
+        "olddev": null,
+        "dev": {
+          "ast": "7bafc3f29c70e9d7012773fbfd0e398d76af6010b09e06f740f80bbde733cfdd",
+          "source": "f0cf8d9dbdec7298015de060643fd812864d72e828d54c222cc40b24d052a6fb",
+          "line": 631
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_switcher_open_committed_under_the_question_closes_after_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "532457580ec54a5bd536103a6602420150d57af81ef5daa0bc6174646d5f725b",
+          "source": "ca2caac70952123733f241f51d3e1a50058e358e09887237d7fe15b6a00ab5ba",
+          "line": 561
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_switcher_open_committed_under_the_question_closes_after_wait.activate": {
+        "olddev": null,
+        "dev": {
+          "ast": "6a102d3afdaa7d0d62999835de05816c8c7769abca39bbeaffdb441c49168555",
+          "source": "a52d4d2641719677d481f1a0b8a30291f6317c0d1318cd0c03eb95cf4bfd00d4",
+          "line": 575
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_switcher_open_committed_under_the_question_closes_after_wait.character_loader": {
+        "olddev": null,
+        "dev": {
+          "ast": "bc922926546b6ba1e824fb9ae04816a121e2450b372a06c7e56ce6e5bbf1f0c1",
+          "source": "8ea90221398804781b98886b4c1e21d1c63a6346e764d40e0faecda9e162e688",
+          "line": 567
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_switcher_open_committed_under_the_question_closes_after_wait.wait_for_commit": {
+        "olddev": null,
+        "dev": {
+          "ast": "74107e53e1810ef187f2e7fb57d47fdb0996b771c406024bbb3655f28aa71c42",
+          "source": "9ad28b54d114527e55d9e05235937c5d35d7b1391fb21498827c1bbf50855737",
+          "line": 582
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_trace_export_written_under_the_question_reports_it_after_wait": {
+        "olddev": null,
+        "dev": {
+          "ast": "1111636fc2382ce6abb7a6b46f67f34a5869c959a9670aa239fc111b4b2dbaac",
+          "source": "1c74b93eb6b463fbc2c42fa2219d212435a18a5eb3161bae800c60560c64323d",
+          "line": 316
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_trace_export_written_under_the_question_reports_it_after_wait.write_when_released": {
+        "olddev": null,
+        "dev": {
+          "ast": "510cc5d69857f8353281a44e114bcd41e2b43cd3b0a5764d798a4e7f8a0672a2",
+          "source": "318aecb911c1a730bfd3b45e6b3f7e8b3dac5c5ec10a417362b5b62bfc9ba55a",
+          "line": 324
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_an_uncovered_close_is_immediate_and_happens_once": {
+        "olddev": null,
+        "dev": {
+          "ast": "cb1a0ad40f3b7b369c70b5c3a27f87ff532eb169df201f622242d0cbb272853e",
+          "source": "b675b0ad1faba84304927895939cd084a0848c41c153fa5ef3d0c2d85284f7e2",
+          "line": 293
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_quit_anyway_still_quits_when_a_close_was_kept": {
+        "olddev": null,
+        "dev": {
+          "ast": "50733173d9fd8b82b3ec52ecab91dac9d395f7880f01d4ab1d98bc7ef226f121",
+          "source": "348cd48e7e8a245532b7f71a3f9f472cbddd0642ece53c884205ef4f1f4ed00a",
+          "line": 225
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "Tests/UI/test_console_modal_dismissal.py": {
+      "test_console_modal_inventory_matches_runtime_ast_and_transitive_launches": {
+        "olddev": {
+          "ast": "3e1e84b5bcd9adc2f9ad877717543fed01374da86d7d347dd766003be999759f",
+          "source": "8669cf66c1dbdb90c1fc2742d8a4aedd7740952417349803ed68515dd5448722",
+          "line": 1382
+        },
+        "dev": {
+          "ast": "573e5d14574fb0e0496171cee991f592ee9f37384968813e473a2b046f02cf60",
+          "source": "ea81f526c2a997ca39154236bba7431f082c2f628151b6e5465ae309abcc52ee",
+          "line": 1393
+        },
+        "BASE": {
+          "ast": "3e1e84b5bcd9adc2f9ad877717543fed01374da86d7d347dd766003be999759f",
+          "source": "8669cf66c1dbdb90c1fc2742d8a4aedd7740952417349803ed68515dd5448722",
+          "line": 1382
+        },
+        "feature_changed": false
+      }
+    },
+    "Tests/UI/test_console_prompts_modal.py": {
+      "test_apply_completion_keeps_nested_top_and_reports_committed_state": {
+        "olddev": {
+          "ast": "b9e3ce7f53cec1562f6130a8601cd7ed69cb2fea05ba2cd8ba2e3cdec1bebfbe",
+          "source": "86099b4feabde92281616ae279b7f0b63b3313af5eca08053130ff990b77cbc5",
+          "line": 2929
+        },
+        "dev": null,
+        "BASE": {
+          "ast": "b9e3ce7f53cec1562f6130a8601cd7ed69cb2fea05ba2cd8ba2e3cdec1bebfbe",
+          "source": "86099b4feabde92281616ae279b7f0b63b3313af5eca08053130ff990b77cbc5",
+          "line": 2929
+        },
+        "feature_changed": false
+      },
+      "test_apply_completion_keeps_nested_top_and_reports_committed_state.apply": {
+        "olddev": {
+          "ast": "94f2fdd7f3c0ebd1eb000d23c32e28ad3f8d359c21b8d062cdc1fd9a51e686da",
+          "source": "2f05455c1b3243a1ce7355c418dc27a606d16f9cebd2ceb5ab4e1d3d98459ad1",
+          "line": 2941
+        },
+        "dev": null,
+        "BASE": {
+          "ast": "94f2fdd7f3c0ebd1eb000d23c32e28ad3f8d359c21b8d062cdc1fd9a51e686da",
+          "source": "2f05455c1b3243a1ce7355c418dc27a606d16f9cebd2ceb5ab4e1d3d98459ad1",
+          "line": 2941
+        },
+        "feature_changed": false
+      },
+      "test_apply_completion_keeps_nested_top_then_closes_once_uncovered": {
+        "olddev": null,
+        "dev": {
+          "ast": "d4322634e8ea512c2f60bb01ac0cde582f3868c51efbb3cd47037008eaf5854e",
+          "source": "e6bc57ea84cfdadf37581ad05a186e62efd24f0033efc65c0db60ed75ed39d19",
+          "line": 2929
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_apply_completion_keeps_nested_top_then_closes_once_uncovered.apply": {
+        "olddev": null,
+        "dev": {
+          "ast": "94f2fdd7f3c0ebd1eb000d23c32e28ad3f8d359c21b8d062cdc1fd9a51e686da",
+          "source": "2f05455c1b3243a1ce7355c418dc27a606d16f9cebd2ceb5ab4e1d3d98459ad1",
+          "line": 2946
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "Tests/UI/test_console_video_picker_cancel.py": {
+      "_assert_the_same_video_waits_alone": {
+        "olddev": null,
+        "dev": {
+          "ast": "f84a48f6e40ac90de208a092c74d12088669f42970924357f1ef36b3b2166fbe",
+          "source": "a42c06068bbf9b7e15cf60deaef9b0741cb1a6fef064b9699994b4e670377672",
+          "line": 81
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_back_at_the_storage_choice": {
+        "olddev": null,
+        "dev": {
+          "ast": "bf3119d6030e6c42a799ba3999593efb1b0613c65f5fa3b474feee9cd7717415",
+          "source": "556ecb777508c14170d65dcd1aee15d414f8f75e8f7064baee525b982bc529f7",
+          "line": 58
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_choice_labels": {
+        "olddev": null,
+        "dev": {
+          "ast": "f3b6cfb43d3e34c826be56f97346f0a0ba5215e376842d7aa257f3711d402217",
+          "source": "66edff7b4549fa8ca7f509960a13223c9c9284f2bb8483196b51282b7bfd3f81",
+          "line": 52
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_open_the_picker_from": {
+        "olddev": null,
+        "dev": {
+          "ast": "9ef547aa0642bd2dfa5be6b9b185ec495a06daebc796e79cc48b87c0be1e5df3",
+          "source": "b9dff21e082370e1ba37c521810c221f69649d8abdffc4785e46be84405b3698",
+          "line": 98
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_cancelling_the_save_picker_returns_to_the_storage_choice": {
+        "olddev": null,
+        "dev": {
+          "ast": "dd2c61c6062506c9be860343f616f98453b50721b7cd1032ddeda2f7b9061c46",
+          "source": "ddd441dfc0d0321516720c699d04ff3c759b355f7f8c09ff4fa5c9267fbe607b",
+          "line": 109
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_discard_and_quit_over_the_picker_exits_without_reopening_the_choice": {
+        "olddev": null,
+        "dev": {
+          "ast": "80003a170e5e1795c8b70a3d5dd8908d7901f69a93f753c7719e0296d7b8ca71",
+          "source": "6120171f619a7a3f8b0daba130ef67bd291f61ac4a9aa870f2144dc5d6383f3e",
+          "line": 233
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_discard_and_quit_over_the_picker_exits_without_reopening_the_choice.recording_wait_for_screen": {
+        "olddev": null,
+        "dev": {
+          "ast": "abc0b0f0b562265547c0ec98fd1a5c92c03e2c39760046823c6d0726fd5ea9d9",
+          "source": "c5ab616c51e9e14cfb2e38b61ffcc84a2e566b59177b464ad9ccd5616397a841",
+          "line": 264
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_only_an_explicit_discard_throws_the_video_away": {
+        "olddev": null,
+        "dev": {
+          "ast": "46d404fc3970ccd93333c6bab4189591d405f9e4cb0f206277e1cd8ce247ac69",
+          "source": "7810d9646145786940a30ade21558097fda90e2376b89bd9b8ae76a4637ec751",
+          "line": 194
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "Tests/UI/test_modal_quit_discard_guards.py": {
+      "test_console_prompts_modal_refuses_quit_while_an_apply_is_in_flight": {
+        "olddev": {
+          "ast": "6e9902365a9ac63ef92013ac437235f3945760137116a8a1722cb6720193fcd5",
+          "source": "3569652d7d88f6a62cf0d2fe3b644a74795d129a5923a8303b9d10bda6db935a",
+          "line": 290
+        },
+        "dev": {
+          "ast": "2b3c0a82a9a9826ed7d8663a4593ec72b55f1881894cea42084e6ea7de0b4c9f",
+          "source": "1970eb5227a6677b8d3f71a7a531b567261f99e99d8b93bff8e0b80e1a07ef1c",
+          "line": 290
+        },
+        "BASE": {
+          "ast": "6e9902365a9ac63ef92013ac437235f3945760137116a8a1722cb6720193fcd5",
+          "source": "3569652d7d88f6a62cf0d2fe3b644a74795d129a5923a8303b9d10bda6db935a",
+          "line": 290
+        },
+        "feature_changed": false
+      }
+    },
+    "Tests/UI/test_modal_quit_in_flight_hooks.py": {
+      "_stand_in": {
+        "olddev": null,
+        "dev": {
+          "ast": "9caacfddab3a0b520fa088890763470bf404e050dd86aebdde3c09b6954b3f28",
+          "source": "3873f49f5210698e09be51246c11b7d3a3a51a91e55668edc573e331f5971918",
+          "line": 58
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "asked": {
+        "olddev": null,
+        "dev": {
+          "ast": "c0be1209543885ed8d52a8d661cf1b04610dcb61769b83e190f092520235823d",
+          "source": "2d4c99144f83f3dd1905b531fa68034073de6130760d0f97040a3226ee75d955",
+          "line": 220
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "asked._keep_editing": {
+        "olddev": null,
+        "dev": {
+          "ast": "7ece16e0cd4c004aa0afdde2ec091c79ce2969eb4c1cf0a4e0fe23faf6287e0b",
+          "source": "6ea617c20445eedc18ddd4744e14c11f31f506f71bdec4fa81bdc34a4ff3d16d",
+          "line": 231
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "quit_anyway": {
+        "olddev": null,
+        "dev": {
+          "ast": "da793047c3f7e94bca70573f6d5777c04abcf074a7162edaa10aa11207abca4a",
+          "source": "fd5caee50c31df292e4f6e5bc9b2badd04bcde6ea0143708b80e0c494ee438b5",
+          "line": 94
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "quit_anyway._ask": {
+        "olddev": null,
+        "dev": {
+          "ast": "ed80b246673ee145a50db6a3a217232934c8e32b77f00c2f60a418a0c8a66d61",
+          "source": "5faaa72db4e3e88e8ad540dd13ee6e46be7640e2ac0b71b5690fc6b0068cc861",
+          "line": 109
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_new_activity_is_announced_before_anything_is_asked": {
+        "olddev": null,
+        "dev": {
+          "ast": "9217682338f09edae1024c14e7142bda394d81920e034022cebc80941a85656b",
+          "source": "927ae3b3d6faf265d68484cb52785e37caca1a6553386c6d2ac1d4813f2982f0",
+          "line": 156
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_a_repeated_ctrl_q_mid_operation_asks_to_quit_anyway": {
+        "olddev": null,
+        "dev": {
+          "ast": "d3ee48891c6e1d5ffe0294e115c19287bc8683765b827041fc6cd4a4dd05f79b",
+          "source": "cbca812b1c5f8f23d0e1f2f7d9bdc173dc33420e78c90801f070b641488de573",
+          "line": 119
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_both_export_dialogs_name_the_one_shared_activity": {
+        "olddev": null,
+        "dev": {
+          "ast": "d4bc1bb5a3e8f701b907a24740d13c28646818da8fb8ff7cd9453d8e6be5e66f",
+          "source": "29480e3fdfd540bd69699e330c4363aaff5bbab179669f163d436a120833da11",
+          "line": 178
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_idle_modal_lets_ctrl_q_through_silently": {
+        "olddev": null,
+        "dev": {
+          "ast": "543360e9f71b81c155a8c98a7d52e67daf607f2c7e56b974b329f05e990e712f",
+          "source": "ce6bed3aa83839e9953f7ece4501628ccf3016c8414fda3bb228537fa51dcd60",
+          "line": 190
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_mid_operation_ctrl_q_says_still_working_and_stays": {
+        "olddev": null,
+        "dev": {
+          "ast": "61a1c36dca4ee44a4a2de4c301e8859394981b416e3a7ea77b5f6d6cada5a848",
+          "source": "085b5116e778ac7dda87c8ad21a30819bc43d5bfee8d471bce6248e60bbeef6c",
+          "line": 82
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_model_popover_asks_before_ctrl_q_drops_its_edits": {
+        "olddev": null,
+        "dev": {
+          "ast": "c874ccd7e27f3833ab2ef885f7c044cb0a4487c5a81ae6ae2bf9fd0e06b1b6cd",
+          "source": "f6e6aed892a86caccc7d8e16b95a8754b280740318c5da93c684f4de1cc8897a",
+          "line": 242
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_model_popover_with_nothing_to_lose_quits_without_asking": {
+        "olddev": null,
+        "dev": {
+          "ast": "f9483ea9b2116deee9a4d452dbef166bc3a149fba05c9e4f748ba26dd61dffc8",
+          "source": "99fa463b12019a283826454c196fb007d9014e6e3a338178c2078323600cf77c",
+          "line": 262
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "test_switcher_stays_only_while_a_chat_opening_commits": {
+        "olddev": null,
+        "dev": {
+          "ast": "f3248d563a1f1a2e41b1088fcc1911b4c4c8992eac300a0ff3e4377871f3fd69",
+          "source": "1707ae04a10c07100d527f35784d91a185aba7c72e9cb61e7da2e2a6f944b978",
+          "line": 210
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "scripts/check_ui_pr_gate_census.py": {},
+    "tldw_chatbook/UI/Console_Modules/video.py": {
+      "ConsoleVideoController": {
+        "olddev": {
+          "ast": "2662686f9abea1bcc8e16e4f83144827e9b77bfa930751b5f97f5d6eb382d64c",
+          "source": "e578460160436e798b04184ac8585b20d049285be1242201fa135eb5910f16d0",
+          "line": 41
+        },
+        "dev": {
+          "ast": "4a712c18f6e343a7b3a18727838dd008ba389c6e67933ddb7b71517f543bc2f1",
+          "source": "440d923ff0e08cb6f7f9c33ed1d008f58270dffbaf9ef285e80e4d0477ed35ba",
+          "line": 40
+        },
+        "BASE": {
+          "ast": "2662686f9abea1bcc8e16e4f83144827e9b77bfa930751b5f97f5d6eb382d64c",
+          "source": "e578460160436e798b04184ac8585b20d049285be1242201fa135eb5910f16d0",
+          "line": 41
+        },
+        "feature_changed": false
+      },
+      "ConsoleVideoController._save_pending_console_video_external": {
+        "olddev": {
+          "ast": "4f5cfc769dbeb5174a957c7620a4f536f0b2d56bacbb8217f6e750297b74bd65",
+          "source": "860518e08b471b7d72b28de225afc1c12ed529127ad1df0fc137946baa2c5ec9",
+          "line": 788
+        },
+        "dev": {
+          "ast": "60455fc0b484d2721f767b947fdc50d12db7285c24ef6cb5ac91b530e9647c88",
+          "source": "88e4fc093e94850b13f5f56d58f0e8c2dbe7d8716ac7ce9f18c91481476c24e4",
+          "line": 787
+        },
+        "BASE": {
+          "ast": "4f5cfc769dbeb5174a957c7620a4f536f0b2d56bacbb8217f6e750297b74bd65",
+          "source": "860518e08b471b7d72b28de225afc1c12ed529127ad1df0fc137946baa2c5ec9",
+          "line": 788
+        },
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/UI/Library_Modules/prompt_collection_manager_modal.py": {
+      "PromptCollectionManagerModal": {
+        "olddev": {
+          "ast": "25367a88788723ba718cbd5bdbe64f84249e45aba591a2e771547c818fe7d1f8",
+          "source": "549914518887f9a0a3a57116639cf06a119e3c6ba15da799e8c817c10eb31d96",
+          "line": 41
+        },
+        "dev": {
+          "ast": "dc5f981514ae3f2888894ddcd28fe4a81c9806f15a785a6f879a66f938f5cbaa",
+          "source": "3d6fec915f3eaae1591e55c57b0022e402bd510f5cda845f3ff5088d873ff521",
+          "line": 41
+        },
+        "BASE": {
+          "ast": "25367a88788723ba718cbd5bdbe64f84249e45aba591a2e771547c818fe7d1f8",
+          "source": "549914518887f9a0a3a57116639cf06a119e3c6ba15da799e8c817c10eb31d96",
+          "line": 41
+        },
+        "feature_changed": false
+      },
+      "PromptCollectionManagerModal.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "b386e7a10664eaded86a614389f0cb5dbd83fbe77e0f66e02488181887af5079",
+          "source": "9e2598063eda381a3bc690860d9d803e0382ff95a6a197b96b94427bdc685ab6",
+          "line": 670
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/UI/Screens/profile_interview_screen.py": {
+      "ProfileInterviewScreen": {
+        "olddev": {
+          "ast": "798397820689de105247ac4c4cb12df0089f845956fcd76dda9741fb33703523",
+          "source": "3d1ca598bbb2505ef334bb629a3fea5dbf0378449e523c2d976641cec38cc258",
+          "line": 96
+        },
+        "dev": {
+          "ast": "dbced56cf508f3791a6fce8383c9ee5b494adc7272f49ad60bbcd259a00301e2",
+          "source": "780a5c5a4e471d5a53298d35aa0db822195042806d5b2df48b6ad14536b26268",
+          "line": 100
+        },
+        "BASE": {
+          "ast": "798397820689de105247ac4c4cb12df0089f845956fcd76dda9741fb33703523",
+          "source": "3d1ca598bbb2505ef334bb629a3fea5dbf0378449e523c2d976641cec38cc258",
+          "line": 96
+        },
+        "feature_changed": false
+      },
+      "ProfileInterviewScreen.__init__": {
+        "olddev": {
+          "ast": "b17358f0ed58cda186f283cbf1921df62d0b3459b31a6804c39a0ffef264169a",
+          "source": "97ddeac08873f123ebd65b314a45b8b771c88b503ce9bc930be1e754929f3c58",
+          "line": 107
+        },
+        "dev": {
+          "ast": "77c1972881c3b343c98331aa7fff14e36efb2dca733f4ed2b1ab65e6d5dca2a6",
+          "source": "2b1da6e9eceece60151e18f8db4301fa33a0ee9a2ea01a04dd49ce9b2c21c4f2",
+          "line": 111
+        },
+        "BASE": {
+          "ast": "b17358f0ed58cda186f283cbf1921df62d0b3459b31a6804c39a0ffef264169a",
+          "source": "97ddeac08873f123ebd65b314a45b8b771c88b503ce9bc930be1e754929f3c58",
+          "line": 107
+        },
+        "feature_changed": false
+      },
+      "ProfileInterviewScreen._apply_error": {
+        "olddev": {
+          "ast": "7cfc05d18dffe738116f18c4398d569bb2b01f968310af75b481e2c45004a283",
+          "source": "5168a11412a17fc98e71842898d5294cad8461e3c63bb51cc7be2a3667ef9667",
+          "line": 403
+        },
+        "dev": {
+          "ast": "e0c1262ab359750a89d03710581205abc15e6ed155020af52c167c17b02559ae",
+          "source": "c8553f012224b2b45e299822b1ae30e186ee6d8ff3e5f74715ef6dd977929974",
+          "line": 413
+        },
+        "BASE": {
+          "ast": "7cfc05d18dffe738116f18c4398d569bb2b01f968310af75b481e2c45004a283",
+          "source": "5168a11412a17fc98e71842898d5294cad8461e3c63bb51cc7be2a3667ef9667",
+          "line": 403
+        },
+        "feature_changed": false
+      },
+      "ProfileInterviewScreen._apply_expired": {
+        "olddev": {
+          "ast": "52a5d9726c8368e5b9081114495dc8fe42b3ae11569dd9e22ee0d3bb52d24105",
+          "source": "edd5da585d3d5bae6b1341d6c019c7b63ba706bec8ebe409f0cfe50d8bafd659",
+          "line": 416
+        },
+        "dev": {
+          "ast": "e0290847552a13426378d2751469e70c5807a13f0e26b997ae262aa13551e8c1",
+          "source": "58535db6a6a4503c5fa98abde84e2b4eba1328fcc5267eecc0da1bfccb719bfb",
+          "line": 427
+        },
+        "BASE": {
+          "ast": "52a5d9726c8368e5b9081114495dc8fe42b3ae11569dd9e22ee0d3bb52d24105",
+          "source": "edd5da585d3d5bae6b1341d6c019c7b63ba706bec8ebe409f0cfe50d8bafd659",
+          "line": 416
+        },
+        "feature_changed": false
+      },
+      "ProfileInterviewScreen._cancel_choice": {
+        "olddev": {
+          "ast": "7729abf45fd539fbf2c541226a4c6e218de5e348e5c9a45d8222e33977662588",
+          "source": "99e899c8436dbdd881f0b640d9c7c5bc434051cf7d53886eeb4f12d0a2ecd06f",
+          "line": 643
+        },
+        "dev": {
+          "ast": "09285809aa9ce5c12145685e46db551419c9e4b3f6879d24fcefdb6b2c7fc064",
+          "source": "89f38ec800c36da1c66a24bf5716b070eee16d909b6731f12366f4445e1b877c",
+          "line": 665
+        },
+        "BASE": {
+          "ast": "7729abf45fd539fbf2c541226a4c6e218de5e348e5c9a45d8222e33977662588",
+          "source": "99e899c8436dbdd881f0b640d9c7c5bc434051cf7d53886eeb4f12d0a2ecd06f",
+          "line": 643
+        },
+        "feature_changed": false
+      },
+      "ProfileInterviewScreen._cleanup_succeeded": {
+        "olddev": {
+          "ast": "81b2e0000a6eabe91eaf0d7bf29b40a738de97ff833010436ad86a79b89e7e33",
+          "source": "220cc36feddf8507c817ab79838f74cd0ea9e7ee2d0b2f2a7118567c6c38c117",
+          "line": 667
+        },
+        "dev": {
+          "ast": "ade03e2b1778632adacb995e66c60416f57ef4104eac92c76e41394e75f5649b",
+          "source": "8849b1ba0a5b01b18ee518cb743f6c654391625cb4f5ae0a9b6e367c75c2cd71",
+          "line": 714
+        },
+        "BASE": {
+          "ast": "81b2e0000a6eabe91eaf0d7bf29b40a738de97ff833010436ad86a79b89e7e33",
+          "source": "220cc36feddf8507c817ab79838f74cd0ea9e7ee2d0b2f2a7118567c6c38c117",
+          "line": 667
+        },
+        "feature_changed": false
+      },
+      "ProfileInterviewScreen._close_with": {
+        "olddev": null,
+        "dev": {
+          "ast": "be51bf14c13baa14de75520fb0938f0fdb72bb7b3ba68ed3da0476f662fc0297",
+          "source": "52be4be624f3e6161dcfce7741cff8121194d22328136081e48e9150d9aedad2",
+          "line": 681
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "ProfileInterviewScreen._discard_cancelled_start": {
+        "olddev": {
+          "ast": "0c83e4b36da7fd8158e974ac74a2168ce7c6d43166d14daffc09a91930ec554a",
+          "source": "e36159669e1daed4198f6adcc05dd254506676a2102c407ab62aeb2e03bdf2d6",
+          "line": 226
+        },
+        "dev": {
+          "ast": "9457ff78079e5bbd6ef8e9e0c2b395eb6ef868c6c276183493ffead6abe784f1",
+          "source": "c9b7fc6f88e8067283fc41d5e2e4b056194c181e43e52c6528767ba6d22513f2",
+          "line": 235
+        },
+        "BASE": {
+          "ast": "0c83e4b36da7fd8158e974ac74a2168ce7c6d43166d14daffc09a91930ec554a",
+          "source": "e36159669e1daed4198f6adcc05dd254506676a2102c407ab62aeb2e03bdf2d6",
+          "line": 226
+        },
+        "feature_changed": false
+      },
+      "ProfileInterviewScreen._perform_safe_cancel": {
+        "olddev": {
+          "ast": "0f36ebb9034804ad122633d484910e78be797105c60ee2c0c696d45ca7c34e38",
+          "source": "b98a0823ff295f16d6fd947895ba811e80e39e89c823d877f7e064693e97458c",
+          "line": 560
+        },
+        "dev": {
+          "ast": "19cd26216e39c99cb4b401f475e665527adf17317a266c73f9a8e4a29ae9a79d",
+          "source": "58fdfbcacfcd241a6f072086c0b5471b58085cb3ddc6fe1f58f4aa78d69f89a2",
+          "line": 572
+        },
+        "BASE": {
+          "ast": "0f36ebb9034804ad122633d484910e78be797105c60ee2c0c696d45ca7c34e38",
+          "source": "b98a0823ff295f16d6fd947895ba811e80e39e89c823d877f7e064693e97458c",
+          "line": 560
+        },
+        "feature_changed": false
+      },
+      "ProfileInterviewScreen._quit_discards_interview": {
+        "olddev": {
+          "ast": "e11ea083f35dfd86e00f084dd42e309dd9e27650e748709abe7cc984941e302a",
+          "source": "3791930054e3656208be9a5b8851cd25136f76c917d56b84fc8abb6f14fd87bc",
+          "line": 591
+        },
+        "dev": {
+          "ast": "23d711a17d11a804c8c419fb19a09056903cf10c70e1b4cf3de6a83ec3516bfd",
+          "source": "e91efc0efc70f9b3b66f09a8b8e2838ff3d78e89a9e84aa5d010c162743b8fed",
+          "line": 604
+        },
+        "BASE": {
+          "ast": "e11ea083f35dfd86e00f084dd42e309dd9e27650e748709abe7cc984941e302a",
+          "source": "3791930054e3656208be9a5b8851cd25136f76c917d56b84fc8abb6f14fd87bc",
+          "line": 591
+        },
+        "feature_changed": false
+      },
+      "ProfileInterviewScreen._retry_cleanup": {
+        "olddev": {
+          "ast": "c6a16cead0e8d0abfb1c45f547797aaa0e1fb19fc33b8a4be2ae2b49487781d3",
+          "source": "8418b72e3ad60db9b62c54276c0d0b185c26bd5197d4f9928eca52be1f91a300",
+          "line": 658
+        },
+        "dev": {
+          "ast": "7dd6960b0fd039041d2ce0aaec5e18b5b9cd5fe0c4123bca2ecaaae13fdc0740",
+          "source": "07aee6713c356fb97f88c7f68e3666d2aa887f963fecb816776dae469529f129",
+          "line": 704
+        },
+        "BASE": {
+          "ast": "c6a16cead0e8d0abfb1c45f547797aaa0e1fb19fc33b8a4be2ae2b49487781d3",
+          "source": "8418b72e3ad60db9b62c54276c0d0b185c26bd5197d4f9928eca52be1f91a300",
+          "line": 658
+        },
+        "feature_changed": false
+      },
+      "ProfileInterviewScreen.confirm_quit": {
+        "olddev": {
+          "ast": "d8c96dceebd0f353e53f9699f14d3c38ca99992370e5e6e750a3ba4b0c3c6971",
+          "source": "2c7fa24d8c2a8a1585e0957011e364c065ac8c0f644a90f5c57653553bfcf151",
+          "line": 610
+        },
+        "dev": {
+          "ast": "244c21034fecf768ea8e1419cddab6ae49fbf2cfa31e589ab370f962c9af1732",
+          "source": "828e27127283927ff37a1f23245a3a95e61166ccc998315d6c5dedaffd9489fe",
+          "line": 624
+        },
+        "BASE": {
+          "ast": "d8c96dceebd0f353e53f9699f14d3c38ca99992370e5e6e750a3ba4b0c3c6971",
+          "source": "2c7fa24d8c2a8a1585e0957011e364c065ac8c0f644a90f5c57653553bfcf151",
+          "line": 610
+        },
+        "feature_changed": false
+      },
+      "ProfileInterviewScreen.on_screen_resume": {
+        "olddev": null,
+        "dev": {
+          "ast": "159c510c6488b6a056204b6b0ca3b89cc1f9da3ce4356e88da226e948fb52a50",
+          "source": "7830febbd60a757cb29ab4a19ab3f31fb906e8c02ede9baaa96ce605c514d8ce",
+          "line": 698
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/UI/Watchlists_Modules/bulk_sources_modal.py": {
+      "BulkSourcesModal": {
+        "olddev": {
+          "ast": "1ca048db9af9a62fae8c9e9558b2482d3dd7d3dac289ea75a8f5352e0c4d82e5",
+          "source": "a56520dba75f06adbdc0931d5b6d038c377b277f7693a3cd20b37f9977dc7ba9",
+          "line": 67
+        },
+        "dev": {
+          "ast": "91c1395cc90295b5b6ac5c341024278ffe5a19f2807c6b9066eb42a600d99d25",
+          "source": "61b141c8a4496da3de1b19819386c9ec1aae891ec46031cdbdbc4bfb847c882f",
+          "line": 67
+        },
+        "BASE": {
+          "ast": "1ca048db9af9a62fae8c9e9558b2482d3dd7d3dac289ea75a8f5352e0c4d82e5",
+          "source": "a56520dba75f06adbdc0931d5b6d038c377b277f7693a3cd20b37f9977dc7ba9",
+          "line": 67
+        },
+        "feature_changed": false
+      },
+      "BulkSourcesModal.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "023a94105a658502a659994f837da845441c8a2dde9355043d18e687003ff4fa",
+          "source": "ae02c0f13544b5d4d6319981b2d1afd71e407329127e2d406b1c5071e790eb39",
+          "line": 160
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py": {
+      "ConsoleCapturePolicyDialog": {
+        "olddev": {
+          "ast": "139f40eb07f20e84f65fe5a8475ba6832057ba816a176cd58733b6c0cd1b5a5c",
+          "source": "fdfeef4fb6eba5899040da7d8bf36e9d10c00392ae668a43e36a7207ca09bac5",
+          "line": 222
+        },
+        "dev": {
+          "ast": "ac04fb75795a8b0919d15c6279b0d4ba5a0ab6a443256f3762a968b1500dfa92",
+          "source": "cab6fa67b0e3b3d54425bc7a8de99a803a47274af66be86d4761292ca3c5d0c1",
+          "line": 222
+        },
+        "BASE": {
+          "ast": "139f40eb07f20e84f65fe5a8475ba6832057ba816a176cd58733b6c0cd1b5a5c",
+          "source": "fdfeef4fb6eba5899040da7d8bf36e9d10c00392ae668a43e36a7207ca09bac5",
+          "line": 222
+        },
+        "feature_changed": false
+      },
+      "ConsoleCapturePolicyDialog.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "121b7f2ce18dc72d6eb9fff9c22299a7a307f9fb51ed7672f1610a2109919e0b",
+          "source": "1076cfcde349c1c22ca8b161b4b94d47a33a3ef0f5719cd04f0f2bb59d0261f5",
+          "line": 838
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "ConsoleTracePrivacyDialog": {
+        "olddev": {
+          "ast": "4a3f1ece611843007864d19a43361aff3f9a2d31fa743195f3e305cd71499cdd",
+          "source": "cc1780f9bceafe6d4a6d69eaae066fe3bb80d3167c212eee06631184107ab200",
+          "line": 839
+        },
+        "dev": {
+          "ast": "640bcb6d6f76746a80bbe242c03b3fd137fca4a26477bc6e2a1c3fb986704aa3",
+          "source": "87b06d1a6bcf3ae9d5714830ea97a4dabff404fd180bf7e8a9bd3acc89d5291c",
+          "line": 849
+        },
+        "BASE": {
+          "ast": "4a3f1ece611843007864d19a43361aff3f9a2d31fa743195f3e305cd71499cdd",
+          "source": "cc1780f9bceafe6d4a6d69eaae066fe3bb80d3167c212eee06631184107ab200",
+          "line": 839
+        },
+        "feature_changed": false
+      },
+      "ConsoleTracePrivacyDialog.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "4eb924adae7bce75162a69c03001a1e5499e256900ac25bd1283f1e49025b983",
+          "source": "dc985df2c06df7265c59d65f466a58170ff96c0fb80f4e6cc72a380aa4e42f0b",
+          "line": 1079
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_quit_unless_applying": {
+        "olddev": null,
+        "dev": {
+          "ast": "9f6e538e2aaee1213a343bdb0ed2a2afa3432be4569d9c6117c408a4e074df49",
+          "source": "0701a88af4851b4db2bf70396a6d0ce64d3150977d33e192199a826bb963e4c9",
+          "line": 1090
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py": {
+      "ConsoleExchangeExportDialog": {
+        "olddev": {
+          "ast": "ff8c3172c402c7d50796964ce4d76e583691f3fb8df3d64942cccb04bd63c63f",
+          "source": "6842f6ca972e4eb164312a62d48d7f028424ba9f958cf8d8a38b7a1fff568574",
+          "line": 47
+        },
+        "dev": {
+          "ast": "9af9120e9251707e62f89d8883161b8c2c2e8e7d63620a1e8d02490ab48ecef8",
+          "source": "6618b02883a96bebe5707f81565f6d774f327c52007edb8adaeb93654b3c2390",
+          "line": 48
+        },
+        "BASE": {
+          "ast": "ff8c3172c402c7d50796964ce4d76e583691f3fb8df3d64942cccb04bd63c63f",
+          "source": "6842f6ca972e4eb164312a62d48d7f028424ba9f958cf8d8a38b7a1fff568574",
+          "line": 47
+        },
+        "feature_changed": false
+      },
+      "ConsoleExchangeExportDialog.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "97586be22360ceb4fc8a418b16e419b9073d757621a257268831f4efd662812f",
+          "source": "53bc1d8d96121c5445b6be0a92c6643557f4de4bcfa1f6d82781cae27c004acd",
+          "line": 367
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/Console/console_fork_chat_modal.py": {
+      "ConsoleForkChatModal": {
+        "olddev": {
+          "ast": "7edc7061591d3ec7c84f4c1a0dd18bfea9162c50ae9e6dd048bf3497bfec9702",
+          "source": "527d6805aba3957a29c1e73b6f9f3dc985ef7e7d45af9f9b036d728485e78f9d",
+          "line": 82
+        },
+        "dev": {
+          "ast": "7d2d9f0da6e6ebb80b9e3b3b224a032f0950e101fd63d0ab6f45f6d7d08b0302",
+          "source": "fbd32b83133c3e2ed96c310c9c2ef9761d5346458457e657a1f7c9a96ccddf34",
+          "line": 82
+        },
+        "BASE": {
+          "ast": "7edc7061591d3ec7c84f4c1a0dd18bfea9162c50ae9e6dd048bf3497bfec9702",
+          "source": "527d6805aba3957a29c1e73b6f9f3dc985ef7e7d45af9f9b036d728485e78f9d",
+          "line": 82
+        },
+        "feature_changed": false
+      },
+      "ConsoleForkChatModal.close_after_success": {
+        "olddev": {
+          "ast": "cfd7c3f1e194abd54693f3592901af653fbf93e49bd7b6ae87ba7ee671ea5fae",
+          "source": "393cff945cc0d4bfa5b7b44afb8786932781c4af0a35cd1d896a254bda57d736",
+          "line": 503
+        },
+        "dev": {
+          "ast": "59efb3c2b6a3c562b97e243ee918c4112a65254c999078dee4e3e79fba3be707",
+          "source": "671881d88afc75de25d2993df50f0cc3fdbb528bda59fb2c2893c5e07c870b36",
+          "line": 517
+        },
+        "BASE": {
+          "ast": "cfd7c3f1e194abd54693f3592901af653fbf93e49bd7b6ae87ba7ee671ea5fae",
+          "source": "393cff945cc0d4bfa5b7b44afb8786932781c4af0a35cd1d896a254bda57d736",
+          "line": 503
+        },
+        "feature_changed": false
+      },
+      "ConsoleForkChatModal.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "719ebeefd1b62ac25cf07d3487d3f448c2e03aaa2dc6bdbf3c502336313b44dc",
+          "source": "a91b080c68b6801d7d2bc4307bd52dee427c18360bb6515fe34cf3c9a086b5c1",
+          "line": 425
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/Console/console_model_popover.py": {
+      "ConsoleModelPopover": {
+        "olddev": {
+          "ast": "bae3af577e051e7af4acdaf282bc75f85e6a7fe97224aa441309eed08492e218",
+          "source": "1d6ed5e7beb9a086624cdbb9b65456d91f6b23cce0537433de7e70b53c425b53",
+          "line": 334
+        },
+        "dev": {
+          "ast": "e8227a21224123b30d0e8693dc852ad31d56c7db71f6966abff1c48530326fdc",
+          "source": "cc90b85da4c92fec70de11a72db0b925a94df1c4a30354f72708814cf43783ff",
+          "line": 334
+        },
+        "BASE": {
+          "ast": "bae3af577e051e7af4acdaf282bc75f85e6a7fe97224aa441309eed08492e218",
+          "source": "1d6ed5e7beb9a086624cdbb9b65456d91f6b23cce0537433de7e70b53c425b53",
+          "line": 334
+        },
+        "feature_changed": false
+      },
+      "ConsoleModelPopover.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "e3d7e0d77979d373d1ea00ffa73b3115d13b50c6cc7f9dc9eb4cdfdbaeef3e41",
+          "source": "64d08f5288d3954cc85112e257e53f666587911dc7321d621e2f3ba065f4bb8b",
+          "line": 1957
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/Console/console_prompts_modal.py": {
+      "ConsolePromptsModal": {
+        "olddev": {
+          "ast": "eb28576f2e0f3add8d9830d4bd956f435a7f65e8c74de02c2ae466f41253ba30",
+          "source": "3b30c8aa3311472335b5a6602001ed6a4562e70a085ec39d1f03daa15e039322",
+          "line": 193
+        },
+        "dev": {
+          "ast": "b5155cdfcea1a690fa5f7e91876f4ef8f494029ea9fda2ec0d1ccbbfd6074c57",
+          "source": "3a73501eba5707f81150709130bfbb00d537a139282f46aa074b57df227f643c",
+          "line": 193
+        },
+        "BASE": {
+          "ast": "eb28576f2e0f3add8d9830d4bd956f435a7f65e8c74de02c2ae466f41253ba30",
+          "source": "3b30c8aa3311472335b5a6602001ed6a4562e70a085ec39d1f03daa15e039322",
+          "line": 193
+        },
+        "feature_changed": false
+      },
+      "ConsolePromptsModal._coordinate_apply": {
+        "olddev": {
+          "ast": "4b85f93393b772bcdfda1ec605c64a73d574b831d5a66476b530ba82412854b9",
+          "source": "7de90cf216ef9027618ec18656c57ba055ff1474b0eaaff867ed70f7a0dae2ae",
+          "line": 1466
+        },
+        "dev": {
+          "ast": "085123a483adef1f99e716b6d758920a8674a443f85978b41aff226f4284e0ea",
+          "source": "d0aa8fbce8c5f7faa236f1be02a76023e473117bff36401140eb9b7c0dea591c",
+          "line": 1466
+        },
+        "BASE": {
+          "ast": "4b85f93393b772bcdfda1ec605c64a73d574b831d5a66476b530ba82412854b9",
+          "source": "7de90cf216ef9027618ec18656c57ba055ff1474b0eaaff867ed70f7a0dae2ae",
+          "line": 1466
+        },
+        "feature_changed": false
+      },
+      "ConsolePromptsModal.confirm_quit": {
+        "olddev": {
+          "ast": "d987e37b7f91433159478f41bdd13f4d027f3bd0b6fc431839cded9d53aa92b0",
+          "source": "804f0069594a268d2f8731eec3abfc0e249b64fc9ead4bf95570d587b2b736ff",
+          "line": 1782
+        },
+        "dev": {
+          "ast": "ab0da3c5cd9fb7681d871e23b02adc3770326c38ac98b3dde3c0eeea4721ba77",
+          "source": "a62e45224ec4b925a5749784ec94c243ad44c3e6940b2f9389d8a205bcfaba3b",
+          "line": 1785
+        },
+        "BASE": {
+          "ast": "d987e37b7f91433159478f41bdd13f4d027f3bd0b6fc431839cded9d53aa92b0",
+          "source": "804f0069594a268d2f8731eec3abfc0e249b64fc9ead4bf95570d587b2b736ff",
+          "line": 1782
+        },
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py": {
+      "ConsoleSessionSwitcherModal": {
+        "olddev": {
+          "ast": "735af771a1a162d47cd87c24d5ea7e2a927a4881f4975f588aed4ea21c7dd4a3",
+          "source": "69b2444a769b506b94cf75514c49b67f08da4cf9557a4514752b827d0e9afa6a",
+          "line": 173
+        },
+        "dev": {
+          "ast": "69aec5da15ee414ac2b8c6075a1be1d524ca822faa57fdd56ccf0a88caac4a84",
+          "source": "813e91bd28a4c6689734d7e387ee0417b341980227d011bc8d5112d547ffa4d4",
+          "line": 173
+        },
+        "BASE": {
+          "ast": "b4344d45ee31f39373a07e053aabe46ae37975317946e4f8aa88002c7fac3d3f",
+          "source": "34199f3f5f155e1bea493ba6da513050e6ae2049bd3a447dade94dabd6f20050",
+          "line": 173
+        },
+        "feature_changed": true
+      },
+      "ConsoleSessionSwitcherModal._run_character_activation": {
+        "olddev": {
+          "ast": "486eb8591c3c3da6d282a1c7f590da4201a317a3fadf5f093bbcdd435b97657e",
+          "source": "db5a79e9f147f85ffb26dd0f1475365ccb27476938a2ab0b39a8c90e1a0e6043",
+          "line": 2323
+        },
+        "dev": {
+          "ast": "5db671b9ce773d35ba757731615993aab521cf1f88b14582353b9c6208dbc58f",
+          "source": "250d25a0f9004176f85703c0bc5712a8ef13cc68ceaa275c975c89d70ef1c526",
+          "line": 2323
+        },
+        "BASE": {
+          "ast": "486eb8591c3c3da6d282a1c7f590da4201a317a3fadf5f093bbcdd435b97657e",
+          "source": "db5a79e9f147f85ffb26dd0f1475365ccb27476938a2ab0b39a8c90e1a0e6043",
+          "line": 2327
+        },
+        "feature_changed": false
+      },
+      "ConsoleSessionSwitcherModal._run_character_library_recovery": {
+        "olddev": {
+          "ast": "730b9a0f4b1386de767ddcba52b18eaca5082eda353fc5dd7c72ada656e2b8dc",
+          "source": "3579b095059141d66155cf1443628e2e9ff9bcedacd9c71f0743af5a2d6916cf",
+          "line": 2493
+        },
+        "dev": {
+          "ast": "6f325b1421055ecc0bbcce5a46cccbd7342d1e07ba819b72bd308539e7ec11c9",
+          "source": "f0b6375a525da2c8fbaf07b3b9c3d49d37f3718aa2838adc031ca6e339eda711",
+          "line": 2495
+        },
+        "BASE": {
+          "ast": "730b9a0f4b1386de767ddcba52b18eaca5082eda353fc5dd7c72ada656e2b8dc",
+          "source": "3579b095059141d66155cf1443628e2e9ff9bcedacd9c71f0743af5a2d6916cf",
+          "line": 2497
+        },
+        "feature_changed": false
+      },
+      "ConsoleSessionSwitcherModal.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "cf6f2e82df22c4c289657108b2dd8aee59811cca83b113f963789a40e888699e",
+          "source": "239947e2128fd8f610c6afe4064b45af537e3b6e6f4eabd4e55adf92aeb0b1ec",
+          "line": 2554
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/Console/console_video_capacity_modal.py": {
+      "ConsoleVideoCapacityModal": {
+        "olddev": {
+          "ast": "6070513fb71e619b2f0a2050a8addcd81dbb851ff1e65167f7ed1abdd9458e2a",
+          "source": "cb2ca6ce14317e58697021ec650e4ee0ad6f7110503d61d7a06fe3ca7cc59d50",
+          "line": 29
+        },
+        "dev": {
+          "ast": "c67ced7539f14d95ee5d9ee3271827a3ada410243722bcdd02f3bb6bff8c5610",
+          "source": "d7389e360bd273c051a21419a158b12cb0c2cbeaf8f205f93aa8010e90f2958e",
+          "line": 57
+        },
+        "BASE": {
+          "ast": "6070513fb71e619b2f0a2050a8addcd81dbb851ff1e65167f7ed1abdd9458e2a",
+          "source": "cb2ca6ce14317e58697021ec650e4ee0ad6f7110503d61d7a06fe3ca7cc59d50",
+          "line": 29
+        },
+        "feature_changed": false
+      },
+      "ConsoleVideoCapacityModal.confirm_quit": {
+        "olddev": {
+          "ast": "06baf74250306b805a090bc88653efddeee30a0aa2c1fa0c805ea86029f89882",
+          "source": "b1d680aee808bbb306adf602a2844fe830c7a0aec7b9299f11dba2275c7d8217",
+          "line": 199
+        },
+        "dev": {
+          "ast": "bb27dd2c87fcb5c761d9390450607ad0962b065de354b82f449ea44a02abac4e",
+          "source": "a26ab2c2e4cc2a12dbb5153bc07b480d0121078f361394b0e4264de379558a24",
+          "line": 227
+        },
+        "BASE": {
+          "ast": "06baf74250306b805a090bc88653efddeee30a0aa2c1fa0c805ea86029f89882",
+          "source": "b1d680aee808bbb306adf602a2844fe830c7a0aec7b9299f11dba2275c7d8217",
+          "line": 199
+        },
+        "feature_changed": false
+      },
+      "confirm_quit_discarding_generated_video": {
+        "olddev": null,
+        "dev": {
+          "ast": "b376429edc1b17d773a41c1019c9a82286f06492395d852d7420ff7451434f8b",
+          "source": "a4d36acd4105b26cfed41743861be5c342f34d3f7f0b69b4487ec6caec2f0b39",
+          "line": 29
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/Console/console_video_save_screens.py": {
+      "GeneratedVideoConfirmation": {
+        "olddev": null,
+        "dev": {
+          "ast": "fde17af02b7eb62fea0f9d386d950a3e6182a57f79aa33fc2c825af198f265ea",
+          "source": "a11cbbc48440dd0f1598d2c601c2ed59e64b364ef7358463171ed5dcbd213e96",
+          "line": 38
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "GeneratedVideoConfirmation.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "556a5928e50c861d247e173128aa9ee3f97158c1867c42db8a32955a9bfd4c2b",
+          "source": "dbcbea9beccd3c71f6c3bc4973c41fec83b40c1ea72f73f7986efcecaf02e9b9",
+          "line": 41
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "GeneratedVideoFileSave": {
+        "olddev": null,
+        "dev": {
+          "ast": "2c1e316884ad0aa175e2ed09349a3c80d2a3860af8042b3578c622e2b738e25a",
+          "source": "91ff004f1b883f5ebf5ba11541d9c1a249a9eb5d7d0003f262f30902e0805442",
+          "line": 26
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "GeneratedVideoFileSave.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "8ab16564cde0dc8fc1374c432109cb9ef22b51eb311ef2210d78a93f677006e9",
+          "source": "ecf0a62f563a956e16abeba760172774089934d957bacbd0f7aa71abd1242c5a",
+          "line": 29
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/Console/trace_export_dialog.py": {
+      "TraceExportDialog": {
+        "olddev": {
+          "ast": "b5be90b5329ad6c5aab1314d859720d4d51e02765d6f42d30ef7334bc60b999e",
+          "source": "409387bbe17faea1a8a3705c8124b7844194f5ee5a77be1523d286412b2b8f9b",
+          "line": 50
+        },
+        "dev": {
+          "ast": "eb15b4d9d08e90a6d45406a3b4ff2dd467ff957aea3f4b087e8a6df6f8cb4338",
+          "source": "6e962c143648b5be9c841a0b58502594e7dde2ac085dcdc8c21cd74ad85b1354",
+          "line": 51
+        },
+        "BASE": {
+          "ast": "b5be90b5329ad6c5aab1314d859720d4d51e02765d6f42d30ef7334bc60b999e",
+          "source": "409387bbe17faea1a8a3705c8124b7844194f5ee5a77be1523d286412b2b8f9b",
+          "line": 50
+        },
+        "feature_changed": false
+      },
+      "TraceExportDialog._export_flow": {
+        "olddev": {
+          "ast": "ad6402517a26295530a3ca7a4a630daa59d683390d05184e094f0daf7d49db92",
+          "source": "275bdb136effd3ceecd23ad3ce433d55aa0c3825b4d0f2bd63c6401d0152664e",
+          "line": 317
+        },
+        "dev": {
+          "ast": "8ce702742fb95437ed420e3a3ec57277b398c4cffabdf814597557b9a0365bdd",
+          "source": "fedf694071b7d5426645d67ea17c7ba0f571515302288c08e328d1f1964ba510",
+          "line": 318
+        },
+        "BASE": {
+          "ast": "ad6402517a26295530a3ca7a4a630daa59d683390d05184e094f0daf7d49db92",
+          "source": "275bdb136effd3ceecd23ad3ce433d55aa0c3825b4d0f2bd63c6401d0152664e",
+          "line": 317
+        },
+        "feature_changed": false
+      },
+      "TraceExportDialog.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "7b2ae6fe49c85605c3c517d6defffda74420cae596b19572ddef8e5f9e0ecc73",
+          "source": "08da71304edc89f5fd6aa782cda1fe7a69a5a2295db132600186dc4bbd360690",
+          "line": 382
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/Console/trace_export_profile_ui.py": {},
+    "tldw_chatbook/Widgets/Persona_Widgets/buddy_character_review.py": {
+      "BuddyCharacterReviewDialog": {
+        "olddev": {
+          "ast": "640762753f4ced9e47622b82bbfaf675ba49623ef11b05d36edb3f810c0b1dcf",
+          "source": "3386b6822677c96f941bdaf722f3ec37e2c86cd422397a06e7781bc8434e61f9",
+          "line": 32
+        },
+        "dev": {
+          "ast": "ff7818b50012c9e3e9bda4198fb6c120d87a0bdb10ed69119cbdfd21271193a4",
+          "source": "7badcbba2cf33ea91079b6bc8beed5e2c74666f8c31a0e6c4dedb299fff18e74",
+          "line": 32
+        },
+        "BASE": {
+          "ast": "640762753f4ced9e47622b82bbfaf675ba49623ef11b05d36edb3f810c0b1dcf",
+          "source": "3386b6822677c96f941bdaf722f3ec37e2c86cd422397a06e7781bc8434e61f9",
+          "line": 32
+        },
+        "feature_changed": false
+      },
+      "BuddyCharacterReviewDialog.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "a1c70f2504f8ae50257dbf4b0c020408334c15ba3d230df0d4dcd520cf1cdf4b",
+          "source": "1b7dc9a4b230d6c7dbe6c0ef1b152ba3fac52b649b0d775c859c7fc1ab3d05e7",
+          "line": 456
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py": {
+      "PersonalContextProposalReviewModal": {
+        "olddev": {
+          "ast": "a60380141b8a94d832d92633c93e4b9288221a9cfd30dc499c7ad607e7f07606",
+          "source": "ad885d20d66810cfc549c2e7d1226b0adc9073438ae657bee307d74bfa691a75",
+          "line": 63
+        },
+        "dev": {
+          "ast": "f9b1b6c6e91c2c49deb5615799595af12b0cec587fdb1aa4c7cbb1b916037da4",
+          "source": "970ab33ae4e9bae31470bc936880d8dbb205aaa5bca0b1f31c693543bdafdf68",
+          "line": 63
+        },
+        "BASE": {
+          "ast": "a60380141b8a94d832d92633c93e4b9288221a9cfd30dc499c7ad607e7f07606",
+          "source": "ad885d20d66810cfc549c2e7d1226b0adc9073438ae657bee307d74bfa691a75",
+          "line": 63
+        },
+        "feature_changed": false
+      },
+      "PersonalContextProposalReviewModal._resolved": {
+        "olddev": {
+          "ast": "195ed833b1c51b13175e13eb44d24941ba897bce3b30e77cb7f340b9feb84d66",
+          "source": "0b43fb5bce21cbf94e0a47be84c22a2ecda43070987c33e426ce9cddb32ec91e",
+          "line": 347
+        },
+        "dev": {
+          "ast": "b1797397b2c66fd01c6ef18a4c3fbf1ecba5debdfcc0bf0df627e60dc130754e",
+          "source": "d14159f29ac5eadba1401219e9476f160a7c9bbf7115227bc8d91d976465bdba",
+          "line": 347
+        },
+        "BASE": {
+          "ast": "195ed833b1c51b13175e13eb44d24941ba897bce3b30e77cb7f340b9feb84d66",
+          "source": "0b43fb5bce21cbf94e0a47be84c22a2ecda43070987c33e426ce9cddb32ec91e",
+          "line": 347
+        },
+        "feature_changed": false
+      },
+      "PersonalContextProposalReviewModal.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "5028f6221409f188adc4f4e10cddd46dfed04f0cb5bcf784df9e013e04b9d5f5",
+          "source": "cd0d47a668fb0d81500a644f96fb6e24a10af72d29a3ba920b56c0e395ce1e9c",
+          "line": 364
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "PersonalContextReviewModal": {
+        "olddev": {
+          "ast": "9e0bb38f7fdf3300660488f281b8956d762554d100f3cee55dc7496fc298a064",
+          "source": "0d994f093e4c549a359eadafd42798c9e02e5ddf2f436e5c2b788097ee3c3dd9",
+          "line": 383
+        },
+        "dev": {
+          "ast": "a88dbc9ce10ec168d85a67de875505fdd92688884d534176a4d95c00fdddd49f",
+          "source": "47a8a6a621e5a32a69c6cb75d6c5d17261254711b6a03c0bfa0f31fe0e8021e0",
+          "line": 393
+        },
+        "BASE": {
+          "ast": "9e0bb38f7fdf3300660488f281b8956d762554d100f3cee55dc7496fc298a064",
+          "source": "0d994f093e4c549a359eadafd42798c9e02e5ddf2f436e5c2b788097ee3c3dd9",
+          "line": 383
+        },
+        "feature_changed": false
+      },
+      "PersonalContextReviewModal._cleanup_finished": {
+        "olddev": {
+          "ast": "fde37786e31412999610883b1461c2c21d79e8e72ac6c54dbe357528a25c4e80",
+          "source": "31700293213fdc03ce7a64734595e91a44dbcdd51f67df442a93bb767e8f394c",
+          "line": 719
+        },
+        "dev": {
+          "ast": "bc0b9f33f77a1403da8b6a853ef35373c4b09dd804f757ada4b5f76e51e41c74",
+          "source": "e3d15d240eae497718412ad4db4b07346015f6e6bc4e4f3766119e5be38c5c13",
+          "line": 732
+        },
+        "BASE": {
+          "ast": "fde37786e31412999610883b1461c2c21d79e8e72ac6c54dbe357528a25c4e80",
+          "source": "31700293213fdc03ce7a64734595e91a44dbcdd51f67df442a93bb767e8f394c",
+          "line": 719
+        },
+        "feature_changed": false
+      },
+      "PersonalContextReviewModal._commit_finished": {
+        "olddev": {
+          "ast": "f0e37eb0519c5462e0a2257c62127f8c1713f9ac1e0d10af5062a102af8036a5",
+          "source": "ba00ecedff18762d39c4b2fcf901e18749032cb9b841f0e7037794884f055bc7",
+          "line": 694
+        },
+        "dev": {
+          "ast": "f67355cc9dfe256c79b01dd556d97c14739ba0b2d29b3284ce9330023bd812e6",
+          "source": "d9b599e989dbe9f88f567e90dbd5b91b9decbca35ed5d998131123425f039a13",
+          "line": 704
+        },
+        "BASE": {
+          "ast": "f0e37eb0519c5462e0a2257c62127f8c1713f9ac1e0d10af5062a102af8036a5",
+          "source": "ba00ecedff18762d39c4b2fcf901e18749032cb9b841f0e7037794884f055bc7",
+          "line": 694
+        },
+        "feature_changed": false
+      },
+      "PersonalContextReviewModal.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "722174539e96f288b45cecbf7d1866f088f3b541f9aea4f34eb2b350226bcd9c",
+          "source": "8e5226e06421ce303bcf0caa60778738c62783632485dfc9befcbc01d8e8fa08",
+          "line": 769
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "_quit_unless_busy": {
+        "olddev": null,
+        "dev": {
+          "ast": "b668fdfae9f10a188357d3510dac820cff4e14eb0fca5c2d425ca9119b2620ce",
+          "source": "851fe2fddeb7228e3e2f14ebebe8b693f89b997d7e7acd93764a4891f11590a3",
+          "line": 879
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/modal_dismissal.py": {
+      "SafeModalDismissMixin": {
+        "olddev": {
+          "ast": "b73fc9905661ee6cb7482d29d6f12a33ed4919a34fd0c634e62b11bae9c513b5",
+          "source": "fa99cce828d40498a1f1323ca3142392f7c7db1e95564fc8fa36debcee9c8fef",
+          "line": 234
+        },
+        "dev": {
+          "ast": "7372da523784983688224bd87ab87122118becf18283bb2753e05ea34963951b",
+          "source": "e18a5bb09b01fee9c05a22d118a11318a6b4031e740e40672b8a6b8693bf0303",
+          "line": 236
+        },
+        "BASE": {
+          "ast": "b73fc9905661ee6cb7482d29d6f12a33ed4919a34fd0c634e62b11bae9c513b5",
+          "source": "fa99cce828d40498a1f1323ca3142392f7c7db1e95564fc8fa36debcee9c8fef",
+          "line": 234
+        },
+        "feature_changed": false
+      },
+      "SafeModalDismissMixin._finish_pending_close": {
+        "olddev": null,
+        "dev": {
+          "ast": "2feada06ee115efeb60f2286031bf1d5d26603318355d056048dc3711c206104",
+          "source": "c96cc6158f888dd9b8793d28568e4e0a6ea5b057ad3227c9c5d682a664201ae4",
+          "line": 430
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "SafeModalDismissMixin.dismiss": {
+        "olddev": {
+          "ast": "e29e30f66a3e4b924255f80fa206ed7530fe8845bc2ba7a496b00cdbdc71d69c",
+          "source": "18d7f946d8e45859ee558466c7a2ac6d3788681edbbbaca1c5134aff4cc3b2e3",
+          "line": 311
+        },
+        "dev": {
+          "ast": "1c968c28bcfeb4047e30432d2f6dfed2d9bad6d202ec9e0ae402a988a9bed4e6",
+          "source": "bc9bf2a34edbb314e9834b6f68a46a26211dabc765ee98b15f1890c0158feb28",
+          "line": 318
+        },
+        "BASE": {
+          "ast": "e29e30f66a3e4b924255f80fa206ed7530fe8845bc2ba7a496b00cdbdc71d69c",
+          "source": "18d7f946d8e45859ee558466c7a2ac6d3788681edbbbaca1c5134aff4cc3b2e3",
+          "line": 311
+        },
+        "feature_changed": false
+      },
+      "SafeModalDismissMixin.dismiss_safe_once_when_on_top": {
+        "olddev": null,
+        "dev": {
+          "ast": "fb9b2e15367abddd137f814d67e252999aac12b6102e9fb3988f5cd43b4e894a",
+          "source": "2f9584277a096a098f617c8b8c96d0fa19160cd836f9f8a5a262ed92fe325393",
+          "line": 386
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "SafeModalDismissMixin.on_mount": {
+        "olddev": {
+          "ast": "499d38cf08802e551c5a32b845cf05d3b59cff8b5871988e21eed340a16e1015",
+          "source": "26fbd1efb0de705f5decc5f0bae8ce0dd9f5fabe8a7970fe93c34fbc999beeba",
+          "line": 249
+        },
+        "dev": {
+          "ast": "b81df42d4e1ec197cc473358efca29e26fbbf37b359f8bd57cb952e4b4e95ffc",
+          "source": "bd50f19bc04db9788d21c9c64c5e476128a56be7932b0e8d706a07fabb62c094",
+          "line": 254
+        },
+        "BASE": {
+          "ast": "499d38cf08802e551c5a32b845cf05d3b59cff8b5871988e21eed340a16e1015",
+          "source": "26fbd1efb0de705f5decc5f0bae8ce0dd9f5fabe8a7970fe93c34fbc999beeba",
+          "line": 249
+        },
+        "feature_changed": false
+      },
+      "SafeModalDismissMixin.on_screen_resume": {
+        "olddev": null,
+        "dev": {
+          "ast": "4d2388d94bf61a46ff2130a7b530023bbc23e87ee4d314854342ae9c8fc8d6f8",
+          "source": "10fbdf0affa5453a9696602ab7ff28a685d6239a624f3eecfdf8802219a2bee8",
+          "line": 425
+        },
+        "BASE": null,
+        "feature_changed": false
+      },
+      "SafeModalDismissMixin.on_unmount": {
+        "olddev": {
+          "ast": "eb5448d3313a78e485c4579c386799f1abe1ab3dc8cf14173c9010bd983b9672",
+          "source": "af4a95f18c32881925a895520641dd9d87133fd336e4404cc9d67156555f1cb9",
+          "line": 270
+        },
+        "dev": {
+          "ast": "9f68e8e10e75c13654ba50dec2cbfb0e7ad1b0e93b7fcf67d72f038962bf1882",
+          "source": "10e0f4d00714a3f0daeb464e8d8594f3559edb56b9ee3fc93d8b3c62765c6978",
+          "line": 276
+        },
+        "BASE": {
+          "ast": "eb5448d3313a78e485c4579c386799f1abe1ab3dc8cf14173c9010bd983b9672",
+          "source": "af4a95f18c32881925a895520641dd9d87133fd336e4404cc9d67156555f1cb9",
+          "line": 270
+        },
+        "feature_changed": false
+      },
+      "_SafeModalHost": {
+        "olddev": {
+          "ast": "1f3fbcc80f6d4e37634f025c5754140a954b4a7930930dd2acc65d662db5cc16",
+          "source": "7d7ac6483154d7445d973bdb6cf22aa29a8cfb26d51c51e67f726b839a4710e9",
+          "line": 22
+        },
+        "dev": {
+          "ast": "b6307b2de5478172fd7ce2526db90c282fb713a8fe083b4f44f451af956756c3",
+          "source": "3e2f2d7ecaa98c1696d3d9690bfc4630ee83ff1b7cca09eed9d637d5f098f902",
+          "line": 22
+        },
+        "BASE": {
+          "ast": "1f3fbcc80f6d4e37634f025c5754140a954b4a7930930dd2acc65d662db5cc16",
+          "source": "7d7ac6483154d7445d973bdb6cf22aa29a8cfb26d51c51e67f726b839a4710e9",
+          "line": 22
+        },
+        "feature_changed": false
+      },
+      "_SafeModalHost.call_next": {
+        "olddev": null,
+        "dev": {
+          "ast": "8074a23ccc9d47fe8bbca881d89845b8efb1ef0dd30cbb44f43b6551ca02aed5",
+          "source": "7f2a2841242a54b0a8e32f8d63ab48eb2351d8a7b706077a2235dede6dc5c1c8",
+          "line": 37
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/project_skills_import_modal.py": {
+      "ProjectSkillsImportModal": {
+        "olddev": {
+          "ast": "1c29c46f20478de1faffed4afb587024a54aef2a860d7ebd7f48ebb8b4d23190",
+          "source": "e56e10e787599340cb5bb9426620102090f12fff8922b12a2d55a0a47631d5cd",
+          "line": 80
+        },
+        "dev": {
+          "ast": "e41768cd9623ac4222f2ecd817a7a7b45b7a9ac62b7e503aff298cedab048207",
+          "source": "4e24d8ceb0ba1ce51ccda0886ec630a7d38e23e3f611644e2030078d2c7fd270",
+          "line": 80
+        },
+        "BASE": {
+          "ast": "1c29c46f20478de1faffed4afb587024a54aef2a860d7ebd7f48ebb8b4d23190",
+          "source": "e56e10e787599340cb5bb9426620102090f12fff8922b12a2d55a0a47631d5cd",
+          "line": 80
+        },
+        "feature_changed": false
+      },
+      "ProjectSkillsImportModal.confirm_quit": {
+        "olddev": null,
+        "dev": {
+          "ast": "afa46452d2ab4f3ab31dc8cec4d673645d6a46c1f255651a0871c1946f6e2a47",
+          "source": "4e68a487969b7e804295ea9f7d04bbb57bddb26c04566a0d41e8d56fe550def6",
+          "line": 287
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    },
+    "tldw_chatbook/Widgets/quit_while_working.py": {
+      "refuse_quit_while_working": {
+        "olddev": null,
+        "dev": {
+          "ast": "5fc770e0ea34f1027b55626be1b690b6dd8e92aa524bf34840fbe18d6eefe469",
+          "source": "4490be32a72439ad0bba0f96a59862c6db380ec26ab095f86db69032bd01060f",
+          "line": 65
+        },
+        "BASE": null,
+        "feature_changed": false
+      }
+    }
+  }
+}

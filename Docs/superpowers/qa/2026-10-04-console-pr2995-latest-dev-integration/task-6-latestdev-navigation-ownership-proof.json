@@ -1,0 +1,52 @@
+{
+  "diagnostic_source": "9ce98df2e7cda8b444b3bed90f27c1d382677871",
+  "pinned_integrated_dev": "67fc5310471823262eb6ce344a539e699784bed8",
+  "all_production_paths_exact": true,
+  "production_paths": 3047,
+  "diagnostic_test_sha256": "0c94528937bb7869e7417339704fad61c0ec307034823df242f42ba113f8c261",
+  "overlay_delta": "existing helper decoration plus synthetic ownership observations and delegating save_state wrapper inside selected test only",
+  "before_navigation": {
+    "runtime_is_chat": true,
+    "runtime_is_top": true,
+    "top_composer_text": "half",
+    "top": "ChatScreen",
+    "screen_is_top": true,
+    "stack": [
+      [
+        "Screen",
+        false
+      ],
+      [
+        "ChatScreen",
+        false
+      ],
+      [
+        "ChatScreen",
+        true
+      ]
+    ],
+    "focused_type": "ConsoleComposerBar",
+    "focused_id": "console-native-composer",
+    "composer_text": "half",
+    "visible_is_first": true,
+    "draft": "",
+    "active_is_first": true
+  },
+  "save_calls": [
+    {
+      "is_test": false,
+      "is_top": false,
+      "runtime_is_screen": false,
+      "composer": "",
+      "before": {
+        "cb983bda-e7bb-4ab1-894f-0bbfbf97397c": "",
+        "e22ce1a8-d55d-4618-95c1-794c49677c37": ""
+      },
+      "after": {
+        "cb983bda-e7bb-4ab1-894f-0bbfbf97397c": "",
+        "e22ce1a8-d55d-4618-95c1-794c49677c37": ""
+      }
+    }
+  ],
+  "outcome": "original empty-draft assertion failed; only non-top/non-runtime duplicate screen was serialized"
+}

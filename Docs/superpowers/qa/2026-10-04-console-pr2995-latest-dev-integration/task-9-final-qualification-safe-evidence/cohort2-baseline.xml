@@ -1,0 +1,607 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="11" skipped="0" tests="11" time="2.899" timestamp="2026-10-04T09:18:17.507528-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_fallback_fires_when_missing_and_always_fires" time="0.203"><failure message="AssertionError: fallback&#10;assert [] == [True]&#10;  &#10;  Right contains one more item: True&#10;  Use -v to get more diff">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e5ea300&gt;
+
+    def test_fallback_fires_when_missing_and_always_fires(monkeypatch):
+        for mode, rationales in (("fallback", ("",)), ("always", ("why",))):
+            _armed(monkeypatch, mode)
+            ctrl = _bare_controller()
+            ctrl._pending_approval_rounds["r1"] = {
+                "event": threading.Event(), "summary_fired": False,
+            }
+            ctrl._maybe_fire_permission_summary(_payload(rationales))
+&gt;           assert _ThreadStub.started == [True], mode
+E           AssertionError: fallback
+E           assert [] == [True]
+E             
+E             Right contains one more item: True
+E             Use -v to get more diff
+
+Tests/Chat/test_permission_summary_wiring.py:115: AssertionError</failure></testcase><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_parked_round_fires_once_on_attach_remount" time="0.035"><failure message="AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e8dce90&gt;
+
+    def test_parked_round_fires_once_on_attach_remount(monkeypatch):
+        ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
+&gt;       assert ctrl.remount_pending_approval_for_active_session() is True
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_permission_summary_wiring.py:157: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10e8de210&gt;
+
+    def remount_pending_approval_for_active_session(self) -&gt; bool:
+        """Mount the ACTIVE session's still-armed approval round, if any.
+    
+        task-15860 Task 5. UI THREAD (called from
+        ``ConsoleRuntime.attach_view``, which runs on it). Re-derives the
+        card from ``_parked_approval_payloads`` exactly as
+        ``switch_session`` does -- same single source of truth, no second
+        copy of "what is this session's card showing".
+    
+        Deliberately mounts NOTHING when no round is armed: pushing
+        ``None`` here would clear a card on every new claim, and an attach
+        is not a reason to hide anything.
+    
+        PR0 (task-15661, fixed): ``_parked_approval_payloads`` is keyed by
+        ROUND now, so two rounds armed for one session each keep their own
+        payload. This mounts the session's FIFO HEAD -- the oldest-armed
+        round -- and each later sibling mounts in turn as the head ahead of
+        it resolves. Covered by ``Tests/UI/test_console_headless_approval.
+        py::test_two_headless_rounds_each_mount_in_turn``.
+    
+        Returns:
+            True when a card was mounted.
+        """
+        session_id = self.store.active_session_id
+        if not session_id:
+            return False
+&gt;       if self.set_pending_decision is not None:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?
+
+tldw_chatbook/Chat/console_chat_controller.py:17190: AttributeError</failure></testcase><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_consumed_flag_prevents_refire_on_attach_remount" time="0.034"><failure message="AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e8c9d30&gt;
+
+    def test_consumed_flag_prevents_refire_on_attach_remount(monkeypatch):
+        ctrl, _payload_, mounted = _parked_controller(monkeypatch, "always")
+        ctrl._pending_approval_rounds["r1"]["summary_fired"] = True  # consumed
+&gt;       assert ctrl.remount_pending_approval_for_active_session() is True
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_permission_summary_wiring.py:171: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10e8c89e0&gt;
+
+    def remount_pending_approval_for_active_session(self) -&gt; bool:
+        """Mount the ACTIVE session's still-armed approval round, if any.
+    
+        task-15860 Task 5. UI THREAD (called from
+        ``ConsoleRuntime.attach_view``, which runs on it). Re-derives the
+        card from ``_parked_approval_payloads`` exactly as
+        ``switch_session`` does -- same single source of truth, no second
+        copy of "what is this session's card showing".
+    
+        Deliberately mounts NOTHING when no round is armed: pushing
+        ``None`` here would clear a card on every new claim, and an attach
+        is not a reason to hide anything.
+    
+        PR0 (task-15661, fixed): ``_parked_approval_payloads`` is keyed by
+        ROUND now, so two rounds armed for one session each keep their own
+        payload. This mounts the session's FIFO HEAD -- the oldest-armed
+        round -- and each later sibling mounts in turn as the head ahead of
+        it resolves. Covered by ``Tests/UI/test_console_headless_approval.
+        py::test_two_headless_rounds_each_mount_in_turn``.
+    
+        Returns:
+            True when a card was mounted.
+        """
+        session_id = self.store.active_session_id
+        if not session_id:
+            return False
+&gt;       if self.set_pending_decision is not None:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?
+
+tldw_chatbook/Chat/console_chat_controller.py:17190: AttributeError</failure></testcase><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_switch_session_promotes_parked_round_and_fires_once" time="0.032"><failure message="AttributeError: 'ConsoleChatController' object has no attribute '_console_answerable_decision_by_session'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e8dcbf0&gt;
+
+    def test_switch_session_promotes_parked_round_and_fires_once(monkeypatch):
+        ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
+        ctrl.store.active_session_id = "s0"  # switching away from s0 onto s1
+        ctrl.store.switch_session = lambda session_id: SimpleNamespace(id=session_id)
+        ctrl.mark_session_visited = lambda session_id: None
+        ctrl._clear_terminal_run_state = lambda **_: None
+        ctrl._remount_parked_skill_install = lambda session_id: None
+        ctrl._remount_parked_skill_script = lambda session_id: None
+&gt;       ctrl.switch_session("s1")
+
+Tests/Chat/test_permission_summary_wiring.py:184: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tldw_chatbook/Chat/console_chat_controller.py:15222: in switch_session
+    self.set_answerable_decision(previous_session_id, None)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10e8c3f80&gt;
+session_id = 's0', decision_id = None
+
+    def set_answerable_decision(self, session_id: str, decision_id: str | None) -&gt; bool:
+        """Update Console's claim without erasing another visible owner's claim."""
+        with self._approval_state_lock:
+            self._interrupt_host.decision_view_revision += 1
+&gt;           self._console_answerable_decision_by_session.pop(session_id, None)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'ConsoleChatController' object has no attribute '_console_answerable_decision_by_session'
+
+tldw_chatbook/Chat/console_chat_controller.py:16966: AttributeError</failure></testcase><testcase classname="Tests.Chat.test_permission_summary_wiring" name="test_remount_head_helper_fires_promoted_sibling_once" time="0.033"><failure message="AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e8dcb90&gt;
+
+    def test_remount_head_helper_fires_promoted_sibling_once(monkeypatch):
+        # Teardown/revocation promotion: the resolved head was unparked and its
+        # round popped; `_remount_head` promotes the queued sibling r2.
+        ctrl, _head, mounted = _parked_controller(monkeypatch, "always")
+        parked = ctrl._parked_approval_payloads
+        parked["r2"] = dict(parked["r1"], round_id="r2")
+        parked.pop("r1")
+        ctrl._pending_approval_rounds.pop("r1")
+        ctrl._pending_approval_rounds["r2"] = {
+            "event": threading.Event(), "summary_fired": False,
+        }
+    
+        class _InlineApp:
+            @staticmethod
+            def call_from_thread(fn, *args):
+                fn(*args)  # run the UI-thread callback inline
+    
+        ctrl.app = _InlineApp()
+&gt;       ctrl._remount_head(parked, ctrl.set_pending_approval, "s1")
+
+Tests/Chat/test_permission_summary_wiring.py:211: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10e8c8aa0&gt;
+store = {'r2': {'calls': [{'llm_name': 't', 'rationale': 'why'}], 'round_id': 'r2', 'session_id': 's1', 'summary': None}}
+setter = &lt;built-in method append of list object at 0x11b3fea40&gt;
+session_id = 's1'
+
+    def _remount_head(
+        self,
+        store: dict[str, dict[str, Any]],
+        setter: Callable[[dict[str, Any] | None], None] | None,
+        session_id: str | None,
+    ) -&gt; None:
+        """Push ``store``'s head for ``session_id`` through ``setter`` on the UI thread.
+    
+        The pre-host body, kept verbatim: every kind's activation re-derive
+        and the approval attach path call it with their own store and
+        setter, and it fires the ADR-090 permission summary for any dict
+        payload -- ``_maybe_fire_permission_summary`` itself ignores round
+        ids it does not know, so a skill payload passes through untouched.
+    
+        Args:
+            store: A per-kind parked-payload dict.
+            setter: The kind's UI-thread setter, or None to do nothing.
+            session_id: The session whose head to push; None means the
+                store's active session.
+        """
+        if self.app is None:
+            return
+    
+&gt;       if self.set_pending_decision is not None:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute 'set_pending_decision'. Did you mean: 'expire_pending_decisions'?
+
+tldw_chatbook/Chat/console_chat_controller.py:17114: AttributeError</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_default_chat_local_provider_uses_scratch_not_config_or_cwd" time="0.036"><failure message="AttributeError: 'ConsoleChatController' object has no attribute 'store'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e838260&gt;
+tmp_path = PosixPath('/private/tmp/task9-final-baseline-attribution/test_default_chat_local_provid0')
+
+    def test_default_chat_local_provider_uses_scratch_not_config_or_cwd(
+        monkeypatch,
+        tmp_path,
+    ):
+        configured = tmp_path / "configured"
+        cwd = tmp_path / "cwd"
+        configured.mkdir()
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        monkeypatch.setattr(
+            controller_mod,
+            "get_cli_setting",
+            _console_settings(enabled=True, workspace_root=str(configured)),
+        )
+        scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
+        snapshot = scratch_spaces.snapshot("chat-a")
+        context = _test_execution_context(
+            snapshot,
+            session_id="chat-a",
+            tool_configuration={
+                "local_tools_enabled": True,
+                "workspace_root": str(configured),
+            },
+        )
+        controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+        controller._scratch_spaces = scratch_spaces
+    
+&gt;       provider, review = _compose_local_provider(
+            controller,
+            session_id="chat-a",
+            turn_context=context,
+        )
+
+/private/tmp/task9-original-cd15/Tests/Chat/test_console_local_review_hook.py:958: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/private/tmp/task9-original-cd15/Tests/Chat/test_console_local_review_hook.py:783: in _compose_local_provider
+    return ConsoleChatController._compose_local_provider(
+/private/tmp/task9-original-cd15/tldw_chatbook/Chat/console_chat_controller.py:18174: in _compose_local_provider
+    **self._character_wiring(session_id),
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10e8c3a40&gt;
+session_id = 'chat-a'
+
+    def _character_wiring(self, session_id: str | None) -&gt; dict[str, Any]:
+        """The ``character_service`` kwarg for ``LocalToolProvider`` (TASK-32954).
+    
+        Empty (tools not registered) without a session or an app. The read
+        guard is per SESSION, not per turn, so a full read in one turn permits
+        the save in the next (spec §3.1).
+    
+        Args:
+            session_id: THIS run's owning session id.
+    
+        Returns:
+            ``{"character_service": CharacterToolService}`` or ``{}``.
+        """
+        if session_id is None or self.app is None:
+            return {}
+&gt;       session = next((s for s in self.store.sessions() if s.id == session_id), None)
+                                   ^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute 'store'
+
+/private/tmp/task9-original-cd15/tldw_chatbook/Chat/console_chat_controller.py:18495: AttributeError</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_wires_the_sessions_exact_todo_store" time="0.037"><failure message="AttributeError: 'ConsoleChatController' object has no attribute '_character_read_guards'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e8ca7b0&gt;
+tmp_path = PosixPath('/private/tmp/task9-final-baseline-attribution/test_compose_local_provider_wi0')
+
+    def test_compose_local_provider_wires_the_sessions_exact_todo_store(
+        monkeypatch, tmp_path
+    ):
+        """An inactive target, not the active session, owns provider task state."""
+        from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    
+        monkeypatch.setattr(
+            controller_mod,
+            "get_cli_setting",
+            _console_settings(workspace_root=str(tmp_path)),
+        )
+        service = _FakeService(state=ALLOW)
+        controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
+        controller.store = ConsoleChatStore()
+        target = controller.store.create_session(title="Target", workspace_id="ws")
+        active = controller.store.create_session(title="Active", workspace_id="ws")
+        assert controller.store.active_session_id == active.id
+        markers = []
+        controller._agent_bridge = SimpleNamespace(
+            append_todo_marker=lambda session_id, todos: markers.append(
+                (session_id, list(todos))
+            )
+        )
+    
+&gt;       local_provider, _hook = _compose_local_provider(controller, session_id=target.id)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_local_review_hook.py:1649: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_local_review_hook.py:783: in _compose_local_provider
+    return ConsoleChatController._compose_local_provider(
+tldw_chatbook/Chat/console_chat_controller.py:18174: in _compose_local_provider
+    **self._character_wiring(session_id),
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10e8dcf50&gt;
+session_id = '741b98ce-96d2-422c-b92b-ffb57bbede84'
+
+    def _character_wiring(self, session_id: str | None) -&gt; dict[str, Any]:
+        """The ``character_service`` kwarg for ``LocalToolProvider`` (TASK-32954).
+    
+        Empty (tools not registered) without a session or an app. The read
+        guard is per SESSION, not per turn, so a full read in one turn permits
+        the save in the next (spec §3.1).
+    
+        Args:
+            session_id: THIS run's owning session id.
+    
+        Returns:
+            ``{"character_service": CharacterToolService}`` or ``{}``.
+        """
+        if session_id is None or self.app is None:
+            return {}
+        session = next((s for s in self.store.sessions() if s.id == session_id), None)
+        if session is None:
+            return {}
+        from tldw_chatbook.Tools.character_tool_service import (
+            CharacterReadGuard,
+            CharacterToolService,
+        )
+    
+&gt;       guard = self._character_read_guards.setdefault(session_id, CharacterReadGuard())
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute '_character_read_guards'
+
+tldw_chatbook/Chat/console_chat_controller.py:18503: AttributeError</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_without_bridge_registers_no_todo_spec" time="0.034"><failure message="AttributeError: 'ConsoleChatController' object has no attribute '_character_read_guards'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e8c3e00&gt;
+tmp_path = PosixPath('/private/tmp/task9-final-baseline-attribution/test_compose_local_provider_wi1')
+
+    def test_compose_local_provider_without_bridge_registers_no_todo_spec(
+        monkeypatch, tmp_path
+    ):
+        """A live session without a transcript bridge exposes no task capability."""
+        from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    
+        monkeypatch.setattr(
+            controller_mod,
+            "get_cli_setting",
+            _console_settings(workspace_root=str(tmp_path)),
+        )
+        controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
+        controller.store = ConsoleChatStore()
+        session = controller.store.create_session(workspace_id="ws")
+        controller._agent_bridge = None
+    
+&gt;       local_provider, _hook = _compose_local_provider(controller, session_id=session.id)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_local_review_hook.py:1695: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_local_review_hook.py:783: in _compose_local_provider
+    return ConsoleChatController._compose_local_provider(
+tldw_chatbook/Chat/console_chat_controller.py:18174: in _compose_local_provider
+    **self._character_wiring(session_id),
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;tldw_chatbook.Chat.console_chat_controller.ConsoleChatController object at 0x10e8cb290&gt;
+session_id = 'f31b1423-349d-45c5-9ca3-74bd963fe98b'
+
+    def _character_wiring(self, session_id: str | None) -&gt; dict[str, Any]:
+        """The ``character_service`` kwarg for ``LocalToolProvider`` (TASK-32954).
+    
+        Empty (tools not registered) without a session or an app. The read
+        guard is per SESSION, not per turn, so a full read in one turn permits
+        the save in the next (spec §3.1).
+    
+        Args:
+            session_id: THIS run's owning session id.
+    
+        Returns:
+            ``{"character_service": CharacterToolService}`` or ``{}``.
+        """
+        if session_id is None or self.app is None:
+            return {}
+        session = next((s for s in self.store.sessions() if s.id == session_id), None)
+        if session is None:
+            return {}
+        from tldw_chatbook.Tools.character_tool_service import (
+            CharacterReadGuard,
+            CharacterToolService,
+        )
+    
+&gt;       guard = self._character_read_guards.setdefault(session_id, CharacterReadGuard())
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'ConsoleChatController' object has no attribute '_character_read_guards'
+
+tldw_chatbook/Chat/console_chat_controller.py:18503: AttributeError</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_hook_clears_stamps_before_gating" time="0.052"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">tmp_path = PosixPath('/private/tmp/task9-final-baseline-attribution/test_hook_clears_stamps_before0')
+
+    def test_hook_clears_stamps_before_gating(tmp_path):
+&gt;       p = provider(ASK, tmp_path)
+            ^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_local_review_hook.py:211: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_local_review_hook.py:207: in provider
+    return LocalToolProvider(workspace_root=tmp_path, resolve_state=lambda hub: state)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Agents/local_tool_provider.py:830: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:5162: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10a725d30&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired</failure></testcase><testcase classname="Tests.Chat.test_console_local_review_hook" name="test_compose_local_provider_eligible" time="0.038"><failure message="tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e8cb290&gt;
+tmp_path = PosixPath('/private/tmp/task9-final-baseline-attribution/test_compose_local_provider_el0')
+
+    def test_compose_local_provider_eligible(monkeypatch, tmp_path):
+        monkeypatch.setattr(
+            controller_mod,
+            "get_cli_setting",
+            _console_settings(workspace_root=str(tmp_path)),
+        )
+        service = _FakeService()
+        controller = _bare_controller(SimpleNamespace(unified_mcp_service=service))
+    
+&gt;       local_provider, hook = _compose_local_provider(
+            controller,
+        )
+
+Tests/Chat/test_console_local_review_hook.py:909: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_local_review_hook.py:783: in _compose_local_provider
+    return ConsoleChatController._compose_local_provider(
+tldw_chatbook/Chat/console_chat_controller.py:18145: in _compose_local_provider
+    provider = LocalToolProvider(
+tldw_chatbook/Agents/local_tool_provider.py:830: in __init__
+    selected_specs = _default_specs(
+tldw_chatbook/Agents/local_tool_provider.py:5162: in _default_specs
+    get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:9511: in get_cli_setting
+    config = load_cli_config_and_ensure_existence()  # Ensures config is loaded
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:7112: in load_cli_config_and_ensure_existence
+    return _load_cli_config_bootstrap(force_reload=force_reload).config
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = &lt;tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10a725d30&gt;
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+&gt;               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired</failure></testcase><testcase classname="Tests.Agents.test_builtin_gate_real_tool_coverage" name="test_create_note_persists_through_a_real_db_on_a_worker_thread" time="0.470"><failure message="AssertionError: {'error': 'Failed to create note: raw_source_selection_changed'}&#10;assert 'error' not in {'error': 'Failed to create note: raw_source_selection_changed'}">tmp_path = PosixPath('/private/tmp/task9-final-baseline-attribution/test_create_note_persists_thro0')
+monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x10e838890&gt;
+
+    @pytest.mark.integration
+    def test_create_note_persists_through_a_real_db_on_a_worker_thread(
+        tmp_path, monkeypatch
+    ):
+        """AC#2: the design-spec claim the nominal test never proved.
+    
+        `Tests/Agents/test_builtin_gate_live_tools.py` monkeypatches
+        `NotesInteropService` away, proving only that `asyncio.run` works off
+        the main thread. This runs the REAL `CreateNoteTool.execute` on a real
+        non-main thread against a real `CharactersRAGDB` file, twice over:
+    
+        * the PRODUCTION write path -- `_get_db` constructs its own
+          `CharactersRAGDB` (same file, `client_id=user_id`) ON the worker
+          thread, exactly as a live agent run does, and the row must be durable
+          to a main-thread reader of the same file; and
+        * the SINGLE-INSTANCE seam the spec named -- `threading.local`
+          connections + `check_same_thread=False` -- by reading through THIS
+          test's own instance from BOTH threads.
+    
+        A review finding caught the first version claiming the second while
+        exercising only the first: `_get_db` does not reuse `global_db_to_use`,
+        it re-instantiates against its path -- so "same instance across
+        threads" must be asserted on an instance this test actually holds.
+        """
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+        from tldw_chatbook.Tools import note_management_tools as nmt
+    
+        db = CharactersRAGDB(tmp_path / "worker.db", "task-696-test")
+        monkeypatch.setattr("tldw_chatbook.config.chachanotes_db", db, raising=False)
+        monkeypatch.setattr(nmt, "_resolve_user_id", lambda: "worker_user")
+        monkeypatch.setattr(nmt, "_notes_db_base_dir", lambda: str(tmp_path))
+    
+        result: dict = {}
+        error: list[BaseException] = []
+    
+        def _worker() -&gt; None:
+            assert threading.current_thread() is not threading.main_thread()
+            try:
+                result.update(
+                    asyncio.run(
+                        nmt.CreateNoteTool().execute(
+                            title="worker-thread note",
+                            content="written off the main thread",
+                        )
+                    )
+                )
+                # The single-instance cross-thread seam: THIS test's instance,
+                # used on the worker thread. `threading.local` must mint this
+                # thread its own connection rather than raise or return the
+                # main thread's.
+                note_id = result.get("note_id")
+                if note_id:
+                    result["worker_read"] = db.get_note_by_id(str(note_id))
+            except BaseException as exc:  # noqa: BLE001 -- surfaced below
+                error.append(exc)
+    
+        thread = threading.Thread(target=_worker, name="agent-worker")
+        thread.start()
+        thread.join(timeout=30)
+        assert not thread.is_alive(), "worker thread hung"
+        assert not error, f"execute raised on the worker thread: {error!r}"
+&gt;       assert "error" not in result, result
+E       AssertionError: {'error': 'Failed to create note: raw_source_selection_changed'}
+E       assert 'error' not in {'error': 'Failed to create note: raw_source_selection_changed'}
+
+Tests/Agents/test_builtin_gate_real_tool_coverage.py:170: AssertionError</failure></testcase></testsuite></testsuites>

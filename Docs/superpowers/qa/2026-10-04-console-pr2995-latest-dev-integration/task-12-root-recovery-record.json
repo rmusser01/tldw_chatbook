@@ -1,0 +1,10 @@
+{
+  "metadata_base": "99bd5b13db620435a8824b7599708e85ca8009d9",
+  "dev": "7d155170dc95557736a239a1ce7427981f4d50ec",
+  "recovery_ref": "refs/codex/pr2995-pre-task12",
+  "bundle": "/private/tmp/pr2995-task12/pre-rebase.bundle",
+  "bundle_bytes": 10309572,
+  "bundle_sha256": "979dd6b08c3d64985349d33e0b9ae595efb8f7d085342ad2262616a0f6be2474",
+  "source_review": "task-9-independent-review.md",
+  "source_review_sha256": "52ef5a52c013e6fb59dd3298c6adf7a97a980b301b01500ad60674ef08ff1a77"
+}

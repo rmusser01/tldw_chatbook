@@ -1,0 +1,74 @@
+[
+  {
+    "source": "786c1771cdd4e1311f54c4b26473808ea1cb4c31",
+    "path": "Tests/Chat/test_console_provider_gateway.py",
+    "sha256": "08240cbf0754bfc921f1e2327585f201911d25cc6314febd2f0f46b59cdd9219",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--check",
+      "--stdin-filename",
+      "Tests/Chat/test_console_provider_gateway.py",
+      "-"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "source": "786c1771cdd4e1311f54c4b26473808ea1cb4c31",
+    "path": "Tests/UI/test_console_native_chat_flow.py",
+    "sha256": "fd61fa33a7fcb1a4b929e0e269fa42b5aadc56e89d528eaa7314ce97ba03fb8d",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--check",
+      "--stdin-filename",
+      "Tests/UI/test_console_native_chat_flow.py",
+      "-"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "source": "df2ba424de63576d36d9c3e38387c84285303f1c",
+    "path": "Tests/Chat/test_console_provider_gateway.py",
+    "sha256": "8d24a4e7f65004549c176574048626859cb2f616c74a4831233fc338c3194f96",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--check",
+      "--stdin-filename",
+      "Tests/Chat/test_console_provider_gateway.py",
+      "-"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "source": "df2ba424de63576d36d9c3e38387c84285303f1c",
+    "path": "Tests/UI/test_console_native_chat_flow.py",
+    "sha256": "dc7fb3a3b2b29a32c2c89ec0b65b333d4f439be1b33689563ebd328809e0ff7d",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--check",
+      "--stdin-filename",
+      "Tests/UI/test_console_native_chat_flow.py",
+      "-"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  }
+]

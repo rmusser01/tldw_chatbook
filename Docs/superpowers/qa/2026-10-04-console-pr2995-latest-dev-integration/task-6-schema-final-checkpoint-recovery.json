@@ -1,0 +1,8 @@
+{
+  "base": "392655567f7754a394ea1e7aba8d75e81d2cadb2",
+  "ref": "refs/heads/codex/pr2995-task6-pre-schema-392655567f",
+  "bundle": "/private/tmp/pr2995-task6/pre-schema-392655567f.bundle",
+  "sha256": "38d31a05cbe0cfe9f9bc3416a33eff10cf900c83b136f7c65a64a36110769b14",
+  "verify": "The bundle contains this ref:\n392655567f7754a394ea1e7aba8d75e81d2cadb2 refs/heads/codex/pr2995-task6-pre-schema-392655567f\nThe bundle records a complete history.\nThe bundle uses this hash algorithm: sha1\n/private/tmp/pr2995-task6/pre-schema-392655567f.bundle is okay\n",
+  "dev": "057e62eaec5343ffce9445cfb32881e756dd7634"
+}

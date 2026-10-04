@@ -1,0 +1,196 @@
+[
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 14,
+      "row": 1743
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Chat/test_console_automatic_library_preparation.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "_store",
+          "end_location": {
+            "column": 14,
+            "row": 1743
+          },
+          "location": {
+            "column": 9,
+            "row": 1743
+          }
+        }
+      ],
+      "message": "Prefix it with an underscore or any other dummy variable pattern"
+    },
+    "location": {
+      "column": 9,
+      "row": 1743
+    },
+    "message": "Unpacked variable `store` is never used",
+    "name": "unused-unpacked-variable",
+    "noqa_row": 1743,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "RUF059",
+    "end_location": {
+      "column": 16,
+      "row": 1788
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Chat/test_console_automatic_library_preparation.py",
+    "fix": {
+      "applicability": "unsafe",
+      "edits": [
+        {
+          "content": "_gateway",
+          "end_location": {
+            "column": 16,
+            "row": 1788
+          },
+          "location": {
+            "column": 9,
+            "row": 1788
+          }
+        }
+      ],
+      "message": "Prefix it with an underscore or any other dummy variable pattern"
+    },
+    "location": {
+      "column": 9,
+      "row": 1788
+    },
+    "message": "Unpacked variable `gateway` is never used",
+    "name": "unused-unpacked-variable",
+    "noqa_row": 1788,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-unpacked-variable"
+  },
+  {
+    "cell": null,
+    "code": "BLE001",
+    "end_location": {
+      "column": 29,
+      "row": 2786
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Chat/test_console_automatic_library_preparation.py",
+    "fix": null,
+    "location": {
+      "column": 16,
+      "row": 2786
+    },
+    "message": "Do not catch blind exception: `BaseException`",
+    "name": "blind-except",
+    "noqa_row": 2786,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/blind-except"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 75,
+      "row": 29
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Chat/test_console_dispatch_recovery_fix_round3.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nfrom types import SimpleNamespace\nfrom typing import Any\n\nimport pytest\n\nfrom Tests.Chat.test_console_automatic_library_preparation import (\n    _capture_staged_evidence,\n    _PolicyCoordinator,\n    _real_retrieval_controller_for_launch,\n    _staged_evidence_launch,\n    _wire_retrieval_evidence_owner,\n)\nfrom Tests.Chat.test_console_dispatch_recovery_fix_round2 import (\n    _assert_exact_postcommit_recovery,\n)\nfrom Tests.Chat.test_console_durable_turn_fix_round1 import (\n    _install_real_effect_failure,\n)\nfrom Tests.Chat.test_console_first_send_atomicity import _controller\nfrom Tests.private_profile import private_profile_test\nfrom tldw_chatbook.Chat.console_chat_controller import ConsoleChatController\nfrom tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve\nfrom tldw_chatbook.Chat.console_runtime import ConsoleRuntime\nfrom tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 32
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "I001",
+    "end_location": {
+      "column": 75,
+      "row": 28
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Chat/test_console_dispatch_recovery_fix_round4.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from __future__ import annotations\n\nfrom types import SimpleNamespace\nfrom typing import Any, Callable\n\nimport pytest\n\nfrom Tests.Chat.console_close_helpers import close_controller_session\nfrom Tests.Chat.test_console_automatic_library_preparation import (\n    _capture_staged_evidence,\n    _PolicyCoordinator,\n    _real_retrieval_controller_for_launch,\n    _staged_evidence_launch,\n    _wire_retrieval_evidence_owner,\n)\nfrom Tests.Chat.test_console_dispatch_recovery import _restored_store\nfrom Tests.Chat.test_console_durable_turn_fix_round1 import (\n    _install_real_effect_failure,\n)\nfrom Tests.Chat.test_console_durable_turn_fix_round2 import _submit_queued\nfrom Tests.Chat.test_console_first_send_atomicity import _controller\nfrom Tests.private_profile import private_profile_test\nfrom tldw_chatbook.Chat.console_library_policy import ConsoleAutoRetrieve\nfrom tldw_chatbook.Chat.console_runtime import ConsoleRuntime\nfrom tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module\n\n\n",
+          "end_location": {
+            "column": 1,
+            "row": 31
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Organize imports"
+    },
+    "location": {
+      "column": 1,
+      "row": 3
+    },
+    "message": "Import block is un-sorted or un-formatted",
+    "name": "unsorted-imports",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"
+  },
+  {
+    "cell": null,
+    "code": "UP035",
+    "end_location": {
+      "column": 33,
+      "row": 6
+    },
+    "filename": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Chat/test_console_dispatch_recovery_fix_round4.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from typing import Any\nfrom collections.abc import Callable",
+          "end_location": {
+            "column": 33,
+            "row": 6
+          },
+          "location": {
+            "column": 1,
+            "row": 6
+          }
+        }
+      ],
+      "message": "Import from `collections.abc`"
+    },
+    "location": {
+      "column": 1,
+      "row": 6
+    },
+    "message": "Import from `collections.abc` instead: `Callable`",
+    "name": "deprecated-import",
+    "noqa_row": 6,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/deprecated-import"
+  }
+]

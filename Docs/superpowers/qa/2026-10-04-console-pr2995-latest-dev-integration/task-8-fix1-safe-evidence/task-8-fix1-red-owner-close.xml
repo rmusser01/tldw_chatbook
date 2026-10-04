@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="4" time="6.508" timestamp="2026-10-04T05:10:25.352918-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_console_chat_create_integration" name="test_creation_sql_read_does_not_block_retirement[primary-close]" time="1.688"><failure message="AssertionError: SQLite read held the retirement registry lock&#10;assert False">Tests/Chat/test_console_chat_create_integration.py:1731: in test_creation_sql_read_does_not_block_retirement
+    assert completed_while_read_parked, "SQLite read held the retirement registry lock"
+E   AssertionError: SQLite read held the retirement registry lock
+E   assert False</failure></testcase><testcase classname="Tests.Chat.test_console_chat_create_integration" name="test_creation_sql_read_does_not_block_retirement[primary-revoke]" time="1.521"><failure message="AssertionError: SQLite read held the retirement registry lock&#10;assert False">Tests/Chat/test_console_chat_create_integration.py:1731: in test_creation_sql_read_does_not_block_retirement
+    assert completed_while_read_parked, "SQLite read held the retirement registry lock"
+E   AssertionError: SQLite read held the retirement registry lock
+E   assert False</failure></testcase><testcase classname="Tests.Chat.test_console_chat_create_integration" name="test_creation_sql_read_does_not_block_retirement[subagent-close]" time="1.497"><failure message="AssertionError: SQLite read held the retirement registry lock&#10;assert False">Tests/Chat/test_console_chat_create_integration.py:1731: in test_creation_sql_read_does_not_block_retirement
+    assert completed_while_read_parked, "SQLite read held the retirement registry lock"
+E   AssertionError: SQLite read held the retirement registry lock
+E   assert False</failure></testcase><testcase classname="Tests.Chat.test_console_chat_create_integration" name="test_creation_sql_read_does_not_block_retirement[subagent-revoke]" time="1.494"><failure message="AssertionError: SQLite read held the retirement registry lock&#10;assert False">Tests/Chat/test_console_chat_create_integration.py:1731: in test_creation_sql_read_does_not_block_retirement
+    assert completed_while_read_parked, "SQLite read held the retirement registry lock"
+E   AssertionError: SQLite read held the retirement registry lock
+E   assert False</failure></testcase></testsuite></testsuites>

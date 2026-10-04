@@ -1,0 +1,24 @@
+{
+  "selection": [
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_a_failed_compaction_keeps_the_hold_and_says_why",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_a_hold_after_hooks_resumes_without_repeating_its_side_effects",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_held_send_is_not_also_a_turn_recovery",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_held_send_resumes_and_replies",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_send_that_cannot_fit_keeps_the_message_recoverable",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_a_send_that_cannot_fit_is_refused_before_commit_with_the_alert",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_an_abandoned_resumed_hold_leaves_no_answered_id_behind",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_an_ask_hold_pauses_the_send_before_it_is_committed",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_cancel_sends_nothing_and_returns_the_message_to_the_composer",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_compact_and_send_summarizes_then_sends_the_held_message_once",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_hook_context_that_cannot_fit_is_refused_before_commit",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_send_without_compacting_holds_even_if_the_policy_turned_automatic",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_send_without_compacting_past_the_ceiling_drops_older_turns_to_fit",
+    "Tests/Chat/test_console_compaction_ask_hold.py::test_send_without_compacting_sends_with_no_summary_call",
+    "Tests/Chat/test_console_context_compaction.py::test_known_overflow_still_blocks_when_compaction_is_unavailable",
+    "Tests/Chat/test_console_staged_evidence_dispatch_pin.py::test_a_composer_send_uses_the_evidence_staged_at_dispatch",
+    "Tests/Chat/test_console_staged_evidence_dispatch_pin.py::test_a_resumed_turn_does_not_take_evidence_staged_while_it_was_paused",
+    "Tests/Chat/test_console_turn_preparation.py::test_pause_actions_are_the_exact_frozen_data_matrix",
+    "Tests/Chat/test_console_turn_preparation.py::test_transition_cartesian_matrix_matches_only_the_frozen_legal_edges"
+  ],
+  "reason": "First execution of previously unexecuted compaction hold, staged-dispatch pin, concrete capacity and preparation transition owners; original cancellation failure under attribution separately."
+}

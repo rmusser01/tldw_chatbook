@@ -1,0 +1,152 @@
+F..                                                                      [100%]
+=================================== FAILURES ===================================
+_____________ test_session_verified_adoption_edges_are_late_bound ______________
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: in runtest
+    super().runtest()
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+Tests/private_profile.py:158: in wrapped
+    pytest.fail(
+E   Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-session-move-wiring-profile-xfkr51m5/pytest/test_session_verified_adoption0/private-profile-process/pytest.log
+E   --- child failure: AttributeError: 'object' object has no attribute '_hooks_v2_runtime'
+E   request = <FixtureRequest for <Coroutine test_session_verified_adoption_edges_are_late_bound>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111ddb620>
+E   
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_session_verified_adoption_edges_are_late_bound(request, monkeypatch):
+E           screen = _unmounted_console()
+E           session = screen._session
+E           with monkeypatch.context() as patch:
+E               selection, summary, controller, draft = (object() for _ in range(4))
+E               calls = []
+E   >           patch.setattr(screen, "_console_chat_controller", controller)
+E   
+E   Tests/UI/test_console_controller_wiring.py:974: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+E   tldw_chatbook/UI/Screens/chat_screen.py:9574: in _console_chat_controller
+E       self._console_runtime().set_chat_controller(value)
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+E   
+E   self = <tldw_chatbook.Chat.console_runtime.ConsoleRuntime object at 0x11203b080>
+E   value = <object object at 0x11122e7c0>
+E   
+E       def set_chat_controller(self, value: Any) -> None:
+E           """Replace the chat-controller handle."""
+E           self._chat_controller = value
+E           if value is not None:
+E   >           value._hooks_v2_runtime = self
+E               ^^^^^^^^^^^^^^^^^^^^^^^
+E   E           AttributeError: 'object' object has no attribute '_hooks_v2_runtime'
+E   
+E   tldw_chatbook/Chat/console_runtime.py:1745: AttributeError
+E   --- child log tail ---
+E   F                                                                        [100%]
+E   =================================== FAILURES ===================================
+E   _____________ test_session_verified_adoption_edges_are_late_bound ______________
+E   
+E   request = <FixtureRequest for <Coroutine test_session_verified_adoption_edges_are_late_bound>>
+E   monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111ddb620>
+E   
+E       @pytest.mark.asyncio
+E       @private_profile_test
+E       async def test_session_verified_adoption_edges_are_late_bound(request, monkeypatch):
+E           screen = _unmounted_console()
+E           session = screen._session
+E           with monkeypatch.context() as patch:
+E               selection, summary, controller, draft = (object() for _ in range(4))
+E               calls = []
+E   >           patch.setattr(screen, "_console_chat_controller", controller)
+E   
+E   Tests/UI/test_console_controller_wiring.py:974: 
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+E   tldw_chatbook/UI/Screens/chat_screen.py:9574: in _console_chat_controller
+E       self._console_runtime().set_chat_controller(value)
+E   _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+E   
+E   self = <tldw_chatbook.Chat.console_runtime.ConsoleRuntime object at 0x11203b080>
+E   value = <object object at 0x11122e7c0>
+E   
+E       def set_chat_controller(self, value: Any) -> None:
+E           """Replace the chat-controller handle."""
+E           self._chat_controller = value
+E           if value is not None:
+E   >           value._hooks_v2_runtime = self
+E               ^^^^^^^^^^^^^^^^^^^^^^^
+E   E           AttributeError: 'object' object has no attribute '_hooks_v2_runtime'
+E   
+E   tldw_chatbook/Chat/console_runtime.py:1745: AttributeError
+E   ---------------------------- Captured stderr setup -----------------------------
+E   2026-10-04 03:18:52.156 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+E   2026-10-04 03:18:52.169 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+E   2026-10-04 03:18:52.250 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+E   2026-10-04 03:18:52.252 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+E   ----------------------------- Captured stderr call -----------------------------
+E   2026-10-04 03:18:52.372 | INFO     | tldw_chatbook.app:__init__:1256 - Loaded app_config - strip_thinking_tags: True
+E   2026-10-04 03:18:52.392 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'notes_service' completed in 0.000s
+E   2026-10-04 03:18:52.392 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'prompts_service' completed in 0.000s
+E   2026-10-04 03:18:52.392 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'providers_models' completed in 0.000s
+E   2026-10-04 03:18:52.392 | INFO     | tldw_chatbook.app:__init__:1364 - Parallel init task 'media_db' completed in 0.000s
+E   2026-10-04 03:18:52.463 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - LibraryCollectionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sv5258rv/library_collections.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-10-04 03:18:52.535 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - WorkspaceDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sv5258rv/workspaces.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-10-04 03:18:52.640 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SubscriptionsDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sv5258rv/subscriptions.sqlite [Client: tldw_cli_local_instance_v1]
+E   2026-10-04 03:18:52.646 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ClientNotificationsDB initialized with path: :memory: [Client: tldw_cli_local_instance_v1]
+E   2026-10-04 03:18:52.647 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - EventStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sv5258rv/tldw_chatbook_event_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-10-04 03:18:52.647 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - SyncStateRepository initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sv5258rv/tldw_chatbook_sync_state.db [Client: tldw_cli_local_instance_v1]
+E   2026-10-04 03:18:52.847 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v1_to_v2:migrate:73 - Scheduling schema migrated to version 2 (missed_count column)
+E   2026-10-04 03:18:52.909 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v2_to_v3:migrate:58 - Scheduling schema migrated to version 3 (timeout_seconds column)
+E   2026-10-04 03:18:53.003 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v3_to_v4:migrate:137 - Scheduling schema migrated to version 4 (automation runs/results)
+E   2026-10-04 03:18:53.078 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v4_to_v5:migrate:63 - Scheduling schema migrated to version 5 (scheduled_task_runs)
+E   2026-10-04 03:18:53.140 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v5_to_v6:migrate:68 - Scheduling schema migrated to version 6 (task_incidents)
+E   2026-10-04 03:18:53.203 | DEBUG    | tldw_chatbook.Scheduling.db.migrations.v6_to_v7:migrate:107 - Scheduling schema migrated to version 7 (automation_results server_id unique index)
+E   2026-10-04 03:18:53.203 | INFO     | tldw_chatbook.DB.base_db:__init__:989 - ScheduledTasksDB initialized with path: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw-chatbook-test-sv5258rv/scheduled_tasks.sqlite [Client: default]
+E   2026-10-04 03:18:53.246 | DEBUG    | tldw_chatbook.app:__init__:1435 - ULTRA EARLY APP INIT: self._media_types_for_ui VALUE: ['All Media']
+E   2026-10-04 03:18:53.246 | DEBUG    | tldw_chatbook.app:__init__:1438 - ULTRA EARLY APP INIT: self._media_types_for_ui TYPE: <class 'list'>
+E   2026-10-04 03:18:53.255 | INFO     | tldw_chatbook.Evals.config_loader:_load_config:58 - Loaded configuration from /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Evals/config/eval_config.yaml
+E   2026-10-04 03:18:53.428 | INFO     | tldw_chatbook.DB.Evals_DB:_create_schema:595 - Created EvalsDB schema version 6
+E   2026-10-04 03:18:53.428 | INFO     | tldw_chatbook.DB.Evals_DB:__init__:232 - EvalsDB initialized with path: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-session-move-wiring-profile-xfkr51m5/pytest/test_session_verified_adoption0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/evals.db
+E   2026-10-04 03:18:53.428 | INFO     | tldw_chatbook.Evals.task_loader:__init__:98 - TaskLoader initialized
+E   2026-10-04 03:18:53.460 | DEBUG    | tldw_chatbook.Event_Handlers.worker_handlers.base_handler:register:155 - Registered worker handler: MiscWorkerHandler
+E   2026-10-04 03:18:53.461 | INFO     | tldw_chatbook.app:_init_worker_handlers:2176 - Worker handler registry initialized with all handlers
+E   2026-10-04 03:18:53.461 | INFO     | tldw_chatbook.app:__init__:1618 - === STARTUP TIMING SUMMARY ===
+E   2026-10-04 03:18:53.465 | INFO     | tldw_chatbook.app:__init__:1619 - Total initialization time: 1.149 seconds
+E   2026-10-04 03:18:53.465 | INFO     | tldw_chatbook.app:__init__:1625 -   basic_init: 0.074s (6.4%)
+E   2026-10-04 03:18:53.465 | INFO     | tldw_chatbook.app:__init__:1625 -   attribute_init: 0.000s (0.0%)
+E   2026-10-04 03:18:53.465 | INFO     | tldw_chatbook.app:__init__:1625 -   parallel_init: 0.001s (0.1%)
+E   2026-10-04 03:18:53.465 | INFO     | tldw_chatbook.app:__init__:1638 -     - media_db: 0.000s (0.4% of parallel_init)
+E   2026-10-04 03:18:53.466 | INFO     | tldw_chatbook.app:__init__:1638 -     - notes_service: 0.000s (0.3% of parallel_init)
+E   2026-10-04 03:18:53.466 | INFO     | tldw_chatbook.app:__init__:1638 -     - providers_models: 0.000s (0.2% of parallel_init)
+E   2026-10-04 03:18:53.466 | INFO     | tldw_chatbook.app:__init__:1638 -     - prompts_service: 0.000s (0.2% of parallel_init)
+E   2026-10-04 03:18:53.466 | INFO     | tldw_chatbook.app:__init__:1642 - ==============================
+E   2026-10-04 03:18:53.467 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:122 - Initializing ChatScreen screen: chat
+E   ------------------------------ Captured log call -------------------------------
+E   INFO     root:app.py:1390 App __init__: Determined initial tab value: chat
+E   WARNING  root:app.py:1495 Prompts service not initialized, self.prompts_db set to None.
+E   ERROR    root:app.py:1516 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E   - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-session-move-wiring-profile-xfkr51m5/pytest/test_session_verified_adoption0/private-profile-process/pytest.xml -
+E   ============================= slowest 25 durations =============================
+E   1.24s call     Tests/UI/test_console_controller_wiring.py::test_session_verified_adoption_edges_are_late_bound
+E   
+E   (2 durations < 1s hidden.)
+E   =========================== short test summary info ============================
+E   FAILED Tests/UI/test_console_controller_wiring.py::test_session_verified_adoption_edges_are_late_bound
+E   1 failed in 4.07s
+---------------------------- Captured stderr setup -----------------------------
+2026-10-04 03:18:48.534 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-04 03:18:48.551 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-04 03:18:48.639 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-04 03:18:48.641 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-session-move-wiring.xml -
+============================= slowest 25 durations =============================
+6.41s call     Tests/UI/test_console_controller_wiring.py::test_session_verified_adoption_edges_are_late_bound
+
+(8 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_controller_wiring.py::test_session_verified_adoption_edges_are_late_bound
+1 failed, 2 passed in 10.39s

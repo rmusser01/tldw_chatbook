@@ -1,0 +1,338 @@
+{
+  "base": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+  "dev": "9878fd251a01b9b65138316088af7bcee8c987b6",
+  "status": "ahead",
+  "total_commits": 19,
+  "commits": [
+    {
+      "sha": "c1351eb7804271447192a886c6a9978ab0e0c586",
+      "subject": "fix(console): Ctrl+Q waits for in-flight modals and guards the video save picker (TASK-33622.15)"
+    },
+    {
+      "sha": "59a898096b7fb7adfb4ae4b82f76fe36f912e9e5",
+      "subject": "docs(backlog): record TASK-33622.15 verification and two lessons (TASK-33622.15)"
+    },
+    {
+      "sha": "0161e54fd07eb2cf8a8648ee9d1f956525b353c9",
+      "subject": "fix(console): a repeated Ctrl+Q can quit past a stuck in-flight modal (TASK-33622.15)"
+    },
+    {
+      "sha": "39e709f1c1b9beef426803f426b7d06fd4eb0393",
+      "subject": "docs(backlog): record the TASK-33622.15 review round and soften an unconfirmed cause (TASK-33622.15)"
+    },
+    {
+      "sha": "4ed6124a70cfb4b463c638fa15e77fef8d3baadc",
+      "subject": "docs(backlog): file TASK-33622.17 (picker Cancel returns to the storage choice; owner decision)"
+    },
+    {
+      "sha": "8dbdf69816a004a6e3ef43002417ceb257e99cff",
+      "subject": "fix(console): cancelling the video Save-to-disk picker returns to the storage choice (TASK-33622.17)"
+    },
+    {
+      "sha": "1b87647ddc11ab46a9c8c46c551302acecc58192",
+      "subject": "docs(backlog): record TASK-33622.17 verification and an archived-baseline lesson (TASK-33622.17)"
+    },
+    {
+      "sha": "e3477df0e9d09ee4a52b03101b4c6818edd449c5",
+      "subject": "test(console): run the mounted video-capacity tests and pin Discard and quit over the picker (TASK-33622.17)"
+    },
+    {
+      "sha": "e19c71117d49e5b816281fb5483f4f6194e95822",
+      "subject": "docs(spec): mark picker-cancel-is-Discard superseded in the video store cap spec (TASK-33622.17)"
+    },
+    {
+      "sha": "0fee33a048f9d35ca47c05ec2d2ee289d458cdb2",
+      "subject": "docs(backlog): record the TASK-33622.17 review round and a shutdown-recorder lesson (TASK-33622.17)"
+    },
+    {
+      "sha": "341bfbf194c30c62e75c607136290cac0c9bd087",
+      "subject": "fix(console): a dialog that finishes under the quit-anyway question closes after Wait (TASK-33622.15)"
+    },
+    {
+      "sha": "fb954df494f31e60b2d68912aab2f66a14e4c82e",
+      "subject": "refactor(console): share the export still-writing notice and type the prompt fixtures (TASK-33622.15)"
+    },
+    {
+      "sha": "44368b99cc9e5449daaf4f2c41e143bb85c2117c",
+      "subject": "docs(backlog): record the PR #2998 bot-review round and a live race-control lesson (TASK-33622.15)"
+    },
+    {
+      "sha": "32a3c1851d3e0e65014f79d75ad3f3b53093cd9f",
+      "subject": "fix(console): a Prompts apply that finishes under the quit question closes after Wait (TASK-33622.15)"
+    },
+    {
+      "sha": "b8abe85183966bc6381da95e9a14fd160c00e823",
+      "subject": "test(console): pin the interview's close under the real quit question (TASK-33622.15)"
+    },
+    {
+      "sha": "bd293c8a3bbc1c537e241a2da4eca4697bf673cc",
+      "subject": "ci(ui): gate the two fast Ctrl+Q quit test files on pull requests (TASK-33622.15)"
+    },
+    {
+      "sha": "adc112753a999c96bd6a84815a0ac67d3d3275ae",
+      "subject": "docs(backlog): record the PR #2998 checkpoint round and two Pilot timing lessons (TASK-33622.15)"
+    },
+    {
+      "sha": "2895f80aa29119ce873875b882a4e616520ef51f",
+      "subject": "docs(backlog): TASK-33622.15 and TASK-33622.17 Done"
+    },
+    {
+      "sha": "9878fd251a01b9b65138316088af7bcee8c987b6",
+      "subject": "Merge pull request #2998 from rmusser01/fix/task-33622.15-ctrlq-residual-gaps"
+    }
+  ],
+  "files": [
+    {
+      "filename": "Docs/User_Guide/console.md",
+      "status": "modified",
+      "additions": 3,
+      "deletions": 1
+    },
+    {
+      "filename": "Docs/User_Guide/console/branching-and-rewind.md",
+      "status": "modified",
+      "additions": 6,
+      "deletions": 1
+    },
+    {
+      "filename": "Docs/User_Guide/console/video.md",
+      "status": "modified",
+      "additions": 6,
+      "deletions": 0
+    },
+    {
+      "filename": "Docs/User_Guide/index.md",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 1
+    },
+    {
+      "filename": "Docs/User_Guide/settings/personal-context-profile.md",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 1
+    },
+    {
+      "filename": "Docs/superpowers/specs/2026-08-10-task-3401-20-video-store-cap-design.md",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 0
+    },
+    {
+      "filename": "Tests/Architecture/test_guarded_modal_quit_census.py",
+      "status": "added",
+      "additions": 729,
+      "deletions": 0
+    },
+    {
+      "filename": "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
+      "status": "modified",
+      "additions": 24,
+      "deletions": 9
+    },
+    {
+      "filename": "Tests/Chat/test_console_video_capacity.py",
+      "status": "modified",
+      "additions": 112,
+      "deletions": 11
+    },
+    {
+      "filename": "Tests/UI/modal_wide_tier_registry.py",
+      "status": "modified",
+      "additions": 1,
+      "deletions": 0
+    },
+    {
+      "filename": "Tests/UI/test_app_quit_in_flight_modals.py",
+      "status": "added",
+      "additions": 869,
+      "deletions": 0
+    },
+    {
+      "filename": "Tests/UI/test_close_under_quit_question.py",
+      "status": "added",
+      "additions": 660,
+      "deletions": 0
+    },
+    {
+      "filename": "Tests/UI/test_console_modal_dismissal.py",
+      "status": "modified",
+      "additions": 18,
+      "deletions": 2
+    },
+    {
+      "filename": "Tests/UI/test_console_prompts_modal.py",
+      "status": "modified",
+      "additions": 21,
+      "deletions": 5
+    },
+    {
+      "filename": "Tests/UI/test_console_video_picker_cancel.py",
+      "status": "added",
+      "additions": 295,
+      "deletions": 0
+    },
+    {
+      "filename": "Tests/UI/test_modal_quit_discard_guards.py",
+      "status": "modified",
+      "additions": 8,
+      "deletions": 0
+    },
+    {
+      "filename": "Tests/UI/test_modal_quit_in_flight_hooks.py",
+      "status": "added",
+      "additions": 266,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/docs/lessons-live-verification.md",
+      "status": "modified",
+      "additions": 35,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/docs/lessons-testing-evidence.md",
+      "status": "modified",
+      "additions": 68,
+      "deletions": 0
+    },
+    {
+      "filename": "backlog/tasks/task-33622.15 - CtrlQ-under-a-modal-in-flight-operations-and-the-video-save-picker-can-still-lose-work.md",
+      "status": "modified",
+      "additions": 67,
+      "deletions": 6
+    },
+    {
+      "filename": "backlog/tasks/task-33622.17 - Cancel-in-the-generated-video-Save-to-disk-picker-returns-to-the-storage-choice.md",
+      "status": "added",
+      "additions": 75,
+      "deletions": 0
+    },
+    {
+      "filename": "scripts/check_ui_pr_gate_census.py",
+      "status": "modified",
+      "additions": 7,
+      "deletions": 1
+    },
+    {
+      "filename": "scripts/ui_pr_gate_census.txt",
+      "status": "modified",
+      "additions": 2,
+      "deletions": 0
+    },
+    {
+      "filename": "tldw_chatbook/UI/Console_Modules/video.py",
+      "status": "modified",
+      "additions": 19,
+      "deletions": 7
+    },
+    {
+      "filename": "tldw_chatbook/UI/Library_Modules/prompt_collection_manager_modal.py",
+      "status": "modified",
+      "additions": 14,
+      "deletions": 0
+    },
+    {
+      "filename": "tldw_chatbook/UI/Screens/profile_interview_screen.py",
+      "status": "modified",
+      "additions": 51,
+      "deletions": 6
+    },
+    {
+      "filename": "tldw_chatbook/UI/Watchlists_Modules/bulk_sources_modal.py",
+      "status": "modified",
+      "additions": 12,
+      "deletions": 0
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py",
+      "status": "modified",
+      "additions": 39,
+      "deletions": 0
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py",
+      "status": "modified",
+      "additions": 13,
+      "deletions": 0
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/Console/console_fork_chat_modal.py",
+      "status": "modified",
+      "additions": 21,
+      "deletions": 2
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/Console/console_model_popover.py",
+      "status": "modified",
+      "additions": 18,
+      "deletions": 0
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+      "status": "modified",
+      "additions": 12,
+      "deletions": 6
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
+      "status": "modified",
+      "additions": 18,
+      "deletions": 2
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/Console/console_video_capacity_modal.py",
+      "status": "modified",
+      "additions": 29,
+      "deletions": 11
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/Console/console_video_save_screens.py",
+      "status": "added",
+      "additions": 47,
+      "deletions": 0
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/Console/trace_export_dialog.py",
+      "status": "modified",
+      "additions": 17,
+      "deletions": 1
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/Console/trace_export_profile_ui.py",
+      "status": "modified",
+      "additions": 9,
+      "deletions": 2
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/Persona_Widgets/buddy_character_review.py",
+      "status": "modified",
+      "additions": 14,
+      "deletions": 0
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py",
+      "status": "modified",
+      "additions": 45,
+      "deletions": 4
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/modal_dismissal.py",
+      "status": "modified",
+      "additions": 67,
+      "deletions": 3
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/project_skills_import_modal.py",
+      "status": "modified",
+      "additions": 19,
+      "deletions": 0
+    },
+    {
+      "filename": "tldw_chatbook/Widgets/quit_while_working.py",
+      "status": "added",
+      "additions": 93,
+      "deletions": 0
+    }
+  ]
+}

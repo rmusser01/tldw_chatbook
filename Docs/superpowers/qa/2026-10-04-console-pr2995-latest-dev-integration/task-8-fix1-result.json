@@ -1,0 +1,82 @@
+{
+  "status": "DONE_WITH_CONCERNS",
+  "head": "d3443b9e4297fa20897cf99e77a3ae2c8c562b10",
+  "root_checkpoint": "72c67b80a870308e2425b5c2ad9437c3cfe01bd8",
+  "behavior_tests": {
+    "final_validation": 24,
+    "final_callers": 56,
+    "total": 80,
+    "failures": 0,
+    "skips": 0
+  },
+  "cap": {
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "budget": 29367,
+    "immutable_lines": 32910,
+    "current_lines": 33027,
+    "inherited_overage": 3543,
+    "fix_delta": 117,
+    "remaining_overage": 3660,
+    "immutable_receipt": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fix1-final-immutable.json",
+    "current_receipt": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fix1-final-cap.json",
+    "policy": "Unchanged; no waiver. Root directed separate structural repair."
+  },
+  "startup_navigation": {
+    "carried_cases": 58,
+    "replayed": false,
+    "warnings": 3
+  },
+  "fd_warnings": [
+    {
+      "delta": 265,
+      "start": 14,
+      "end": 279,
+      "limit": 200,
+      "source": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/907b89d38dec3bf3-pytest.log"
+    },
+    {
+      "delta": 233,
+      "start": 14,
+      "end": 247,
+      "limit": 200,
+      "source": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-safe-evidence/4ecf6a78f65b90b5-pytest.log"
+    }
+  ],
+  "fd_attribution": "Unresolved; no claim about resource, change or production leak cause. No suppression or threshold changes.",
+  "guards": {
+    "fatal_ruff": "pass",
+    "formatter_ratchet": "pass",
+    "source_whitespace": "pass",
+    "final_diagnostic_reconstruction": "pass",
+    "final_worker_reconstruction": "pass"
+  },
+  "qa": {
+    "count": 11792,
+    "required_historical_count": 11572,
+    "original_tree_sha256": "555c864c0e6f15f5ee2e2122fcfd126dea49ed35c3a0d2cb975018373d6f616c",
+    "current_same_paths_sha256": "555c864c0e6f15f5ee2e2122fcfd126dea49ed35c3a0d2cb975018373d6f616c",
+    "mismatches": [],
+    "prior_complete_map": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-final-freeze-map.json",
+    "required_historical": {
+      "count": 11572,
+      "reference_sha256": "3bdcd8a65aa9d92e9b837bcda820b017e738a016261c1a781bbd1b06d1dfd765",
+      "current_sha256": "3bdcd8a65aa9d92e9b837bcda820b017e738a016261c1a781bbd1b06d1dfd765",
+      "mismatches": []
+    },
+    "checkpoint_historical": {
+      "count": 11750,
+      "reference_sha256": "cef88a8f3b5c562b341013e5b13a973d882c16db26a934f646ef1fa6263a3b88",
+      "current_sha256": "cef88a8f3b5c562b341013e5b13a973d882c16db26a934f646ef1fa6263a3b88",
+      "mismatches": []
+    },
+    "incoming": {
+      "count": 42,
+      "reference_sha256": "a7faf9e9ad750b7e08380e6eec2d1b3e15f730647b7683d14a1ba9bf654dbfe9",
+      "current_sha256": "a7faf9e9ad750b7e08380e6eec2d1b3e15f730647b7683d14a1ba9bf654dbfe9",
+      "mismatches": []
+    }
+  },
+  "scope": "Only two source/test files committed; no source/Git activity after final freeze, no remote action. Controller cap remains a blocking separate structural task.",
+  "report": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fix1-report.md",
+  "map": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-fix1-freeze-map.json"
+}

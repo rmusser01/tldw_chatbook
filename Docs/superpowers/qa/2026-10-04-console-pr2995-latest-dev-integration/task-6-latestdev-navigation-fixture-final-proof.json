@@ -1,0 +1,30 @@
+{
+  "head_before": "9ce98df2e7cda8b444b3bed90f27c1d382677871",
+  "path": "Tests/UI/test_console_store_continuity.py",
+  "before_sha256": "866206da3c37096903476093191bc4372fa9d03192741933cdea7befe12a7499",
+  "after_sha256": "80fc5237809a45d7b83985a0d63456e8f75a94f8990f001c127ad4aa209534b2",
+  "all_other_functions_exact": true,
+  "other_function_count": 14,
+  "all_original_assertions_exact": true,
+  "original_assertions": [
+    "Assert(test=Compare(left=Attribute(value=Name(id='first', ctx=Load()), attr='persisted_conversation_id', ctx=Load()), ops=[In()], comparators=[Tuple(elts=[Constant(value=None), Constant(value='')], ctx=Load())]), msg=Constant(value='this test is about an UNSAVED conversation'))",
+    "Assert(test=Compare(left=Name(id='chat2', ctx=Load()), ops=[IsNot()], comparators=[Name(id='chat', ctx=Load())]))",
+    "Assert(test=Compare(left=Call(func=Name(id='list', ctx=Load()), args=[Name(id='after', ctx=Load())], keywords=[]), ops=[Eq()], comparators=[Name(id='before_ids', ctx=Load())]), msg=JoinedStr(values=[Constant(value='session identity changed across the navigation: '), FormattedValue(value=Name(id='before_ids', ctx=Load()), conversion=-1), Constant(value=' -> '), FormattedValue(value=Call(func=Name(id='list', ctx=Load()), args=[Name(id='after', ctx=Load())], keywords=[]), conversion=-1)]))",
+    "Assert(test=Compare(left=Attribute(value=Name(id='store2', ctx=Load()), attr='active_session_id', ctx=Load()), ops=[Eq()], comparators=[Attribute(value=Name(id='first', ctx=Load()), attr='id', ctx=Load())]), msg=Constant(value='the active session changed across the navigation'))",
+    "Assert(test=Compare(left=Attribute(value=Subscript(value=Name(id='after', ctx=Load()), slice=Attribute(value=Name(id='first', ctx=Load()), attr='id', ctx=Load()), ctx=Load()), attr='draft', ctx=Load()), ops=[Eq()], comparators=[Constant(value='half')]), msg=JoinedStr(values=[Constant(value=\"an unsaved session's draft did not survive the navigation: \"), FormattedValue(value=Attribute(value=Subscript(value=Name(id='after', ctx=Load()), slice=Attribute(value=Name(id='first', ctx=Load()), attr='id', ctx=Load()), ctx=Load()), attr='draft', ctx=Load()), conversion=114)]))",
+    "Assert(test=Compare(left=Attribute(value=Subscript(value=Name(id='after', ctx=Load()), slice=Attribute(value=Name(id='second', ctx=Load()), attr='id', ctx=Load()), ctx=Load()), attr='title', ctx=Load()), ops=[Eq()], comparators=[Constant(value='Second')]))",
+    "Assert(test=Compare(left=Subscript(value=Name(id='after', ctx=Load()), slice=Attribute(value=Name(id='first', ctx=Load()), attr='id', ctx=Load()), ctx=Load()), ops=[Is()], comparators=[Name(id='first', ctx=Load())]), msg=Constant(value='the returning Console got a REBUILT session object for an unsaved conversation -- a staged wake holding the old reference would target a dead id'))"
+  ],
+  "entire_function_exact_after_reversing_documented_delta": true,
+  "delta": [
+    "existing private_profile_test import/decorator and request parameter",
+    "one existing _initial_screen_pushed assignment relocated before run_test",
+    "four pre-navigation assertions: unique content stack, current top, runtime.view, actual typed composer half"
+  ],
+  "additional_assertions": [
+    "Assert(test=Compare(left=Attribute(value=Name(id='app', ctx=Load()), attr='screen_stack', ctx=Load()), ops=[Eq()], comparators=[List(elts=[Subscript(value=Attribute(value=Name(id='app', ctx=Load()), attr='screen_stack', ctx=Load()), slice=Constant(value=0), ctx=Load()), Name(id='chat', ctx=Load())], ctx=Load())]))",
+    "Assert(test=Compare(left=Attribute(value=Name(id='app', ctx=Load()), attr='screen', ctx=Load()), ops=[Is()], comparators=[Name(id='chat', ctx=Load())]))",
+    "Assert(test=Compare(left=Attribute(value=Call(func=Attribute(value=Name(id='chat', ctx=Load()), attr='_console_runtime', ctx=Load()), args=[], keywords=[]), attr='view', ctx=Load()), ops=[Is()], comparators=[Name(id='chat', ctx=Load())]))",
+    "Assert(test=Compare(left=Call(func=Attribute(value=Call(func=Attribute(value=Name(id='chat', ctx=Load()), attr='query_one', ctx=Load()), args=[Constant(value='#console-native-composer')], keywords=[]), attr='draft_text', ctx=Load()), args=[], keywords=[]), ops=[Eq()], comparators=[Constant(value='half')]))"
+  ]
+}

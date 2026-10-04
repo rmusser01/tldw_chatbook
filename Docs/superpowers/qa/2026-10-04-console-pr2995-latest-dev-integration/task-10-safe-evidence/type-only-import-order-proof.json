@@ -1,0 +1,26 @@
+{
+  "tested_source_commit": "d0f17e7cef",
+  "path": "tldw_chatbook/Chat/console_chat_fork.py",
+  "before_sha256": "5d9be7714fca46a4f6dbe8248c06515d32b56f6d9d5bfadbcae5cc9f907c2e02",
+  "after_sha256": "55a16b1eefe7d9d50ef46644f4dbb7a760c7fc7a13c64ee1a088570c7d1cbc72",
+  "runtime_ast_before_sha256": "8a54a72727677a7c8e891e7bf6e6e798fb51017bf684387bc3d2bd29b231a38b",
+  "runtime_ast_after_sha256": "8a54a72727677a7c8e891e7bf6e6e798fb51017bf684387bc3d2bd29b231a38b",
+  "runtime_ast_equal": true,
+  "guard": "Imported typing.TYPE_CHECKING is False during normal execution; __future__.annotations retains annotations as strings. Only these2 existing guarded ImportFrom nodes exchange order.",
+  "old_guarded_order": [
+    "VideoGenerationMetadata",
+    "TraceForkBoundary"
+  ],
+  "new_guarded_order": [
+    "TraceForkBoundary",
+    "VideoGenerationMetadata"
+  ],
+  "runtime_import_order_unchanged": true,
+  "all_function_class_and_test_asts_unchanged": true,
+  "carried_receipts": [
+    "fork-qualification.json",
+    "fork-qualification.xml",
+    "store-ratchets.json",
+    "store-ratchets.xml"
+  ]
+}

@@ -1,0 +1,279 @@
+{
+  "commit_console_settings_live": [
+    {
+      "chain": [
+        "commit_console_settings_live",
+        "replace_session_settings",
+        "_replace_session_settings"
+      ],
+      "events": [
+        [
+          9552,
+          "session_id"
+        ]
+      ]
+    },
+    {
+      "chain": [
+        "commit_console_settings_live",
+        "_replace_session_context_policy_live"
+      ],
+      "events": [
+        [
+          8710,
+          null
+        ]
+      ]
+    }
+  ],
+  "persist_console_settings_commit_serialized": [
+    {
+      "chain": [
+        "persist_console_settings_commit_serialized",
+        "_join_console_settings_persistence_drain"
+      ],
+      "events": [
+        [
+          8933,
+          null
+        ]
+      ]
+    }
+  ],
+  "prepare_session_user_display_name_override_for_commit": [
+    {
+      "chain": [
+        "prepare_session_user_display_name_override_for_commit"
+      ],
+      "events": [
+        [
+          12822,
+          "commit.session_id"
+        ]
+      ]
+    },
+    {
+      "chain": [
+        "prepare_session_user_display_name_override_for_commit",
+        "_materialize_roleplay_projections_live"
+      ],
+      "events": [
+        [
+          13311,
+          "session_id"
+        ],
+        [
+          13343,
+          null
+        ],
+        [
+          13346,
+          null
+        ]
+      ]
+    }
+  ],
+  "publish_durable_voice_pair": [
+    {
+      "chain": [
+        "publish_durable_voice_pair",
+        "_publish_voice_pair"
+      ],
+      "events": [
+        [
+          16280,
+          null
+        ],
+        [
+          16281,
+          null
+        ]
+      ]
+    }
+  ],
+  "publish_first_persisted_conversation": [
+    {
+      "chain": [
+        "publish_first_persisted_conversation"
+      ],
+      "events": [
+        [
+          8491,
+          "session_id"
+        ]
+      ]
+    }
+  ],
+  "publish_temporary_voice_pair": [
+    {
+      "chain": [
+        "publish_temporary_voice_pair",
+        "_publish_voice_pair"
+      ],
+      "events": [
+        [
+          16280,
+          null
+        ],
+        [
+          16281,
+          null
+        ]
+      ]
+    }
+  ],
+  "rebind_persisted_conversation": [
+    {
+      "chain": [
+        "rebind_persisted_conversation"
+      ],
+      "events": [
+        [
+          8516,
+          "session_id"
+        ]
+      ]
+    }
+  ],
+  "reconcile_durable_turn_settings": [
+    {
+      "chain": [
+        "reconcile_durable_turn_settings",
+        "_join_console_settings_persistence_drain"
+      ],
+      "events": [
+        [
+          8933,
+          null
+        ]
+      ]
+    }
+  ],
+  "retry_console_settings_persistence": [
+    {
+      "chain": [
+        "retry_console_settings_persistence",
+        "_join_console_settings_persistence_drain"
+      ],
+      "events": [
+        [
+          8933,
+          null
+        ]
+      ]
+    }
+  ],
+  "retry_voice_promotion_recovery": [
+    {
+      "chain": [
+        "retry_voice_promotion_recovery",
+        "_publish_voice_pair"
+      ],
+      "events": [
+        [
+          16280,
+          null
+        ],
+        [
+          16281,
+          null
+        ]
+      ]
+    }
+  ],
+  "seed_persona_roleplay": [
+    {
+      "chain": [
+        "seed_persona_roleplay",
+        "_materialize_roleplay_projections",
+        "_materialize_roleplay_projections_live"
+      ],
+      "events": [
+        [
+          13311,
+          "session_id"
+        ],
+        [
+          13343,
+          null
+        ],
+        [
+          13346,
+          null
+        ]
+      ]
+    }
+  ],
+  "set_session_assistant_name": [
+    {
+      "chain": [
+        "set_session_assistant_name"
+      ],
+      "events": [
+        [
+          13180,
+          "session_id"
+        ]
+      ]
+    },
+    {
+      "chain": [
+        "set_session_assistant_name",
+        "_materialize_roleplay_projections",
+        "_materialize_roleplay_projections_live"
+      ],
+      "events": [
+        [
+          13311,
+          "session_id"
+        ],
+        [
+          13343,
+          null
+        ],
+        [
+          13346,
+          null
+        ]
+      ]
+    }
+  ],
+  "set_session_user_display_name_override_for_commit": [
+    {
+      "chain": [
+        "set_session_user_display_name_override_for_commit",
+        "set_session_user_display_name_override",
+        "_set_session_user_display_name_override"
+      ],
+      "events": [
+        [
+          12759,
+          "session_id"
+        ]
+      ]
+    },
+    {
+      "chain": [
+        "set_session_user_display_name_override_for_commit",
+        "set_session_user_display_name_override",
+        "_set_session_user_display_name_override",
+        "_materialize_roleplay_projections",
+        "_materialize_roleplay_projections_live"
+      ],
+      "events": [
+        [
+          13311,
+          "session_id"
+        ],
+        [
+          13343,
+          null
+        ],
+        [
+          13346,
+          null
+        ]
+      ]
+    }
+  ]
+}

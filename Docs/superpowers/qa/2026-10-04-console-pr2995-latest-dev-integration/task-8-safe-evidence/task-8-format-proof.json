@@ -1,0 +1,77 @@
+[
+  {
+    "path": "Tests/Chat/test_console_chat_create_confirm.py",
+    "functions": [
+      "test_close_cannot_resurrect_a_remembered_chat_create_grant"
+    ],
+    "before_sha256": "e14a5701d5576cc095e47bf3efef167e58745015fb78939171868bd1581c2846",
+    "after_sha256": "f2b62b2c4c47c4aeef75390f734e3c2304e01fc99b3bbcf5625d3a710107d041",
+    "full_module_ast_exact": true
+  },
+  {
+    "path": "Tests/Chat/test_console_chat_create_integration.py",
+    "functions": [
+      "_prepare_close_new_chat",
+      "_approve_close_new_chat",
+      "test_confirmed_create_refuses_a_source_retained_during_close",
+      "test_inflight_create_cannot_publish_after_its_source_closes",
+      "test_chat_create_completion_uses_the_current_view_sink",
+      "test_admitted_chat_create_completion_error_keeps_the_placed_chat"
+    ],
+    "before_sha256": "d660e32056cc5dae6204f1ccca2b668e25236e3a027efd549660f42e4f30d547",
+    "after_sha256": "27a88dd31ccb896abfb8b7b58c4a0abab890eeb3bbc6760059136c22f25ba698",
+    "full_module_ast_exact": true
+  },
+  {
+    "path": "Tests/Chat/test_console_chat_start.py",
+    "functions": [
+      "test_before_cutoff_withdrawal_preserves_latest_draft_and_refunds",
+      "test_ledger_cutoff_retains_charge_and_requires_conversation_receipt",
+      "_seed_close_source_message",
+      "test_prepared_worker_decision_and_close_terminate",
+      "test_prepared_close_preserves_only_successfully_saved_draft"
+    ],
+    "before_sha256": "a03c263eb569e9534dd30776d3ee7efc3fb9aaa1deecfc0a82a46703c2b955c1",
+    "after_sha256": "63f1eb28fc8c30d3d8fa7fee99e393fab2f212fed8c2b7af72ce777a1a158511",
+    "full_module_ast_exact": true
+  },
+  {
+    "path": "Tests/UI/test_console_pending_interrupt_projection.py",
+    "functions": [
+      "_verify_chat_create_confirmation_has_its_own_kind_and_review_route",
+      "_verify_late_chat_create_projection_transition"
+    ],
+    "before_sha256": "4f550803e3ee65d5f3ddcb178a364dd11c74e635dbdb4f9fa3b243bcdd6e2fc3",
+    "after_sha256": "e400d30d35f0fe7bb72f6fbe24e6f50d68b9b4f80162fb691833990c0dfab260",
+    "full_module_ast_exact": true
+  },
+  {
+    "path": "Tests/UI/test_console_session_tab_close.py",
+    "functions": [
+      "_pending_close_app",
+      "_prepare_surviving_child",
+      "_assert_surviving_creation_is_live",
+      "_arm_pending_round",
+      "_verify_background_pending_close_names_consequences_and_cancels_only_its_owner",
+      "_verify_background_pending_close_releases_round_without_an_active_turn",
+      "_verify_chat_create_enrichment_cannot_arm_after_its_session_closes"
+    ],
+    "before_sha256": "37d77e989a8044c449973fef5eeecc7bef2934402237d2a6568b62789534af3e",
+    "after_sha256": "88860d8c0f114d1b49022d756746fb5fb38b61536f15f4c8a9d8936d29ca133b",
+    "full_module_ast_exact": true
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "functions": [
+      "ConsoleChatController._chat_creation_source_live",
+      "ConsoleChatController._chat_creation_record",
+      "ConsoleChatController._chat_creation_record_locked",
+      "ConsoleChatController._execute_prepared_chat_create",
+      "ConsoleChatController.request_chat_create_confirm",
+      "ConsoleChatController.execute_agent_chat_create"
+    ],
+    "before_sha256": "1d56fc81a74d74431a22c082e06842257c96228eecd740351bbcd345c837d0c4",
+    "after_sha256": "75912586578aa0c0933b7a19a7d78514325dc08440bc7acd6d80a044dc5eeddf",
+    "full_module_ast_exact": true
+  }
+]

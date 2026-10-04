@@ -1,0 +1,295 @@
+2026-10-04 07:33:47.697 | DEBUG    | tldw_chatbook.config:<module>:116 - CRITICAL DEBUG: config.py module is being imported/executed NOW.
+2026-10-04 07:33:47.779 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6933 - Attempting to load CLI config from: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_8g312bi8/config/config.toml
+2026-10-04 07:33:47.780 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6962 - CLI Config file not found at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_8g312bi8/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-10-04 07:33:47.781 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6971 - Created default CLI config file at /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_8g312bi8/config/config.toml
+2026-10-04 07:33:47.781 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7038 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'console_ssh', 'hooks', 'skills', 'tamagotchi', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-10-04 07:33:47.781 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:7042 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'databricks', 'together', 'fireworks', 'cerebras', 'sambanova', 'nvidia', 'deepinfra', 'nebius', 'novita', 'minimax', 'mimo', 'tokenhub', 'byteplus', 'stepfun', 'vercel', 'zenmux', 'kilo', 'siliconflow', 'baseten', 'gmi', 'ollama_cloud', 'upstage', 'arcee', 'qianfan', 'nous', 'venice', 'meta', 'azure', 'wandb', 'cloudflare', 'opencode_zen', 'commandcode', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+2026-10-04 07:33:47.798 | INFO     | tldw_chatbook.config:_load_settings_uncached:2213 - Determined ACTUAL_PROJECT_ROOT for general paths: /private/tmp/pr2995-task11-dev-attribution/tldw_chatbook
+2026-10-04 07:33:47.798 | INFO     | tldw_chatbook.config:_load_settings_uncached:2216 - Determined APP_COMPONENT_ROOT for config files: /private/tmp/pr2995-task11-dev-attribution/tldw_chatbook
+2026-10-04 07:33:47.799 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2239 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+2026-10-04 07:33:47.800 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2559 - Darwin platform-preferred STT provider resolved to: faster-whisper
+2026-10-04 07:33:47.844 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3798 - Ensured chat dictionaries folder exists: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/tldw_test_config_8g312bi8/home/.local/share/tldw_cli/default_user/chat_dicts
+2026-10-04 07:33:47.844 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3829 - load_settings: Configuration cached for future use
+2026-10-04 07:33:47.845 | INFO     | tldw_chatbook.config:<module>:11495 - Default API Endpoint (from config.py global scope): openai
+2026-10-04 07:33:47.845 | DEBUG    | tldw_chatbook.config:<module>:11518 - CRITICAL DEBUG: Database initialization is now lazy - will initialize on first access
+2026-10-04 07:33:47.845 | INFO     | tldw_chatbook.Utils.optional_deps:<module>:1554 - Lazy dependency checking enabled (default). Dependencies will be checked on first use.
+2026-10-04 07:33:49.553 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-04 07:33:49.603 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-04 07:33:49.688 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-04 07:33:49.710 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+2026-10-04 07:33:49.715 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2898 - Initializing CharactersRAGDB db_sha256=76df43a9aff8 [Client ID: task14-test]
+2026-10-04 07:33:49.938 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3076 - Opened/Reopened SQLite connection db_sha256=76df43a9aff8 thread=8494865792
+2026-10-04 07:33:49.948 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24013 - Started outermost transaction on thread 8494865792.
+2026-10-04 07:33:49.949 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8109 - Checking DB schema 'rag_char_chat_schema'. Current version: 0. Code supports: 76
+2026-10-04 07:33:49.949 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:3960 - Applying schema Version 4 for 'rag_char_chat_schema' to DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:49.949 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:49.961 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4001 - [rag_char_chat_schema V4] Full schema script executed.
+2026-10-04 07:33:49.961 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_apply_schema_v4:4008 - [rag_char_chat_schema V4] Schema 4 applied and version confirmed for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:49.962 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4272 - [task-2451] Default Assistant enrichment UPDATE affected 1 row(s) in DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:49.962 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4293 - Migrating schema from V4 to V5 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:49.963 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:49.974 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4303 - [rag_char_chat_schema V4→V5] Migration script executed.
+2026-10-04 07:33:49.974 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v4_to_v5:4312 - [rag_char_chat_schema V4→V5] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:49.974 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4346 - Migrating schema from V5 to V6 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:49.975 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:49.977 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4354 - [rag_char_chat_schema V5→V6] Migration script executed.
+2026-10-04 07:33:49.977 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v5_to_v6:4363 - [rag_char_chat_schema V5→V6] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:49.977 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4397 - Migrating schema from V6 to V7 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:49.977 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:49.980 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4405 - [rag_char_chat_schema V6→V7] Migration script executed.
+2026-10-04 07:33:49.980 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v6_to_v7:4414 - [rag_char_chat_schema V6→V7] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:49.980 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8023 - Migrating schema from V7 to V8 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:49.981 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:49.984 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8031 - [rag_char_chat_schema V7→V8] Migration script executed.
+2026-10-04 07:33:49.984 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v7_to_v8:8040 - [rag_char_chat_schema V7→V8] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:49.985 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4448 - Migrating schema from V8 to V9 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:49.985 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:49.989 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4456 - [rag_char_chat_schema V8→V9] Migration script executed.
+2026-10-04 07:33:49.989 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v8_to_v9:4465 - [rag_char_chat_schema V8→V9] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:49.989 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4499 - Migrating schema from V9 to V10 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:49.989 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:49.990 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4507 - [rag_char_chat_schema V9→V10] Migration script executed.
+2026-10-04 07:33:49.990 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v9_to_v10:4516 - [rag_char_chat_schema V9→V10] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:49.990 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4550 - Migrating schema from V10 to V11 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:49.991 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:49.995 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4558 - [rag_char_chat_schema V10→V11] Migration script executed.
+2026-10-04 07:33:49.996 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v10_to_v11:4567 - [rag_char_chat_schema V10→V11] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:49.996 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4601 - Migrating schema from V11 to V12 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:49.997 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.011 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4609 - [rag_char_chat_schema V11→V12] Migration script executed.
+2026-10-04 07:33:50.011 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v11_to_v12:4618 - [rag_char_chat_schema V11→V12] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.011 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4644 - Migrating schema from V12 to V13 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.012 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.042 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4652 - [rag_char_chat_schema V12→V13] Migration script executed.
+2026-10-04 07:33:50.042 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v12_to_v13:4660 - [rag_char_chat_schema V12→V13] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.042 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4685 - Migrating schema from V13 to V14 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.043 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.051 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4693 - [rag_char_chat_schema V13→V14] Migration script executed.
+2026-10-04 07:33:50.051 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v13_to_v14:4701 - [rag_char_chat_schema V13→V14] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.051 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4726 - Migrating schema from V14 to V15 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.051 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.052 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4734 - [rag_char_chat_schema V14→V15] Migration script executed.
+2026-10-04 07:33:50.052 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v14_to_v15:4742 - [rag_char_chat_schema V14→V15] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.052 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4768 - Migrating schema from V15 to V16 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.053 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.053 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4811 - [rag_char_chat_schema V15→V16] Migration script executed.
+2026-10-04 07:33:50.054 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v15_to_v16:4821 - [rag_char_chat_schema V15→V16] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.054 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:4847 - Migrating schema from V16 to V17 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.056 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.056 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:4862 - [rag_char_chat_schema V16→V17] Migration script executed.
+2026-10-04 07:33:50.056 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v16_to_v17:4870 - [rag_char_chat_schema V16→V17] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.056 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:4898 - Migrating schema from V17 to V18 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.056 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.060 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:4913 - [rag_char_chat_schema V17→V18] Migration script executed.
+2026-10-04 07:33:50.060 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v17_to_v18:4921 - [rag_char_chat_schema V17→V18] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.061 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:7966 - Migrating schema from V18 to V19 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.061 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.061 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:7981 - [rag_char_chat_schema V18→V19] Migration script executed.
+2026-10-04 07:33:50.061 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v18_to_v19:7989 - [rag_char_chat_schema V18→V19] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.061 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:4949 - Migrating schema from V19 to V20 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.062 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.065 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:4969 - [rag_char_chat_schema V19→V20] Migration script executed.
+2026-10-04 07:33:50.066 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v19_to_v20:4977 - [rag_char_chat_schema V19→V20] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.066 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5005 - Migrating schema from V20 to V21 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.066 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.066 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_skip_already_applied_add_column:3835 - [rag_char_chat_schema V20→V21] world_book_entries.priority already present; skipping the ADD COLUMN (idempotent replay).
+2026-10-04 07:33:50.067 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5025 - [rag_char_chat_schema V20→V21] Migration script executed.
+2026-10-04 07:33:50.067 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v20_to_v21:5033 - [rag_char_chat_schema V20→V21] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.067 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5055 - Migrating schema from V21 to V22 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.067 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.067 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_skip_already_applied_add_column:3835 - [rag_char_chat_schema V21→V22] world_book_entries.regex already present; skipping the ADD COLUMN (idempotent replay).
+2026-10-04 07:33:50.068 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5070 - [rag_char_chat_schema V21→V22] Migration script executed.
+2026-10-04 07:33:50.068 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v21_to_v22:5076 - [rag_char_chat_schema V21→V22] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.068 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5098 - Migrating schema from V22 to V23 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.068 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.068 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5113 - [rag_char_chat_schema V22→V23] Migration script executed.
+2026-10-04 07:33:50.068 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v22_to_v23:5119 - [rag_char_chat_schema V22→V23] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.068 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5142 - Migrating schema from V23 to V24 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.069 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.071 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5157 - [rag_char_chat_schema V23→V24] Migration script executed.
+2026-10-04 07:33:50.071 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v23_to_v24:5163 - [rag_char_chat_schema V23→V24] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.071 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5186 - Migrating schema from V24 to V25 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.072 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.072 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5201 - [rag_char_chat_schema V24→V25] Migration script executed.
+2026-10-04 07:33:50.072 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v24_to_v25:5207 - [rag_char_chat_schema V24→V25] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.072 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5231 - Migrating schema from V25 to V26 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.072 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.081 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5246 - [rag_char_chat_schema V25→V26] Migration script executed.
+2026-10-04 07:33:50.081 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v25_to_v26:5252 - [rag_char_chat_schema V25→V26] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.081 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.086 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.086 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-04 07:33:50.090 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5439 - Migrating schema from V28 to V29 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.090 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.091 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5454 - [rag_char_chat_schema V28→V29] Migration script executed.
+2026-10-04 07:33:50.091 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v28_to_v29:5462 - [rag_char_chat_schema V28→V29] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.091 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5489 - Migrating schema from V29 to V30 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.092 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.096 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5509 - [rag_char_chat_schema V29→V30] Migration script executed.
+2026-10-04 07:33:50.096 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v29_to_v30:5533 - [rag_char_chat_schema V29→V30] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.096 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5560 - Migrating schema from V30 to V31 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.096 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.100 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5580 - [rag_char_chat_schema V30→V31] Migration script executed.
+2026-10-04 07:33:50.100 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v30_to_v31:5604 - [rag_char_chat_schema V30→V31] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.100 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:5637 - Migrating schema from V31 to V32 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.101 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enrich_default_assistant_card_if_bare:4272 - [task-2451] Default Assistant enrichment UPDATE affected 0 row(s) in DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.102 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v31_to_v32:5663 - [rag_char_chat_schema V31→V32] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.104 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.107 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.114 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.116 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.118 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.126 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.129 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.134 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.136 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.138 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:5983 - Migrating schema from V41 to V42 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.140 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v41_to_v42:6047 - [rag_char_chat_schema V41→V42] conversations.console_project_context_json already present; applying the version bump only.
+2026-10-04 07:33:50.140 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6097 - Migrating schema from V42 to V43 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.141 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.142 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v42_to_v43:6236 - [rag_char_chat_schema V42→V43] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.142 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6266 - Migrating schema from V43 to V44 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.143 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.157 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v43_to_v44:6306 - [rag_char_chat_schema V43→V44] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.157 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6375 - Actor Pack schema migration started: chachanotes_v44_to_v45
+2026-10-04 07:33:50.158 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.159 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v44_to_v45:6408 - Actor Pack schema migration completed: chachanotes_v44_to_v45
+2026-10-04 07:33:50.159 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6452 - Migrating schema from V45 to V46 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.159 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.168 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v45_to_v46:6498 - [rag_char_chat_schema V45→V46] Migration completed successfully for DB: db_sha256=76df43a9aff8. Purged 0 unreachable sync_log row(s) of 1.
+2026-10-04 07:33:50.168 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6540 - Migrating schema from V46 to V47 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.168 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.169 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v46_to_v47:6575 - [rag_char_chat_schema V46→V47] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.169 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.177 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:6731 - Migrating schema from V48 to V49 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.177 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.178 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v48_to_v49:6766 - [rag_char_chat_schema V48→V49] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.178 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:6814 - Migrating schema from V49 to V50 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.178 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.179 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v49_to_v50:6848 - [rag_char_chat_schema V49→V50] Migration completed successfully for DB: db_sha256=76df43a9aff8.
+2026-10-04 07:33:50.179 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.184 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.199 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:6973 - Migrating schema from V52 to V53 for 'rag_char_chat_schema' in DB: db_sha256=76df43a9aff8...
+2026-10-04 07:33:50.200 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.200 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_migrate_from_v52_to_v53:7038 - [rag_char_chat_schema V52→V53] Migration completed for DB: db_sha256=76df43a9aff8 (examined 0, compacted 0, skipped 0 unreadable).
+2026-10-04 07:33:50.201 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.209 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.214 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.236 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.240 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.266 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.268 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.269 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.270 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.299 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.309 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.336 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.338 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.344 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-04 07:33:50.344 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 3 on thread 8494865792.
+2026-10-04 07:33:50.346 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.350 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.389 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.391 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.392 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.404 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.427 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.428 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.437 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.438 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:23982 - Entered nested transaction level 2 on thread 8494865792.
+2026-10-04 07:33:50.438 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8242 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 76.
+2026-10-04 07:33:50.446 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24078 - Transaction (outermost) committed successfully on thread 8494865792.
+2026-10-04 07:33:50.446 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:2921 - CharactersRAGDB initialization completed successfully db_sha256=76df43a9aff8
+2026-10-04 07:33:50.467 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+TASK11_SNAPSHOT {"exception_type": "RecoveryRequired", "fixed_reason_equal": true}
+TASK11_ADMISSION {"node": "Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_releases_exact_evidence_once_and_preserves_replacement", "admitted": false, "fixed_unavailable_copy_equal": true}
+
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-safe-evidence/pending-setup-10.xml -
+============================= slowest 25 durations =============================
+
+(1 durations < 1s hidden.)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! KeyboardInterrupt !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:123: KeyboardInterrupt
+(to show a full traceback on KeyboardInterrupt use --full-trace)
+no tests ran in 2.29s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-353e29da-0418-40db-b0bc-7333e6f57d7f/popen-gw0/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-353e29da-0418-40db-b0bc-7333e6f57d7f/popen-gw0/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-353e29da-0418-40db-b0bc-7333e6f57d7f/popen-gw0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-353e29da-0418-40db-b0bc-7333e6f57d7f/popen-gw0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-353e29da-0418-40db-b0bc-7333e6f57d7f
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-353e29da-0418-40db-b0bc-7333e6f57d7f'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-584788bc-abdf-4a94-9444-0c11f08255f5/popen-gw4/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-584788bc-abdf-4a94-9444-0c11f08255f5/popen-gw4/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-584788bc-abdf-4a94-9444-0c11f08255f5/popen-gw4
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-584788bc-abdf-4a94-9444-0c11f08255f5/popen-gw4'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-584788bc-abdf-4a94-9444-0c11f08255f5
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-584788bc-abdf-4a94-9444-0c11f08255f5'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-87d82d0a-242c-4f14-9773-7bb94b0619a8/popen-gw5/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-87d82d0a-242c-4f14-9773-7bb94b0619a8/popen-gw5/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-87d82d0a-242c-4f14-9773-7bb94b0619a8/popen-gw5
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-87d82d0a-242c-4f14-9773-7bb94b0619a8/popen-gw5'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-87d82d0a-242c-4f14-9773-7bb94b0619a8
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-87d82d0a-242c-4f14-9773-7bb94b0619a8'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-3d8bd06d-ee37-4625-8086-0256baa308bf/popen-gw0/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-3d8bd06d-ee37-4625-8086-0256baa308bf/popen-gw0/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-3d8bd06d-ee37-4625-8086-0256baa308bf/popen-gw0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-3d8bd06d-ee37-4625-8086-0256baa308bf/popen-gw0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-3d8bd06d-ee37-4625-8086-0256baa308bf
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-3d8bd06d-ee37-4625-8086-0256baa308bf'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d5b6c387-c940-40f1-b96d-68aef29eb81b/popen-gw0/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d5b6c387-c940-40f1-b96d-68aef29eb81b/popen-gw0/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d5b6c387-c940-40f1-b96d-68aef29eb81b/popen-gw0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d5b6c387-c940-40f1-b96d-68aef29eb81b/popen-gw0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d5b6c387-c940-40f1-b96d-68aef29eb81b
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d5b6c387-c940-40f1-b96d-68aef29eb81b'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-74c977d0-12b1-4a66-987d-37e4f51b12b1/popen-gw2/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-74c977d0-12b1-4a66-987d-37e4f51b12b1/popen-gw2/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-74c977d0-12b1-4a66-987d-37e4f51b12b1/popen-gw2
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-74c977d0-12b1-4a66-987d-37e4f51b12b1/popen-gw2'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-74c977d0-12b1-4a66-987d-37e4f51b12b1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-74c977d0-12b1-4a66-987d-37e4f51b12b1'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4f57ed0f-3ffc-4c00-8e90-8e4bd89c979d/popen-gw3/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4f57ed0f-3ffc-4c00-8e90-8e4bd89c979d/popen-gw3/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4f57ed0f-3ffc-4c00-8e90-8e4bd89c979d/popen-gw3
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4f57ed0f-3ffc-4c00-8e90-8e4bd89c979d/popen-gw3'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4f57ed0f-3ffc-4c00-8e90-8e4bd89c979d
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-4f57ed0f-3ffc-4c00-8e90-8e4bd89c979d'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d2d56493-c7b0-41ce-9f41-a1d2a0cddf4e/popen-gw1/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d2d56493-c7b0-41ce-9f41-a1d2a0cddf4e/popen-gw1/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d2d56493-c7b0-41ce-9f41-a1d2a0cddf4e/popen-gw1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d2d56493-c7b0-41ce-9f41-a1d2a0cddf4e/popen-gw1'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d2d56493-c7b0-41ce-9f41-a1d2a0cddf4e
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-d2d56493-c7b0-41ce-9f41-a1d2a0cddf4e'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-38d6066a-b119-4250-ab36-01babed5bc1e/popen-gw1/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-38d6066a-b119-4250-ab36-01babed5bc1e/popen-gw1/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-38d6066a-b119-4250-ab36-01babed5bc1e/popen-gw1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-38d6066a-b119-4250-ab36-01babed5bc1e/popen-gw1'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-38d6066a-b119-4250-ab36-01babed5bc1e
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-38d6066a-b119-4250-ab36-01babed5bc1e'
+  warnings.warn(

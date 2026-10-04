@@ -1,0 +1,8 @@
+ImportError while loading conftest '/private/tmp/pr2995-task6/schema-base-392655567f/Tests/conftest.py'.
+Tests/conftest.py:58: in <module>
+    _BOOTSTRAP_CONFIG_ROOT = _BOOTSTRAP_CONFIG_ROOT.resolve(strict=True)
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/pathlib.py:1240: in resolve
+    s = self._flavour.realpath(self, strict=strict)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   FileNotFoundError: [Errno 2] No such file or directory: '/private/tmp/pr2995-task6/schema-base-392655567f/private-profile'

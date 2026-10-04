@@ -1,0 +1,14 @@
+[
+  {
+    "path": "Tests/Architecture/test_persistent_diagnostic_inventory.py",
+    "before_sha256": "9b69f60257f21f59131eb3d18ae16c1feee0860af3a52f2de4394ba5f6b7f159",
+    "after_sha256": "56889d6b480016ffd1032475c0edb709587fbeea780482baaffc6819a878f64e",
+    "strict_ast_equal": true
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+    "before_sha256": "f0a08433c1d00a2b11449d052d2d5667cb3d9c345eb9858a5233dc1406d1376d",
+    "after_sha256": "fe741aa7edfe72f9095b1120da55e2abb03774b76c687d53d84f2a69d35d7a7f",
+    "strict_ast_equal": true
+  }
+]

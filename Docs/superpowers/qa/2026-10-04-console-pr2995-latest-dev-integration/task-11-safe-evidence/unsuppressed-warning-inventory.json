@@ -1,0 +1,182 @@
+{
+  "batch-fatal-ruff.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "batch-format.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "batch-unrestricted-ruff.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "batch-whitespace.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "chat-qualification.log": {
+    "pytest_cleanup_warning_count": 24,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "combined-seam-qualification.log": {
+    "pytest_cleanup_warning_count": 24,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "dev-evidence-cancel-attribution.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "diagnostic-inventory.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "fatal-ruff.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "fixture-batch-qualification.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "fixture-fatal-ruff.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "fixture-final-fatal-ruff.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "fixture-final-format.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "fixture-final-whitespace.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "fixture-format.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "fixture-repair-green.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "fixture-whitespace.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "format-check.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "immutable-fixed-cause.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "immutable-preaccept-failure-attribution.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "pending-setup-01.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "pending-setup-02.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "pending-setup-03.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "pending-setup-04.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "pending-setup-05.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "pending-setup-06.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "pending-setup-07.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "pending-setup-08.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "pending-setup-09.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "pending-setup-10.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "remaining-existing-qualification.log": {
+    "pytest_cleanup_warning_count": 27,
+    "py_audio_unavailable_count": 1,
+    "warning_summary_present": false
+  },
+  "remaining-independent-qualification.log": {
+    "pytest_cleanup_warning_count": 24,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "source-whitespace.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "ui-census.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "ui-qualification.log": {
+    "pytest_cleanup_warning_count": 24,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  },
+  "worker-analyzer.log": {
+    "pytest_cleanup_warning_count": 0,
+    "py_audio_unavailable_count": 0,
+    "warning_summary_present": false
+  }
+}

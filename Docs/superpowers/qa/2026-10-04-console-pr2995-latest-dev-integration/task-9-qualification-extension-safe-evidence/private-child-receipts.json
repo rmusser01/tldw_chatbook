@@ -1,0 +1,13 @@
+{
+  "copies": [
+    {
+      "source": "/private/tmp/task9-extension-failed38/test_confirm_callback_absent_f0/private-profile-process/pytest.xml",
+      "destination_stem": "private-profile-child-1"
+    },
+    {
+      "source": "/private/tmp/task9-extension-failed38/test_confirm_callback_present_0/private-profile-process/pytest.xml",
+      "destination_stem": "private-profile-child-2"
+    }
+  ],
+  "all_child_warning_output_retained": true
+}

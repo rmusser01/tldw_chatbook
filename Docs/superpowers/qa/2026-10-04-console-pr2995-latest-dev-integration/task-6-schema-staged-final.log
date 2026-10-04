@@ -1,0 +1,12 @@
+....................                                                     [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-schema-staged-final.xml -
+============================= slowest 25 durations =============================
+1.31s call     Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py::test_subscription_native_catalog_retains_exact_embedded_stamps[True-76]
+1.28s call     Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py::test_native76_staged_upgrade_preserves_machine_receipts[False]
+1.24s call     Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py::test_native76_staged_upgrade_preserves_machine_receipts[True]
+1.15s call     Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py::test_subscription_native_catalog_retains_exact_embedded_stamps[False-76]
+1.14s call     Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py::test_subscription_native_catalog_retains_exact_embedded_stamps[True-77]
+1.10s call     Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py::test_subscription_native_catalog_retains_exact_embedded_stamps[False-77]
+
+(19 durations < 1s hidden.)
+20 passed in 17.58s

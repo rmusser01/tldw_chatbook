@@ -1,0 +1,38 @@
+[
+  {
+    "name": "rollback_session_settings_replacement",
+    "current_line": 9724,
+    "strict_ast_equal_dev": true,
+    "strict_ast_equal_reviewed": true,
+    "has_boundary": true,
+    "transitioned": true,
+    "function_ast_sha256": "880bb930bca50416b22d058bad2bf7c290b30d94c20d22b089f1d088c0aeaa64"
+  },
+  {
+    "name": "adopt_session_ephemeral_endpoint",
+    "current_line": 9590,
+    "strict_ast_equal_dev": true,
+    "strict_ast_equal_reviewed": true,
+    "has_boundary": true,
+    "transitioned": true,
+    "function_ast_sha256": "119641f40061c30acba91c80d142b9f555d9e16e1e98ebf1cdfdb7fb41fc5549"
+  },
+  {
+    "name": "update_message_thinking_block",
+    "current_line": 18180,
+    "strict_ast_equal_dev": true,
+    "strict_ast_equal_reviewed": true,
+    "has_boundary": true,
+    "transitioned": true,
+    "function_ast_sha256": "314acd43be1cd0b1745a8eb1a2ff2c3b0b870bc1fa1fe1cd449693867d8f65ac"
+  },
+  {
+    "name": "rollback_session_ephemeral_endpoint_adoption",
+    "current_line": 9652,
+    "strict_ast_equal_dev": true,
+    "strict_ast_equal_reviewed": true,
+    "has_boundary": true,
+    "transitioned": true,
+    "function_ast_sha256": "ea5cd39a049914c932bab2e5041a96db7a2b6308e3c23563f31088f2551cf901"
+  }
+]

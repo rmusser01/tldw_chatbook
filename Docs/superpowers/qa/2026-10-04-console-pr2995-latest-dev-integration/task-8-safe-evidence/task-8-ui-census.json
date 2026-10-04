@@ -1,0 +1,8 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_ui_pr_gate_census.py"
+  ],
+  "exit": 0,
+  "seconds": 0.02264204202219844
+}

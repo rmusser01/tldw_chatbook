@@ -1,0 +1,9 @@
+{
+  "source_base": "bda1dbf34b4785293dc1968e57bc5385a1b7ee17",
+  "file": "backlog/tasks/task-33628.8 - Console-chains-a-later-edit-and-resend-fork-after-legacy-flat-rows-on-reload.md",
+  "before": "**AC#2 stays unticked.** It holds for every marked fork: Edit & resend of the first message, a typed prompt sent before the first message, and (TASK-33628.12) a voice exchange sent there. For an unmarked pre-marker fork it cannot hold without the identification AC#1's first option asked for, which does not exist. Whether the accepted residual closes the task is the lead's or owner's call.",
+  "after": "**AC#2 matches the accepted scope.** It holds for every marked fork: Edit & resend of the first message, a typed prompt sent before the first message, and (TASK-33628.12) a voice exchange sent there. Unmarked pre-marker forks keep the chained reading documented under AC#1; the current AC#2 wording records that accepted residual.",
+  "acceptance_criteria_unchanged": true,
+  "source_and_tests_unchanged": true,
+  "scope": "Copy-only stale note correction plus normal CLI updated_date; original task body/evidence preserved in frozen Git and package."
+}

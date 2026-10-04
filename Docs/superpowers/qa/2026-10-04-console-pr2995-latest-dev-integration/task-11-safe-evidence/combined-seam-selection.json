@@ -1,0 +1,10 @@
+{
+  "selection": [
+    "Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[hello]",
+    "Tests/Chat/test_console_fork_transition_census.py::test_external_console_modules_do_not_write_live_fork_fields_directly"
+  ],
+  "reason": [
+    "Concrete native prepared-start path exercises merged submit/resume, original completed runtime ledger, durable checkpoint, literal machine-origin request and assistant answer assertions. One hello parameter only.",
+    "Merged submit/compaction adds transient rollback owner routing; exact existing external writer/rollback source census checks no direct fork-field writes and exact rollback guards."
+  ]
+}

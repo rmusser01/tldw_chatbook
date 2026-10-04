@@ -1,0 +1,102 @@
+{
+  "Tests/Agents/test_agent_worktree_retire_race_copy.py": {
+    "head_count": 0,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Chat/test_console_activity_presentation.py": {
+    "head_count": 1,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Chat/test_console_automatic_library_preparation.py": {
+    "head_count": 3,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Chat/test_console_compaction_ask_hold.py": {
+    "head_count": 5,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Chat/test_console_context_budget_copy.py": {
+    "head_count": 1,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Chat/test_console_context_budget_routes.py": {
+    "head_count": 1,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Chat/test_console_context_compaction.py": {
+    "head_count": 2,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Chat/test_console_dispatch_recovery_fix_round3.py": {
+    "head_count": 1,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Chat/test_console_dispatch_recovery_fix_round4.py": {
+    "head_count": 2,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Chat/test_console_durable_turn_fix_round1.py": {
+    "head_count": 2,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Chat/test_console_staged_evidence_dispatch_pin.py": {
+    "head_count": 1,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Chat/test_console_turn_preparation.py": {
+    "head_count": 1,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Performance/test_textual_css_fastpath.py": {
+    "head_count": 1,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/Scripts/test_check_textual_worker_contract.py": {
+    "head_count": 38,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/UI/test_console_compaction_hold_flow.py": {
+    "head_count": 2,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "Tests/UI/test_console_trace_call_recovery.py": {
+    "head_count": 0,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "scripts/check_textual_worker_contract.py": {
+    "head_count": 5,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "tldw_chatbook/Agents/local_tool_provider.py": {
+    "head_count": 41,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "tldw_chatbook/Chat/console_agent_bridge.py": {
+    "head_count": 29,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "tldw_chatbook/Chat/console_chat_controller.py": {
+    "head_count": 215,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "tldw_chatbook/Chat/console_context_budget_copy.py": {
+    "head_count": 0,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "tldw_chatbook/Chat/console_runtime.py": {
+    "head_count": 30,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "tldw_chatbook/Chat/console_turn_preparation.py": {
+    "head_count": 5,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py": {
+    "head_count": 4,
+    "unmatched_by_code_message_and_source_line": []
+  },
+  "tldw_chatbook/UI/Screens/chat_screen.py": {
+    "head_count": 193,
+    "unmatched_by_code_message_and_source_line": []
+  }
+}

@@ -1,0 +1,8 @@
+...................................                                      [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-schema-upstream-seams.xml -
+============================= slowest 25 durations =============================
+2.14s call     Tests/Backup_Recovery/test_operational_owners.py::test_subscription_site_config_manager_schema_is_qualified
+1.30s call     Tests/ChaChaNotesDB/test_notes_fts_undelete_guard_migration.py::TestNotesFtsUndeleteGuardMigration::test_legacy_broken_notes_au_body_is_repaired_by_migration
+
+(23 durations < 1s hidden.)
+35 passed in 16.03s

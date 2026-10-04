@@ -1,0 +1,10 @@
+{
+  "base": "8bd3c9f5e529efc298bd6ccd63e0265878b07cf2",
+  "prior_dev": "df2ba424de63576d36d9c3e38387c84285303f1c",
+  "ref": "refs/heads/codex/task-8-recovery-8bd3c9f5",
+  "bundle": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-recovery-8bd3c9f5.bundle",
+  "bytes": 10106473,
+  "sha256": "46c4df144ed9bd0f385c0732c06bda14e9fede1df1288b50e0cfbdba76b16432",
+  "verify": "The bundle contains this ref:\n8bd3c9f5e529efc298bd6ccd63e0265878b07cf2 refs/heads/codex/task-8-recovery-8bd3c9f5\nThe bundle requires this ref:\ndf2ba424de63576d36d9c3e38387c84285303f1c \nThe bundle uses this hash algorithm: sha1\n.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-8-recovery-8bd3c9f5.bundle is okay\n",
+  "verify_exit": 0
+}

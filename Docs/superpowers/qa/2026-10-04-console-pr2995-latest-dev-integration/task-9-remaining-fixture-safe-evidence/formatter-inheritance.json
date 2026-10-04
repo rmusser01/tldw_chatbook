@@ -1,0 +1,42 @@
+[
+  {
+    "file": "Tests/Agents/test_builtin_gate_real_tool_coverage.py",
+    "inherited_format_edits": 0,
+    "new_format_edits": 0
+  },
+  {
+    "file": "Tests/Chat/test_console_local_review_hook.py",
+    "inherited_format_edits": 3,
+    "new_format_edits": 0
+  },
+  {
+    "file": "Tests/Chat/test_console_rewind_summarize.py",
+    "inherited_format_edits": 0,
+    "new_format_edits": 0
+  },
+  {
+    "file": "Tests/Chat/test_console_video_actions.py",
+    "inherited_format_edits": 0,
+    "new_format_edits": 0
+  },
+  {
+    "file": "Tests/Chat/test_permission_summary_wiring.py",
+    "inherited_format_edits": 7,
+    "new_format_edits": 0
+  },
+  {
+    "file": "Tests/UI/test_console_auto_speak_wiring.py",
+    "inherited_format_edits": 0,
+    "new_format_edits": 0
+  },
+  {
+    "file": "Tests/UI/test_console_parallel_runs.py",
+    "inherited_format_edits": 0,
+    "new_format_edits": 0
+  },
+  {
+    "file": "Tests/UI/test_skill_install_concurrent_confirms.py",
+    "inherited_format_edits": 0,
+    "new_format_edits": 0
+  }
+]

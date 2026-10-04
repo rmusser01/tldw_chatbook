@@ -1,0 +1,2257 @@
+{
+  "tables": {
+    "prior": {
+      "tldw_chatbook/Agents/agent_service.py": {
+        "autowake_enabled is not boolean; using default": [],
+        "child_max_wall_seconds is not numeric": [],
+        "child_max_wall_seconds is not finite": [],
+        "on_child_settled consumer raised": [
+          "type(exc).__name__"
+        ],
+        "subagents_outlive_turn is not boolean": [],
+        "sub-agents are outliving their turn": [
+          "len(survivors)"
+        ]
+      },
+      "tldw_chatbook/Agents/local_tool_provider.py": {
+        "Local tool state resolution failed": [],
+        "Local tool approval-state resolution failed": [],
+        "Local tool approval callback failed": []
+      },
+      "tldw_chatbook/Agents/mcp_tool_provider.py": {
+        "MCPToolProvider: persona_policy_provider failed": [
+          "tool.name",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Agents/persona_policy.py": {
+        "Dropping non-mapping persona policy rule": [
+          "type(entry).__name__"
+        ],
+        "Dropping malformed persona policy rule": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Agents/run_log_eviction.py": {
+        "continuation owner missing from payload": [],
+        "run-log eviction failed for continuation history": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Agents/session_todo_store.py": {
+        "Session todo change callback failed": []
+      },
+      "tldw_chatbook/Chat/console_chat_controller.py": {
+        "Console global user display-name accessor failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unsettled check failed for a session; treated as idle": [
+          "type(exc).__name__"
+        ],
+        "has_unsettled_children raised; recording re-attach source anyway": [
+          "type(exc).__name__"
+        ],
+        "fleet usage re-attach failed": [
+          "type(exc).__name__"
+        ],
+        "fleet survivor count failed for a session": []
+      },
+      "tldw_chatbook/Chat/console_chat_store.py": {
+        "Failed to reconcile restored Chat sync intent": [],
+        "Failed to project Sync v2 continuation owner": [],
+        "Failed to project Sync v2 Chat tombstone": [],
+        "Failed to persist seeded Console roleplay context": [],
+        "Failed to persist planned Console roleplay system prompt projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist planned Console roleplay message projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to enqueue roleplay Sync v2 chat message": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist Console roleplay message projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist Console roleplay system prompt projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist Console roleplay identity context": [
+          "type(exc).__name__"
+        ],
+        "Failed to flush Console roleplay context on first persist": []
+      },
+      "tldw_chatbook/Chat/console_agent_bridge.py": {
+        "fleet drain consumer raised": [
+          "type(exc).__name__"
+        ],
+        "model-call loop did not stop": [],
+        "could not open the post-turn window": [],
+        "post-turn window failed": []
+      },
+      "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": {
+        "Skipping malformed usage_json on message export": []
+      },
+      "tldw_chatbook/Character_Chat/local_character_persona_service.py": {
+        "Dropping malformed persona policy rule": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Chat/console_fleet_attention.py": {
+        "fleet unseen revision bump failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unseen mark listing failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unseen mark clear failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unseen mark write failed": [
+          "type(exc).__name__"
+        ],
+        "fleet completion announce failed": [
+          "type(exc).__name__"
+        ],
+        "fleet toast title lookup failed": [
+          "type(exc).__name__"
+        ],
+        "fleet toast session-title fallback failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Chat/console_fleet_wake.py": {
+        "fleet wake drain intake failed": [
+          "type(exc).__name__"
+        ],
+        "wake send gate raised; deferring": [
+          "type(exc).__name__"
+        ],
+        "wake user-priority probe raised; deferring": [
+          "type(exc).__name__"
+        ],
+        "wake delivery failed": [
+          "type(exc).__name__"
+        ],
+        "wake delivery ledger stamp failed (exception_type=": [
+          "type(exc).__name__"
+        ],
+        "wake delivery ledger stamp failed after dispose": [
+          "type(exc).__name__"
+        ],
+        "wake mark listing failed": [
+          "type(exc).__name__"
+        ],
+        "wake ledger read failed": [
+          "type(exc).__name__"
+        ],
+        "wake session resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+        "Database error restoring a note": [
+          "type(e).__name__"
+        ],
+        "Note restore was already active": [],
+        "Note restore completed normally": [],
+        "Note restore completed concurrently": []
+      },
+      "tldw_chatbook/Library/library_ingest_jobs.py": {
+        "LibraryIngestJobRegistry progress listener raised": []
+      },
+      "tldw_chatbook/Notes/file_notes_service.py": {
+        "Could not remove a File Notes export temporary": [
+          "type(error).__name__"
+        ]
+      },
+      "tldw_chatbook/Local_Ingestion/audio_processing.py": {
+        "Time-range trim could not be converted": []
+      },
+      "tldw_chatbook/RAG_Search/eval/regression.py": {
+        "Saved metric baseline": [
+          "len(metrics)"
+        ]
+      },
+      "tldw_chatbook/RAG_Search/simplified/rag_service.py": {
+        "ran a fallback expression but names": [
+          "self._resolved_fts_match_construction()",
+          "FTS_MATCH_OR"
+        ],
+        "has no FTS5-searchable": [],
+        "Keyword search found": [
+          "len(results)",
+          "len(rankings)"
+        ],
+        "Media keyword sub-leg found": [
+          "len(results)"
+        ],
+        "Media keyword sub-leg failed": [
+          "type(e).__name__"
+        ],
+        "ChaChaNotes keyword sub-legs failed": [
+          "type(e).__name__"
+        ],
+        "Could not resolve the ChaChaNotes database path": [
+          "type(e).__name__"
+        ],
+        "Rejected chachanotes_db_path from config": [
+          "type(e).__name__"
+        ],
+        "ChaChaNotes database not found": [],
+        "Could not open the ChaChaNotes database": [
+          "type(e).__name__"
+        ],
+        "Notes keyword sub-leg failed": [
+          "type(e).__name__"
+        ],
+        "Conversations keyword sub-leg failed": [
+          "type(e).__name__"
+        ],
+        "Query truncated": [
+          "len(query)",
+          "MAX_QUERY_LENGTH"
+        ],
+        "Unknown fts_match_construction; using conservative fallback": []
+      },
+      "tldw_chatbook/UI/Console_Modules/fleet.py": {
+        "Console fleet completion handoff will retry": [
+          "claim.revision",
+          "type(exc).__name__"
+        ],
+        "console fleet wake mount-claim failed": [
+          "type(exc).__name__"
+        ],
+        "fleet survivor check failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/chat_screen.py": {
+        "Pending sidebar-state write failed": [
+          "type(error).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Console_Modules/video.py": {
+        "stream resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/library_screen.py": {
+        "Pending Library lifecycle write failed during unmount.": [],
+        "Library entry canvas repair attempt failed": [],
+        "Strict Library entry shell synchronization failed": [],
+        "Strict Library entry canvas removal failed": [],
+        "Strict Library entry canvas mount failed": [],
+        "Library snapshot shell reconciliation failed": [],
+        "Library snapshot canvas replacement failed": [],
+        "Library Search/RAG snapshot sync failed": [],
+        "Database Notes move kept both placements": [
+          "type(exc).__name__"
+        ],
+        "Database Notes tree mutation": [
+          "operation",
+          "type(exc).__name__"
+        ],
+        "in bulk delete": [],
+        "Failed to restore a Library media item in bulk-delete undo": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist the Library ingest backend": [],
+        "Failed to persist Library ingest options": []
+      },
+      "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": {
+        "Failed to restore a Library note": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": {
+        "Failed to load Library conversations page.": []
+      },
+      "tldw_chatbook/UI/Console_Modules/image.py": {
+        "Console image edit cleanup failed": [
+          "'image_edit'",
+          "'persistence'",
+          "type(exc).__name__"
+        ],
+        "Console image edit failed": [
+          "'image_edit'",
+          "phase",
+          "error_type"
+        ],
+        "Console image edit failure guidance persistence failed": [
+          "'image_edit'",
+          "'failure_guidance_persistence'",
+          "type(exc).__name__"
+        ],
+        "remote transcript image fetch failed": [
+          "type(exc).__name__"
+        ],
+        "generate-image provider resolution for LLM context failed": [
+          "type(exc).__name__"
+        ],
+        "Image generation batch raised": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/LLM_Management_Window.py": {
+        "Lazy LLM view mount failed: view={}": [
+          "safe_view"
+        ],
+        "Managed GGUF inventory load failed": []
+      },
+      "tldw_chatbook/UI/Screens/llm_screen.py": {
+        "External Parakeet source removal failed": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet verification rejected the selected source": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet verification failed unexpectedly": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet source save failed": [
+          "type(exc).__name__"
+        ],
+        "Managed VAD preflight failed": [
+          "type(exc).__name__"
+        ],
+        "Managed VAD installation failed": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet copy planning failed": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet managed copy failed": [
+          "type(exc).__name__"
+        ],
+        "Curated model preflight failed": [
+          "type(exc).__name__"
+        ],
+        "Curated model installation failed": [
+          "type(exc).__name__"
+        ],
+        "Activated Parakeet source preference update failed": [
+          "type(exc).__name__"
+        ],
+        "Remote model preflight failed": [
+          "type(exc).__name__",
+          "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)"
+        ],
+        "Remote model installation failed": [
+          "type(exc).__name__",
+          "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)"
+        ]
+      },
+      "tldw_chatbook/Chat/console_turn_context.py": {
+        "Console turn context: tool policy profile resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Console_Modules/session.py": {
+        "Character swap: roleplay template seed failed": [
+          "type(exc).__name__"
+        ],
+        "Start Chat: roleplay template seed/persist failed": [
+          "type(exc).__name__"
+        ],
+        "Console turn context: persona policy rules resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Console_Modules/workspace.py": {
+        "Star-toggle cancellation re-sync failed": []
+      },
+      "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {
+        "MCP Tools-mode local master save failed": [
+          "type(exc).__name__"
+        ],
+        "MCP Tools-mode workspace root save failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/settings_screen.py": {
+        "Console identity refresh hook failed after settings save": [
+          "type(screen).__name__",
+          "generation",
+          "type(exc).__name__"
+        ],
+        "Settings post-pane-swap callback failed": [],
+        "Failed to persist render_remote_images": [],
+        "Failed to persist model_catalog settings": []
+      },
+      "tldw_chatbook/UI/Dictation_Window_Improved.py": {
+        "Pending dictation settings write failed": [
+          "type(error).__name__"
+        ],
+        "Failed to persist dictation settings": []
+      },
+      "tldw_chatbook/UI/Navigation/base_app_screen.py": {
+        "Stale post-teardown mouse-capture sweep skipped": [],
+        "Mouse-capture release before teardown skipped": []
+      },
+      "tldw_chatbook/UI/STTS_Window.py": {
+        "Dropping a stale chapter-detection result": [],
+        "Failed to detect chapters in worker": [],
+        "Failed to apply detected chapters": []
+      },
+      "tldw_chatbook/UI/Screens/model_installed_view.py": {
+        "Managed model idle recycle failed": [
+          "type(recycle_exc).__name__"
+        ],
+        "Managed model deletion blocked by a lease": []
+      },
+      "tldw_chatbook/UI/Screens/personas_screen.py": {
+        "Could not list chat dictionaries": [],
+        "Could not derive dictionary statistics": [],
+        "Could not attach the world book": [],
+        "Could not show the dictionary attach picker": [],
+        "Could not show the world-book attach picker": [],
+        "Error saving persona policy rules": [
+          "len(rules)",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
+        "Wizard commit rejected non-owned sections": []
+      },
+      "tldw_chatbook/UI/Screens/settings_video_gen_defaults.py": {
+        "could not resolve config path": [
+          "type(exc).__name__"
+        ],
+        "could not parse video-generation config": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/video_player_screen.py": {
+        "component=modal_player": [
+          "phase",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/adapter_registry.py": {
+        "Failed to initialize video adapter": [
+          "name",
+          "type(exc).__name__"
+        ],
+        "Failed to resolve video adapter class": [
+          "name",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/adapters/minimax_video_adapter.py": {
+        "remote task cancel failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/config.py": {
+        "unknown-key scan failed": [
+          "type(e).__name__"
+        ],
+        "keyring lookup failed": [
+          "backend",
+          "type(e).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/video_store.py": {
+        "VideoStore: startup removal failed": [
+          "type(exc).__name__"
+        ],
+        "failed to remove unpublished sibling": [
+          "'OSError'"
+        ],
+        "VideoStore: lease close failed": [
+          "type(exc).__name__"
+        ],
+        "VideoStore: lease unlock failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/video_templates.py": {
+        "is not a table": [],
+        "has unknown keys": [
+          "len(unknown)"
+        ],
+        "has no prompt_suffix": []
+      },
+      "tldw_chatbook/Widgets/Console/console_video_preview.py": {
+        "component=inline_preview": [
+          "phase",
+          "type(error).__name__"
+        ]
+      },
+      "tldw_chatbook/Widgets/Library/library_canvas_sync.py": {
+        "Library post-recompose callback failed": []
+      },
+      "tldw_chatbook/Widgets/enhanced_file_picker.py": {
+        "Failed to persist file-picker recent/last-dir state": [
+          "type(e).__name__"
+        ]
+      },
+      "tldw_chatbook/Widgets/settings_agents_panel.py": {
+        "could not open agent runs database": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/app.py": {
+        "Consolidated widget CSS incomplete": [
+          "len(sources)"
+        ],
+        "Config load failure warning failed": [
+          "type(e).__name__"
+        ],
+        "Instance lock acquisition failed unexpectedly": [
+          "type(_instance_lock_exc).__name__"
+        ],
+        "Screen pre-import failed": [
+          "route.screen_name",
+          "type(exc).__name__"
+        ],
+        "Generated CSS is stale during module entry; rebuilding": [],
+        "Generated CSS is stale during CLI entry; rebuilding": []
+      },
+      "tldw_chatbook/app_service_wiring.py": {
+        "Deferred workspace agent provisioning wiring failed": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent provisioning skipped": [],
+        "Workspace agent backfill failed during app wiring": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent backfill provisioned": [
+          "provisioned"
+        ]
+      },
+      "tldw_chatbook/app_ingest_queue.py": {
+        "Error closing the Parakeet source service": [],
+        "Error closing the local STT dispatch coordinator": [],
+        "Error joining the Library ingest progress drain thread": [],
+        "Error cleaning up a partially constructed Library ingest": [
+          "method_name",
+          "type(progress_queue).__name__"
+        ]
+      },
+      "tldw_chatbook/Workspaces/agent_provisioning.py": {
+        "Workspace agent provisioning failed": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent backfill could not persist defaults": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent backfill had failures": [],
+        "Workspace agent backfill completion flag could not be stored": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Workspaces/registry_service.py": {
+        "Workspace agent provisioning hook failed": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent provisioning returned no defaults": [],
+        "Workspace agent defaults could not be persisted": [
+          "type(exc).__name__"
+        ],
+        "Ignoring malformed workspace assistant_defaults": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py": {
+        "GGUF launch lease close failed": [
+          "provider"
+        ],
+        "GGUF source preparation failed": [
+          "provider"
+        ]
+      },
+      "tldw_chatbook/Event_Handlers/LLM_Management_Events/server_lifecycle.py": {
+        "server claim resource close failed": [
+          "provider"
+        ]
+      },
+      "tldw_chatbook/config.py": {
+        "Invalid chat display name in [chat_defaults]": [],
+        "Refusing to write CLI config": [
+          "type(exc).__name__"
+        ]
+      }
+    },
+    "feature": {
+      "tldw_chatbook/Agents/agent_service.py": {
+        "autowake_enabled is not boolean; using default": [],
+        "child_max_wall_seconds is not numeric": [],
+        "child_max_wall_seconds is not finite": [],
+        "on_child_settled consumer raised": [
+          "type(exc).__name__"
+        ],
+        "subagents_outlive_turn is not boolean": [],
+        "sub-agents are outliving their turn": [
+          "len(survivors)"
+        ]
+      },
+      "tldw_chatbook/Agents/local_tool_provider.py": {
+        "Local tool state resolution failed": [],
+        "Local tool approval-state resolution failed": [],
+        "Local tool approval callback failed": []
+      },
+      "tldw_chatbook/Agents/mcp_tool_provider.py": {
+        "MCPToolProvider: persona_policy_provider failed": [
+          "tool.name",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Agents/persona_policy.py": {
+        "Dropping non-mapping persona policy rule": [
+          "type(entry).__name__"
+        ],
+        "Dropping malformed persona policy rule": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Agents/run_log_eviction.py": {
+        "continuation owner missing from payload": [],
+        "run-log eviction failed for continuation history": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Agents/session_todo_store.py": {
+        "Session todo change callback failed": []
+      },
+      "tldw_chatbook/Chat/console_chat_controller.py": {
+        "Console global user display-name accessor failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unsettled check failed for a session; treated as idle": [
+          "type(exc).__name__"
+        ],
+        "has_unsettled_children raised; recording re-attach source anyway": [
+          "type(exc).__name__"
+        ],
+        "fleet usage re-attach failed": [
+          "type(exc).__name__"
+        ],
+        "fleet survivor count failed for a session": []
+      },
+      "tldw_chatbook/Chat/console_chat_store.py": {
+        "Failed to reconcile restored Chat sync intent": [],
+        "Failed to project Sync v2 continuation owner": [],
+        "Failed to project Sync v2 Chat tombstone": [],
+        "Failed to persist seeded Console roleplay context": [],
+        "Failed to persist planned Console roleplay system prompt projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist planned Console roleplay message projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to enqueue roleplay Sync v2 chat message": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist Console roleplay system prompt projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist Console roleplay identity context": [
+          "type(exc).__name__"
+        ],
+        "Failed to flush Console roleplay context on first persist": []
+      },
+      "tldw_chatbook/Chat/console_agent_bridge.py": {
+        "model-call loop did not stop": [],
+        "could not open the post-turn window": [],
+        "post-turn window failed": [],
+        "fleet settlement consumer raised": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": {
+        "Skipping malformed usage_json on message export": []
+      },
+      "tldw_chatbook/Character_Chat/local_character_persona_service.py": {
+        "Dropping malformed persona policy rule": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Chat/console_fleet_attention.py": {
+        "fleet unseen revision bump failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unseen mark listing failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unseen mark clear failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unseen mark write failed": [
+          "type(exc).__name__"
+        ],
+        "fleet completion announce failed": [
+          "type(exc).__name__"
+        ],
+        "fleet toast title lookup failed": [
+          "type(exc).__name__"
+        ],
+        "fleet toast session-title fallback failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Chat/console_fleet_wake.py": {
+        "wake delivery failed": [
+          "type(exc).__name__"
+        ],
+        "wake session resolution failed": [
+          "type(exc).__name__"
+        ],
+        "wake pause could not be saved": [
+          "type(exc).__name__"
+        ],
+        "wake recovery failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+        "Database error restoring a note": [
+          "type(e).__name__"
+        ],
+        "Note restore was already active": [],
+        "Note restore completed normally": [],
+        "Note restore completed concurrently": []
+      },
+      "tldw_chatbook/Library/library_ingest_jobs.py": {
+        "LibraryIngestJobRegistry progress listener raised": []
+      },
+      "tldw_chatbook/Notes/file_notes_service.py": {
+        "Could not remove a File Notes export temporary": [
+          "type(error).__name__"
+        ]
+      },
+      "tldw_chatbook/Local_Ingestion/audio_processing.py": {
+        "Time-range trim could not be converted": []
+      },
+      "tldw_chatbook/RAG_Search/eval/regression.py": {
+        "Saved metric baseline": [
+          "len(metrics)"
+        ]
+      },
+      "tldw_chatbook/RAG_Search/simplified/rag_service.py": {
+        "ran a fallback expression but names": [
+          "self._resolved_fts_match_construction()",
+          "FTS_MATCH_OR"
+        ],
+        "has no FTS5-searchable": [],
+        "Keyword search found": [
+          "len(results)",
+          "len(rankings)"
+        ],
+        "Media keyword sub-leg found": [
+          "len(results)"
+        ],
+        "Media keyword sub-leg failed": [
+          "type(e).__name__"
+        ],
+        "ChaChaNotes keyword sub-legs failed": [
+          "type(e).__name__"
+        ],
+        "Could not resolve the ChaChaNotes database path": [
+          "type(e).__name__"
+        ],
+        "Rejected chachanotes_db_path from config": [
+          "type(e).__name__"
+        ],
+        "ChaChaNotes database not found": [],
+        "Could not open the ChaChaNotes database": [
+          "type(e).__name__"
+        ],
+        "Notes keyword sub-leg failed": [
+          "type(e).__name__"
+        ],
+        "Conversations keyword sub-leg failed": [
+          "type(e).__name__"
+        ],
+        "Query truncated": [
+          "len(query)",
+          "MAX_QUERY_LENGTH"
+        ],
+        "Unknown fts_match_construction; using conservative fallback": []
+      },
+      "tldw_chatbook/UI/Console_Modules/fleet.py": {
+        "Console fleet completion handoff will retry": [
+          "claim.revision",
+          "type(exc).__name__"
+        ],
+        "console fleet wake mount-claim failed": [
+          "type(exc).__name__"
+        ],
+        "fleet survivor check failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/chat_screen.py": {},
+      "tldw_chatbook/UI/Console_Modules/video.py": {
+        "stream resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/library_screen.py": {
+        "Pending Library lifecycle write failed during unmount.": [],
+        "Library entry canvas repair attempt failed": [],
+        "Strict Library entry shell synchronization failed": [],
+        "Strict Library entry canvas removal failed": [],
+        "Strict Library entry canvas mount failed": [],
+        "Library snapshot shell reconciliation failed": [],
+        "Library snapshot canvas replacement failed": [],
+        "Library Search/RAG snapshot sync failed": [],
+        "Database Notes move kept both placements": [
+          "type(exc).__name__"
+        ],
+        "Database Notes tree mutation": [
+          "operation",
+          "type(exc).__name__"
+        ],
+        "in bulk delete": [],
+        "Failed to restore a Library media item in bulk-delete undo": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist the Library ingest backend": [],
+        "Failed to persist Library ingest options": []
+      },
+      "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": {
+        "Failed to restore a Library note": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": {
+        "Failed to load Library conversations page.": []
+      },
+      "tldw_chatbook/UI/Console_Modules/image.py": {
+        "Console image edit cleanup failed": [
+          "'image_edit'",
+          "'persistence'",
+          "type(exc).__name__"
+        ],
+        "Console image edit failed": [
+          "'image_edit'",
+          "phase",
+          "error_type"
+        ],
+        "Console image edit failure guidance persistence failed": [
+          "'image_edit'",
+          "'failure_guidance_persistence'",
+          "type(exc).__name__"
+        ],
+        "remote transcript image fetch failed": [
+          "type(exc).__name__"
+        ],
+        "generate-image provider resolution for LLM context failed": [
+          "type(exc).__name__"
+        ],
+        "Image generation batch raised": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/LLM_Management_Window.py": {
+        "Lazy LLM view mount failed: view={}": [
+          "safe_view"
+        ],
+        "Managed GGUF inventory load failed": []
+      },
+      "tldw_chatbook/UI/Screens/llm_screen.py": {
+        "External Parakeet source removal failed": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet verification rejected the selected source": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet verification failed unexpectedly": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet source save failed": [
+          "type(exc).__name__"
+        ],
+        "Managed VAD preflight failed": [
+          "type(exc).__name__"
+        ],
+        "Managed VAD installation failed": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet copy planning failed": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet managed copy failed": [
+          "type(exc).__name__"
+        ],
+        "Curated model preflight failed": [
+          "type(exc).__name__"
+        ],
+        "Curated model installation failed": [
+          "type(exc).__name__"
+        ],
+        "Activated Parakeet source preference update failed": [
+          "type(exc).__name__"
+        ],
+        "Remote model preflight failed": [
+          "type(exc).__name__",
+          "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)"
+        ],
+        "Remote model installation failed": [
+          "type(exc).__name__",
+          "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)"
+        ]
+      },
+      "tldw_chatbook/Chat/console_turn_context.py": {
+        "Console turn context: tool policy profile resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Console_Modules/session.py": {
+        "Character swap: roleplay template seed failed": [
+          "type(exc).__name__"
+        ],
+        "Start Chat: roleplay template seed/persist failed": [
+          "type(exc).__name__"
+        ],
+        "Console turn context: persona policy rules resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Console_Modules/workspace.py": {
+        "Star-toggle cancellation re-sync failed": []
+      },
+      "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {},
+      "tldw_chatbook/UI/Screens/settings_screen.py": {
+        "Console identity refresh hook failed after settings save": [
+          "type(screen).__name__",
+          "generation",
+          "type(exc).__name__"
+        ],
+        "Settings post-pane-swap callback failed": [],
+        "Failed to persist model_catalog settings": []
+      },
+      "tldw_chatbook/UI/Dictation_Window_Improved.py": {
+        "Pending dictation settings write failed": [
+          "type(error).__name__"
+        ],
+        "Failed to persist dictation settings": []
+      },
+      "tldw_chatbook/UI/Navigation/base_app_screen.py": {
+        "Stale post-teardown mouse-capture sweep skipped": [],
+        "Mouse-capture release before teardown skipped": []
+      },
+      "tldw_chatbook/UI/STTS_Window.py": {
+        "Dropping a stale chapter-detection result": [],
+        "Failed to detect chapters in worker": [],
+        "Failed to apply detected chapters": []
+      },
+      "tldw_chatbook/UI/Screens/model_installed_view.py": {
+        "Managed model idle recycle failed": [
+          "type(recycle_exc).__name__"
+        ],
+        "Managed model deletion blocked by a lease": []
+      },
+      "tldw_chatbook/UI/Screens/personas_screen.py": {
+        "Could not list chat dictionaries": [],
+        "Could not derive dictionary statistics": [],
+        "Could not attach the world book": [],
+        "Could not show the dictionary attach picker": [],
+        "Could not show the world-book attach picker": [],
+        "Error saving persona policy rules": [
+          "len(rules)",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
+        "Wizard commit rejected non-owned sections": []
+      },
+      "tldw_chatbook/UI/Screens/settings_video_gen_defaults.py": {
+        "could not resolve config path": [
+          "type(exc).__name__"
+        ],
+        "could not parse video-generation config": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/video_player_screen.py": {
+        "component=modal_player": [
+          "phase",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/adapter_registry.py": {},
+      "tldw_chatbook/Video_Generation/adapters/minimax_video_adapter.py": {
+        "remote task cancel failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/config.py": {},
+      "tldw_chatbook/Video_Generation/video_store.py": {
+        "VideoStore: startup removal failed": [
+          "type(exc).__name__"
+        ],
+        "failed to remove unpublished sibling": [
+          "'OSError'"
+        ],
+        "VideoStore: lease close failed": [
+          "type(exc).__name__"
+        ],
+        "VideoStore: lease unlock failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/video_templates.py": {
+        "is not a table": [],
+        "has unknown keys": [
+          "len(unknown)"
+        ],
+        "has no prompt_suffix": []
+      },
+      "tldw_chatbook/Widgets/Console/console_video_preview.py": {
+        "component=inline_preview": [
+          "phase",
+          "type(error).__name__"
+        ]
+      },
+      "tldw_chatbook/Widgets/Library/library_canvas_sync.py": {
+        "Library post-recompose callback failed": []
+      },
+      "tldw_chatbook/Widgets/enhanced_file_picker.py": {
+        "Failed to persist file-picker recent/last-dir state": [
+          "type(e).__name__"
+        ]
+      },
+      "tldw_chatbook/Widgets/settings_agents_panel.py": {
+        "could not open agent runs database": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/app.py": {
+        "Consolidated widget CSS incomplete": [
+          "len(sources)"
+        ],
+        "Config load failure warning failed": [
+          "type(e).__name__"
+        ],
+        "Instance lock acquisition failed unexpectedly": [
+          "type(_instance_lock_exc).__name__"
+        ],
+        "Screen pre-import failed": [
+          "route.screen_name",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/app_service_wiring.py": {
+        "Deferred workspace agent provisioning wiring failed": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent provisioning skipped": [],
+        "Workspace agent backfill failed during app wiring": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent backfill provisioned": [
+          "provisioned"
+        ]
+      },
+      "tldw_chatbook/app_ingest_queue.py": {
+        "Error closing the Parakeet source service": [],
+        "Error closing the local STT dispatch coordinator": [],
+        "Error joining the Library ingest progress drain thread": [],
+        "Error cleaning up a partially constructed Library ingest": [
+          "method_name",
+          "type(progress_queue).__name__"
+        ]
+      },
+      "tldw_chatbook/Workspaces/agent_provisioning.py": {
+        "Workspace agent provisioning failed": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent backfill could not persist defaults": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent backfill had failures": [],
+        "Workspace agent backfill completion flag could not be stored": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Workspaces/registry_service.py": {
+        "Workspace agent provisioning hook failed": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent provisioning returned no defaults": [],
+        "Workspace agent defaults could not be persisted": [
+          "type(exc).__name__"
+        ],
+        "Ignoring malformed workspace assistant_defaults": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py": {
+        "GGUF launch lease close failed": [
+          "provider"
+        ],
+        "GGUF source preparation failed": [
+          "provider"
+        ]
+      },
+      "tldw_chatbook/Event_Handlers/LLM_Management_Events/server_lifecycle.py": {
+        "server claim resource close failed": [
+          "provider"
+        ]
+      },
+      "tldw_chatbook/config.py": {
+        "Invalid chat display name in [chat_defaults]": [],
+        "Refusing to write CLI config": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Media_Generation/adapter_registry.py": {
+        "Failed to initialize {} adapter for '{}' (error_type={})": [
+          "self.modality",
+          "name",
+          "type(exc).__name__"
+        ],
+        "Failed to resolve {} adapter class for '{}' (error_type={})": [
+          "self.modality",
+          "name",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Media_Generation/config_machinery.py": {
+        "{} unknown-key scan failed": [
+          "tables.section_name",
+          "type(e).__name__"
+        ],
+        "keyring lookup failed for {}/{}": [
+          "tables.keyring_label",
+          "backend",
+          "type(e).__name__"
+        ]
+      },
+      "tldw_chatbook/app_entry.py": {
+        "Generated CSS is stale during module entry; rebuilding": [],
+        "Generated CSS is stale during CLI entry; rebuilding": []
+      }
+    },
+    "upstream": {
+      "tldw_chatbook/Agents/agent_service.py": {
+        "autowake_enabled is not boolean; using default": [],
+        "child_max_wall_seconds is not numeric": [],
+        "child_max_wall_seconds is not finite": [],
+        "on_child_settled consumer raised": [
+          "type(exc).__name__"
+        ],
+        "subagents_outlive_turn is not boolean": [],
+        "sub-agents are outliving their turn": [
+          "len(survivors)"
+        ]
+      },
+      "tldw_chatbook/Agents/local_tool_provider.py": {
+        "Local tool state resolution failed": [],
+        "Local tool approval-state resolution failed": [],
+        "Local tool approval callback failed": []
+      },
+      "tldw_chatbook/Agents/mcp_tool_provider.py": {
+        "MCPToolProvider: persona_policy_provider failed": [
+          "tool.name",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Agents/persona_policy.py": {
+        "Dropping non-mapping persona policy rule": [
+          "type(entry).__name__"
+        ],
+        "Dropping malformed persona policy rule": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Agents/run_log_eviction.py": {
+        "continuation owner missing from payload": [],
+        "run-log eviction failed for continuation history": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Agents/session_todo_store.py": {
+        "Session todo change callback failed": []
+      },
+      "tldw_chatbook/Chat/console_chat_controller.py": {
+        "Console global user display-name accessor failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unsettled check failed for a session; treated as idle": [
+          "type(exc).__name__"
+        ],
+        "has_unsettled_children raised; recording re-attach source anyway": [
+          "type(exc).__name__"
+        ],
+        "fleet usage re-attach failed": [
+          "type(exc).__name__"
+        ],
+        "fleet survivor count failed for a session": []
+      },
+      "tldw_chatbook/Chat/console_chat_store.py": {
+        "Failed to reconcile restored Chat sync intent": [],
+        "Failed to project Sync v2 continuation owner": [],
+        "Failed to project Sync v2 Chat tombstone": [],
+        "Failed to persist seeded Console roleplay context": [],
+        "Failed to persist planned Console roleplay system prompt projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist planned Console roleplay message projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to enqueue roleplay Sync v2 chat message": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist Console roleplay message projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist Console roleplay system prompt projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist Console roleplay identity context": [
+          "type(exc).__name__"
+        ],
+        "Failed to flush Console roleplay context on first persist": []
+      },
+      "tldw_chatbook/Chat/console_agent_bridge.py": {
+        "fleet drain consumer raised": [
+          "type(exc).__name__"
+        ],
+        "model-call loop did not stop": [],
+        "could not open the post-turn window": [],
+        "post-turn window failed": []
+      },
+      "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": {
+        "Skipping malformed usage_json on message export": []
+      },
+      "tldw_chatbook/Character_Chat/local_character_persona_service.py": {
+        "Dropping malformed persona policy rule": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Chat/console_fleet_attention.py": {
+        "fleet unseen revision bump failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unseen mark listing failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unseen mark clear failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unseen mark write failed": [
+          "type(exc).__name__"
+        ],
+        "fleet completion announce failed": [
+          "type(exc).__name__"
+        ],
+        "fleet toast title lookup failed": [
+          "type(exc).__name__"
+        ],
+        "fleet toast session-title fallback failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Chat/console_fleet_wake.py": {
+        "fleet wake drain intake failed": [
+          "type(exc).__name__"
+        ],
+        "wake send gate raised; deferring": [
+          "type(exc).__name__"
+        ],
+        "wake user-priority probe raised; deferring": [
+          "type(exc).__name__"
+        ],
+        "wake delivery failed": [
+          "type(exc).__name__"
+        ],
+        "wake delivery ledger stamp failed (exception_type=": [
+          "type(exc).__name__"
+        ],
+        "wake delivery ledger stamp failed after dispose": [
+          "type(exc).__name__"
+        ],
+        "wake mark listing failed": [
+          "type(exc).__name__"
+        ],
+        "wake ledger read failed": [
+          "type(exc).__name__"
+        ],
+        "wake session resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+        "Database error restoring a note": [
+          "type(e).__name__"
+        ],
+        "Note restore was already active": [],
+        "Note restore completed normally": [],
+        "Note restore completed concurrently": []
+      },
+      "tldw_chatbook/Library/library_ingest_jobs.py": {
+        "LibraryIngestJobRegistry progress listener raised": []
+      },
+      "tldw_chatbook/Notes/file_notes_service.py": {
+        "Could not remove a File Notes export temporary": [
+          "type(error).__name__"
+        ]
+      },
+      "tldw_chatbook/Local_Ingestion/audio_processing.py": {
+        "Time-range trim could not be converted": []
+      },
+      "tldw_chatbook/RAG_Search/eval/regression.py": {
+        "Saved metric baseline": [
+          "len(metrics)"
+        ]
+      },
+      "tldw_chatbook/RAG_Search/simplified/rag_service.py": {
+        "ran a fallback expression but names": [
+          "self._resolved_fts_match_construction()",
+          "FTS_MATCH_OR"
+        ],
+        "has no FTS5-searchable": [],
+        "Keyword search found": [
+          "len(results)",
+          "len(rankings)"
+        ],
+        "Media keyword sub-leg found": [
+          "len(results)"
+        ],
+        "Media keyword sub-leg failed": [
+          "type(e).__name__"
+        ],
+        "ChaChaNotes keyword sub-legs failed": [
+          "type(e).__name__"
+        ],
+        "Could not resolve the ChaChaNotes database path": [
+          "type(e).__name__"
+        ],
+        "Rejected chachanotes_db_path from config": [
+          "type(e).__name__"
+        ],
+        "ChaChaNotes database not found": [],
+        "Could not open the ChaChaNotes database": [
+          "type(e).__name__"
+        ],
+        "Notes keyword sub-leg failed": [
+          "type(e).__name__"
+        ],
+        "Conversations keyword sub-leg failed": [
+          "type(e).__name__"
+        ],
+        "Query truncated": [
+          "len(query)",
+          "MAX_QUERY_LENGTH"
+        ],
+        "Unknown fts_match_construction; using conservative fallback": []
+      },
+      "tldw_chatbook/UI/Console_Modules/fleet.py": {
+        "Console fleet completion handoff will retry": [
+          "claim.revision",
+          "type(exc).__name__"
+        ],
+        "console fleet wake mount-claim failed": [
+          "type(exc).__name__"
+        ],
+        "fleet survivor check failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/chat_screen.py": {
+        "Pending sidebar-state write failed": [
+          "type(error).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Console_Modules/video.py": {
+        "stream resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/library_screen.py": {
+        "Pending Library lifecycle write failed during unmount.": [],
+        "Library entry canvas repair attempt failed": [],
+        "Strict Library entry shell synchronization failed": [],
+        "Strict Library entry canvas removal failed": [],
+        "Strict Library entry canvas mount failed": [],
+        "Library snapshot shell reconciliation failed": [],
+        "Library snapshot canvas replacement failed": [],
+        "Library Search/RAG snapshot sync failed": [],
+        "Database Notes move kept both placements": [
+          "type(exc).__name__"
+        ],
+        "Database Notes tree mutation": [
+          "operation",
+          "type(exc).__name__"
+        ],
+        "in bulk delete": [],
+        "Failed to restore a Library media item in bulk-delete undo": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist the Library ingest backend": [],
+        "Failed to persist Library ingest options": []
+      },
+      "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": {
+        "Failed to restore a Library note": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": {
+        "Failed to load Library conversations page.": []
+      },
+      "tldw_chatbook/UI/Console_Modules/image.py": {
+        "Console image edit cleanup failed": [
+          "'image_edit'",
+          "'persistence'",
+          "type(exc).__name__"
+        ],
+        "Console image edit failed": [
+          "'image_edit'",
+          "phase",
+          "error_type"
+        ],
+        "Console image edit failure guidance persistence failed": [
+          "'image_edit'",
+          "'failure_guidance_persistence'",
+          "type(exc).__name__"
+        ],
+        "remote transcript image fetch failed": [
+          "type(exc).__name__"
+        ],
+        "generate-image provider resolution for LLM context failed": [
+          "type(exc).__name__"
+        ],
+        "Image generation batch raised": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/LLM_Management_Window.py": {
+        "Lazy LLM view mount failed: view={}": [
+          "safe_view"
+        ],
+        "Managed GGUF inventory load failed": []
+      },
+      "tldw_chatbook/UI/Screens/llm_screen.py": {
+        "External Parakeet source removal failed": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet verification rejected the selected source": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet verification failed unexpectedly": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet source save failed": [
+          "type(exc).__name__"
+        ],
+        "Managed VAD preflight failed": [
+          "type(exc).__name__"
+        ],
+        "Managed VAD installation failed": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet copy planning failed": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet managed copy failed": [
+          "type(exc).__name__"
+        ],
+        "Curated model preflight failed": [
+          "type(exc).__name__"
+        ],
+        "Curated model installation failed": [
+          "type(exc).__name__"
+        ],
+        "Activated Parakeet source preference update failed": [
+          "type(exc).__name__"
+        ],
+        "Remote model preflight failed": [
+          "type(exc).__name__",
+          "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)"
+        ],
+        "Remote model installation failed": [
+          "type(exc).__name__",
+          "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)"
+        ]
+      },
+      "tldw_chatbook/Chat/console_turn_context.py": {
+        "Console turn context: tool policy profile resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Console_Modules/session.py": {
+        "Character swap: roleplay template seed failed": [
+          "type(exc).__name__"
+        ],
+        "Start Chat: roleplay template seed/persist failed": [
+          "type(exc).__name__"
+        ],
+        "Console turn context: persona policy rules resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Console_Modules/workspace.py": {
+        "Star-toggle cancellation re-sync failed": []
+      },
+      "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {
+        "MCP Tools-mode local master save failed": [
+          "type(exc).__name__"
+        ],
+        "MCP Tools-mode workspace root save failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/settings_screen.py": {
+        "Console identity refresh hook failed after settings save": [
+          "type(screen).__name__",
+          "generation",
+          "type(exc).__name__"
+        ],
+        "Settings post-pane-swap callback failed": [],
+        "Failed to persist render_remote_images": [],
+        "Failed to persist model_catalog settings": []
+      },
+      "tldw_chatbook/UI/Dictation_Window_Improved.py": {
+        "Pending dictation settings write failed": [
+          "type(error).__name__"
+        ],
+        "Failed to persist dictation settings": []
+      },
+      "tldw_chatbook/UI/Navigation/base_app_screen.py": {
+        "Stale post-teardown mouse-capture sweep skipped": [],
+        "Mouse-capture release before teardown skipped": []
+      },
+      "tldw_chatbook/UI/STTS_Window.py": {
+        "Dropping a stale chapter-detection result": [],
+        "Failed to detect chapters in worker": [],
+        "Failed to apply detected chapters": []
+      },
+      "tldw_chatbook/UI/Screens/model_installed_view.py": {
+        "Managed model idle recycle failed": [
+          "type(recycle_exc).__name__"
+        ],
+        "Managed model deletion blocked by a lease": []
+      },
+      "tldw_chatbook/UI/Screens/personas_screen.py": {
+        "Could not list chat dictionaries": [],
+        "Could not derive dictionary statistics": [],
+        "Could not attach the world book": [],
+        "Could not show the dictionary attach picker": [],
+        "Could not show the world-book attach picker": [],
+        "Error saving persona policy rules": [
+          "len(rules)",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
+        "Wizard commit rejected non-owned sections": []
+      },
+      "tldw_chatbook/UI/Screens/settings_video_gen_defaults.py": {
+        "could not resolve config path": [
+          "type(exc).__name__"
+        ],
+        "could not parse video-generation config": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/video_player_screen.py": {
+        "component=modal_player": [
+          "phase",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/adapter_registry.py": {
+        "Failed to initialize video adapter": [
+          "name",
+          "type(exc).__name__"
+        ],
+        "Failed to resolve video adapter class": [
+          "name",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/adapters/minimax_video_adapter.py": {
+        "remote task cancel failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/config.py": {
+        "unknown-key scan failed": [
+          "type(e).__name__"
+        ],
+        "keyring lookup failed": [
+          "backend",
+          "type(e).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/video_store.py": {
+        "VideoStore: startup removal failed": [
+          "type(exc).__name__"
+        ],
+        "failed to remove unpublished sibling": [
+          "'OSError'"
+        ],
+        "VideoStore: lease close failed": [
+          "type(exc).__name__"
+        ],
+        "VideoStore: lease unlock failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/video_templates.py": {
+        "is not a table": [],
+        "has unknown keys": [
+          "len(unknown)"
+        ],
+        "has no prompt_suffix": []
+      },
+      "tldw_chatbook/Widgets/Console/console_video_preview.py": {
+        "component=inline_preview": [
+          "phase",
+          "type(error).__name__"
+        ]
+      },
+      "tldw_chatbook/Widgets/Library/library_canvas_sync.py": {
+        "Library post-recompose callback failed": []
+      },
+      "tldw_chatbook/Widgets/enhanced_file_picker.py": {
+        "Failed to persist file-picker recent/last-dir state": [
+          "type(e).__name__"
+        ]
+      },
+      "tldw_chatbook/Widgets/settings_agents_panel.py": {
+        "could not open agent runs database": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/app.py": {
+        "Consolidated widget CSS incomplete": [
+          "len(sources)"
+        ],
+        "Config load failure warning failed": [
+          "type(e).__name__"
+        ],
+        "Instance lock acquisition failed unexpectedly": [
+          "type(_instance_lock_exc).__name__"
+        ],
+        "Screen pre-import failed": [
+          "route.screen_name",
+          "type(exc).__name__"
+        ],
+        "Generated CSS is stale during module entry; rebuilding": [],
+        "Generated CSS is stale during CLI entry; rebuilding": []
+      },
+      "tldw_chatbook/app_service_wiring.py": {
+        "Deferred workspace agent provisioning wiring failed": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent provisioning skipped": [],
+        "Workspace agent backfill failed during app wiring": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent backfill provisioned": [
+          "provisioned"
+        ]
+      },
+      "tldw_chatbook/app_ingest_queue.py": {
+        "Error closing the Parakeet source service": [],
+        "Error closing the local STT dispatch coordinator": [],
+        "Error joining the Library ingest progress drain thread": [],
+        "Error cleaning up a partially constructed Library ingest": [
+          "method_name",
+          "type(progress_queue).__name__"
+        ]
+      },
+      "tldw_chatbook/Workspaces/agent_provisioning.py": {
+        "Workspace agent provisioning failed": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent backfill could not persist defaults": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent backfill had failures": [],
+        "Workspace agent backfill completion flag could not be stored": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Workspaces/registry_service.py": {
+        "Workspace agent provisioning hook failed": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent provisioning returned no defaults": [],
+        "Workspace agent defaults could not be persisted": [
+          "type(exc).__name__"
+        ],
+        "Ignoring malformed workspace assistant_defaults": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py": {
+        "GGUF launch lease close failed": [
+          "provider"
+        ],
+        "GGUF source preparation failed": [
+          "provider"
+        ]
+      },
+      "tldw_chatbook/Event_Handlers/LLM_Management_Events/server_lifecycle.py": {
+        "server claim resource close failed": [
+          "provider"
+        ]
+      },
+      "tldw_chatbook/config.py": {
+        "Invalid chat display name in [chat_defaults]": [],
+        "Refusing to write CLI config": [
+          "type(exc).__name__"
+        ]
+      }
+    },
+    "final": {
+      "tldw_chatbook/Agents/agent_service.py": {
+        "autowake_enabled is not boolean; using default": [],
+        "child_max_wall_seconds is not numeric": [],
+        "child_max_wall_seconds is not finite": [],
+        "on_child_settled consumer raised": [
+          "type(exc).__name__"
+        ],
+        "subagents_outlive_turn is not boolean": [],
+        "sub-agents are outliving their turn": [
+          "len(survivors)"
+        ]
+      },
+      "tldw_chatbook/Agents/local_tool_provider.py": {
+        "Local tool state resolution failed": [],
+        "Local tool approval-state resolution failed": [],
+        "Local tool approval callback failed": []
+      },
+      "tldw_chatbook/Agents/mcp_tool_provider.py": {
+        "MCPToolProvider: persona_policy_provider failed": [
+          "tool.name",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Agents/persona_policy.py": {
+        "Dropping non-mapping persona policy rule": [
+          "type(entry).__name__"
+        ],
+        "Dropping malformed persona policy rule": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Agents/run_log_eviction.py": {
+        "continuation owner missing from payload": [],
+        "run-log eviction failed for continuation history": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Agents/session_todo_store.py": {
+        "Session todo change callback failed": []
+      },
+      "tldw_chatbook/Chat/console_chat_controller.py": {
+        "Console global user display-name accessor failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unsettled check failed for a session; treated as idle": [
+          "type(exc).__name__"
+        ],
+        "has_unsettled_children raised; recording re-attach source anyway": [
+          "type(exc).__name__"
+        ],
+        "fleet usage re-attach failed": [
+          "type(exc).__name__"
+        ],
+        "fleet survivor count failed for a session": []
+      },
+      "tldw_chatbook/Chat/console_chat_store.py": {
+        "Failed to reconcile restored Chat sync intent": [],
+        "Failed to project Sync v2 continuation owner": [],
+        "Failed to project Sync v2 Chat tombstone": [],
+        "Failed to persist seeded Console roleplay context": [],
+        "Failed to persist planned Console roleplay system prompt projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist planned Console roleplay message projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to enqueue roleplay Sync v2 chat message": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist Console roleplay system prompt projection": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist Console roleplay identity context": [
+          "type(exc).__name__"
+        ],
+        "Failed to flush Console roleplay context on first persist": []
+      },
+      "tldw_chatbook/Chat/console_agent_bridge.py": {
+        "model-call loop did not stop": [],
+        "could not open the post-turn window": [],
+        "post-turn window failed": [],
+        "fleet settlement consumer raised": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Character_Chat/Character_Chat_Lib.py": {
+        "Skipping malformed usage_json on message export": []
+      },
+      "tldw_chatbook/Character_Chat/local_character_persona_service.py": {
+        "Dropping malformed persona policy rule": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Chat/console_fleet_attention.py": {
+        "fleet unseen revision bump failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unseen mark listing failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unseen mark clear failed": [
+          "type(exc).__name__"
+        ],
+        "fleet unseen mark write failed": [
+          "type(exc).__name__"
+        ],
+        "fleet completion announce failed": [
+          "type(exc).__name__"
+        ],
+        "fleet toast title lookup failed": [
+          "type(exc).__name__"
+        ],
+        "fleet toast session-title fallback failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Chat/console_fleet_wake.py": {
+        "wake delivery failed": [
+          "type(exc).__name__"
+        ],
+        "wake session resolution failed": [
+          "type(exc).__name__"
+        ],
+        "wake pause could not be saved": [
+          "type(exc).__name__"
+        ],
+        "wake recovery failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/DB/ChaChaNotes_DB.py": {
+        "Database error restoring a note": [
+          "type(e).__name__"
+        ],
+        "Note restore was already active": [],
+        "Note restore completed normally": [],
+        "Note restore completed concurrently": []
+      },
+      "tldw_chatbook/Library/library_ingest_jobs.py": {
+        "LibraryIngestJobRegistry progress listener raised": []
+      },
+      "tldw_chatbook/Notes/file_notes_service.py": {
+        "Could not remove a File Notes export temporary": [
+          "type(error).__name__"
+        ]
+      },
+      "tldw_chatbook/Local_Ingestion/audio_processing.py": {
+        "Time-range trim could not be converted": []
+      },
+      "tldw_chatbook/RAG_Search/eval/regression.py": {
+        "Saved metric baseline": [
+          "len(metrics)"
+        ]
+      },
+      "tldw_chatbook/RAG_Search/simplified/rag_service.py": {
+        "ran a fallback expression but names": [
+          "self._resolved_fts_match_construction()",
+          "FTS_MATCH_OR"
+        ],
+        "has no FTS5-searchable": [],
+        "Keyword search found": [
+          "len(results)",
+          "len(rankings)"
+        ],
+        "Media keyword sub-leg found": [
+          "len(results)"
+        ],
+        "Media keyword sub-leg failed": [
+          "type(e).__name__"
+        ],
+        "ChaChaNotes keyword sub-legs failed": [
+          "type(e).__name__"
+        ],
+        "Could not resolve the ChaChaNotes database path": [
+          "type(e).__name__"
+        ],
+        "Rejected chachanotes_db_path from config": [
+          "type(e).__name__"
+        ],
+        "ChaChaNotes database not found": [],
+        "Could not open the ChaChaNotes database": [
+          "type(e).__name__"
+        ],
+        "Notes keyword sub-leg failed": [
+          "type(e).__name__"
+        ],
+        "Conversations keyword sub-leg failed": [
+          "type(e).__name__"
+        ],
+        "Query truncated": [
+          "len(query)",
+          "MAX_QUERY_LENGTH"
+        ],
+        "Unknown fts_match_construction; using conservative fallback": []
+      },
+      "tldw_chatbook/UI/Console_Modules/fleet.py": {
+        "Console fleet completion handoff will retry": [
+          "claim.revision",
+          "type(exc).__name__"
+        ],
+        "console fleet wake mount-claim failed": [
+          "type(exc).__name__"
+        ],
+        "fleet survivor check failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/chat_screen.py": {},
+      "tldw_chatbook/UI/Console_Modules/video.py": {
+        "stream resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/library_screen.py": {
+        "Pending Library lifecycle write failed during unmount.": [],
+        "Library entry canvas repair attempt failed": [],
+        "Strict Library entry shell synchronization failed": [],
+        "Strict Library entry canvas removal failed": [],
+        "Strict Library entry canvas mount failed": [],
+        "Library snapshot shell reconciliation failed": [],
+        "Library snapshot canvas replacement failed": [],
+        "Library Search/RAG snapshot sync failed": [],
+        "Database Notes move kept both placements": [
+          "type(exc).__name__"
+        ],
+        "Database Notes tree mutation": [
+          "operation",
+          "type(exc).__name__"
+        ],
+        "in bulk delete": [],
+        "Failed to restore a Library media item in bulk-delete undo": [
+          "type(exc).__name__"
+        ],
+        "Failed to persist the Library ingest backend": [],
+        "Failed to persist Library ingest options": []
+      },
+      "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": {
+        "Failed to restore a Library note": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": {
+        "Failed to load Library conversations page.": []
+      },
+      "tldw_chatbook/UI/Console_Modules/image.py": {
+        "Console image edit cleanup failed": [
+          "'image_edit'",
+          "'persistence'",
+          "type(exc).__name__"
+        ],
+        "Console image edit failed": [
+          "'image_edit'",
+          "phase",
+          "error_type"
+        ],
+        "Console image edit failure guidance persistence failed": [
+          "'image_edit'",
+          "'failure_guidance_persistence'",
+          "type(exc).__name__"
+        ],
+        "remote transcript image fetch failed": [
+          "type(exc).__name__"
+        ],
+        "generate-image provider resolution for LLM context failed": [
+          "type(exc).__name__"
+        ],
+        "Image generation batch raised": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/LLM_Management_Window.py": {
+        "Lazy LLM view mount failed: view={}": [
+          "safe_view"
+        ],
+        "Managed GGUF inventory load failed": []
+      },
+      "tldw_chatbook/UI/Screens/llm_screen.py": {
+        "External Parakeet source removal failed": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet verification rejected the selected source": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet verification failed unexpectedly": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet source save failed": [
+          "type(exc).__name__"
+        ],
+        "Managed VAD preflight failed": [
+          "type(exc).__name__"
+        ],
+        "Managed VAD installation failed": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet copy planning failed": [
+          "type(exc).__name__"
+        ],
+        "External Parakeet managed copy failed": [
+          "type(exc).__name__"
+        ],
+        "Curated model preflight failed": [
+          "type(exc).__name__"
+        ],
+        "Curated model installation failed": [
+          "type(exc).__name__"
+        ],
+        "Activated Parakeet source preference update failed": [
+          "type(exc).__name__"
+        ],
+        "Remote model preflight failed": [
+          "type(exc).__name__",
+          "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)"
+        ],
+        "Remote model installation failed": [
+          "type(exc).__name__",
+          "isinstance(exc, TransferError) and getattr(exc, 'retryable', False)"
+        ]
+      },
+      "tldw_chatbook/Chat/console_turn_context.py": {
+        "Console turn context: tool policy profile resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Console_Modules/session.py": {
+        "Character swap: roleplay template seed failed": [
+          "type(exc).__name__"
+        ],
+        "Start Chat: roleplay template seed/persist failed": [
+          "type(exc).__name__"
+        ],
+        "Console turn context: persona policy rules resolution failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Console_Modules/workspace.py": {
+        "Star-toggle cancellation re-sync failed": []
+      },
+      "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": {},
+      "tldw_chatbook/UI/Screens/settings_screen.py": {
+        "Console identity refresh hook failed after settings save": [
+          "type(screen).__name__",
+          "generation",
+          "type(exc).__name__"
+        ],
+        "Settings post-pane-swap callback failed": [],
+        "Failed to persist model_catalog settings": []
+      },
+      "tldw_chatbook/UI/Dictation_Window_Improved.py": {
+        "Pending dictation settings write failed": [
+          "type(error).__name__"
+        ],
+        "Failed to persist dictation settings": []
+      },
+      "tldw_chatbook/UI/Navigation/base_app_screen.py": {
+        "Stale post-teardown mouse-capture sweep skipped": [],
+        "Mouse-capture release before teardown skipped": []
+      },
+      "tldw_chatbook/UI/STTS_Window.py": {
+        "Dropping a stale chapter-detection result": [],
+        "Failed to detect chapters in worker": [],
+        "Failed to apply detected chapters": []
+      },
+      "tldw_chatbook/UI/Screens/model_installed_view.py": {
+        "Managed model idle recycle failed": [
+          "type(recycle_exc).__name__"
+        ],
+        "Managed model deletion blocked by a lease": []
+      },
+      "tldw_chatbook/UI/Screens/personas_screen.py": {
+        "Could not list chat dictionaries": [],
+        "Could not derive dictionary statistics": [],
+        "Could not attach the world book": [],
+        "Could not show the dictionary attach picker": [],
+        "Could not show the world-book attach picker": [],
+        "Error saving persona policy rules": [
+          "len(rules)",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": {
+        "Wizard commit rejected non-owned sections": []
+      },
+      "tldw_chatbook/UI/Screens/settings_video_gen_defaults.py": {
+        "could not resolve config path": [
+          "type(exc).__name__"
+        ],
+        "could not parse video-generation config": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/UI/Screens/video_player_screen.py": {
+        "component=modal_player": [
+          "phase",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/adapter_registry.py": {},
+      "tldw_chatbook/Video_Generation/adapters/minimax_video_adapter.py": {
+        "remote task cancel failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/config.py": {},
+      "tldw_chatbook/Video_Generation/video_store.py": {
+        "VideoStore: startup removal failed": [
+          "type(exc).__name__"
+        ],
+        "failed to remove unpublished sibling": [
+          "'OSError'"
+        ],
+        "VideoStore: lease close failed": [
+          "type(exc).__name__"
+        ],
+        "VideoStore: lease unlock failed": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Video_Generation/video_templates.py": {
+        "is not a table": [],
+        "has unknown keys": [
+          "len(unknown)"
+        ],
+        "has no prompt_suffix": []
+      },
+      "tldw_chatbook/Widgets/Console/console_video_preview.py": {
+        "component=inline_preview": [
+          "phase",
+          "type(error).__name__"
+        ]
+      },
+      "tldw_chatbook/Widgets/Library/library_canvas_sync.py": {
+        "Library post-recompose callback failed": []
+      },
+      "tldw_chatbook/Widgets/enhanced_file_picker.py": {
+        "Failed to persist file-picker recent/last-dir state": [
+          "type(e).__name__"
+        ]
+      },
+      "tldw_chatbook/Widgets/settings_agents_panel.py": {
+        "could not open agent runs database": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/app.py": {
+        "Consolidated widget CSS incomplete": [
+          "len(sources)"
+        ],
+        "Config load failure warning failed": [
+          "type(e).__name__"
+        ],
+        "Instance lock acquisition failed unexpectedly": [
+          "type(_instance_lock_exc).__name__"
+        ],
+        "Screen pre-import failed": [
+          "route.screen_name",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/app_service_wiring.py": {
+        "Deferred workspace agent provisioning wiring failed": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent provisioning skipped": [],
+        "Workspace agent backfill failed during app wiring": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent backfill provisioned": [
+          "provisioned"
+        ]
+      },
+      "tldw_chatbook/app_ingest_queue.py": {
+        "Error closing the Parakeet source service": [],
+        "Error closing the local STT dispatch coordinator": [],
+        "Error joining the Library ingest progress drain thread": [],
+        "Error cleaning up a partially constructed Library ingest": [
+          "method_name",
+          "type(progress_queue).__name__"
+        ]
+      },
+      "tldw_chatbook/Workspaces/agent_provisioning.py": {
+        "Workspace agent provisioning failed": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent backfill could not persist defaults": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent backfill had failures": [],
+        "Workspace agent backfill completion flag could not be stored": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Workspaces/registry_service.py": {
+        "Workspace agent provisioning hook failed": [
+          "type(exc).__name__"
+        ],
+        "Workspace agent provisioning returned no defaults": [],
+        "Workspace agent defaults could not be persisted": [
+          "type(exc).__name__"
+        ],
+        "Ignoring malformed workspace assistant_defaults": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Event_Handlers/LLM_Management_Events/llm_management_events.py": {
+        "GGUF launch lease close failed": [
+          "provider"
+        ],
+        "GGUF source preparation failed": [
+          "provider"
+        ]
+      },
+      "tldw_chatbook/Event_Handlers/LLM_Management_Events/server_lifecycle.py": {
+        "server claim resource close failed": [
+          "provider"
+        ]
+      },
+      "tldw_chatbook/config.py": {
+        "Invalid chat display name in [chat_defaults]": [],
+        "Refusing to write CLI config": [
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Media_Generation/adapter_registry.py": {
+        "Failed to initialize {} adapter for '{}' (error_type={})": [
+          "self.modality",
+          "name",
+          "type(exc).__name__"
+        ],
+        "Failed to resolve {} adapter class for '{}' (error_type={})": [
+          "self.modality",
+          "name",
+          "type(exc).__name__"
+        ]
+      },
+      "tldw_chatbook/Media_Generation/config_machinery.py": {
+        "{} unknown-key scan failed": [
+          "tables.section_name",
+          "type(e).__name__"
+        ],
+        "keyring lookup failed for {}/{}": [
+          "tables.keyring_label",
+          "backend",
+          "type(e).__name__"
+        ]
+      },
+      "tldw_chatbook/app_entry.py": {
+        "Generated CSS is stale during module entry; rebuilding": [],
+        "Generated CSS is stale during CLI entry; rebuilding": []
+      }
+    }
+  },
+  "union_exact": false
+}

@@ -1,0 +1,92 @@
+FFF                                                                      [100%]
+=================================== FAILURES ===================================
+__________________ test_reader_info_is_explicit_and_truthful ___________________
+Tests/UI/test_library_conversation_reader.py:370: in test_reader_info_is_explicit_and_truthful
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_shell.py:227: in _build_test_app
+    app = _build_tldw_test_app(
+Tests/UI/app_factory.py:357: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:113: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2032: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+---------------------------- Captured stderr setup -----------------------------
+2026-10-04 00:46:34.092 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-04 00:46:34.116 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-04 00:46:34.158 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-04 00:46:34.159 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+______ test_page_drift_confirms_exact_identity_before_declaring_deletion _______
+Tests/UI/test_library_conversation_reader.py:1663: in test_page_drift_confirms_exact_identity_before_declaring_deletion
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/test_library_shell.py:227: in _build_test_app
+    app = _build_tldw_test_app(
+Tests/UI/app_factory.py:357: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:113: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2032: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: in _participant_state
+    raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E   tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+_ test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_skills_controller.py] _
+Tests/Architecture/test_library_modules_size_ratchet.py:699: in test_controller_does_not_grow_past_its_budget
+    assert lines <= max_lines, (
+E   AssertionError: tldw_chatbook/UI/Library_Modules/library_skills_controller.py grew to 3154 lines (budget 3142, +12).
+E     
+E     tldw_chatbook/UI/Library_Modules/library_skills_controller.py is under a size ratchet (Tests/Architecture/test_library_modules_size_ratchet.py).
+E     If this growth is a sanctioned move landing (recipe backlog/docs/library-decomposition-recipe.md §1), re-measure and raise this row's pin in the SAME commit with a dated comment. Otherwise this is the creep this test exists to catch -- do not raise the budget just to silence it.
+E   assert 3154 <= 3142
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-reader-baseline-red.xml -
+============================= slowest 25 durations =============================
+
+(9 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_library_conversation_reader.py::test_reader_info_is_explicit_and_truthful
+FAILED Tests/UI/test_library_conversation_reader.py::test_page_drift_confirms_exact_identity_before_declaring_deletion
+FAILED Tests/Architecture/test_library_modules_size_ratchet.py::test_controller_does_not_grow_past_its_budget[tldw_chatbook/UI/Library_Modules/library_skills_controller.py]
+3 failed in 6.77s

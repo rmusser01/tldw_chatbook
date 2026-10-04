@@ -1,0 +1,5 @@
+{
+  "initial_constructor_selector": "Checked script stopped before source writes because two constructors shared the needle. Corrected to the exact AST ConsoleSessionController call.",
+  "initial_removal_range": "Nonmoved-method AST proof caught three adjacent removals consuming the next method header. Restored exact functional-commit header and changed slice to end_lineno only; no commit contained this state.",
+  "initial_wiring_test": "Bare object test double rejected runtime _hooks_v2_runtime assignment; replaced only the new test double with SimpleNamespace. Failed receipt retained."
+}

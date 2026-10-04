@@ -1,0 +1,1634 @@
+{
+  "files": [
+    {
+      "file": "Tests/Chat/test_console_local_review_hook.py",
+      "authorized_overlay_reversal_AST_exact": true,
+      "before_sha256": "64d6596f1ad4dd7d87548e0a9baa22c3649936e4a31d9ef5edb32d3370369da5",
+      "after_sha256": "9877d4352ecb81778682635ad0713bde0b9905081e789503300b2e3e0599d3fb"
+    },
+    {
+      "file": "Tests/Chat/test_console_video_actions.py",
+      "authorized_overlay_reversal_AST_exact": true,
+      "before_sha256": "1e2a6c0155a18a74e10e23d8385a04ac2e0df2534b1e88cf684b559f7d2f4927",
+      "after_sha256": "31c58639c14a4370e7ff746987f568d80b16fb30d95af7c78d8b30da42fc5a76"
+    },
+    {
+      "file": "Tests/Chat/test_permission_summary_wiring.py",
+      "authorized_overlay_reversal_AST_exact": true,
+      "before_sha256": "c5058496814cf6cc346c7c8c076c0ed746de66f8df320d4b49b499bc186fa6ce",
+      "after_sha256": "e436ce0254a8efe8b8f58dc01d1978d017d1e2d0fa4a622875258e0cf2a40768"
+    },
+    {
+      "file": "Tests/UI/test_console_parallel_runs.py",
+      "authorized_overlay_reversal_AST_exact": true,
+      "before_sha256": "1081f293be567eedeff8bcb8384c72d73cd883b9e82cef6630eb1b5c01e4c2db",
+      "after_sha256": "435f67b462fe2f6af4662cd09b540b9d2c3fb5da10df7fef68cca8ba9a91311c"
+    },
+    {
+      "file": "tldw_chatbook/Chat/console_interrupt_rounds.py",
+      "authorized_overlay_reversal_AST_exact": true,
+      "before_sha256": "6dad71a115045a57bce67b98a54c313f37b31712b0de37e86741c2622f49882c",
+      "after_sha256": "d9d391123e31a409e000293acb1b335b423ddec0c0bd2ba9b81cc679def63487"
+    }
+  ],
+  "all_original_assertions_preserved_except_exact8_literal_replacements": true,
+  "prior318_pass_body_carries": [
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_mode_off_never_fires",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_summary_service_import_failure_is_advisory",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_fallback_fires_only_when_a_rationale_is_missing",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_delivery_drops_resolved_rounds_and_updates_live_ones",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_remount_head_helper_skips_non_mcp_payloads",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": true
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_the_store_read_happens_on_the_spawning_thread_not_the_worker",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_watchlists_receipt_capture_accepts_only_structured_canonical_ids",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_controller_retains_and_publishes_only_canonical_receipt_identity",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_controller_unfollow_survives_view_detach_and_remount",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_sibling_without_its_own_approval_never_dispatches[timeout-user did not approve within the time limit; do not retry-denied-timeout]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_sibling_without_its_own_approval_never_dispatches[surprise-tool call not approved (no decision recorded)-denied-unresolved]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_sibling_without_its_own_approval_never_dispatches[None-tool call not approved (no decision recorded)-denied-unresolved]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_lone_timed_out_row_still_reaches_the_provider_refusal",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_combined_hook_empty_list_is_noop",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_stop_mid_approval_records_only_the_unresolved_row",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_disabled_flag",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_coerces_quoted_false_to_disabled",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_no_service",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_kill_switch_on",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_kill_switch_read_failure_fails_closed",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_approval_requested_fires_with_round_payload",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_approval_requested_fires_for_view_detached_round",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_raw_shell_approval.py::test_pending_row_discloses_the_complete_validated_raw_request",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_raw_shell_approval.py::test_runtime_model_session_grants_are_memory_only_and_clear_on_disarm",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_raw_shell_approval.py::test_review_hook_keeps_repeated_raw_calls_independent",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_raw_shell_approval.py::test_review_hook_clears_stale_stamps_before_a_raising_round",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_raw_shell_approval.py::test_session_decision_grants_only_this_console_session",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_raw_shell_approval.py::test_raw_review_does_not_count_an_unselected_name_fallback",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_virtual_cli_approval.py::test_review_hook_keeps_same_model_tool_calls_independent",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_virtual_cli_approval.py::test_review_hook_clears_stale_stamps_before_a_raising_round",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_virtual_cli_approval.py::test_stamp_scope_hides_parent_verdicts_and_restores_them",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_virtual_cli_approval.py::test_controller_composition_honors_local_master_and_kill_switch[True-False-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_virtual_cli_approval.py::test_controller_composition_honors_local_master_and_kill_switch[False-False-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_virtual_cli_approval.py::test_controller_composition_honors_local_master_and_kill_switch[True-True-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_virtual_cli_approval.py::test_compose_virtual_cli_provider_wires_arg_rule_persist_and_check",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_virtual_cli_approval.py::test_controller_does_not_compose_virtual_cli_without_admitted_roots",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_virtual_cli_approval.py::test_run_registry_advertises_the_one_virtual_cli_model_tool",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_agent_lesson_skill_promotion_approval.py::test_hook_uses_exact_call_id_and_approve_once_card",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_agent_lesson_skill_promotion_approval.py::test_hook_denial_cannot_be_reused_by_same_named_call",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_builtin_gate_real_tool_coverage.py::test_a_real_reads_tagged_tool_reaches_the_approval_card_not_silence",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_real_agent_service_and_approval_hook_capture_ordered_lifecycle[approve_once-approval_approved-tool_succeeded]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_real_agent_service_and_approval_hook_capture_ordered_lifecycle[deny-approval_denied-None]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_lifecycle_capture_failure_is_contained_and_diagnosed_when_writable[False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_lifecycle_capture_failure_is_contained_and_diagnosed_when_writable[True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_repeated_same_tool_calls_keep_distinct_safe_durable_correlation",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_generic_tool_credentials_are_scrubbed_at_durable_agent_step_boundary",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_denied_call_cancelled_before_dispatch_is_not_approval_revoked",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_agent_service_actual_request_assembly_captures_safe_context_chain",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_agent_service_post_response_cancel_persists_causal_observation",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_review_metadata_comes_from_answered_decision[deny-False-denied]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_review_metadata_comes_from_answered_decision[deny-True-None]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_review_metadata_comes_from_answered_decision[approve_once-False-approved]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_review_metadata_comes_from_answered_decision[approve_session-False-approved]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_review_metadata_comes_from_answered_decision[timeout-False-None]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_review_metadata_comes_from_answered_decision[None-False-None]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_real_builtin_review_preserves_answer_authority[deny-False-denied]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_real_builtin_review_preserves_answer_authority[deny-True-None]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_real_builtin_review_preserves_answer_authority[approve_once-False-approved]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_real_builtin_review_preserves_answer_authority[approve_session-False-approved]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_real_builtin_review_preserves_answer_authority[timeout-False-None]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_real_builtin_review_preserves_answer_authority[None-False-None]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_builtin_review_uses_unanswered_state_of_selected_key[decisions_map0-unresolved0-None]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_builtin_review_uses_unanswered_state_of_selected_key[decisions_map1-unresolved1-denied]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_builtin_review_uses_unanswered_state_of_selected_key[decisions_map2-unresolved2-None]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_builtin_name_stamp_keeps_unresolved_sibling_and_restores_with_scope",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_trace_approval_capture.py::test_metadata_does_not_override_idless_same_name_refusal",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_automatic_compaction_commits_memory_and_the_send_replies",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_compact_now_succeeds_after_real_durable_sends",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compaction_records_reason_and_discloses_spend",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_says_nothing_changed",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_failure_is_not_rebilled_until_the_policy_changes[custom-32000]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_failure_is_not_rebilled_until_the_policy_changes[automatic-2400]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_compact_now_retries_once_after_an_automatic_failure",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_pauses_automatic_compaction",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_failed_auxiliary_compact_now_keeps_the_send_pause",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_under_omit_still_reports_the_failure",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_failed_automatic_compaction_under_omit_is_disclosed_once",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_recovery_fallback_keeps_only_the_preflight_blocks_own_copy",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_failed_micro_compaction_is_not_rebilled_by_the_next_tick",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_edit_to_the_latest_exchange_lifts_the_pause[edited-compact-now-micro-tick]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_edit_to_the_latest_exchange_lifts_the_pause[edited-compact-now-send]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_edit_to_the_latest_exchange_lifts_the_pause[edited-micro-tick-micro-tick]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_edit_to_the_latest_exchange_lifts_the_pause[edited-micro-tick-send]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_edit_to_the_latest_exchange_lifts_the_pause[unchanged-compact-now-micro-tick]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_edit_to_the_latest_exchange_lifts_the_pause[unchanged-compact-now-send]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_edit_to_the_latest_exchange_lifts_the_pause[unchanged-micro-tick-micro-tick]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_edit_to_the_latest_exchange_lifts_the_pause[unchanged-micro-tick-send]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_compact_now_beside_an_unsent_turn_keeps_its_retry_paused",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_compact_now_beside_an_unsent_turn_keeps_a_fresh_send_paused",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_pauses_a_continue_of_the_latest_reply",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_pauses_a_continue_under_stop_and_ask[unchanged]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_live_session.py::test_live_failed_compact_now_pauses_a_continue_under_stop_and_ask[reply-edited]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_automatic_failure_copy_names_cause_spend_and_next_step",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_manual_failure_copy_says_nothing_changed",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_suppressed_copy_says_no_new_call_was_made",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_stale_copy_invites_a_resend_instead_of_a_settings_change",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_spend_copy_never_fabricates_a_price[None-False-]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_spend_copy_never_fabricates_a_price[None-True-reported no token usage]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_spend_copy_never_fabricates_a_price[usage2-True-2,000 input + 50 output tokens.]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_manual_compact_now_with_nothing_to_summarize_says_so_plainly",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_manual_compact_now_with_no_useful_summary_gives_a_next_step",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_saved_range_faults_are_not_worded_as_a_size_problem",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_omitted_copy_discloses_a_billed_failure_the_send_survived[invalid_summary_output-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_omitted_copy_discloses_a_billed_failure_the_send_survived[branch_memory_changed_before_commit-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_every_known_reason_has_specific_copy",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_failed_attempt_suppresses_rebilling_until_the_fence_changes",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_each_route_keeps_its_own_pause",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_a_commit_that_can_never_land_fails_before_the_billed_call",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_success_clears_the_latch",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_changing_the_legacy_summary_text_lifts_the_pause",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[continue-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[regenerate-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[retry-failed-regenerate-sibling-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[send-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[send-after-deleting-the-latest-exchange-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[regenerate-after-editing-the-question-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[continue-after-editing-the-reply-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_a_compact_now_pause_covers_requests_that_resume_its_latest_exchange[regenerate-an-earlier-reply-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_a_send_pause_covers_the_previous_reply_after_a_discard[continue]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_failure.py::test_a_send_pause_covers_the_previous_reply_after_a_discard[regenerate]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_trace_compaction_admission.py::test_compaction_policy_resolves_explicit_bounded_config",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_trace_compaction_admission.py::test_provider_dispatch_gate_yields_until_maintenance_resumes",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_trace_compaction_admission.py::test_admission_requires_a_successful_durable_logical_gc",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_trace_compaction_admission.py::test_admission_defers_for_provider_activity_and_always_resumes_dispatch",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_trace_compaction_admission.py::test_admission_defers_for_activity_and_size_thresholds",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_trace_compaction_admission.py::test_admission_rechecks_live_storage_thresholds_for_the_same_gc_result",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_trace_compaction_admission.py::test_admission_defers_when_another_maintenance_owner_holds_the_lease",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_trace_compaction_admission.py::test_wal_disk_and_lease_failures_remain_pending_and_retryable",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_trace_compaction_admission.py::test_retry_backoff_prevents_an_immediate_second_attempt",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_trace_compaction_admission.py::test_expired_compaction_lease_recovers_and_can_retry",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_actual_compaction_commit_and_required_input_fence[none-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_actual_compaction_commit_and_required_input_fence[none-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_actual_compaction_commit_and_required_input_fence[pre-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_actual_compaction_commit_and_required_input_fence[pre-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_actual_compaction_commit_and_required_input_fence[post-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_actual_compaction_commit_and_required_input_fence[post-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_focused_fallback_gets_its_actual_required_candidate",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_console_compaction_real_sqlite_commit_and_provider_fence[False-False-False-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_console_compaction_real_sqlite_commit_and_provider_fence[False-True-False-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_console_compaction_real_sqlite_commit_and_provider_fence[True-False-False-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_console_compaction_real_sqlite_commit_and_provider_fence[True-True-False-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_console_compaction_real_sqlite_commit_and_provider_fence[True-False-True-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_console_compaction_real_sqlite_commit_and_provider_fence[False-False-False-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_console_compaction_real_sqlite_commit_and_provider_fence[True-False-False-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_manual_post_requirement_precedes_next_input_and_late_effects_are_discarded[False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_manual_post_requirement_precedes_next_input_and_late_effects_are_discarded[True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_successful_manual_post_checkpoints_retire_with_consumed_handoffs",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_previous_manual_handoff_does_not_keep_failed_operation_live[False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_hooks_v2_compaction.py::test_previous_manual_handoff_does_not_keep_failed_operation_live[True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_an_ask_hold_pauses_the_send_before_it_is_committed",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_compact_and_send_summarizes_then_sends_the_held_message_once",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_send_without_compacting_sends_with_no_summary_call",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_cancel_sends_nothing_and_returns_the_message_to_the_composer",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_a_failed_compaction_keeps_the_hold_and_says_why",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_held_send_is_not_also_a_turn_recovery",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_held_send_resumes_and_replies[compact_and_send]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_held_send_resumes_and_replies[send_without_compacting]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_a_send_that_cannot_fit_is_refused_before_commit_with_the_alert[True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_a_send_that_cannot_fit_is_refused_before_commit_with_the_alert[False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_a_runtime_send_that_cannot_fit_keeps_the_message_recoverable",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_send_without_compacting_holds_even_if_the_policy_turned_automatic",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_an_abandoned_resumed_hold_leaves_no_answered_id_behind",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_send_without_compacting_past_the_ceiling_drops_older_turns_to_fit",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_hook_context_that_cannot_fit_is_refused_before_commit",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_compaction_ask_hold.py::test_a_hold_after_hooks_resumes_without_repeating_its_side_effects",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_budget_routes.py::test_a_window_the_reservation_fills_alerts_with_max_tokens[False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_budget_routes.py::test_a_window_the_reservation_fills_alerts_with_max_tokens[True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_budget_routes.py::test_mandatory_context_over_the_window_alerts_with_what_fills_it[False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_budget_routes.py::test_mandatory_context_over_the_window_alerts_with_what_fills_it[True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_budget_routes.py::test_an_estimated_window_takes_the_same_route_as_a_verified_one[ask]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_budget_routes.py::test_an_estimated_window_takes_the_same_route_as_a_verified_one[automatic]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_budget_routes.py::test_the_hold_calls_its_budget_an_estimate_only_when_the_window_sets_it[custom-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_budget_routes.py::test_the_hold_calls_its_budget_an_estimate_only_when_the_window_sets_it[automatic-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_unknown_model_automatic_budget_does_not_block_unverified_send",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_memory_preflight_counts_and_preserves_private_owner_group",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_unknown_model_uses_bounded_custom_budget_for_compaction",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_visual_policy_falls_back_to_text_for_text_only_model",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_automatic_preflight_uses_active_model_visual_limit",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_automatic_preflight_refuses_selected_non_image_attachment_before_dispatch",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_bounded_budget_without_older_units_does_not_block_fitting_send",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_known_overflow_still_blocks_when_compaction_is_unavailable",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_controller_preflight_routes_off_ask_and_automatic_once[off-0-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_controller_preflight_routes_off_ask_and_automatic_once[ask-0-True]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_controller_preflight_routes_off_ask_and_automatic_once[automatic-1-False]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_controller_decision_diagnostic_is_event_only",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_context_compaction.py::test_manual_compact_now_is_explicit_and_transcript_neutral",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_first_chat_handoff.py::test_compaction_reaches_a_terminal_answer_when_the_gateway_hangs",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Backup_Recovery/test_console_maintenance.py::test_console_maintenance_preserves_admitted_turns_and_queued_prompts[refusal]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_video_actions.py::test_generate_video_registered_in_default_registry",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_video_actions.py::test_unknown_hint_derives_video_name",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_video_actions.py::test_generate_video_blocked_in_ephemeral_chat",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_video_actions.py::test_video_actions_offered_on_video_messages",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_video_actions.py::test_video_actions_absent_on_plain_messages",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_video_actions.py::test_video_actions_enabled_only_when_file_available",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_video_actions.py::test_video_action_dispatch_returns_screen_targets",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_video_actions.py::test_guide_segments_name_video_actions",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_destination_display_removes_credentials_path_query_and_controls",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_console_wiring_opens_auto_speak_consent_on_owning_app",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_enabling_auto_speak_confirms_destination_without_replaying_greeting",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_opted_out_completion_does_not_resolve_or_initialize_tts",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_new_active_reply_dispatches_exactly_once",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_destination_change_requires_one_reconfirmation_and_drops_extra_reply",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_background_completion_never_prompts_or_plays",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_hands_free_owns_new_reply_without_prompt_or_play",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_dismissal_and_stale_completion_drop_retained_token",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_persistence_failure_keeps_switch_truthful",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_disable_persistence_failure_keeps_switch_enabled",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_dispatch_exception_persists_paused_state",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_tts_failure_persists_pause_and_resume_clears_it",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_unmount_unsubscribes_and_stale_callbacks_are_noops",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_concurrent_enable_requests_share_one_destination_lookup_and_modal",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_modal_open_failure_releases_enable_reservation_and_keeps_state_truthful",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_unmount_while_destination_lookup_is_blocked_never_prompts_or_dispatches",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_delayed_completion_drops_after_active_session_a_b_a_cycle",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_enable_modal_acceptance_drops_after_active_session_a_b_a_cycle",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_failure_after_unmount_still_persists_pause_for_same_opt_in_epoch",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_old_failure_after_disable_reenable_does_not_pause_new_opt_in",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_retry_uses_trusted_path_for_failed_message_without_resuming",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_retry_failure_after_resume_does_not_notify_stale_paused_state",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_retry_drops_when_auto_speak_resumes_during_destination_lookup",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_retry_drops_when_hands_free_starts_during_destination_lookup",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_retry_failed_message_from_wrong_active_session_fails_closed",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_later_successful_completion_for_same_message_dispatches_again",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_regeneration_waits_for_prior_speech_then_dispatches_once",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_pending_regeneration_reconfirms_changed_destination_before_speech",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_regeneration_pending_behind_failed_speech_stays_paused",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_regeneration_destination_await_rechecks_failure_pause_before_dispatch",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_same_id_restore_accepts_new_completion_and_drops_old_generation",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_regeneration_pending_behind_speech_drops_after_active_change",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_duplicate_completion_callback_after_settlement_does_not_replay",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_distinct_completions_during_destination_lookup_both_dispatch",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_unavailable_app_handler_callback_durably_pauses_auto_speak",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_retry_deleted_failed_message_fails_closed",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_retry_stale_failed_message_id_fails_closed",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_retry_ownership_is_independent_per_session_and_resume_is_scoped",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_old_failure_cannot_pause_same_id_restored_session",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_scheduler_rejection_closes_work_and_allows_retry",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_modal_callback_scheduler_rejection_unwinds_modal",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::TestSuspendGuardUnit::test_pending_requires_open_modal_and_live_callback",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_pending_interrupt_projection.py::test_session_owned_pending_projection_journeys",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_skill_install_confirm.py::test_confirm_round_trip_allow",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_skill_install_confirm.py::test_confirm_round_trip_deny",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_skill_install_confirm.py::test_confirm_timeout_denies",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_skill_install_confirm.py::test_confirm_no_app_denies_immediately",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_skill_install_confirm.py::test_own_session_cancel_event_denies_the_round",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_skill_install_confirm.py::test_unrelated_session_stop_does_not_deny",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_skill_install_confirm.py::test_shutdown_denies_pending_confirm",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_skill_install_confirm.py::test_request_skill_install_confirm_parks_for_a_non_active_session",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_skill_install_confirm.py::test_switch_session_no_longer_denies_a_pending_skill_install_confirm",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_skill_install_confirm.py::test_resolve_pending_skill_install_ignores_a_stale_or_unknown_request_id",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_skill_install_confirm.py::test_resolve_pending_skill_install_with_no_request_id_is_dropped",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_skill_install_confirm.py::test_confirm_zero_timeout_keeps_round_armed_for_late_decision",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_skill_install_concurrent_confirms.py::test_two_concurrent_rounds_for_different_sessions_each_get_their_own_decision",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_skill_install_concurrent_confirms.py::test_close_session_denies_only_that_sessions_round",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_skill_install_concurrent_confirms.py::test_a_decision_cannot_resolve_the_other_round",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_skill_install_concurrent_confirms.py::test_teardown_of_one_round_leaves_the_other_armed",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_skill_install_concurrent_confirms.py::test_two_rounds_for_the_same_session_keep_badge_and_payload_until_both_resolve",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_skill_install_concurrent_confirms.py::test_two_rounds_for_the_same_session_resolving_the_newer_one_first_leaves_the_slot_populated",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_skill_install_concurrent_confirms.py::test_stale_request_id_with_both_rounds_live_resolves_neither",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_skill_install_concurrent_confirms.py::test_shutdown_denies_every_armed_round_with_real_session_ids",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_skill_install_concurrent_confirms.py::test_bare_shutdown_flag_alone_denies_a_real_session_round_within_one_poll_interval",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_skill_install_concurrent_confirms.py::test_shutdown_flag_alone_denies_both_unregistered_sessions_rounds_and_cleans_accounting",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_trace_call_recovery.py::test_a_compaction_hold_shows_its_numbers_and_three_choices",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_trace_call_recovery.py::test_a_compaction_hold_on_an_estimated_window_says_so",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_trace_call_recovery.py::test_each_compaction_hold_button_reaches_its_controller_action",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_compaction_hold_flow.py::test_an_ask_hold_shows_the_card_and_each_action_completes[compact_and_send]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_compaction_hold_flow.py::test_an_ask_hold_shows_the_card_and_each_action_completes[send_without_compacting]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_compaction_hold_flow.py::test_an_ask_hold_shows_the_card_and_each_action_completes[cancel]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_fallback_fires_when_missing_and_always_fires",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_parked_round_fires_once_on_attach_remount",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": true
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_consumed_flag_prevents_refire_on_attach_remount",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": true
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_remount_head_helper_fires_promoted_sibling_once",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": true
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_hook_clears_stamps_before_gating",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_hook_gates_ask_calls_in_one_batch",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_hook_keeps_same_name_watchlist_decisions_per_call",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_local_same_name_broad_approval_scope_survives_later_narrow_scope[always_allow-approve_session]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_local_same_name_broad_approval_scope_survives_later_narrow_scope[always_allow-approve_once]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_local_same_name_broad_approval_scope_survives_later_narrow_scope[approve_session-approve_once]",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_local_pending_gate_carries_descriptor_owned_effects",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_mounted_approval_row_carries_exact_descriptor_effects",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_hook_skips_non_ask_calls",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_combined_hook_does_not_overwrite_a_local_refusal",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_combined_hook_clears_later_providers_when_earlier_hook_raises",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_combined_hook_runs_remaining_hooks_after_a_raise",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_hook_level_card_deny_lands_in_the_execution_log_exactly_once",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_missing_master_key_defaults_enabled",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_coerces_quoted_true_to_enabled",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_eligible",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_default_chat_local_provider_rejects_after_scratch_close",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_routes_schedule_through_shared_app_command_service",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_empty_workspace_root_uses_scratch",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_console_run_without_admitted_roots_keeps_non_path_local_tools",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_local_provider_read_only_filters_write_specs_without_global_mutation",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_selected_root_overrides_disabled_fallback",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_selected_root_swap_fails_closed_before_local_invoke",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_tilde_workspace_root_does_not_grant_home_access",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_persists_session_and_always_allow",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_session_approval_skips_reprompt",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_records_deny_via_service",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_records_timeout_via_service",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_allow_records_no_refusal",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_recording_failure_does_not_break_invoke",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_without_session_registers_no_todo_spec",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_compose_local_provider_unknown_session_registers_no_todo_spec",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_hook_passes_rationale_onto_local_pending_rows",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_a_no_app_headless_round_is_not_recorded_as_a_local_user_denial",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_local_review_hook.py::test_run_reply_wraps_the_review_chain_with_pretooluse_hooks",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Agents/test_builtin_gate_real_tool_coverage.py::test_create_note_persists_through_a_real_db_on_a_worker_thread",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_rewind_summarize.py::test_range_projection_is_shared_by_preflight_and_next_send_preview",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_rewind_summarize.py::test_preview_duplicates_complete_system_and_memory_dispatch_block",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_console_rewind_summarize.py::test_effective_legacy_memory_makes_automatic_and_compact_now_zero_call",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::test_consent_survives_the_modal_push_suspend",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_auto_speak_wiring.py::TestSuspendGuardUnit::test_suspend_preserves_coordinator_only_while_result_pending",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_skill_install_concurrent_confirms.py::test_teardown_clear_does_not_clobber_a_newer_same_session_round_arming_mid_teardown",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_parallel_runs.py::test_park_toast_fires_again_for_a_genuinely_new_round_same_session",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_parallel_runs.py::test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_round",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/UI/test_console_parallel_runs.py::test_park_toast_fires_once_for_a_new_round_arriving_after_teardown",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": false
+    },
+    {
+      "node": "Tests/Chat/test_permission_summary_wiring.py::test_remount_head_helper_skips_non_mcp_payloads",
+      "AST_exact": true,
+      "replayed_only_if_direct_summary_control": true
+    }
+  ],
+  "host_lines": 6479,
+  "cap": 6479,
+  "production_changed_methods": [
+    "InterruptRoundHost._reproject_pending_decision_for_session"
+  ],
+  "body_contract": "109 moved bodies exact plus1explicit summary fix;398 original unmoved exact plus2prior bounded provider exceptions; Session/authority/locking/QA unchanged",
+  "profile_mechanism": "Tests.private_profile selects profile in child env before import; conftest keep_bootstrap_profile true for child OR bootstrap marker. Retained both marker and exact selected env path; no post-admission path rewrite."
+}

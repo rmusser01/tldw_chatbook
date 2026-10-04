@@ -1,0 +1,5 @@
+{
+  "red_relocation": "Root requested final qualification naming after RED began. Completed red receipts were moved byte-exact from task-9-summary-native-safe-evidence to task-9-summary-native-qualification-safe-evidence; actual argv and log retain original output paths.",
+  "initial_static_attempt": "An exploratory ruff invocation without --no-cache could not create its temporary .ruff_cache file under sandbox permissions; no analysis result. Recorded final --no-cache fatal Ruff passed.",
+  "no_other_tests_executed": true
+}

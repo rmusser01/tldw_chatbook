@@ -1,0 +1,13 @@
+{
+  "path": "Tests/UI/test_console_provider_apply_defaults_flow.py",
+  "base_commits": [
+    "d05a98c766d9834a9b87f96397be5309dbe12b1b",
+    "b6990a3a75d68e101fc9f925feafff287b118b31"
+  ],
+  "before_sha256": "4e2fa8fcc619209ecc849448c18604485b1128cdc9fc1af7024a879b0137624d",
+  "after_sha256": "4f8ec3879c7d3dd62638c2c11deb1824d3e122ca058a209aca0a79c07c1cfed1",
+  "old_docstring": "Calling any durable writer or rebasing from saved vLLM loses this contract.",
+  "new_docstring": "Verified adoption changes only the active session, preserving durable config.",
+  "full_module_AST_exact_after_one_docstring_reversal": true,
+  "all_executable_statements_assertions_and_other_AST_exact": true
+}

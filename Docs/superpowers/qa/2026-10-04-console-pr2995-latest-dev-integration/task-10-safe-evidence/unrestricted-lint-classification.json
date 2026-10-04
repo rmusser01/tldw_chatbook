@@ -1,0 +1,41 @@
+{
+  "baseline": {
+    "tldw_chatbook/Chat/console_chat_store.py": 117,
+    "tldw_chatbook/Chat/console_chat_fork.py": 2,
+    "Tests/Chat/test_console_chat_fork.py": 12
+  },
+  "final_total": 132,
+  "baseline_total": 131,
+  "introduced_code_message_multiset": [
+    [
+      "I001",
+      "Import block is un-sorted or un-formatted",
+      1
+    ]
+  ],
+  "removed_code_message_multiset": [],
+  "first_source_only_replay_total": 122,
+  "first_failure_provenance": "Actual first source-only command exit1/122 errors was reported to root immediately. These replay JSON files reconstruct exact pre-unused-import-removal source through stdin; they are distinct from the initial truncated tool receipt.",
+  "commands": {
+    "baseline": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "check",
+      "--no-cache",
+      "--stdin-filename",
+      "<path>",
+      "--output-format",
+      "json",
+      "-"
+    ],
+    "final": "unrestricted-ruff.json/log",
+    "replay": "same stdin command using final source with the exact2 removed imports restored"
+  },
+  "final_after_type_only_ordering": {
+    "findings": 131,
+    "baseline": 131,
+    "code_message_multiset_equal": true,
+    "introduced": [],
+    "removed": [],
+    "receipt": "final-unrestricted-ruff.json/log"
+  }
+}

@@ -1,0 +1,351 @@
+{
+  "status": "newest_dev_integration_qualified_pending_root_review_and_Task9",
+  "SOURCEBASE": "2e12bfe61f0c943c11fa13a37218a569193de19a",
+  "FROZEN_PREVIOUS_SOURCE": "084b5618ded0f144ae01e643a224d09c554abe3d",
+  "OLDDEV": "f800952214844c3d41ddbe4b6522c93d4be25b7c",
+  "RUNTIMEDEV": "9878fd251a01b9b65138316088af7bcee8c987b6",
+  "EFFECTIVEDEV": "1b12df2757f901e5c8e7a1e8946ad98f315eb8f9",
+  "SOURCEHEAD": "a5bce3259069cf5bf59aba8b9a8f9cf025dcfd75",
+  "rebase_count": 1,
+  "conflicts": [],
+  "source_corrections": [],
+  "replayed_feature_commits": 55,
+  "ancestry": {
+    "f800952214844c3d41ddbe4b6522c93d4be25b7c": true,
+    "9878fd251a01b9b65138316088af7bcee8c987b6": true,
+    "1b12df2757f901e5c8e7a1e8946ad98f315eb8f9": true
+  },
+  "source_union_paths": 29851,
+  "source_union_mismatches": [],
+  "overlap_three_way": {
+    "backlog/docs/lessons-testing-evidence.md": {
+      "merge_exit": 0,
+      "exact": true,
+      "merged_sha256": "01214b3f354e094c7ae69fee67fa25e29951b56c82ebf514ee61aed75018bf65"
+    },
+    "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py": {
+      "merge_exit": 0,
+      "exact": true,
+      "merged_sha256": "0ea91b60766bf73c25596e9279407f177011d558c834fedf041347dff057576c"
+    }
+  },
+  "actual_method_names": {
+    "ConsoleSessionSwitcherModal._entry_metadata": {
+      "owner": "2e12bfe61f0c943c11fa13a37218a569193de19a",
+      "HEAD": {
+        "ast": "69a12f02962e1a1c761d5f78479d31df0047c337df8530b4bd7c3e2d5359d4d6",
+        "source": "30c6dd6a0f25ef0e0fb27c8fe4eca46249bbdf06aadcd878181924abb744a319",
+        "line": 1251
+      },
+      "original": {
+        "ast": "69a12f02962e1a1c761d5f78479d31df0047c337df8530b4bd7c3e2d5359d4d6",
+        "source": "30c6dd6a0f25ef0e0fb27c8fe4eca46249bbdf06aadcd878181924abb744a319",
+        "line": 1251
+      },
+      "source_exact": true,
+      "ast_exact": true
+    },
+    "ConsoleSessionSwitcherModal._run_character_activation": {
+      "owner": "1b12df2757f901e5c8e7a1e8946ad98f315eb8f9",
+      "HEAD": {
+        "ast": "85cd22f69e65701aea559c5483a80447c20d7c27e7487a779ac7aa685a3e3bcc",
+        "source": "250d25a0f9004176f85703c0bc5712a8ef13cc68ceaa275c975c89d70ef1c526",
+        "line": 2327
+      },
+      "original": {
+        "ast": "85cd22f69e65701aea559c5483a80447c20d7c27e7487a779ac7aa685a3e3bcc",
+        "source": "250d25a0f9004176f85703c0bc5712a8ef13cc68ceaa275c975c89d70ef1c526",
+        "line": 2323
+      },
+      "source_exact": true,
+      "ast_exact": true
+    },
+    "ConsoleSessionSwitcherModal._run_character_library_recovery": {
+      "owner": "1b12df2757f901e5c8e7a1e8946ad98f315eb8f9",
+      "HEAD": {
+        "ast": "c58048ce06c72afe11674d5bbe640eb58982989d0c5c1794fef4ee71e11a2a4a",
+        "source": "f0b6375a525da2c8fbaf07b3b9c3d49d37f3718aa2838adc031ca6e339eda711",
+        "line": 2499
+      },
+      "original": {
+        "ast": "c58048ce06c72afe11674d5bbe640eb58982989d0c5c1794fef4ee71e11a2a4a",
+        "source": "f0b6375a525da2c8fbaf07b3b9c3d49d37f3718aa2838adc031ca6e339eda711",
+        "line": 2495
+      },
+      "source_exact": true,
+      "ast_exact": true
+    },
+    "ConsoleSessionSwitcherModal.confirm_quit": {
+      "owner": "1b12df2757f901e5c8e7a1e8946ad98f315eb8f9",
+      "HEAD": {
+        "ast": "37c57b5c290704cad8d3465ad40ea5c54ebc92b502b083063d94bd3f22baae04",
+        "source": "239947e2128fd8f610c6afe4064b45af537e3b6e6f4eabd4e55adf92aeb0b1ec",
+        "line": 2558
+      },
+      "original": {
+        "ast": "37c57b5c290704cad8d3465ad40ea5c54ebc92b502b083063d94bd3f22baae04",
+        "source": "239947e2128fd8f610c6afe4064b45af537e3b6e6f4eabd4e55adf92aeb0b1ec",
+        "line": 2554
+      },
+      "source_exact": true,
+      "ast_exact": true
+    }
+  },
+  "qa_count": 12337,
+  "qa_all_exact": true,
+  "original_frozen_artifacts_unchanged": 126,
+  "original_safe_files": 122,
+  "original_top_level_hashes": 3,
+  "original_manifest_also_frozen": true,
+  "original_passing_cases_carried_without_replay": 65,
+  "new_passed_cases": 59,
+  "results": {
+    "ui-census": {
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_ui_pr_gate_census.py"
+      ],
+      "exit": 0,
+      "seconds": 0.05804610252380371,
+      "stable": true
+    },
+    "modal-video-qualification": {
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "Tests/UI/test_close_under_quit_question.py",
+        "Tests/UI/test_modal_quit_in_flight_hooks.py",
+        "Tests/Architecture/test_guarded_modal_quit_census.py",
+        "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
+        "Tests/UI/test_console_video_picker_cancel.py",
+        "Tests/UI/test_app_quit_in_flight_modals.py::test_ctrl_q_waits_for_a_fork_that_is_committing",
+        "Tests/UI/test_app_quit_in_flight_modals.py::test_a_fork_that_finishes_under_the_quit_question_closes_after_wait",
+        "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-11-newest-dev-safe-evidence/modal-video-qualification.xml"
+      ],
+      "exit": 0,
+      "seconds": 50.443315267562866,
+      "stable": true
+    },
+    "worker-contract": {
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "scripts/check_textual_worker_contract.py"
+      ],
+      "exit": 0,
+      "seconds": 21.542864322662354,
+      "stable": true
+    },
+    "formatter": {
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+        "format",
+        "--check",
+        "Tests/Architecture/test_guarded_modal_quit_census.py",
+        "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
+        "Tests/Chat/test_console_video_capacity.py",
+        "Tests/UI/modal_wide_tier_registry.py",
+        "Tests/UI/test_app_quit_in_flight_modals.py",
+        "Tests/UI/test_close_under_quit_question.py",
+        "Tests/UI/test_console_modal_dismissal.py",
+        "Tests/UI/test_console_prompts_modal.py",
+        "Tests/UI/test_console_video_picker_cancel.py",
+        "Tests/UI/test_modal_quit_discard_guards.py",
+        "Tests/UI/test_modal_quit_in_flight_hooks.py",
+        "scripts/check_ui_pr_gate_census.py",
+        "tldw_chatbook/UI/Console_Modules/video.py",
+        "tldw_chatbook/UI/Library_Modules/prompt_collection_manager_modal.py",
+        "tldw_chatbook/UI/Screens/profile_interview_screen.py",
+        "tldw_chatbook/UI/Watchlists_Modules/bulk_sources_modal.py",
+        "tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py",
+        "tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py",
+        "tldw_chatbook/Widgets/Console/console_fork_chat_modal.py",
+        "tldw_chatbook/Widgets/Console/console_model_popover.py",
+        "tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+        "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
+        "tldw_chatbook/Widgets/Console/console_video_capacity_modal.py",
+        "tldw_chatbook/Widgets/Console/console_video_save_screens.py",
+        "tldw_chatbook/Widgets/Console/trace_export_dialog.py",
+        "tldw_chatbook/Widgets/Console/trace_export_profile_ui.py",
+        "tldw_chatbook/Widgets/Persona_Widgets/buddy_character_review.py",
+        "tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py",
+        "tldw_chatbook/Widgets/modal_dismissal.py",
+        "tldw_chatbook/Widgets/project_skills_import_modal.py",
+        "tldw_chatbook/Widgets/quit_while_working.py"
+      ],
+      "exit": 1,
+      "seconds": 0.0359189510345459,
+      "stable": true
+    },
+    "source-whitespace": {
+      "command": [
+        "git",
+        "-c",
+        "gc.auto=0",
+        "diff",
+        "--check",
+        "2e12bfe61f0c943c11fa13a37218a569193de19a",
+        "HEAD",
+        "--",
+        "Tests/Architecture/test_guarded_modal_quit_census.py",
+        "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
+        "Tests/Chat/test_console_video_capacity.py",
+        "Tests/UI/modal_wide_tier_registry.py",
+        "Tests/UI/test_app_quit_in_flight_modals.py",
+        "Tests/UI/test_close_under_quit_question.py",
+        "Tests/UI/test_console_modal_dismissal.py",
+        "Tests/UI/test_console_prompts_modal.py",
+        "Tests/UI/test_console_video_picker_cancel.py",
+        "Tests/UI/test_modal_quit_discard_guards.py",
+        "Tests/UI/test_modal_quit_in_flight_hooks.py",
+        "scripts/check_ui_pr_gate_census.py",
+        "tldw_chatbook/UI/Console_Modules/video.py",
+        "tldw_chatbook/UI/Library_Modules/prompt_collection_manager_modal.py",
+        "tldw_chatbook/UI/Screens/profile_interview_screen.py",
+        "tldw_chatbook/UI/Watchlists_Modules/bulk_sources_modal.py",
+        "tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py",
+        "tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py",
+        "tldw_chatbook/Widgets/Console/console_fork_chat_modal.py",
+        "tldw_chatbook/Widgets/Console/console_model_popover.py",
+        "tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+        "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
+        "tldw_chatbook/Widgets/Console/console_video_capacity_modal.py",
+        "tldw_chatbook/Widgets/Console/console_video_save_screens.py",
+        "tldw_chatbook/Widgets/Console/trace_export_dialog.py",
+        "tldw_chatbook/Widgets/Console/trace_export_profile_ui.py",
+        "tldw_chatbook/Widgets/Persona_Widgets/buddy_character_review.py",
+        "tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py",
+        "tldw_chatbook/Widgets/modal_dismissal.py",
+        "tldw_chatbook/Widgets/project_skills_import_modal.py",
+        "tldw_chatbook/Widgets/quit_while_working.py"
+      ],
+      "exit": 0,
+      "seconds": 0.04746294021606445,
+      "stable": true
+    },
+    "fatal-ruff": {
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "Tests/Architecture/test_guarded_modal_quit_census.py",
+        "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
+        "Tests/Chat/test_console_video_capacity.py",
+        "Tests/UI/modal_wide_tier_registry.py",
+        "Tests/UI/test_app_quit_in_flight_modals.py",
+        "Tests/UI/test_close_under_quit_question.py",
+        "Tests/UI/test_console_modal_dismissal.py",
+        "Tests/UI/test_console_prompts_modal.py",
+        "Tests/UI/test_console_video_picker_cancel.py",
+        "Tests/UI/test_modal_quit_discard_guards.py",
+        "Tests/UI/test_modal_quit_in_flight_hooks.py",
+        "scripts/check_ui_pr_gate_census.py",
+        "tldw_chatbook/UI/Console_Modules/video.py",
+        "tldw_chatbook/UI/Library_Modules/prompt_collection_manager_modal.py",
+        "tldw_chatbook/UI/Screens/profile_interview_screen.py",
+        "tldw_chatbook/UI/Watchlists_Modules/bulk_sources_modal.py",
+        "tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py",
+        "tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py",
+        "tldw_chatbook/Widgets/Console/console_fork_chat_modal.py",
+        "tldw_chatbook/Widgets/Console/console_model_popover.py",
+        "tldw_chatbook/Widgets/Console/console_prompts_modal.py",
+        "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
+        "tldw_chatbook/Widgets/Console/console_video_capacity_modal.py",
+        "tldw_chatbook/Widgets/Console/console_video_save_screens.py",
+        "tldw_chatbook/Widgets/Console/trace_export_dialog.py",
+        "tldw_chatbook/Widgets/Console/trace_export_profile_ui.py",
+        "tldw_chatbook/Widgets/Persona_Widgets/buddy_character_review.py",
+        "tldw_chatbook/Widgets/Settings_Widgets/personal_context_review_modal.py",
+        "tldw_chatbook/Widgets/modal_dismissal.py",
+        "tldw_chatbook/Widgets/project_skills_import_modal.py",
+        "tldw_chatbook/Widgets/quit_while_working.py"
+      ],
+      "exit": 0,
+      "seconds": 0.04093527793884277,
+      "stable": true
+    }
+  },
+  "census": {
+    "old_count": 135,
+    "new_count": 137,
+    "removed": [],
+    "added": [
+      "Tests/UI/test_close_under_quit_question.py",
+      "Tests/UI/test_modal_quit_in_flight_hooks.py"
+    ],
+    "checker_exact_upstream": true,
+    "floor": 135
+  },
+  "formatter_all_edits_exact_upstream": true,
+  "diagnostic_projection_all_exact_BASE": true,
+  "initial_caps_unchanged": {
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "lines": 33695,
+      "line_cap": 29367,
+      "methods": 494,
+      "methods_cap": null
+    },
+    "tldw_chatbook/Chat/console_chat_store.py": {
+      "lines": 22338,
+      "line_cap": 22344,
+      "methods": 564,
+      "methods_cap": null
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
+      "lines": 25239,
+      "line_cap": 25218,
+      "methods": 761,
+      "methods_cap": 759
+    }
+  },
+  "protected_source": {
+    "tldw_chatbook/Chat/console_chat_controller.py": {
+      "BASE": "100644 blob 1d57ccf8226eae31e8cae34679d5fd1c306aadd2",
+      "HEAD": "100644 blob 1d57ccf8226eae31e8cae34679d5fd1c306aadd2",
+      "exact": true
+    },
+    "tldw_chatbook/UI/Screens/chat_screen.py": {
+      "BASE": "100644 blob 2e426fdbbbf9ce4c24780d78e57b659676d97694",
+      "HEAD": "100644 blob 2e426fdbbbf9ce4c24780d78e57b659676d97694",
+      "exact": true
+    },
+    "tldw_chatbook/Chat/console_chat_store.py": {
+      "BASE": "100644 blob d1fc84692cfb97bca3183dfe32785de1d3fb390c",
+      "HEAD": "100644 blob d1fc84692cfb97bca3183dfe32785de1d3fb390c",
+      "exact": true
+    },
+    "tldw_chatbook/Chat/console_chat_fork.py": {
+      "BASE": "100644 blob 178bbc251065de399c2d44cc207e19bf01813412",
+      "HEAD": "100644 blob 178bbc251065de399c2d44cc207e19bf01813412",
+      "exact": true
+    }
+  },
+  "warnings": [
+    "Raw pytest receipt retains temporary-directory cleanup warnings (Errno 66, old garbage popen-gw4 path). Test selection itself passed59 without skips or failures."
+  ],
+  "pending": [
+    "Root independent integration review",
+    "Task9 controller/ChatScreen structure and size gates",
+    "One final startup/public-navigation qualification after source settles",
+    "Root current-head/publication/merge gates"
+  ],
+  "handoff": {
+    "HEAD": "a5bce3259069cf5bf59aba8b9a8f9cf025dcfd75",
+    "completed_owned_exec_sessions": [
+      76614,
+      86706,
+      7745,
+      1492,
+      23422,
+      53880
+    ],
+    "pending_owned_processes": [],
+    "test_selection_executed_once": true,
+    "source_changes_after_qualification": false,
+    "clean_worktree": true,
+    "empty_index": true,
+    "handoff": "No owned running test/analyzer/diagnostic/rebase/fetch child remains. All tool sessions returned completed. Source/index/HEAD operations relinquished to root after this freeze."
+  }
+}

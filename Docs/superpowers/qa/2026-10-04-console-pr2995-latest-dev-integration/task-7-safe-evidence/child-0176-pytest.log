@@ -1,0 +1,7 @@
+.                                                                        [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-final-adoption-profile-u_04joyy/pytest/test_vllm_console_session_endp0/private-profile-process/pytest.xml -
+============================= slowest 25 durations =============================
+4.91s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_session_endpoint_never_enters_conversation_metadata
+
+(2 durations < 1s hidden.)
+1 passed in 7.85s

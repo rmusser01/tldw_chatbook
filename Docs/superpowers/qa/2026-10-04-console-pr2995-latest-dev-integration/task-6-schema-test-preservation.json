@@ -1,0 +1,10 @@
+{
+  "hook_test_two_assertions_reversal_AST_equal_dev": true,
+  "column_pin_exact_single_addition": {
+    "console_dispatch_checkpoints": [
+      "agent_chat_start_attempt_id"
+    ]
+  },
+  "49_case_scanner_source_exact_BASE": true,
+  "navigation_fixture_source_exact_BASE": true
+}
