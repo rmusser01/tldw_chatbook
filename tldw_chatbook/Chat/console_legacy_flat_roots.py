@@ -29,7 +29,9 @@ before the first message (:func:`appended_metadata`) -- it records
 ``MessageMetadata.root_fork`` (stored as ``"root_fork": true`` in the row's
 local ``metadata_json``) on the new row. A send in a saved conversation writes
 its prompt in the turn's own commit, so the marker travels with that commit
-(:func:`durable_acceptance`), and a writer that replaces a row's whole record
+(:func:`durable_acceptance`); a completed voice exchange is saved by its own
+commit, so its store-resolved destination carries it instead
+(:func:`voice_user_root_fork`); and a writer that replaces a row's whole record
 carries it over (:func:`keep_root_fork`). And :func:`legacy_flat_chain`:
 
 * leaves every MARKED root out of the chain: it stays an independent root, a
@@ -57,19 +59,31 @@ chains is shown, counted, deleted and restored by Undo together.
   it and Undo restores it. The same holds for a fork whose row arrives without
   the marker: ``metadata_json`` is local-only, so another synced device, an
   export/import, or a rewrite by an older build does not carry it.
-* Other rows created at a before-first cursor are not marked and keep that
-  reading too: a completed voice exchange's prompt (its commit proof requires
-  the user row to carry no metadata), and a generated image or video reply
-  (only USER rows are marked on append; a video row stores a different record
-  in the same column).
+* A generated image or video reply created at a before-first cursor is not
+  marked and keeps that reading too (only USER rows are marked on append; a
+  video row stores a different record in the same column).
 * An unmarked all-USER set whose fork has no reply on either branch chains.
+
+DELETE (:func:`delete_seeds`). The durable subtree delete follows parent links,
+so the store passes it the saved ids of its whole in-memory subtree: the
+chained flat roots reach the database only that way (TASK-33628.6). A flat
+conversation can also hold rows the Console never shows -- a tool-role row
+(never a store node) or an empty row (dropped at hydration) -- saved as
+parentless roots between the flat rows. They are later rows of the same
+chain, so a Delete that removes chained roots also removes every such hidden
+root after the first deleted root, in the database's root order
+(TASK-33628.7). Undo restores them with the rest. They are not counted in the
+prompt, which counts only what the transcript shows. Finding them reads only
+the conversation's parentless rows, a page at a time
+(``CharactersRAGDB.get_root_message_rows_page``), and only when the delete
+removes a chained root.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import replace
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -81,6 +95,11 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_dispatch_checkpoint import (
         ConsoleDurableTurnAcceptance,
     )
+    from tldw_chatbook.Chat.console_voice_promotion import VoicePromotionContext
+
+
+#: Parentless rows read per page while looking for hidden flat roots.
+ROOT_ROWS_PAGE_SIZE = 500
 
 
 class _ForkProjectionFlag(Protocol):
@@ -165,6 +184,32 @@ def durable_acceptance(
     return replace(acceptance, user_root_fork=True)
 
 
+def voice_user_root_fork(
+    store: Any, session: _ForkProjectionFlag, context: VoicePromotionContext
+) -> bool:
+    """Whether a completed voice exchange's prompt is a new root-level branch.
+
+    Its prompt is appended under the claimed native leaf, so the typed
+    prompt's rule decides (:func:`appended_metadata`): a USER row appended with
+    no parent while the session already holds a root, outside a fork
+    projection (TASK-33628.12).
+
+    Args:
+        store: The Console store resolving the exchange's destination.
+        session: The session the exchange is published to.
+        context: The sealed exchange; ``expected_native_leaf_id`` is the
+            native parent its prompt is appended under.
+
+    Returns:
+        True when the prompt is saved with the ``root_fork`` marker.
+    """
+    children = store._children_by_parent.get(context.origin.session_id)
+    marker = appended_metadata(
+        None, ConsoleMessageRole.USER, context.expected_native_leaf_id, children, session
+    )
+    return marker is not None
+
+
 def keep_root_fork(
     previous: MessageMetadata | None, metadata: MessageMetadata
 ) -> MessageMetadata:
@@ -219,3 +264,118 @@ def legacy_flat_chain(
     if not has_assistant_root and any(children.get(root) for root in flat):
         return []
     return flat
+
+
+def delete_seeds(
+    store: Any, session_id: str, subtree_ids: Sequence[str]
+) -> list[str | None]:
+    """Return the ids a Delete of ``subtree_ids`` passes to the durable delete.
+
+    Args:
+        store: The Console store about to delete the subtree.
+        session_id: The session holding it.
+        subtree_ids: The native ids the delete removes, selected row first.
+
+    Returns:
+        The subtree's saved ids (``None`` for unsaved nodes, which the
+        database ignores), then the hidden flat rows later in its chain.
+    """
+    nodes = store._nodes_by_session.get(session_id, {})
+    seeds = [nodes[n].persisted_message_id for n in subtree_ids if n in nodes]
+    if not any(_was_chained(store, nodes, node_id) for node_id in subtree_ids):
+        return seeds
+    session = store._sessions.get(session_id)
+    conversation_id = getattr(session, "persisted_conversation_id", None)
+    database = getattr(store.persistence, "db", None) if store.persistence else None
+    reader = getattr(database, "get_root_message_rows_page", None)
+    if conversation_id is None or not callable(reader):
+        return seeds
+    roots = _root_rows(reader, conversation_id)
+    return seeds + hidden_rows_after(roots, {seed for seed in seeds if seed})
+
+
+def _root_rows(
+    reader: Callable[..., Sequence[Mapping[str, Any]]], conversation_id: str
+) -> Iterator[Mapping[str, Any]]:
+    """Yield the conversation's live parentless rows, one page at a time."""
+    after: str | None = None
+    while True:
+        page = reader(
+            conversation_id, after_message_id=after, limit=ROOT_ROWS_PAGE_SIZE
+        )
+        yield from page
+        if len(page) < ROOT_ROWS_PAGE_SIZE:
+            return
+        after = str(page[-1]["id"])
+
+
+def hidden_rows_after(
+    root_rows: Iterable[Mapping[str, Any]], deleted: set[str]
+) -> list[str]:
+    """Return the never-shown root rows after the first deleted root.
+
+    Args:
+        root_rows: The conversation's live parentless rows in the database's
+            root order (timestamp order, as resume reads them), shaped as
+            ``CharactersRAGDB.get_root_message_rows_page`` returns them.
+        deleted: Saved ids the delete already removes.
+
+    Returns:
+        Ids of the unmarked tool-role or empty roots positioned after the
+        first root in ``deleted``.
+    """
+    hidden: list[str] = []
+    later = False
+    for row in root_rows:
+        if row["id"] in deleted:
+            later = True
+        elif later and _never_shown(row):
+            hidden.append(str(row["id"]))
+    return hidden
+
+
+def _was_chained(
+    store: Any, nodes: Mapping[str, ConsoleChatMessage], node_id: str
+) -> bool:
+    """Whether the flat repair hung this saved row under another node.
+
+    A restored node's ``parent_message_id`` is its saved parent; a chained
+    root's native parent is the previous flat root instead, which is saved.
+    A saved row under an unsaved node (an interstitial note) is saved under
+    its nearest saved ancestor; that is not a chain.
+    """
+    node = nodes.get(node_id)
+    parent = nodes.get(store._native_parent_by_message.get(node_id))
+    return bool(
+        node is not None
+        and node.persisted_message_id
+        and parent is not None
+        and parent.persisted_message_id
+        and node.parent_message_id != parent.persisted_message_id
+    )
+
+
+def _never_shown(row: Mapping[str, Any]) -> bool:
+    """Whether resume leaves this row out of the transcript, and it is unmarked.
+
+    Mirrors ``console_messages_from_conversation_tree`` (a row with no text,
+    image, generation state or provider continuation is dropped) and
+    ``ConsoleChatStore._ingest_full_tree`` (a tool row is never a node), over
+    the presence flags the root-row page carries instead of the columns.
+    """
+    from tldw_chatbook.Chat.console_conversation_hydration import (
+        _console_message_role_from_persisted,
+    )
+
+    marker = MessageMetadata.from_json(row.get("metadata_json"))
+    if marker is not None and marker.root_fork:
+        return False
+    shown = (
+        bool(row.get("has_content"))
+        or bool(row.get("has_image"))
+        or bool(row.get("has_generation_state"))
+        or bool(row.get("has_provider_continuation"))
+    )
+    return not shown or (
+        _console_message_role_from_persisted(row) is ConsoleMessageRole.TOOL
+    )

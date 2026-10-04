@@ -13824,34 +13824,24 @@ class ConsoleChatStore:
         on_active_path = message_id in self.active_path_message_ids(session_id)
         subtree_ids = self._subtree_ids(session_id, message_id)
         nodes = self._nodes_by_session.get(session_id, {})
-        if self.persistence is None or message.persisted_message_id is None:
-            with self._dispatch_branch_mutation(session_id):
-                if on_active_path and not self._persist_active_leaf(
-                    session_id, parent_native_id
-                ):
-                    raise ValueError(
-                        "Resolve pending dispatch before deleting this message."
-                    )
         tombstones: list[dict[str, Any]] = []
-        if self.persistence is not None and message.persisted_message_id is not None:
-            deleter = getattr(self.persistence, "delete_message_subtree", None)
-            if not callable(deleter):
-                raise RuntimeError("Message deletion could not be persisted.")
-            with self._dispatch_branch_mutation(session_id):
-                # The in-memory subtree: flat legacy roots chain only here (TASK-33628.6).
-                saved = [
-                    nodes[n].persisted_message_id for n in subtree_ids if n in nodes
-                ]
-                tombstones = deleter(
-                    message_id=message.persisted_message_id, subtree_message_ids=saved
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+        with self._dispatch_branch_mutation(session_id):
+            # TASK-33628.6/.7/.9: every saved row, even under an unsaved node.
+            saved = flat_roots.delete_seeds(self, session_id, subtree_ids)
+            anchor = message.persisted_message_id or next(filter(None, saved), None)
+            if anchor is not None and self.persistence is not None:
+                deleter = getattr(self.persistence, "delete_message_subtree", None)
+                if not callable(deleter):
+                    raise RuntimeError("Message deletion could not be persisted.")
+                tombstones = deleter(message_id=anchor, subtree_message_ids=saved)
+            if on_active_path and not self._persist_active_leaf(
+                session_id, parent_native_id
+            ):
+                raise ValueError(
+                    "Resolve pending dispatch before deleting this message."
                 )
-                if on_active_path and not self._persist_active_leaf(
-                    session_id, parent_native_id
-                ):
-                    raise ValueError(
-                        "Resolve pending dispatch before deleting this message."
-                    )
-            self._project_sync_v2_message_deletes(tombstones)
+        self._project_sync_v2_message_deletes(tombstones)
         for node_id in subtree_ids:
             self._invalidate_generation_attempt(node_id)
         children_map = self._children_by_parent.get(session_id, {})
@@ -15651,12 +15641,14 @@ class ConsoleChatStore:
                         return None
                 elif not current_leaf_persisted_id:
                     return None
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
         return ResolvedVoicePromotionDestination(
             session_id=session_id,
             session_incarnation=context.origin.session_incarnation,
             persisted_conversation_id=session.persisted_conversation_id,
             expected_persisted_leaf_id=current_leaf_persisted_id,
             capture_eligible_at_dispatch=context.capture_eligible_at_dispatch,
+            user_root_fork=flat_roots.voice_user_root_fork(self, session, context),
         )
 
     def try_claim_voice_promotion(
@@ -16151,6 +16143,8 @@ class ConsoleChatStore:
             assistant.metadata = MessageMetadata(
                 terminal_receipt_id=commit.terminal_receipt_id
             )
+        if lease.destination.user_root_fork:  # saved marked (TASK-33628.12)
+            user.metadata = MessageMetadata(root_fork=True)
         if persisted:
             user.parent_message_id = lease.destination.expected_persisted_leaf_id
             assistant.parent_message_id = user.id

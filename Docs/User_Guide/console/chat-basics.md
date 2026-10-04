@@ -618,6 +618,31 @@ itself, and offers Undo afterwards.
    something changed them after the delete, Undo is refused and the delete
    stands.
 
+**Conversations saved before branching.** Older versions of Chatbook saved
+each message on its own, without a link to the message before it. Console
+reads such a conversation as one chain in saved order, so "later messages"
+means every message saved after the one you delete. Rows the transcript never
+shows, such as a tool result or an empty message saved between them, are
+deleted with them, so they leave search and exports too. They are not part of
+the count, and Undo puts them back with the rest.
+
+A new first message in such a conversation stays its own branch beside the
+old one: an **Edit & resend** of the first message, or a prompt sent after
+rewinding to before it, typed or spoken in a voice exchange. Console marks it
+when it is saved. Two cases carry no mark, and Console reads them as more
+later messages of the old chain:
+
+- a first-message edit or before-first prompt saved by an older version of
+  Chatbook, which had no mark to write;
+- a copy that arrived without the mark: the mark is kept only in this
+  device's saved copy, so sync from another device, export and import, or a
+  rewrite by an older version drops it.
+
+Such a branch shows after the older messages, and Delete on one of those
+older messages counts it and removes it too. Undo puts it back. Nothing in
+the saved conversation tells it apart from an older message whose reply came
+later through **Resend**, so Console does not guess.
+
 ### Capture a reply into a note
 1. Select the assistant reply, click **More…**, then choose
    **Capture as note**.

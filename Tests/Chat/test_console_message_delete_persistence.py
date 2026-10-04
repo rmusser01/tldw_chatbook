@@ -1359,3 +1359,786 @@ def test_a_temporary_chat_with_an_edited_first_message_still_saves(fork_projecti
         assert row["parent_message_id"] is None
         marker = json.loads(row["metadata_json"] or "{}").get("root_fork", False)
         assert marker is (marked and not fork_projection)
+
+
+# --- TASK-33628.7: hidden NULL-parent rows between legacy flat rows ------------
+#
+# A legacy flat conversation can hold rows the Console never shows: a tool-role
+# row (never a store node) or an empty row (dropped at hydration). Saved in the
+# flat era, they are NULL-parent roots between the flat rows, so they are not
+# nodes in the in-memory chain, not seeds of the DB delete, and not parent-link
+# descendants of one. Deleting a flat row above them left them live: invisible,
+# but still in search and exports.
+
+
+def _seed_flat(
+    db: CharactersRAGDB,
+    rows: list[tuple[str, str, str | None, str]],
+    *,
+    leaf: str,
+    metadata: dict[str, str] | None = None,
+) -> str:
+    """Seed ``(id, role, parent, content)`` rows oldest first."""
+    conversation_id = db.add_conversation({"title": "Hidden flat rows"})
+    for index, (message_id, role, parent, content) in enumerate(rows):
+        db.add_message(
+            {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "sender": role,
+                "role": role,
+                "content": content or "placeholder",
+                "parent_message_id": parent,
+                "timestamp": f"2026-09-30T00:00:{index:02d}.000000+00:00",
+                "metadata_json": (metadata or {}).get(message_id),
+            }
+        )
+        if not content:
+            # add_message now refuses an empty row; older builds saved them.
+            db.update_message(
+                message_id, {"content": ""}, 1, preserve_descendants=True
+            )
+    db.set_conversation_active_cursor(
+        conversation_id, active_leaf_message_id=leaf, before_message_id=None
+    )
+    return conversation_id
+
+
+def _flat(message_id: str, role: str) -> tuple[str, str, None, str]:
+    return (message_id, role, None, f"{message_id} text")
+
+
+#: A tool row and an empty row saved flat, as the flat era wrote them.
+_TOOL_ROW = ("t1", "tool", None, "t1 text")
+_EMPTY_ROW = ("x1", "assistant", None, "")
+
+
+@pytest.mark.parametrize(
+    ("rows", "target", "removed", "metadata"),
+    [
+        pytest.param(
+            [_flat("f0", "user"), _flat("f1", "assistant"), _TOOL_ROW,
+             _flat("f2", "user"), _flat("f3", "assistant")],
+            "f1",
+            {"f1", "t1", "f2", "f3"},
+            None,
+            id="tool-row-between",
+        ),
+        pytest.param(
+            [_flat("f0", "user"), _flat("f1", "assistant"), _EMPTY_ROW,
+             _flat("f2", "user"), _flat("f3", "assistant")],
+            "f1",
+            {"f1", "x1", "f2", "f3"},
+            None,
+            id="empty-row-between",
+        ),
+        pytest.param(
+            [_flat("f0", "user"), _flat("f1", "assistant"), _flat("f2", "user"),
+             _flat("f3", "assistant"), _TOOL_ROW],
+            "f2",
+            {"f2", "f3", "t1"},
+            None,
+            id="hidden-row-after-the-last",
+        ),
+        pytest.param(
+            [_flat("f0", "user"), _TOOL_ROW, _flat("f1", "assistant"),
+             _flat("f2", "user"), _flat("f3", "assistant")],
+            "f2",
+            {"f2", "f3"},
+            None,
+            id="earlier-hidden-row-stays",
+        ),
+        pytest.param(
+            [_flat("f0", "user"), _flat("f1", "assistant"), _TOOL_ROW,
+             _flat("f2", "user"), _flat("f3", "assistant"),
+             ("e0", "user", None, "e0 text"), ("e1", "assistant", "e0", "e1 text")],
+            "f1",
+            {"f1", "t1", "f2", "f3"},
+            {"e0": _ROOT_FORK_METADATA},
+            id="marked-fork-stays",
+        ),
+        pytest.param(
+            [_flat("f0", "user"), _flat("f1", "assistant"),
+             ("x1", "user", None, ""), _flat("f2", "user"),
+             _flat("f3", "assistant")],
+            "f1",
+            {"f1", "f2", "f3"},
+            {"x1": _ROOT_FORK_METADATA},
+            id="marked-hidden-root-stays",
+        ),
+    ],
+)
+# The root rows are read a page at a time; a page of one puts a page boundary
+# between every pair of roots, so no position in the chain escapes one.
+@pytest.mark.parametrize("page_size", [None, 1], ids=["one-page", "page-of-one"])
+def test_flat_delete_tombstones_hidden_rows_later_in_the_chain(
+    monkeypatch, page_size, rows, target, removed, metadata
+):
+    """AC#1/#2: hidden flat rows later in the chain go with it, and come back."""
+    from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+        export_conversation_to_text,
+    )
+    from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+        restore_deleted_subtree,
+    )
+
+    if page_size is not None:
+        monkeypatch.setattr(flat_roots, "ROOT_ROWS_PAGE_SIZE", page_size)
+    ids = [row[0] for row in rows]
+    hidden = {"t1", "x1"} & set(ids)
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed_flat(db, rows, leaf="f3", metadata=metadata)
+    store, session_id, native = _open_store(db, conversation_id)
+    shown = [m for m, _role in _visible(store, session_id)]
+    # Preconditions: the store chained the flat rows and never shows a hidden one.
+    assert shown == ["f0", "f1", "f2", "f3"]
+    assert not hidden & _tree_ids(store, session_id)
+    assert "t1" not in ids or "t1 text" in (
+        export_conversation_to_text(db, conversation_id) or ""
+    )
+
+    scope = console_delete_scope(store, native[target])
+    deleted, held = delete_subtree_for_undo(store, native[target])
+
+    # The prompt and receipt count what the transcript showed ...
+    assert scope.removed_count == deleted.count == len(removed - hidden)
+    # ... and the durable delete takes the hidden rows later in that chain too.
+    assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
+    assert {message_id for message_id, _version in deleted.tombstones} == removed
+    assert set(held) == removed
+    if "t1" in removed:
+        assert not db.search_messages_by_content("t1", conversation_id=conversation_id)
+        assert "t1 text" not in (export_conversation_to_text(db, conversation_id) or "")
+    reopened, reopened_session, _native = _open_store(db, conversation_id)
+    assert _tree_ids(reopened, reopened_session) == set(ids) - removed - hidden
+
+    restore_deleted_subtree(store, deleted)
+
+    assert _deleted(db, ids) == [0] * len(ids)
+    assert [m for m, _role in _visible(store, session_id)] == shown
+    reopened, reopened_session, _native = _open_store(db, conversation_id)
+    assert _tree_ids(reopened, reopened_session) == set(ids) - hidden
+
+
+#: The columns besides text that make resume show a row.
+_SHOWN_BY = ("image_data", "assistant_generation_state", "provider_continuation_json")
+
+#: A finished continuation: it sets no generation state of its own.
+_COMPLETE_CONTINUATION = {
+    "schema_version": 1,
+    "checkpoint_revision": 1,
+    "provider": "deepseek",
+    "protocol": "chat_completions",
+    "model": "deepseek-chat",
+    "api_base_url": "https://api.deepseek.com/v1",
+    "state": "complete",
+    "rounds": [
+        {
+            "assistant_content": "",
+            "reasoning_blocks": [],
+            "calls": [
+                {
+                    "call_id": "call-1",
+                    "name": "lookup",
+                    "arguments": "{}",
+                    "state": "completed",
+                    "result": "done",
+                }
+            ],
+        }
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "shown_by",
+    [
+        pytest.param(
+            {"image_data": b"\x89PNG\r\n\x1a\n", "image_mime_type": "image/png"},
+            id="image",
+        ),
+        pytest.param({"assistant_generation_state": "failed"}, id="generation-state"),
+        pytest.param(
+            {"provider_continuation_json": _COMPLETE_CONTINUATION},
+            id="provider-continuation",
+        ),
+    ],
+)
+def test_flat_delete_leaves_a_textless_root_that_resume_shows_live(shown_by):
+    """A root with no text is hidden only when nothing else shows it.
+
+    The hidden-root lookup reads presence flags, not text. Every root the
+    transcript chained after the deleted one is in the delete's own subtree,
+    so the flags decide only for a root outside that chain: here, a reply
+    saved after the transcript loaded. An image, a generation state or a
+    provider continuation each makes resume show it, so it stays live; with
+    that flag misread it would be tombstoned as never shown.
+    """
+    from tldw_chatbook.Chat.console_message_delete import delete_subtree_for_undo
+
+    rows = [_flat("f0", "user"), _flat("f1", "assistant"), _flat("f2", "user"),
+            _flat("f3", "assistant")]
+    ids = [row[0] for row in rows]
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed_flat(db, rows, leaf="f3")
+    store, session_id, native = _open_store(db, conversation_id)
+    db.add_message(
+        {
+            "id": "x1",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "",
+            "timestamp": "2026-09-30T00:00:09.000000+00:00",
+            **shown_by,
+        }
+    )
+    saved = db.get_message_by_id("x1")
+    # Preconditions: no text and one column that shows it; the store chained
+    # the flat rows and never loaded this one.
+    assert saved["content"] == ""
+    assert [column for column in _SHOWN_BY if saved[column] is not None] == [
+        column for column in _SHOWN_BY if column in shown_by
+    ]
+    assert [m for m, _role in _visible(store, session_id)] == ids
+    assert "x1" not in _tree_ids(store, session_id)
+
+    deleted, _held = delete_subtree_for_undo(store, native["f1"])
+
+    assert {message_id for message_id, _version in deleted.tombstones} == {
+        "f1", "f2", "f3"
+    }
+    assert _deleted(db, [*ids, "x1"]) == [0, 1, 1, 1, 0]
+    reopened, reopened_session, _native = _open_store(db, conversation_id)
+    assert _tree_ids(reopened, reopened_session) == {"f0", "x1"}
+
+
+#: The two conversation-wide readers a Delete could reach for root rows.
+_CONVERSATION_READERS = (
+    "get_message_tree_rows_for_conversation",
+    "get_root_message_rows_page",
+)
+
+
+def _count_conversation_reads(monkeypatch, db: CharactersRAGDB) -> dict:
+    """Record the ids each call to either conversation reader returned."""
+    reads: dict[str, list[list[str]]] = {}
+    for name in _CONVERSATION_READERS:
+
+        def _counted(*args, _name=name, _reader=getattr(db, name), **kwargs):
+            rows = _reader(*args, **kwargs)
+            reads.setdefault(_name, []).append([row["id"] for row in rows])
+            return rows
+
+        monkeypatch.setattr(db, name, _counted)
+    return reads
+
+
+def test_flat_delete_reads_root_rows_in_pages_not_every_row(monkeypatch):
+    """The hidden-row lookup reads parentless rows only, a page at a time.
+
+    PR #3004 review: the lookup read every live row of the conversation and
+    kept the parentless ones. A flat conversation continued after branching
+    shipped holds parent-linked rows under its last flat row; none of them
+    can be a hidden root, so none is read.
+    """
+    from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+    from tldw_chatbook.Chat.console_message_delete import delete_subtree_for_undo
+
+    threaded = [
+        (f"c{i}", "user" if i % 2 == 0 else "assistant", f"c{i - 1}" if i else "f3",
+         f"c{i} text")
+        for i in range(6)
+    ]
+    rows = [
+        _flat("f0", "user"), _flat("f1", "assistant"), _TOOL_ROW,
+        _flat("f2", "user"), _flat("f3", "assistant"), *threaded,
+    ]
+    ids = [row[0] for row in rows]
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed_flat(db, rows, leaf="c5")
+    store, session_id, native = _open_store(db, conversation_id)
+    # Precondition: the flat rows chained, with the threaded rows after them.
+    assert [m for m, _role in _visible(store, session_id)] == [
+        "f0", "f1", "f2", "f3", *(row[0] for row in threaded)
+    ]
+    monkeypatch.setattr(flat_roots, "ROOT_ROWS_PAGE_SIZE", 2)
+    reads = _count_conversation_reads(monkeypatch, db)
+
+    deleted, _held = delete_subtree_for_undo(store, native["f1"])
+
+    assert "get_message_tree_rows_for_conversation" not in reads
+    pages = reads["get_root_message_rows_page"]
+    # Five roots in pages of two: the last page is short, so it ends the read.
+    assert pages == [["f0", "f1"], ["t1", "f2"], ["f3"]]
+    removed = set(ids) - {"f0"}
+    assert {message_id for message_id, _version in deleted.tombstones} == removed
+    assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
+
+
+@pytest.mark.parametrize(
+    ("target", "removed"),
+    [("c0", {"c0", "c1", "c2", "c3"}), ("c2", {"c2", "c3"})],
+    ids=["threaded-root", "threaded-tail"],
+)
+def test_threaded_delete_reads_no_root_rows_and_leaves_a_hidden_root(
+    monkeypatch, target, removed
+):
+    """Only a subtree holding a chained flat root reads the root rows.
+
+    In a parent-linked conversation a parentless tool row is its own hidden
+    root, not a later row of any chain: Delete follows the parent links and
+    leaves it, without reading the conversation's rows to look for one.
+    """
+    from tldw_chatbook.Chat.console_message_delete import delete_subtree_for_undo
+
+    rows = [
+        ("c0", "user", None, "c0 text"),
+        ("c1", "assistant", "c0", "c1 text"),
+        _TOOL_ROW,
+        ("c2", "user", "c1", "c2 text"),
+        ("c3", "assistant", "c2", "c3 text"),
+    ]
+    ids = [row[0] for row in rows]
+    db = CharactersRAGDB(":memory:", "threaded-delete")
+    conversation_id = _seed_flat(db, rows, leaf="c3")
+    store, session_id, native = _open_store(db, conversation_id)
+    assert [m for m, _role in _visible(store, session_id)] == ["c0", "c1", "c2", "c3"]
+    reads = _count_conversation_reads(monkeypatch, db)
+
+    deleted, _held = delete_subtree_for_undo(store, native[target])
+
+    assert reads == {}
+    assert {message_id for message_id, _version in deleted.tombstones} == removed
+    assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
+
+
+def test_threaded_delete_over_an_unsaved_note_reads_no_root_rows(monkeypatch):
+    """A saved reply under an unsaved note is not a chained flat root.
+
+    The reply is saved under its nearest saved ancestor, not under the note,
+    which has no saved id. That is no flat repair, so deleting the first
+    message of a parent-linked conversation still reads no root rows and
+    leaves the parentless tool row alone.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_message_delete import delete_subtree_for_undo
+
+    rows = [
+        ("c0", "user", None, "c0 text"),
+        ("c1", "assistant", "c0", "c1 text"),
+        _TOOL_ROW,
+        ("c2", "user", "c1", "c2 text"),
+    ]
+    db = CharactersRAGDB(":memory:", "threaded-delete")
+    conversation_id = _seed_flat(db, rows, leaf="c2")
+    store, session_id, native = _open_store(db, conversation_id)
+    store.append_message(
+        session_id, role=ConsoleMessageRole.SYSTEM, content="Skipped skill: demo"
+    )
+    reply = store.append_message(
+        session_id, role=ConsoleMessageRole.ASSISTANT, content="c3 text", persist=True
+    )
+    saved_reply = store.get_message(reply.id).persisted_message_id
+    assert db.get_message_by_id(saved_reply)["parent_message_id"] == "c2"
+    ids = [*(row[0] for row in rows), saved_reply]
+    removed = {"c0", "c1", "c2", saved_reply}
+    reads = _count_conversation_reads(monkeypatch, db)
+
+    deleted, _held = delete_subtree_for_undo(store, native["c0"])
+
+    assert reads == {}
+    assert {message_id for message_id, _version in deleted.tombstones} == removed
+    assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
+
+
+# --- TASK-33628.9: Delete of an unsaved message with saved rows under it -------
+#
+# A message with no saved id can still have saved rows beneath it in memory:
+# a saved child of an unsaved node is written under its nearest SAVED ancestor.
+# The store skipped the durable delete whenever the selected message itself
+# had no saved id, so those rows vanished from the transcript and came back on
+# reopen (and stayed in search and exports).
+
+
+def test_deleting_an_unsaved_message_tombstones_the_saved_rows_under_it():
+    """AC#1/#2: reopen agrees with what the Delete showed, and Undo agrees too."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+        restore_deleted_subtree,
+    )
+
+    db = CharactersRAGDB(":memory:", "unsaved-delete")
+    conversation_id = _seed(db, _CHAIN)
+    store, session_id, _native = _open_store(db, conversation_id)
+    unsaved = store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="unsaved prompt"
+    )
+    reply = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="saved reply",
+        persist=True,
+    )
+    saved_reply = store.get_message(reply.id).persisted_message_id
+    # Preconditions: the prompt is unsaved, its reply is saved under c3.
+    assert store.get_message(unsaved.id).persisted_message_id is None
+    assert saved_reply is not None
+    assert db.get_message_by_id(saved_reply)["parent_message_id"] == "c3"
+    reopened, reopened_session, _ = _open_store(db, conversation_id)
+    reopened_before = _visible(reopened, reopened_session)
+    assert reopened_before[-1] == (saved_reply, "assistant")
+
+    scope = console_delete_scope(store, unsaved.id)
+    deleted, held = delete_subtree_for_undo(store, unsaved.id)
+
+    assert scope.removed_count == deleted.count == 2
+    assert _visible(store, session_id) == [(m, role) for m, role, _ in _CHAIN]
+    assert _deleted(db, [saved_reply]) == [1]
+    assert list(held) == [saved_reply]
+    assert not db.search_messages_by_content(
+        "saved reply", conversation_id=conversation_id
+    )
+    reopened, reopened_session, _ = _open_store(db, conversation_id)
+    assert _visible(reopened, reopened_session) == _visible(store, session_id)
+
+    restore_deleted_subtree(store, deleted)
+
+    assert _deleted(db, [saved_reply]) == [0]
+    assert [m.id for m in store.messages_for_session(session_id)][-2:] == [
+        unsaved.id,
+        reply.id,
+    ]
+    reopened, reopened_session, _ = _open_store(db, conversation_id)
+    assert _visible(reopened, reopened_session) == reopened_before
+
+
+def test_deleting_an_interstitial_note_tombstones_the_saved_reply_under_it():
+    """An unsaved note the send appends mid-turn, with a saved reply under it.
+
+    An @-reference summary or a skipped-skill note is a SYSTEM row appended
+    with no saved id between a saved prompt and its reply; the reply is saved
+    under the prompt (its nearest saved ancestor). The transcript offers no
+    Delete on a SYSTEM row -- Resend reaches this shape (next test) -- but the
+    store's subtree delete still takes the saved reply, and Undo restores both.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+        restore_deleted_subtree,
+    )
+
+    db = CharactersRAGDB(":memory:", "unsaved-delete")
+    conversation_id = _seed(db, _CHAIN)
+    store, session_id, _native = _open_store(db, conversation_id)
+    prompt = store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="saved prompt", persist=True
+    )
+    note = store.append_message(
+        session_id, role=ConsoleMessageRole.SYSTEM, content="Skipped skill: demo"
+    )
+    reply = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="saved reply",
+        persist=True,
+    )
+    saved_prompt = store.get_message(prompt.id).persisted_message_id
+    saved_reply = store.get_message(reply.id).persisted_message_id
+    # Preconditions: the note is unsaved; the reply is saved under the prompt,
+    # so reopen shows the prompt and reply without the note.
+    assert store.get_message(note.id).persisted_message_id is None
+    assert db.get_message_by_id(saved_reply)["parent_message_id"] == saved_prompt
+    reopened, reopened_session, _ = _open_store(db, conversation_id)
+    reopened_before = _visible(reopened, reopened_session)
+    assert reopened_before[-2:] == [(saved_prompt, "user"), (saved_reply, "assistant")]
+
+    scope = console_delete_scope(store, note.id)
+    deleted, held = delete_subtree_for_undo(store, note.id)
+
+    assert scope.removed_count == deleted.count == 2
+    assert _visible(store, session_id)[-1] == (saved_prompt, "user")
+    assert _deleted(db, [saved_prompt, saved_reply]) == [0, 1]
+    assert list(held) == [saved_reply]
+    reopened, reopened_session, _ = _open_store(db, conversation_id)
+    assert _visible(reopened, reopened_session) == _visible(store, session_id)
+
+    restore_deleted_subtree(store, deleted)
+
+    assert _deleted(db, [saved_prompt, saved_reply]) == [0, 0]
+    assert [m.id for m in store.messages_for_session(session_id)][-3:] == [
+        prompt.id,
+        note.id,
+        reply.id,
+    ]
+    reopened, reopened_session, _ = _open_store(db, conversation_id)
+    assert _visible(reopened, reopened_session) == reopened_before
+
+
+async def test_resend_through_an_interstitial_note_tombstones_the_broken_reply(
+    monkeypatch,
+):
+    """The UI path: Resend clears a broken turn by deleting the unsaved note.
+
+    A send with an @-reference appends its audit note, unsaved, between the
+    prompt and the reply; the reply is saved under the prompt. Stopped before
+    any text, the turn offers Resend, which clears the rows after the prompt
+    by deleting the first one -- the note -- with its subtree. When that
+    delete skipped the database the stopped reply stayed live, so reopen
+    showed it again as a second reply ("2/2") beside the re-run, a sibling
+    Resend promises never to create.
+    """
+    import asyncio
+
+    from tldw_chatbook.Chat import console_references
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_turn_resend import resend_target_id, resend_turn
+
+    # @diff always leaves the audit note; keep git itself out of the test.
+    monkeypatch.setattr(console_references, "run_git_reference", lambda _token: "")
+    db = CharactersRAGDB(":memory:", "unsaved-delete")
+    conversation_id = _seed(db, _CHAIN)
+    controller, gateway, store, session_id, _native = await _open_console(
+        db, conversation_id
+    )
+    started = asyncio.Event()
+
+    async def _hang(_resolution, _messages, **_kwargs):
+        started.set()
+        await asyncio.Event().wait()
+        yield ""  # pragma: no cover - cancelled by Stop before any text
+
+    monkeypatch.setattr(gateway, "stream_chat", _hang)
+    task = asyncio.create_task(controller.submit_draft("say blue @diff"))
+    await asyncio.wait_for(started.wait(), 5)
+    assert controller.stop_active_run() is True
+    await asyncio.wait_for(task, 5)
+    monkeypatch.undo()
+    prompt, note, reply = store.messages_for_session(session_id)[4:7]
+    saved_prompt = prompt.persisted_message_id
+    saved_reply = reply.persisted_message_id
+    # Preconditions: an unsaved note between the prompt and a saved, stopped,
+    # empty reply under the prompt; the turn offers Resend on the prompt.
+    assert (prompt.role, note.role, reply.role) == (
+        ConsoleMessageRole.USER,
+        ConsoleMessageRole.SYSTEM,
+        ConsoleMessageRole.ASSISTANT,
+    )
+    assert note.content.startswith("@-references:")
+    assert note.persisted_message_id is None
+    assert (reply.status, reply.content) == ("stopped", "")
+    assert db.get_message_by_id(saved_reply)["parent_message_id"] == saved_prompt
+    assert resend_target_id(store.messages_for_session(session_id)) == prompt.id
+
+    result = await resend_turn(controller, prompt.id)
+
+    assert result.accepted, result.visible_copy
+    assert _deleted(db, [saved_prompt, saved_reply]) == [0, 1]
+    shown = _transcript(store, session_id)
+    assert shown[-2:] == [("user", "say blue @diff"), ("assistant", "reply 1")]
+    _controller, _gateway, reopened, reopened_session, _ = await _open_console(
+        db, conversation_id
+    )
+    assert _transcript(reopened, reopened_session) == shown
+    rerun = reopened.messages_for_session(reopened_session)[-1]
+    assert reopened.siblings_at(rerun.id)[2] == 1
+
+
+# --- TASK-33628.12: a voice exchange sent before the first message -------------
+#
+# A completed voice exchange is saved by its own commit, not by the typed send.
+# Sent after /rewind placed the cursor before the first message, its prompt is
+# a new root-level branch exactly like a typed prompt there, so it must carry
+# the root_fork marker too. Unmarked, every reopen chained it after the legacy
+# flat rows, and Delete on an earlier flat row took it along.
+
+
+async def _inline(work):
+    return work()
+
+
+async def test_a_voice_exchange_sent_before_the_first_message_is_a_marked_root_fork():
+    """AC#1/#3: the voice prompt is marked, reloads as its own branch, and
+    survives a Delete on an earlier flat row."""
+    import json
+
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+    )
+    from tldw_chatbook.Chat.console_voice_promotion import (
+        VoicePromotionClaimStatus,
+        VoicePromotionContext,
+        VoicePromotionOutcomeStatus,
+        VoicePromotionOwner,
+        derive_voice_promotion_identities,
+    )
+
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, _FLAT)
+    store, session_id, native = _open_store(db, conversation_id)
+    # Restore on the first prompt in /rewind places the cursor before it.
+    assert store.set_active_path_before(session_id, native["f0"])
+    origin, native_leaf, persisted_leaf = store.snapshot_voice_promotion_origin(
+        session_id
+    )
+    assert (native_leaf, persisted_leaf) == (None, None)
+    context = VoicePromotionContext(
+        promotion_id="voice-before-first",
+        attempt_id="voice-attempt",
+        origin=origin,
+        expected_native_leaf_id=native_leaf,
+        expected_persisted_leaf_id=persisted_leaf,
+        user_text="spoken prompt",
+        assistant_text="spoken reply",
+        usage_json=None,
+        terminal_boundary_id="voice-boundary",
+        capture_eligible_at_dispatch=False,
+    )
+    owner = VoicePromotionOwner(lambda: store, sync_runner=_inline)
+
+    claim = owner.try_claim(context)
+    assert claim.status is VoicePromotionClaimStatus.CLAIMED
+    outcome = await owner.promote(claim)
+    assert outcome.status is VoicePromotionOutcomeStatus.PROMOTED
+
+    identities = derive_voice_promotion_identities(context.promotion_id)
+    pair = [identities.user_message_id, identities.assistant_message_id]
+    branch = [("user", "spoken prompt"), ("assistant", "spoken reply")]
+    assert _transcript(store, session_id) == branch
+    prompt = db.get_message_by_id(identities.user_message_id)
+    assert prompt["parent_message_id"] is None
+    assert json.loads(prompt["metadata_json"] or "{}").get("root_fork") is True
+    # The live row carries it too, so a later whole-record write keeps it.
+    live_prompt = store.messages_for_session(session_id)[0]
+    assert live_prompt.metadata is not None and live_prompt.metadata.root_fork
+    for message_id in _FLAT_IDS:
+        assert db.get_message_by_id(message_id)["metadata_json"] is None
+
+    store, session_id, native = _open_store(db, conversation_id)
+    assert _transcript(store, session_id) == branch
+    assert _root_count(store, session_id) == 2
+    siblings, index, count = store.siblings_at(native[pair[0]])
+    assert [sibling.persisted_message_id for sibling in siblings] == ["f0", pair[0]]
+    assert (index, count) == (1, 2)
+    store.set_active_leaf(session_id, native["f3"])
+    assert [m for m, _role in _visible(store, session_id)] == _FLAT_IDS
+
+    scope = console_delete_scope(store, native["f1"])
+    deleted, _held = delete_subtree_for_undo(store, native["f1"])
+
+    assert scope.removed_count == deleted.count == 3
+    assert sorted(message_id for message_id, _version in deleted.tombstones) == [
+        "f1",
+        "f2",
+        "f3",
+    ]
+    assert _deleted(db, [*_FLAT_IDS, *pair]) == [0, 1, 1, 1, 0, 0]
+    reopened, reopened_session, reopened_native = _open_store(db, conversation_id)
+    assert _tree_ids(reopened, reopened_session) == {"f0", *pair}
+    reopened.set_active_leaf(reopened_session, reopened_native[pair[1]])
+    assert [m for m, _role in _visible(reopened, reopened_session)] == pair
+
+
+async def test_a_voice_exchange_at_an_ordinary_leaf_stays_unmarked():
+    """Control: a voice exchange appended under a saved leaf is not a fork."""
+    from tldw_chatbook.Chat.console_voice_promotion import (
+        VoicePromotionContext,
+        VoicePromotionOutcomeStatus,
+        VoicePromotionOwner,
+        derive_voice_promotion_identities,
+    )
+
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, _CHAIN)
+    store, session_id, _native = _open_store(db, conversation_id)
+    origin, native_leaf, persisted_leaf = store.snapshot_voice_promotion_origin(
+        session_id
+    )
+    assert persisted_leaf == "c3"
+    context = VoicePromotionContext(
+        promotion_id="voice-at-leaf",
+        attempt_id="voice-attempt",
+        origin=origin,
+        expected_native_leaf_id=native_leaf,
+        expected_persisted_leaf_id=persisted_leaf,
+        user_text="spoken prompt",
+        assistant_text="spoken reply",
+        usage_json=None,
+        terminal_boundary_id="voice-boundary",
+        capture_eligible_at_dispatch=False,
+    )
+    owner = VoicePromotionOwner(lambda: store, sync_runner=_inline)
+
+    outcome = await owner.promote(owner.try_claim(context))
+
+    assert outcome.status is VoicePromotionOutcomeStatus.PROMOTED
+    prompt_id = derive_voice_promotion_identities(context.promotion_id).user_message_id
+    prompt = db.get_message_by_id(prompt_id)
+    assert (prompt["parent_message_id"], prompt["metadata_json"]) == ("c3", None)
+    assert store.get_message(prompt_id).metadata is None
+
+
+async def test_a_temporary_voice_exchange_before_the_first_message_saves_marked():
+    """The temporary path follows the same rule: marked in memory, kept on save."""
+    import json
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Chat.console_voice_promotion import (
+        VoicePromotionContext,
+        VoicePromotionOutcomeStatus,
+        VoicePromotionOwner,
+        derive_voice_promotion_identities,
+    )
+
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(
+        title="Temporary",
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        ephemeral=True,
+    )
+    first = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="first"
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="first reply"
+    )
+    assert store.set_active_path_before(session.id, first.id)
+    origin, native_leaf, persisted_leaf = store.snapshot_voice_promotion_origin(
+        session.id
+    )
+    context = VoicePromotionContext(
+        promotion_id="voice-temporary-before-first",
+        attempt_id="voice-attempt",
+        origin=origin,
+        expected_native_leaf_id=native_leaf,
+        expected_persisted_leaf_id=persisted_leaf,
+        user_text="spoken prompt",
+        assistant_text="spoken reply",
+        usage_json=None,
+        terminal_boundary_id="voice-boundary",
+        capture_eligible_at_dispatch=False,
+    )
+    owner = VoicePromotionOwner(lambda: store, sync_runner=_inline)
+
+    outcome = await owner.promote(owner.try_claim(context))
+
+    assert outcome.status is VoicePromotionOutcomeStatus.PROMOTED
+    native_prompt = derive_voice_promotion_identities(
+        context.promotion_id
+    ).user_message_id
+    assert store.get_message(native_prompt).metadata.root_fork
+    assert store.promote_ephemeral_session(session.id) is not None
+    for message_id, marked in ((first.id, False), (native_prompt, True)):
+        row = db.get_message_by_id(store.get_message(message_id).persisted_message_id)
+        assert row["parent_message_id"] is None
+        assert json.loads(row["metadata_json"] or "{}").get("root_fork", False) is marked

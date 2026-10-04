@@ -11885,6 +11885,81 @@ DELETE FROM keywords
         cursor = self.execute_query(query, (conversation_id,))
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_root_message_rows_page(
+        self,
+        conversation_id: str,
+        *,
+        after_message_id: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Fetch one page of a live conversation's live parentless rows.
+
+        TASK-33628.7 (PR #3004 review): the Console's legacy flat Delete looks
+        for never-shown roots after the rows it deletes. It needs only the
+        parentless rows, so it reads them here a bounded page at a time rather
+        than every row of the conversation. Rows come in the order resume
+        reads roots in -- ``get_message_tree_rows_for_conversation``'s
+        timestamp order, equal timestamps in insertion order -- with only the
+        columns that decide whether resume shows a row: presence flags, not
+        the message text.
+
+        Both statements walk ``idx_msgs_conv_ts (conversation_id, timestamp)``
+        with no post-sort; a later page starts its range at the previous
+        page's last row (plans pinned with ``sqlite_stat1`` absent in
+        ``Tests/DB/test_message_root_rows_page.py``). Today's planner picks
+        that plan with or without the unary ``+``; the ``+`` keeps it there,
+        off the parent indexes, which hold every conversation's parentless
+        rows.
+
+        Args:
+            conversation_id: The conversation UUID.
+            after_message_id: The last id of the previous page; ``None`` for
+                the first page. An id that names no row yields an empty page.
+            limit: The most rows to return; at least 1.
+
+        Returns:
+            Up to ``limit`` rows, each with ``id``, ``sender``, ``role``,
+            ``metadata_json`` and the 0/1 flags ``has_content``,
+            ``has_image``, ``has_generation_state`` and
+            ``has_provider_continuation``. A page shorter than ``limit`` is
+            the last.
+
+        Raises:
+            InputError: If ``limit`` is less than 1.
+        """
+        if limit < 1:
+            raise InputError("limit must be at least 1.")
+        query = """
+            SELECT m.id, m.sender, m.role, m.metadata_json,
+                   (m.content <> '') AS has_content,
+                   (m.image_data IS NOT NULL) AS has_image,
+                   (m.assistant_generation_state IS NOT NULL) AS has_generation_state,
+                   (m.provider_continuation_json IS NOT NULL)
+                       AS has_provider_continuation
+            FROM messages m
+            JOIN conversations c ON m.conversation_id = c.id
+            WHERE m.conversation_id = ?
+              AND +m.parent_message_id IS NULL
+              AND m.deleted = 0
+              AND c.deleted = 0
+        """
+        params: List[Any] = [conversation_id]
+        if after_message_id is not None:
+            # Row values compare the raw stored timestamp, never one that
+            # took a round trip through the DATETIME converter.
+            query += """
+              AND (m.timestamp, m.rowid) > (
+                  SELECT prev.timestamp, prev.rowid
+                  FROM messages prev
+                  WHERE prev.id = ?
+              )
+            """
+            params.append(after_message_id)
+        query += " ORDER BY m.timestamp, m.rowid LIMIT ?"
+        params.append(limit)
+        cursor = self.execute_query(query, tuple(params))
+        return [dict(row) for row in cursor.fetchall()]
+
     def get_message_images_by_ids(
         self, message_ids: Sequence[str]
     ) -> Dict[str, Dict[str, Any]]:
@@ -14886,20 +14961,24 @@ DELETE FROM keywords
                     raise ConflictError(msg, entity="messages", entity_id=message_id)
 
                 if content_changed and not preserve_descendants:
+                    # Unary ``+`` keeps both steps off the (conversation_id, id)
+                    # index, as in soft_delete_message_subtree: with no
+                    # sqlite_stat1 the planner otherwise scans the whole
+                    # conversation once per descendant (TASK-33628.11).
                     descendant_rows = conn.execute(
                         """
                         WITH RECURSIVE descendants(id) AS (
                             SELECT id
                               FROM messages
                              WHERE parent_message_id = ?
-                               AND conversation_id = ? AND deleted = 0
+                               AND +conversation_id = ? AND deleted = 0
                             UNION
                             SELECT child.id
                               FROM messages AS child
                               JOIN descendants AS parent
                                 ON child.parent_message_id = parent.id
                              WHERE child.deleted = 0
-                               AND child.conversation_id = ?
+                               AND +child.conversation_id = ?
                         )
                         SELECT id FROM descendants
                         """,
@@ -14918,14 +14997,14 @@ DELETE FROM keywords
                             SELECT id
                               FROM messages
                              WHERE parent_message_id = ?
-                               AND conversation_id = ? AND deleted = 0
+                               AND +conversation_id = ? AND deleted = 0
                             UNION
                             SELECT child.id
                               FROM messages AS child
                               JOIN descendants AS parent
                                 ON child.parent_message_id = parent.id
                              WHERE child.deleted = 0
-                               AND child.conversation_id = ?
+                               AND +child.conversation_id = ?
                         )
                         UPDATE messages
                            SET deleted = 1,
