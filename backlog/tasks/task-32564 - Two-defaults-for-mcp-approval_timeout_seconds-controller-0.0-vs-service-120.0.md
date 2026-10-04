@@ -3,11 +3,11 @@ id: TASK-32564
 title: >-
   Two defaults for [mcp] approval_timeout_seconds: controller 0.0 vs service
   120.0
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-12 00:10'
-updated_date: '2026-10-04 14:42'
+updated_date: '2026-10-04 15:05'
 labels:
   - mcp
   - config
@@ -28,6 +28,7 @@ Source: Qodo review rounds on the approval-card fix-wave PRs #2586/#2594/#2597/#
 - [x] #1 One documented default for the key, or two clearly named keys/paths, decided and recorded in the config template comment
 - [x] #2 The service, the controller, and the live-server wiring agree with that decision
 - [x] #3 The user guide states the resulting behaviour for the approval card
+- [x] #4 A server-cancelled pending MCP confirmation expires promptly; a late approval cannot revive it and unrelated requests remain active.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -41,6 +42,7 @@ Reason: direct implementation of the accepted default-0 and <=0-no-deadline poli
 2. Align the service and live elicitation defaults with the Console's 0-second default; use no deadline for nonpositive values while preserving terminal cleanup and positive ceilings.
 3. Update the config template, user guide and ADR consequence to describe the one policy.
 4. Run focused MCP/Console and static checks, review the diff, and require passing final-head PR gates before integration.
+5. Qodo review: align the exact CI target contract and Google-style test docs. Correlate standard server notifications/cancelled with only its inbound request task, preserving outgoing requests and expiring the existing approval store in the live callable finally. Verify real stdio frames, malformed/unknown IDs, surviving sibling requests and disconnect cleanup. This repairs cancellation under ADR067/111; no new runtime/provider boundary or ADR.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -48,5 +50,9 @@ Reason: direct implementation of the accepted default-0 and <=0-no-deadline poli
 <!-- SECTION:NOTES:BEGIN -->
 Aligned service and live MCP confirmation fallback with the Console's existing default0 per ADR067. Live confirmations arm a deadline only for positive ceilings; nonpositive/default/unparsable values remain pending until a decision or cancellation. Positive expiry and finally-based terminal cleanup remain intact. Config template, MCP/Console guides and the stale ADR consequence now document the one policy.
 
-Tests cover all three consumers' default/invalid/nonpositive/positive config, live approval/denial/cancellation after a virtual1000-second wait, terminal late-approval refusal, and existing positive expiry/factory behavior. Nine pre-existing real-config nodes use the supported bootstrap_profile marker. Added policy, bridge and live-wiring tests to PR Fast Lane. Reviewed bridge default/fallback expectations now pin0.0. RED:18 expected failures. GREEN:98 combined focused checks; preflight and zero-added-diagnostic lint comparison pass. Existing ADR067 applies; no new ADR. PR gate and final review qualification pending.
+Tests cover all three consumers' default/invalid/nonpositive/positive config, live approval/denial/cancellation after a virtual1000-second wait, terminal late-approval refusal, and existing positive expiry/factory behavior. Nine pre-existing real-config nodes use the supported bootstrap_profile marker. Added policy, bridge and live-wiring tests to PR Fast Lane. Reviewed bridge default/fallback expectations now pin0.0. RED:18 expected failures. GREEN:98 combined focused checks; preflight and zero-added-diagnostic lint comparison pass. Existing ADR067 applies; no new ADR. Integration: PR #3008 against dev.
+
+Qodo review fixes: synchronized the exact Fast Lane target contract, added Google-style test summaries/Args, and repaired standard inbound server cancellation under ADR067/111. Incoming stdio notifications/cancelled target only the exact active inbound task; malformed/unknown/completed IDs are ignored, duplicate IDs preserve existing ownership, and completion/disconnect clear the map. Existing live confirmation finally expires the abandoned request without replying; integer/string IDs, surviving siblings, opposite-direction requests, late approvals and disconnect are covered through real frames/read loop/dispatcher/store. This does not alter approval authority or introduce a new runtime boundary; no new ADR.
+
+Evidence: cancellation regression RED2 timeouts, then GREEN295 targeted checks plus13 latency/responsiveness checks. CI contract mismatch reproduced RED and corrected GREEN; initial CI had1246 passing contract checks and only that stale target assertion failed. Fresh preflight passes and changed Python adds no lint diagnostics. Read-only review found no remaining issue.
 <!-- SECTION:NOTES:END -->

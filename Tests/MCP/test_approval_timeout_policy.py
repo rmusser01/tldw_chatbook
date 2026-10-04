@@ -20,6 +20,14 @@ from tldw_chatbook.MCP.local_store import LocalMCPStore
 def test_console_and_service_share_approval_timeout_policy(
     monkeypatch, configured, expected
 ):
+    """Pin the one approval ceiling policy in both synchronous consumers.
+
+    Args:
+        monkeypatch: Substitute only the configuration-read boundary.
+        configured: Missing, invalid, nonpositive or positive setting value.
+        expected: Policy value both consumers must resolve.
+    """
+
     def setting(section, key, default=None):
         assert (section, key) == ("mcp", "approval_timeout_seconds")
         return default if configured == "missing" else configured
@@ -43,7 +51,14 @@ def test_console_and_service_share_approval_timeout_policy(
 async def test_live_confirmation_without_deadline_remains_answerable(
     monkeypatch, tmp_path, configured, decision
 ):
-    """Advance only the approval clock past the old default, then answer/stop."""
+    """Advance only the approval clock past the old default, then answer/stop.
+
+    Args:
+        monkeypatch: Isolate configuration and the consumer's monotonic clock.
+        tmp_path: Private directory for the real approval store.
+        configured: Missing, invalid or nonpositive setting value.
+        decision: Approval, denial or cancellation after the clock advances.
+    """
     monkeypatch.setattr(
         wiring,
         "get_cli_setting",

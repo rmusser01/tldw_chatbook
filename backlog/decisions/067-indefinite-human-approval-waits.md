@@ -70,7 +70,10 @@ deadline in the past, i.e. an immediate auto-deny). The card's countdown copy
   to `0`, and nonpositive values have no deadline. A positive ceiling expires
   unanswered confirmations; cancellation still expires abandoned store requests
   so a late approval cannot revive them. MCP confirmation waits do not run inside
-  the agent tool-call wrapper and retain their existing async cancellation path.
+  the agent tool-call wrapper and retain their existing async cancellation path. Server `notifications/cancelled` frames cancel only their matching
+  inbound stdio dispatch task. Its existing cleanup expires the confirmation;
+  unknown/malformed IDs and completed requests are ignored, and opposite-direction
+  client requests and sibling confirmations remain independent.
 - Tests that rely on auto-deny inject positive seam values (e.g. 0.05) and are
   unaffected by the default flip.
 

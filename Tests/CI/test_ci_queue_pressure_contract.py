@@ -20,6 +20,9 @@ PUSH_ONLY_CANCELLATION = (
 FAST_LANE_TARGETS = (
     "Tests/CI",
     "Tests/test_smoke.py",
+    "Tests/MCP/test_approval_timeout_policy.py",
+    "Tests/MCP/test_control_plane_bridge.py",
+    "Tests/MCP/test_live_server_request_wiring.py",
     "Tests/Agents/test_execution_capacity.py",
     "Tests/Agents/test_fleet_messages.py",
     "Tests/Agents/test_session_todo_store.py",

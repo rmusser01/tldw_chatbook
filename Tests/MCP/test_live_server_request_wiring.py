@@ -285,3 +285,161 @@ def test_factory_dispatcher_fulfills_elicitation_end_to_end(tmp_path):
 
     result = _run(drive())
     assert result == {"action": "accept", "content": {}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_id", [1, "1"])
+async def test_wire_cancellation_expires_only_the_matching_confirmation(
+    tmp_path, monkeypatch, cancel_id
+):
+    """Route real stdio cancellation frames through the live dispatcher/store.
+
+    Args:
+        tmp_path: Private directory for the real approval store.
+        monkeypatch: Configure missing settings without touching user config.
+        cancel_id: Integer or string inbound ID, kept distinct on the wire.
+    """
+    import json
+    from types import SimpleNamespace
+
+    from tldw_chatbook.MCP import live_server_request_wiring as wiring
+    from tldw_chatbook.MCP.client import _StdioJSONRPCConnection
+
+    monkeypatch.setattr(
+        wiring, "get_cli_setting", lambda section, key, default=None: default
+    )
+    store = _store(tmp_path)
+    dispatcher = wiring.build_server_request_dispatcher_factory(store)("server")
+    reader = asyncio.StreamReader()
+    sent = []
+
+    class Writer:
+        def write(self, data):
+            """Capture bytes written by the production JSON-RPC sender.
+
+            Args:
+                data: Encoded outgoing JSON-RPC frame.
+            """
+            sent.append(json.loads(data))
+
+        async def drain(self):
+            """Expose the transport drain boundary."""
+
+        def close(self):
+            """Expose the transport closure boundary."""
+
+    conn = _StdioJSONRPCConnection(
+        SimpleNamespace(stdout=reader, stderr=None, stdin=Writer(), returncode=0),
+        client_name="test",
+        server_request_dispatcher=dispatcher.handle,
+    )
+
+    def frame(payload):
+        """Deliver a server frame through the production read loop.
+
+        Args:
+            payload: JSON-RPC server request or notification.
+        """
+        reader.feed_data(json.dumps(payload).encode() + b"\n")
+
+    async def wait_for(predicate):
+        """Bound a wait for the observed transport/store state.
+
+        Args:
+            predicate: State condition to observe.
+        """
+        async with asyncio.timeout(2):
+            while not predicate():
+                await asyncio.sleep(0.005)
+
+    # Opposite-direction IDs belong to a separate namespace.
+    outgoing = asyncio.get_running_loop().create_future()
+    conn._pending_requests[1] = outgoing
+    try:
+        for request_id in (1, "1"):
+            frame(
+                {
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "method": "elicitation/create",
+                    "params": {
+                        "message": f"Confirm {type(request_id).__name__}?",
+                        "requestedSchema": {},
+                    },
+                }
+            )
+        await wait_for(lambda: len(store.list_approval_requests()) == 2)
+        assert all(r.status == "pending" for r in store.list_approval_requests())
+        frame(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "elicitation/create",
+                "params": {"message": "Duplicate?", "requestedSchema": {}},
+            }
+        )
+        for malformed in (None, True, 1.0, [], {}, "unknown"):
+            frame(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/cancelled",
+                    "params": {"requestId": malformed},
+                }
+            )
+        frame({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": []})
+        await asyncio.sleep(0.02)
+        assert not conn._read_task.done()
+        assert all(r.status == "pending" for r in store.list_approval_requests())
+        frame(
+            {
+                "jsonrpc": "2.0",
+                "method": "notifications/cancelled",
+                "params": {"requestId": cancel_id},
+            }
+        )
+        await wait_for(
+            lambda: any(r.status == "expired" for r in store.list_approval_requests())
+        )
+        (expired,) = [
+            r for r in store.list_approval_requests() if r.status == "expired"
+        ]
+        assert expired.payload["message"] == f"Confirm {type(cancel_id).__name__}?"
+        assert store.resolve_approval_request(expired.request_id, "approved") is None
+        assert not outgoing.done()
+        (pending,) = [
+            r for r in store.list_approval_requests() if r.status == "pending"
+        ]
+        store.resolve_approval_request(pending.request_id, "approved")
+        await wait_for(lambda: not conn._dispatch_tasks)
+        assert len(sent) == 1
+        assert sent[0]["id"] == ("1" if type(cancel_id) is int else 1)
+        assert sent[0]["result"] == {"action": "accept", "content": {}}
+        assert not conn._server_request_tasks
+        # Disconnect still aborts an indefinite human wait and drains ownership.
+        frame(
+            {
+                "jsonrpc": "2.0",
+                "id": "disconnect",
+                "method": "elicitation/create",
+                "params": {"message": "Disconnect?", "requestedSchema": {}},
+            }
+        )
+        await wait_for(
+            lambda: any(r.status == "pending" for r in store.list_approval_requests())
+        )
+        (abandoned,) = [
+            r for r in store.list_approval_requests() if r.status == "pending"
+        ]
+        conn._pending_requests.pop(1, None)
+        await conn.close()
+        await wait_for(
+            lambda: all(r.status != "pending" for r in store.list_approval_requests())
+        )
+        assert store.resolve_approval_request(abandoned.request_id, "approved") is None
+        assert not conn._dispatch_tasks and not conn._server_request_tasks
+        assert len(sent) == 1
+    finally:
+        conn._pending_requests.pop(1, None)
+        outgoing.cancel()
+        await conn.close()
+        await asyncio.sleep(0)
