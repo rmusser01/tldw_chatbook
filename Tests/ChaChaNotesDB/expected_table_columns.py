@@ -733,6 +733,20 @@ EXPECTED_TABLE_COLUMNS: dict[str, frozenset[str]] = {
         }
     ),
     "flashcards_fts": frozenset({"front", "back", "tags"}),
+    "fleet_progress_messages": frozenset(
+        {
+            "sequence",
+            "message_id",
+            "conversation_id",
+            "handle_id",
+            "run_id",
+            "parent_run_id",
+            "chain_id",
+            "agent",
+            "body",
+            "created_at",
+        }
+    ),
     "kept_briefings": frozenset(
         {
             "id",
