@@ -2,6 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-23
+Amended: 2026-10-03 by TASK-34000.42 (Reader keeps width priority beside a companion)
 Related Task: Implementation tasks will be created from the approved design during planning.
 
 ## Decision
@@ -96,3 +97,12 @@ rather than only as routine UI polish.
 - [Approved design spec](../../Docs/superpowers/specs/2026-08-23-library-media-netnewswire-reader-design.md)
 - [Watchlists NetNewsWire reader design](../../Docs/superpowers/specs/2026-08-23-watchlists-netnewswire-reader-collapsible-rails-design.md)
 - [ADR-042: Watchlists reader-first information architecture](042-watchlists-reader-first-ia.md)
+
+## Amendment 2026-10-03 — Reader width priority beside a companion (TASK-34000.42)
+
+With a list-region companion open (ADR-086 amendment of the same date — the reading desk's working
+note), the Reader remains the width priority: the companion takes
+`clamp(round(0.40 × available), 40, 72)` cells and the Reader keeps everything else. The Reader is
+still never a collapse target; when both cannot fit, the shell stacks Reader and companion as faces
+rather than narrowing the Reader below its floor.
+

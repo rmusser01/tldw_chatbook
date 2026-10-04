@@ -2,7 +2,7 @@
 
 Status: Accepted
 Date: 2026-08-24
-Amended: 2026-08-25 by TASK-22857
+Amended: 2026-08-25 by TASK-22857; 2026-10-03 by TASK-34000.42 (list-region companion — the reading desk)
 Related Tasks: TASK-22031, TASK-22032, TASK-22033, TASK-22034, TASK-22857
 
 ## Decision
@@ -155,3 +155,23 @@ recorded as an ADR.
 - [ADR-084: Library Media reader information architecture](084-library-media-reader-ia.md)
 - [Library Media reader design](../../Docs/superpowers/specs/2026-08-23-library-media-netnewswire-reader-design.md)
 - [Library compose-once design](../../Docs/superpowers/specs/2026-08-13-library-compose-once-design.md)
+
+## Amendment 2026-10-03 — a companion may occupy the list region (TASK-34000.42)
+
+Owner-approved with the Library reading desk design
+(`Docs/superpowers/specs/2026-10-03-library-reading-desk-design.md`, §6).
+
+- The list region may host a destination-owned **companion** in place of the destination list. The
+  first companion is the reading desk's working note beside the Media Reader.
+- A companion is active work. When the companion (floor 40 cells) and the work pane (its profile
+  floor) cannot both fit, the shell stacks them as two **faces** of the work region under a one-row
+  header that names both; it never collapses the companion. Below 64 columns the existing emergency
+  stage applies and the faces still flip.
+- The companion's share is `clamp(round(0.40 × available), 40, 72)` cells; the work pane keeps the
+  rest (see ADR-084's amendment). While a companion is open the Library rail collapses transiently;
+  the saved preference is untouched.
+- The list-region grip names what the region currently holds (for example `Note`), never a stale
+  destination label. In stacked mode the list grip is hidden.
+- Companion visibility, its note, caret and both scroll positions are transient session state — not
+  persisted to config, not restored after a relaunch (ADR-033).
+
