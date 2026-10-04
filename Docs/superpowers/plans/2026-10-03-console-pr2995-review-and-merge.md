@@ -284,6 +284,18 @@ Reason: repair only reproduced fixture admission failures, preserving production
 - [ ] Rerun only the38 failed/error cohort1 nodes, including the three already corrected explicit fake-host constructors. Diagnose the separate background notification failure against actual ordering before any additional repair; immutable BASE passed that case, so profile attribution alone does not justify a timing/assertion/wait change.
 - [ ] Execute pending approved cohorts2/4/5 once at stable corrected source. Carry127 cohort1 passes,16 I1 cases,13 static passes and14 moved characterization passes by exact source/AST mapping. The inherited two-method provider-await guard remains a separate open diagnosis; no waiver or source/guard change is authorized by this fixture scope. Root final loading/navigation remains after independent source review.
 
+#### Task9 inherited bounded-provider repair
+
+ADR required: no new ADR
+ADR path: N/A; retain TASK21145/TASK21150 bounded gateway contract, ADR090/102 and ADR220 ownership.
+Reason: fix two inherited bypasses of the existing deadline; no new service or policy boundary.
+
+- [ ] Preserve profile extension1ab9bedf report/maps/17 safe receipts plus their20 root-pinned hashes and original38 checkpoint hashes. All38 failed/error nodes pass, including the unchanged notification case; its earlier failure cause remains unproven and no timing/assertion change is made.
+- [ ] In only effective_thinking_history_policy_for_session and _build_personal_context_snapshot, route the original exact selection argument through _resolve_for_send_bounded. Keep original try/readiness-default/fallback/continuation/preview/cancellation branches, helper, production deadline constant and source guard unchanged. Both raw awaits are identical to immutable BASE and the real gateway lacks an aggregate deadline; the guard is accurate.
+- [ ] Before production edits, add the two positively gateway-entered timeout controls named in task-9-bounded-provider-authorized-selection.json. Preserve original behavior RED on current source; then require saved normalized policy/stored-preference retention and empty snapshot/no downstream composition after timeout. Use existing profiles and a short test-instance deadline; no existing timeout, assertion or enrollment policy change.
+- [ ] Run only the six existing caller/helper/guard selectors plus two affected controller cap nodes and the two new controls. Execute pending approved cohorts2/4/5 at stable source, without repeating earlier passed cohorts. Capture exact argv before execution, every failure/warning, touched formatter/fatal/whitespace and final maps. Mark these two repaired unmoved methods as explicit carry exceptions; every other original method/authority/lock/QA map stays exact. Diagnose any new setup or behavior failure before repair scope expansion.
+- [ ] Freeze separately named final qualification report/map/safe-manifest preserving both earlier checkpoints, return clean ownership, and obtain independent scoped spec/quality review before root final boot/navigation or publication.
+
 ### Task 10: Place pure fork projections with their existing owner and restore the store cap
 
 **Execution order:** Task10 source repair may precede Task9 implementation. Task9 remains a read-only proposal until its current-dev projection and canonical contract are selected. All source workers execute sequentially.
