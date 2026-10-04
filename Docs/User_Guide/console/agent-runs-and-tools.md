@@ -2005,10 +2005,12 @@ source ▸ Tool gates ▸ **Character cards (character_\*)**.
 
 ### Chat creation tools (fork_chat / new_chat)
 
-A primary Console agent can propose a fresh chat with `new_chat`, or copy the
+A Console agent can propose a fresh chat with `new_chat`, or copy the
 current active message branch with `fork_chat`. Both accept a `title`, an
-`opening_prompt`, and optional standing `instructions`. Sub-agents cannot use
-these tools. Your current chat, workspace, composer and focus stay in place.
+`opening_prompt`, and optional standing `instructions`. Sub-agents can fork a
+chat or create a draft in the same workspace; each request needs fresh
+confirmation. Casual destinations and bounded starts are available only to
+primary agents. Your current chat, workspace, composer and focus stay in place.
 
 `new_chat` has two independent options:
 
