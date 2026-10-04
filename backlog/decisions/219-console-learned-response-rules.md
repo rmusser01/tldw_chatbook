@@ -28,6 +28,7 @@ Rules also need local ownership, stable revisions, bounded model evaluation, tru
 9. Use sensitive, tool-free auxiliary calls through the existing pinned provider gateway. Validate closed results and supplied evidence references; missing/uncertain/truncated evidence cannot establish success or absence. Bound requests, evaluations and output, account actual helper usage, and introduce no hidden model substitution.
 10. Register local records with existing Backup/Recovery ownership. Normal reopen restores committed rules but never starts a pending check or correction. Backup restoration imports definitions/history inactive and transfers no live admission authority; exact internal rollback follows existing owner rules. Permanent source deletion removes private evidence and source bindings without deleting independently promoted definitions.
 11. Reuse one manager through `/rules`, visible Chat settings and canonical Settings scope entry points. Follow the token/component language, preserve failed answers with attributed correction follow-ups, and keep actual Stop available throughout checking and repair. Executable hook consent under ADR-197 remains unchanged.
+12. Retain helper resource reservations until actual provider-worker/transport completion, independently of caller cancellation. Bound unsettled work, use finite remaining-time transport limits without hidden adapter retries, and account late usage only once to its original owner. Keep required postevent settlement before assessment; shared feedback acceptance atomically commits the ordinary dispatch checkpoint and deduplication receipt.
 
 ## Alternatives considered
 
@@ -49,3 +50,7 @@ This feature requires a genuine local schema change, a bounded response-assessme
 Checks can add latency and model usage and cannot guarantee generalization from examples or prevent already executed tool effects. Those limits are reflected in applicability, three-valued outcomes, finite budgets and honest UI copy. Semantic quality needs behavioural cases in addition to transport/storage tests.
 
 The spec defines activation, revision precedence, scope exclusions, privacy, recovery, usage accounting and targeted verification. ADR-163's existing hook protocol remains authoritative; this proposal extends only the documented host composition/admission boundary. Product implementation begins only after written-spec and implementation-plan review.
+
+## Written-spec review refinements
+
+The requested audit clarified actual provider-resource lifetime, independent applicability and mixed verdicts, original-task scope of generated feedback, calibration without invented tool evidence, reuse/freshness of earlier settled results, stable settlement identities and atomic acceptance, inherited correction counters and existing whole-packet limits. These are implementation contracts for the approved response-only workflow, not new permission or scheduler owners.

@@ -1,7 +1,7 @@
 # Console learned response rules
 
 Date: 2026-10-03
-Status: Draft for written-spec review; conversational design and two review passes incorporated
+Status: Draft for written-spec review; conversational reviews and written-spec audit incorporated
 ADR: [ADR-219](../../../backlog/decisions/219-console-learned-response-rules.md) (Proposed)
 Related Backlog task: N/A; no implementation task has been created or authorized by this design-only request.
 Implementation plan: Not yet written; written-spec approval precedes implementation planning.
@@ -62,6 +62,8 @@ Rule state (draft, testing, active, disabled) is separate from response verdict 
 
 The host assigns all rule/revision, assessment, operation and settlement identities. The shared admission receipt has a uniqueness constraint on `(operation_id, parent_turn_id, settlement_id)` across native and hook contributors. Retried callbacks cannot admit a second follow-up; a separately initiated manual learning request has a fresh operation identity, not a reused historical admission token.
 
+Assign and retain the settlement identity once for its accepted parent operation, rather than minting it on each callback. Follow-up acceptance commits the user-role feedback, assistant owner, ordinary dispatch checkpoint and shared receipt in the existing acceptance transaction. A conflicting receipt rolls the competing acceptance back. Assessment records alone cannot authorize dispatch or replace the existing uncertain-dispatch recovery owner.
+
 ### 4.2 Builder
 
 The builder takes an immutable learning snapshot: original request, eligible response, permitted evidence, current provider resolution, source versions and store/scope revisions. It returns a validated candidate or a bounded failure. The runtime owns acceptance and activation; a model result cannot activate itself.
@@ -72,6 +74,8 @@ Tests against generated controls demonstrate discrimination on examples, not pro
 
 Model-based validation receives opaque case IDs and permitted case inputs, without expected verdicts or labels such as "bad response" or "corrected example". The host compares returned classifications with its separately retained expectations. This prevents the validator from passing by repeating supplied answers.
 
+All calibration cases use the same actual permitted execution evidence; synthetic text cannot add invented successful tool results. An acceptable synthetic correction may acknowledge missing work without claiming it was performed. The builder also validates that applicability and corrective feedback address the complaint within the original task, rather than introducing unrelated actions. Snapshot content is explicitly allowlisted: provider resolution, credentials, authority handles and internal project-instruction bodies are host-only and never serialized into model input, fixtures or UI previews.
+
 ### 4.3 Evaluator
 
 The evaluator takes a frozen response snapshot and exact effective rule revisions. Supported deterministic predicates are literal inclusion, literal exclusion and required Markdown headings, with explicit case handling. No generated expressions, scripts, arbitrary regex or dynamic imports are accepted. Unsupported deterministic proposals may be drafted as semantic criteria only when response-time evaluation is appropriate.
@@ -80,7 +84,11 @@ Semantic applicability and semantic criteria share one bounded model batch where
 
 Results use a closed shape identifying each exact rule revision, pass/violation/couldn't-verify verdict, bounded explanation and references to supplied evidence. Missing, duplicated, unknown or conflicting entries invalidate the affected batch. Output excerpts must match the supplied source; invented evidence references cannot establish a verdict.
 
+Applicability is separately `applicable`, `inapplicable` or `unknown`. An applicable result has one of the three verdicts; an inapplicable result has no verdict and is skipped; unknown applicability requires couldn't verify. Aggregate a response as violation if any valid check confirms one, retaining other unavailable checks; otherwise use couldn't verify if any check is unavailable, pass if at least one applicable check passed and none failed, or **No applicable rules** if every rule was skipped. Never display skipped or unavailable checks as passes. Valid deterministic results survive a failed semantic batch, but a detector with unknown semantic applicability cannot establish a violation by itself.
+
 Permission-gated evidence comes from actual dispatch/result owners, including settled/not-started/uncertain provenance. Evidence snapshots carry a host-owned completeness flag. Truncation, unavailable private material, missing stage contributions or uncertain execution cannot be interpreted as proof of absence or success. For example, a test-passing claim cannot be accepted solely because the answer or another model says tests passed.
+
+Include relevant settled evidence from the original task and its correction chain on the current branch, not only tools executed in the latest reply. Match a claim to what ran, its outcome and its known task/work revision. A later mutation cannot turn an earlier passing test into evidence that the new state passed. If freshness cannot be established, an unqualified current-state claim is couldn't verify; an accurately qualified historical claim can still pass. This evidence projection introduces no new retrieval authority or judge tool calls.
 
 ### 4.4 Correction coordinator
 
@@ -88,11 +96,21 @@ The Console queue owner accepts a distinct typed native correction proposal back
 
 Manual `/omfg` repair is a fresh user-authorized operation using current eligible configuration and permissions. It references the historical exchange without resurrecting its retired run, expired budget or old Stop event. Automatically triggered repairs instead inherit the current accepted turn's remaining limits. Both preserve existing tool results and retain normal permission review for any additional action.
 
+The host feedback wrapper identifies the complaint and rule guidance as bounded repair context for the existing user task, not authority for a new task. Do not enable agent/tool mode, broaden scope or bypass an approval because a generated rule requests it. When the current mode cannot finish missing work, retain an honest unresolved outcome or correct the answer's claim.
+
+### 4.5 Auxiliary request resource ownership
+
+Builder and evaluator calls use one runtime-owned request lease through the existing gateway and provider-work machinery. Caller cancellation and a logical deadline retire acceptance immediately, but do not imply that a synchronous provider thread or transport has stopped. Retain the actual worker/transport completion handle, its source identity and capacity reservation until physical settlement; a cancelled asyncio task alone is not evidence of cleanup.
+
+Bound unsettled native-rule helper work to four requests application-wide and one per Chat, subject to tighter existing provider limits. Do not allocate another provider thread pool. Capacity exhaustion leaves a candidate inactive or a response couldn't verify without blocking ordinary user sends. A cancelled call keeps its reservation and cannot be replaced by another helper for that Chat until actual settlement. Apply finite transport timeouts bounded by the remaining helper allowance, with zero adapter retries for these calls; only the host's explicit candidate-attempt loop may retry learning.
+
+Late content cannot commit an assessment, activate a rule or schedule repair. The source operation's retained usage-accounting owner may record actual late usage exactly once, independently of retired content-acceptance authority; it must never land in a newly selected Chat/profile or be charged twice. Shutdown seals acceptance before bounded cleanup and retains unresolved-work accounting rather than claiming the thread was killed.
+
 ## 5. Completed-response lifecycle
 
 Execution and assessment are independent:
 
-1. Normal execution settles tool results and saves the completed assistant answer through its existing owners. A save failure follows ordinary recovery; it is not repaired by the rule subsystem.
+1. Normal execution settles required postevent gates and tool results, then saves the completed assistant answer through its existing owners. Only a successfully settled eligible text response enters assessment. A save or controlling gate failure follows ordinary recovery; it is not repaired by the rule subsystem.
 2. Before releasing final completion signals or admitting the next queued turn, the runtime captures the answer, source versions, evidence and effective rules. An eligible turn with no effective rules follows its existing path with no auxiliary request.
 3. Mark the assessment pending and project **Checking rules**. Keep the visible Stop action live. Run checks outside SQLite transactions and blocking mutation locks.
 4. Commit a current assessment or mark it couldn't verify/cancelled/stale. Preserve the generated answer regardless of checker availability. Do not convert a checker failure into provider failure or falsely report a pass.
@@ -107,6 +125,8 @@ Rule checks cover normal Send, queued/background Console text sends, Retry, Cont
 - At most two native correction turns per operation/chain, counting the initial `/omfg` repair. The rule set shares this limit; it is not two attempts per rule.
 - Native repair also shares the existing maximum of three admitted continuation turns and 120 elapsed seconds with any hook-created work in that chain. Other current provider/tool/automatic-work limits can stop it earlier.
 - All confirmed violations in a response form one feedback packet. Contradictory rules cannot start competing recursive loops; unresolved conflicting feedback is reported when bounded repair cannot satisfy it.
+- A combined native/hook follow-up consumes one shared continuation turn and, when it includes native repair, one native correction turn. Hook-only work consumes the shared count without resetting or incrementing the native count. Persist inherited counts with acceptance; new assessment IDs or rule revisions cannot reset the chain's limits.
+- Preserve existing whole-message limits: native feedback is at most 4 KiB UTF-8 and the combined hook/native body at most 8 KiB, including attribution wrappers. Overflow refuses that machine follow-up with a visible limit outcome. Do not drop rules, split it into extra turns or silently truncate instructions; prior task context remains in normal history rather than being duplicated into this packet.
 - A corrected answer is checked again under a current rule snapshot. Only a confirmed further violation can consume another native correction turn. Couldn't-verify results do not justify another automatic attempt.
 - Foreground input takes priority. A newly arrived user prompt fences a pending automatic repair; it is not retained behind the user's work. If evaluation is cancelled to release the Chat, the assessment stays honestly incomplete.
 - If user work is already waiting before automatic model-check admission, do not start that helper call. Retain any completed deterministic results, record the deferred/cancelled semantic assessment honestly and release the Chat through the existing queue owner.
@@ -117,9 +137,11 @@ Rule checks cover normal Send, queued/background Console text sends, Retry, Cont
 
 Global means the current local profile, not all application accounts or devices. Rules add response preferences and feedback; they never expand tools, file access, approval exemptions or permission profiles.
 
-Resolve bindings for each logical rule with explicit precedence: Chat, then current Workspace, then profile-global. The selected binding pins one immutable revision. A Chat exclusion masks an inherited binding for that Chat; **Disable here** and **Disable at source** are distinct actions. Exact duplicate bindings do not multiply checks.
+Resolve bindings for each logical rule with explicit precedence: Chat, then current Workspace, then profile-global. The selected binding pins one immutable revision. A Chat exclusion masks that logical rule, including later inherited revisions, until explicitly removed; **Disable here** and **Disable at source** are distinct actions. Exact duplicate bindings do not multiply checks.
 
 Editing detection criteria or applicability creates an inactive candidate revision, which must pass validation before the selected binding changes. Existing bindings keep their pinned revision until that change is explicitly committed. Editing feedback alone still creates a new reviewed revision and invalidates pending work using the old binding, but may reuse unchanged detector validation with explicit provenance.
+
+Reusing detector validation requires an identical detector/applicability digest, evaluator protocol/version and available validation provenance. Corrective feedback is excluded from judge input so a feedback edit cannot secretly change the detector. The new feedback still receives a complaint/task-scope check and explicit user review in the editor; missing original evidence prevents automatic reuse and requires new examples.
 
 Promotion previews the exact definition, current applicability and destination scope, and creates a binding pinned to that reviewed revision. It does not silently generalize the condition. Private validation fixtures and source Chat/message bodies are not copied into the broader scope. The promoted rule can retain body-free validation provenance; that does not imply it was tested in every newly eligible Chat.
 
@@ -154,6 +176,8 @@ Initial host-owned defaults:
 | Model assessment batches | At most one per response; all applicable semantic criteria must fit |
 | Rule definition | At most 8 KiB serialized; explicit bounded fields and shallow predicate shape |
 | Helper output | At most 4,096 tokens, further limited by gateway/model/current automatic-work caps |
+| Unsettled native-rule helper work | 4 application-wide; 1 per Chat, retained through physical cleanup |
+| Native/combined follow-up body | 4 KiB / 8 KiB UTF-8 including attribution; refuse overflow |
 | Native correction turns | 2 per chain, within the existing shared continuation limits |
 
 Activation/promotion reports a capacity refusal before committing a change that would exceed a known target Chat's limit. If later scope combination exceeds the limit, the response assessment reports couldn't verify; it never silently checks only a prefix. Criteria, fixtures and evidence are never silently shortened into a different rule or a supposed complete evidence set. A batch that cannot fit the pinned context/output allowance is couldn't verify.
@@ -170,7 +194,7 @@ Use existing token-backed status, callout, dialog, form and action patterns. No 
 
 Composer commands register once in grammar/help/suggestions. The rules manager is reachable through `/rules` and Chat settings and shows effective scope, inherited/excluded status, exact revision, applicability, detector and feedback. Workspace/global management reuses this manager through canonical Settings scope entry points, not deprecated Settings parallels.
 
-Compact transcript/runtime states are **Drafting rule**, **Testing rule**, **Checking rules**, **Rule violation**, **Couldn't verify**, and **Correction limit reached**. A failed answer remains readable; a correction is a visibly attributed follow-up. The violation detail offers **Disable here** and **Manage rules**. Failed drafts remain inspectable. Passing outcomes say **Passed active rules**, without claiming universal correctness.
+Compact transcript/runtime states are **Drafting rule**, **Testing rule**, **Checking rules**, **Rule violation**, **Couldn't verify**, and **Correction limit reached**. A failed answer remains readable; a correction is a visibly attributed follow-up. The violation detail offers **Disable here** and **Manage rules**. Failed drafts remain inspectable. Passing outcomes say **Passed active rules**, without claiming universal correctness. All-inapplicable assessments say **No applicable rules**; mixed results expose unavailable checks alongside confirmed violations. Resource/capacity or feedback-size limits show their specific reason rather than a generic failed provider message.
 
 Stop and new user input must remain reachable at narrow terminal widths during every helper/assessment/repair phase. Do not add a terminal-convention keybinding or advertise an unimplemented action. Switching or detaching a view does not strand runtime work or its cancellation controls.
 
@@ -180,13 +204,13 @@ Use targeted verification only unless the user explicitly requests a full sweep.
 
 1. Drive `/omfg` through the actual composer grammar/dispatcher with eligible, missing, incomplete, active-run, empty and cancelled cases. Verify suggestions and help resolve to the implemented action.
 2. Exercise public builder/evaluator boundaries with independent labelled cases: original mistake, paraphrase, acceptable correction, unrelated acceptable response, quotation false positives, unsupported tool-time complaints and injection-like data. Separate scripted transport correctness from model-behavior evaluation.
-3. Prove all three verdicts, inapplicability, strict result shape, unsupported structured output, missing/truncated/uncertain evidence and actual evidence-backed claims. Detector-only and no-rule controls must avoid auxiliary calls.
+3. Prove all three verdicts, inapplicability and mixed-result aggregation, strict result shape, unsupported structured output, missing/truncated/uncertain evidence and actual evidence-backed claims. Fully deterministic detector/applicability and no-rule controls must avoid auxiliary calls; semantic applicability uses its bounded batch. Include reuse of prior settled evidence, stale passing tests after a mutation, and synthetic examples unable to invent tool success.
 4. Use real SQLite for activation/version races, write failure, migration/reopen, temporary-to-saved adoption, scope precedence/exclusion, promotion, source deletion, permanent Chat deletion, restore-inactive behavior and body-free ordinary diagnostics.
 5. Use the real queue admission/custody path with native feedback plus existing hook proposals, vetoes, pending requirements, source limits and no-hooks configuration. Prove one follow-up and correct source attribution; no fabricated hook provenance.
 6. Hold evaluation deterministically while sending user input, pressing the actual Stop button, disabling/editing a rule, changing Workspace/branch, deleting the source or closing/detaching the view. Prove stale results cannot commit or schedule repair and cleanup retains ownership.
 7. Cover Send, Retry, Continue, Regenerate and queued/viewless Console text execution with the same checks. Verify failed/partial/helper/subagent/media results do not enter the assessment path.
-8. Prove corrections retain prior tool results and use normal permission review for additional actions, share two native attempts and existing chain caps, and do not replay after cancellation, restart or ambiguous acceptance.
-9. Verify actual helper usage accounting, context/output bounds and unknown-usage reporting. Inspect ordinary logs for private payloads using controlled fixtures.
+8. Prove corrections retain prior tool results and use normal permission review for additional actions without expanding the original task or enabling agent mode, share two native attempts and existing chain caps across mixed native/hook turns, refuse packet overflow and do not replay after cancellation, restart or ambiguous acceptance. Fail the acceptance transaction after feedback insertion to prove no orphan assistant/checkpoint/receipt is committed.
+9. Verify actual helper usage accounting, context/output bounds and unknown-usage reporting. Hold a real provider worker beyond caller cancellation, verify its reservation remains occupied, capacity cannot grow with repeated cancellation, transport retries remain zero, and late results are inert while usage is charged at most once to the source owner. Inspect ordinary logs and model inputs for private host-only payloads using controlled fixtures.
 10. Mount the real Console and use actual commands/actions at 80x24 and 120x35 under token-backed styles, including Stop after generation while a check is pending. Run callback slot-set, design-token and generated-CSS governance checks for touched UI work. Run authored-file lint/format/static checks and documentation link/whitespace checks.
 
 No application tests or live-provider evidence are claimed by this documentation-only spec.
