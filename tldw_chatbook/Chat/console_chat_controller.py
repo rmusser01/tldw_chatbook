@@ -158,6 +158,12 @@ from tldw_chatbook.Chat.console_compaction_failure import (
     compaction_failure_copy,
     transaction_failure_copy,
 )
+from tldw_chatbook.Chat.console_context_budget_copy import (
+    MODEL_WINDOW_SETTING,
+    ContextOverflowCause,
+    compaction_prompt_copy,
+    context_overflow_alert_copy,
+)
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     CompactionAdmission,
@@ -329,6 +335,7 @@ from tldw_chatbook.Chat.console_turn_context import (
 from tldw_chatbook.Chat.console_turn_preparation import (
     ConsolePreparationPauseKind,
     ConsolePreparationTransition,
+    ContextCompactionHold,
     ConsoleTurnPreparation,
     ConsoleTurnPreparationState,
     admit_one_shot_capture_off,
@@ -2852,6 +2859,36 @@ def watchlists_operation_receipt_ids(
     )
 
 
+def _context_overflow_cause(
+    decision: CompactionDecision,
+    resolved: Any,
+    capacity: Any,
+) -> ContextOverflowCause | None:
+    """Name why compacting cannot make an over-limit send fit (TASK-34350).
+
+    Args:
+        decision: The preflight's compaction decision.
+        resolved: The request's ``ResolvedConsoleContextPolicy``.
+        capacity: The prepared request's ``ConsoleRequestCapacity``.
+
+    Returns:
+        The cause, or ``None`` when the window itself is unknown.
+    """
+
+    window = capacity.context_window_tokens
+    if (
+        window is not None
+        and window - capacity.effective_response_tokens - capacity.safety_margin_tokens
+        <= 0
+    ):
+        return ContextOverflowCause.NO_INPUT_CAPACITY
+    if resolved.available_conversation_capacity_tokens == 0:
+        return ContextOverflowCause.MANDATORY_EXCEEDS
+    if decision is CompactionDecision.NON_COMPACTABLE:
+        return ContextOverflowCause.NOTHING_TO_COMPACT
+    return None
+
+
 def _flatten_preflight_messages(
     semantic: PreparedConsoleRequest,
 ) -> list[dict[str, Any]]:
@@ -4220,6 +4257,15 @@ class _PreparedEvidenceLease:
     capture_result: Any | None = field(default=None, repr=False)
     released: bool = False
 
+    def __post_init__(self) -> None:
+        # TASK-34352: a staged launch with nobody to capture it used to be
+        # dropped silently at capture time (the turn went out without the
+        # evidence the user staged). Refuse it where the wiring is decided.
+        if self.launch is not None and not callable(self.capture):
+            raise RuntimeError(
+                "Staged evidence was admitted with no capture collaborator."
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class _PreparedSendContinuation:
@@ -4872,6 +4918,8 @@ class ConsoleChatController:
         scratch_spaces: ConsoleScratchSpaceManager | None = None,
         activity_receipts: Any | None = None,
         staged_evidence_provider: Callable[[str], bool] | None = None,
+        staged_evidence_snapshot: "Callable[[], tuple[Any | None, Callable[[Any, Any], None] | None]] | None" = None,
+        frozen_rag_capture: "Callable[[str, Any, Any], Awaitable[Any]] | None" = None,
         cancel_raw_cli_session: Callable[[str], object] | None = None,
         canvas_enabled_reader: Callable[[], bool] | None = None,
         canvas_disabled_reader: Callable[[], bool] | None = None,
@@ -4915,6 +4963,13 @@ class ConsoleChatController:
         self._world_info_applier = world_info_applier
         self._rag_capture_provider = rag_capture_provider
         self._staged_evidence_provider = staged_evidence_provider
+        # TASK-34352: the staged-evidence owner's freeze and exact-launch
+        # capture, passed explicitly. They used to be found by private name
+        # on `rag_capture_provider.__self__`, and a missing name silently
+        # meant "unsupported". Runtime-admitted turns carry their own capture
+        # and release hooks; these serve controllers built without a runtime.
+        self._staged_evidence_snapshot = staged_evidence_snapshot
+        self._frozen_rag_capture = frozen_rag_capture
         self._cancel_raw_cli_session = cancel_raw_cli_session
         if canvas_enabled_reader is None:
             from tldw_chatbook.config import get_canvas_execution_enabled
@@ -4927,6 +4982,11 @@ class ConsoleChatController:
         )
         self._preparation_outcomes: dict[str, ConsolePreparationOutcome] = {}
         self._prepared_send_continuations: dict[str, _PreparedSendContinuation] = {}
+        # TASK-34350: sends held at the compaction threshold (Ask), and the
+        # held sends the user already answered (Compact and send / Send
+        # without compacting), which must not be asked about again.
+        self._context_compaction_holds: dict[str, ContextCompactionHold] = {}
+        self._compaction_hold_answered: set[str] = set()
         self._durable_postcommit_continuations: dict[
             str, _DurablePostcommitContinuation
         ] = {}
@@ -8504,7 +8564,7 @@ class ConsoleChatController:
         return await self.resume_durable_postcommit(preparation.preparation_id)
 
     def trace_call_recovery_preparation(self) -> ConsoleTurnPreparation | None:
-        """Return only the active preparation offering trace-call recovery."""
+        """Return only the active preparation offering a pre-dispatch card."""
 
         preparation = self.store.preparation_for_session(self.store.active_session_id)
         if (
@@ -8515,6 +8575,8 @@ class ConsoleChatController:
                 ConsolePreparationPauseKind.TRACE_PROVENANCE,
                 ConsolePreparationPauseKind.TRACE_CALL,
                 ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
+                # TASK-34350: the context-limit hold uses the same card.
+                ConsolePreparationPauseKind.CONTEXT_COMPACTION,
             }
         ):
             return None
@@ -8899,6 +8961,12 @@ class ConsoleChatController:
         if (
             preparation.state is ConsoleTurnPreparationState.PAUSED
             and preparation.pause_kind
+            is ConsolePreparationPauseKind.CONTEXT_COMPACTION
+        ):
+            return self._cancel_context_compaction_hold(preparation)
+        if (
+            preparation.state is ConsoleTurnPreparationState.PAUSED
+            and preparation.pause_kind
             in {
                 ConsolePreparationPauseKind.TRACE_PROVENANCE,
                 ConsolePreparationPauseKind.TRACE_CALL,
@@ -8945,6 +9013,159 @@ class ConsoleChatController:
             session_id=preparation.session_id,
         )
         return self._prepared_action_refusal(preparation, visible_copy)
+
+    def _cancel_context_compaction_hold(
+        self,
+        preparation: ConsoleTurnPreparation,
+    ) -> ConsoleSubmitResult:
+        """Drop one held send unsent and give its text back (TASK-34350)."""
+
+        cancelled = self.store.cancel_preparation(
+            preparation.session_id,
+            preparation.preparation_id,
+            expected_state=ConsoleTurnPreparationState.PAUSED,
+        )
+        if cancelled is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation.preparation_id)
+            )
+        self._drop_preparation(
+            preparation.preparation_id,
+            expected_states=frozenset({ConsoleTurnPreparationState.CANCELLED}),
+        )
+        self._compaction_hold_answered.discard(preparation.preparation_id)
+        if not self.store.session_draft(preparation.session_id).strip():
+            self.store.set_session_draft(
+                preparation.session_id, preparation.executed_draft
+            )
+        visible_copy = "Held message not sent; it is back in the composer."
+        self._set_run_state(
+            ConsoleRunState(ConsoleRunStatus.STOPPED, visible_copy),
+            session_id=preparation.session_id,
+        )
+        return self._prepared_action_refusal(preparation, visible_copy)
+
+    def context_compaction_hold(
+        self, preparation_id: str
+    ) -> ContextCompactionHold | None:
+        """Return why one send is held at the compaction threshold, if it is.
+
+        Args:
+            preparation_id: The held send's preparation.
+
+        Returns:
+            The hold, or ``None`` once the send is no longer held.
+        """
+
+        preparation = self._preparation_by_id(preparation_id)
+        if (
+            preparation is None
+            or preparation.state is not ConsoleTurnPreparationState.PAUSED
+            or preparation.pause_kind
+            is not ConsolePreparationPauseKind.CONTEXT_COMPACTION
+        ):
+            return None
+        return self._context_compaction_holds.get(preparation_id)
+
+    def _held_send_echo_id(self, session_id: str) -> str | None:
+        """The optimistic echo of this session's paused, uncommitted send."""
+
+        preparation = self.store.preparation_for_session(session_id)
+        if (
+            preparation is None
+            or preparation.state is not ConsoleTurnPreparationState.PAUSED
+            or preparation.pause_kind
+            is not ConsolePreparationPauseKind.CONTEXT_COMPACTION
+        ):
+            return None
+        return preparation.transient_user_message_id
+
+    def _consume_compaction_hold_answer(self, preparation_id: str | None) -> bool:
+        """Whether this send's compaction hold was answered; clears it."""
+
+        if preparation_id is None or preparation_id not in self._compaction_hold_answered:
+            return False
+        self._compaction_hold_answered.discard(preparation_id)
+        return True
+
+    def _held_for_compaction(
+        self, preparation_id: str
+    ) -> ConsoleTurnPreparation | None:
+        preparation = self._preparation_by_id(preparation_id)
+        if self.context_compaction_hold(preparation_id) is None:
+            return None
+        return preparation
+
+    async def compact_and_send(self, preparation_id: str) -> ConsoleSubmitResult:
+        """Compact the held send's chat, then send that exact message.
+
+        Args:
+            preparation_id: The send held at the compaction threshold.
+
+        Returns:
+            The resumed send's result, or a refusal that keeps the hold (and
+            its message) when compaction does not complete.
+        """
+
+        preparation = self._held_for_compaction(preparation_id)
+        if preparation is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation_id)
+            )
+        compacted, visible_copy = await self.compact_context_now(
+            preparation.session_id
+        )
+        if not compacted:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation_id), visible_copy
+            )
+        # The user approved compaction for this send; never ask again for it
+        # even if the summary leaves it near the threshold.
+        return await self._resume_compaction_hold(preparation_id)
+
+    async def send_without_compacting(
+        self, preparation_id: str
+    ) -> ConsoleSubmitResult:
+        """Send the held message once without compacting the chat.
+
+        Args:
+            preparation_id: The send held at the compaction threshold.
+
+        Returns:
+            The resumed send's result, or a refusal if it is no longer held.
+        """
+
+        if self._held_for_compaction(preparation_id) is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation_id)
+            )
+        return await self._resume_compaction_hold(preparation_id)
+
+    async def _resume_compaction_hold(
+        self, preparation_id: str
+    ) -> ConsoleSubmitResult:
+        preparation = self._held_for_compaction(preparation_id)
+        if preparation is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation_id)
+            )
+        ready = self.store.compare_and_set_preparation(
+            preparation.session_id,
+            ConsolePreparationTransition(
+                preparation_id=preparation_id,
+                expected_state=ConsoleTurnPreparationState.PAUSED,
+                new_state=ConsoleTurnPreparationState.READY,
+                pause_kind=None,
+                new_attempt_id=None,
+            ),
+        )
+        if ready is None:
+            return self._prepared_action_refusal(
+                self._preparation_by_id(preparation_id)
+            )
+        self._context_compaction_holds.pop(preparation_id, None)
+        self._compaction_hold_answered.add(preparation_id)
+        return await self._continue_prepared_submission(preparation_id)
 
     def _cancel_trace_recovery_preparation(
         self,
@@ -9124,9 +9345,6 @@ class ConsoleChatController:
 
     def _has_explicit_staged_evidence(self, session_id: str) -> bool | None:
         provider = self._staged_evidence_provider
-        if provider is None:
-            owner = getattr(self._rag_capture_provider, "__self__", None)
-            provider = getattr(owner, "_has_staged_evidence", None)
         if not callable(provider):
             return False
         try:
@@ -9142,18 +9360,22 @@ class ConsoleChatController:
     def _snapshot_staged_evidence(
         self,
     ) -> tuple[bool, Any | None, Callable[[Any, Any], None] | None]:
-        """Freeze the production retrieval owner's current live launch, if any."""
+        """Freeze the staged-evidence owner's current launch, if one is wired.
 
-        owner = getattr(self._rag_capture_provider, "__self__", None)
-        snapshot = getattr(owner, "_snapshot_console_staged_evidence", None)
-        release = getattr(owner, "_release_frozen_console_staged_rag", None)
-        release_callback = release if callable(release) else None
-        if not callable(snapshot):
+        Returns:
+            ``(frozen, launch, release)``. ``frozen`` is False only when this
+            controller has no staged-evidence owner, so the turn keeps the
+            live capture route.
+        """
+
+        snapshot = self._staged_evidence_snapshot
+        if snapshot is None:
             return False, None, None
         try:
-            return True, snapshot(), release_callback
+            launch, release = snapshot()
         except Exception:
-            return True, None, release_callback
+            return True, None, None
+        return True, launch, release
 
     @staticmethod
     def _ordinary_library_text(
@@ -9196,6 +9418,7 @@ class ConsoleChatController:
             self._preparation_outcomes.pop(preparation_id, None)
             self._prepared_send_continuations.pop(preparation_id, None)
             self._trace_call_boundaries_by_preparation.pop(preparation_id, None)
+            self._context_compaction_holds.pop(preparation_id, None)
             fingerprint = self.store.durable_acceptance_fingerprint_for(preparation_id)
             if (
                 fingerprint is None
@@ -10972,7 +11195,15 @@ class ConsoleChatController:
                 )
             one_shot_prefill = frozen_prefill if frozen_prefill_from_one_shot else None
             if custodied_inputs:
-                staged_evidence_frozen = staged_evidence_launch is not None
+                # TASK-34352: a turn admitted with a frozen capture seam froze
+                # its evidence decision at admission -- including "nothing
+                # staged". Recording that as unfrozen sent a paused-then-
+                # resumed turn down the live route, where it consumed
+                # evidence the user staged for their NEXT message meanwhile.
+                staged_evidence_frozen = (
+                    staged_evidence_launch is not None
+                    or staged_evidence_capture is not None
+                )
                 staged_evidence = staged_evidence_launch
             elif preserve_composer:
                 staged_evidence_frozen, staged_evidence, staged_evidence_release = (
@@ -11063,7 +11294,11 @@ class ConsoleChatController:
                     staged_evidence=(
                         _PreparedEvidenceLease(
                             staged_evidence,
-                            capture=staged_evidence_capture,
+                            capture=(
+                                staged_evidence_capture
+                                if staged_evidence_capture is not None
+                                else self._frozen_rag_capture
+                            ),
                             release=staged_evidence_release,
                         )
                         if staged_evidence is not None
@@ -11164,7 +11399,11 @@ class ConsoleChatController:
             custody_evidence_lease = (
                 _PreparedEvidenceLease(
                     staged_evidence_launch,
-                    capture=staged_evidence_capture,
+                    capture=(
+                        staged_evidence_capture
+                        if staged_evidence_capture is not None
+                        else self._frozen_rag_capture
+                    ),
                     release=staged_evidence_release,
                 )
                 if custodied_inputs
@@ -11400,6 +11639,41 @@ class ConsoleChatController:
                     "content": clean_draft,
                 },
             ]
+        # TASK-34350 (owner ruling 2026-10-03): a composer send over the
+        # compaction threshold under Ask is held HERE -- before any hook fires
+        # and before anything is committed -- so the user can compact and
+        # send, send without compacting, or cancel. Nothing is marked Failed
+        # and no dispatch checkpoint exists to recover (TASK-33621.4).
+        if (
+            origin is ConsoleSubmissionOrigin.MANUAL
+            and preparation is not None
+            and not preserve_composer
+            and preparation.preparation_id not in self._compaction_hold_answered
+            and isinstance(resolution, ConsoleProviderResolution)
+        ):
+            hold, alert = await self._assess_context_compaction(
+                session_id=session.id,
+                resolution=resolution,
+                provider_messages=provider_messages,
+                uncommitted_user_message_id=(
+                    echoed_user.id if echoed_user is not None else None
+                ),
+            )
+            if alert is not None:
+                # Compacting cannot make it fit: refuse before commit, so the
+                # alert is not buried under a dispatch-recovery panel and the
+                # message stays recoverable (live 2026-10-04).
+                if echoed_user is not None:
+                    self._mark_transient_echo_blocked(echoed_user.id)
+                self._abandon_preparation(preparation.preparation_id)
+                return self._block(session.id, alert)
+            if hold is not None:
+                return self._hold_send_for_compaction(
+                    preparation,
+                    hold,
+                    origin=origin,
+                    queue_entry_id=queue_entry_id,
+                )
         hook_owner = getattr(self, "_hooks_v2_submissions", {}).get(
             asyncio.current_task()
         )
@@ -11792,6 +12066,9 @@ class ConsoleChatController:
                     enter_ephemeral_provider_dispatch
                     if deferred_provider_dispatch
                     else None
+                ),
+                compaction_ask_bypassed=self._consume_compaction_hold_answer(
+                    preparation.preparation_id if preparation is not None else None
                 ),
                 trusted_profile_user_message_id=(
                     echoed_user.id
@@ -13288,6 +13565,9 @@ class ConsoleChatController:
                     preparation_id=None,
                     stream_signals=continuation.stream_signals,
                     before_provider_dispatch=enter_provider_dispatch,
+                    compaction_ask_bypassed=self._consume_compaction_hold_answer(
+                        preparation_id
+                    ),
                     capture_mode_override=effective_capture_mode,
                     trace_request=(
                         continuation.trace_request
@@ -25035,14 +25315,9 @@ class ConsoleChatController:
         launch the turn was admitted with. ``None`` means nothing was staged.
         """
 
-        if lease is None:
+        if lease is None or lease.launch is None:
             return None, None, None, None
         provider = lease.capture
-        if not callable(provider):
-            owner = getattr(self._rag_capture_provider, "__self__", None)
-            provider = getattr(owner, "_capture_frozen_console_staged_rag", None)
-        if not callable(provider):
-            return None, None, None, None
         try:
             captured = await provider(
                 draft,
@@ -25484,9 +25759,21 @@ class ConsoleChatController:
             pass
 
     def _durable_context_snapshots(
-        self, session_id: str
+        self,
+        session_id: str,
+        *,
+        uncommitted_user_message_id: str | None = None,
     ) -> tuple[DurableMessageSnapshot, ...] | None:
-        """Capture the active durable lineage without leaking content to logs."""
+        """Capture the active durable lineage without leaking content to logs.
+
+        Args:
+            session_id: The session whose active path to capture.
+            uncommitted_user_message_id: TASK-34350: the optimistic echo of a
+                send still being assessed before commit. It is the request,
+                not history, so it is skipped instead of failing the capture.
+                Defaults to the echo of a send held at the compaction
+                threshold, which no caller should treat as history either.
+        """
         persistence = getattr(self.store, "persistence", None)
         # task-32804.12 ([D2]): prefer the batch version reader so the
         # snapshot capture is a few chunked SELECTs instead of one point read
@@ -25519,7 +25806,14 @@ class ConsoleChatController:
             except Exception:
                 return None
         snapshots: list[DurableMessageSnapshot] = []
+        skip_id = (
+            uncommitted_user_message_id
+            if uncommitted_user_message_id is not None
+            else self._held_send_echo_id(session_id)
+        )
         for native_id in active_ids:
+            if native_id == skip_id:
+                continue
             message = messages.get(native_id)
             if message is None:
                 return None
@@ -26645,6 +26939,234 @@ class ConsoleChatController:
         self._preflight_block_copies.pop(assistant_message_id, None)
         return ConsoleSubmitResult(True, True, visible_copy)
 
+    def _context_overflow_alert(
+        self,
+        decision: CompactionDecision,
+        resolved: Any,
+        capacity: Any,
+        prepared_before: Any,
+        resolution: ConsoleProviderResolution,
+    ) -> str | None:
+        """Alert copy for a request compacting cannot make fit, else None.
+
+        Shared by the stream preflight and the pre-commit assessment so the
+        two cannot disagree (TASK-34350).
+        """
+
+        if decision not in {
+            CompactionDecision.UNKNOWN_WINDOW,
+            CompactionDecision.NON_COMPACTABLE,
+        }:
+            return None
+        if not prepared_before.known_overflow:
+            return None
+        if (
+            resolved.policy.failure_behavior
+            is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
+        ):
+            return None
+        cause = _context_overflow_cause(decision, resolved, capacity)
+        if cause is not None:
+            return context_overflow_alert_copy(
+                cause,
+                model=resolution.model or "the selected model",
+                window_tokens=capacity.context_window_tokens,
+                window_estimated=capacity.limit_source == "estimated",
+                response_tokens=capacity.effective_response_tokens,
+                input_ceiling_tokens=capacity.effective_input_ceiling_tokens,
+            )
+        limiting_reason = (
+            resolved.validation_errors[0]
+            if resolved.validation_errors
+            else "The effective model input ceiling is unavailable."
+        )
+        return (
+            "This request cannot fit the selected model. "
+            f"{limiting_reason} Summarizing older turns cannot make "
+            "enough room. Set the model's context window in "
+            f"{MODEL_WINDOW_SETTING}, or reduce mandatory context or "
+            "the response maximum."
+        )
+
+    def _assess_request_capacity_only(
+        self,
+        *,
+        session_id: str,
+        owner: Any,
+        resolution: ConsoleProviderResolution,
+        provider_messages: list[dict[str, Any]],
+        prepare: Callable[..., Any],
+        agent_tools_enabled: bool,
+        assessment_sink: Callable[..., None],
+    ) -> None:
+        """Report a request's capacity verdict when there is no history yet."""
+
+        tools: list[Mapping[str, Any]] = []
+        if agent_tools_enabled and self._agent_bridge is not None:
+            preview = getattr(self._agent_bridge, "preview_tool_schemas", None)
+            if callable(preview):
+                try:
+                    tools = list(preview())
+                except Exception:
+                    tools = []
+        prepared = prepare(
+            resolution, list(provider_messages), tools=tools, apply_safety_window=False
+        )
+        capacity = prepared.capacity
+        try:
+            global_overrides = self._global_context_policy_overrides()
+        except Exception:
+            global_overrides = None
+        resolved = resolve_context_policy(
+            capacity=ConsoleContextCapacity(
+                model_context_window_tokens=capacity.context_window_tokens,
+                model_window_verified=capacity.safety_verified,
+                provider_input_cap_tokens=capacity.provider_input_cap_tokens,
+                response_reservation_tokens=capacity.effective_response_tokens,
+                safety_margin_tokens=capacity.safety_margin_tokens,
+                mandatory_input_tokens=(
+                    prepared.accounting.non_compactable_tokens
+                    - prepared.accounting.memory_tokens
+                ),
+            ),
+            global_overrides=global_overrides,
+            conversation_overrides=owner.context_policy_overrides,
+        )
+        decision = decide_compaction(
+            resolved,
+            conversation_tokens=(
+                prepared.accounting.memory_tokens
+                + prepared.accounting.compactable_tokens
+            ),
+            compactable_units=0,
+        )
+        budget = resolved.effective_conversation_budget_tokens or 0
+        assessment_sink(
+            ContextCompactionHold(
+                session_id=session_id,
+                used_tokens=(
+                    prepared.accounting.memory_tokens
+                    + prepared.accounting.compactable_tokens
+                ),
+                trigger_tokens=int(budget * resolved.policy.trigger_ratio),
+                budget_tokens=budget,
+                estimated=False,
+            ),
+            decision,
+            self._context_overflow_alert(
+                decision, resolved, capacity, prepared, resolution
+            ),
+        )
+
+    async def _assess_context_compaction(
+        self,
+        *,
+        session_id: str,
+        resolution: ConsoleProviderResolution,
+        provider_messages: list[dict[str, Any]],
+        uncommitted_user_message_id: str | None,
+    ) -> tuple[ContextCompactionHold | None, str | None]:
+        """Probe whether this exact request would stop at Ask or cannot fit.
+
+        Runs the real preflight as a side-effect-free assessment (TASK-34350).
+        A probe failure never blocks the send: the stream preflight still
+        runs and owns every refusal.
+
+        Args:
+            session_id: The sending session.
+            resolution: The resolved provider for this send.
+            provider_messages: The assembled request, current draft included.
+            uncommitted_user_message_id: The send's own optimistic echo.
+
+        Returns:
+            ``(hold, alert)``: the hold numbers when the decision is Ask, and
+            the alert copy when compacting cannot make the request fit.
+        """
+
+        captured: list[
+            tuple[ContextCompactionHold, CompactionDecision, str | None]
+        ] = []
+        try:
+            continuation_sidecar, continuation_target = (
+                self._provider_continuation_history_for_resolution(
+                    session_id, resolution
+                )
+            )
+            await self._apply_conversation_memory_preflight(
+                session_id=session_id,
+                resolution=resolution,
+                provider_messages=list(provider_messages),
+                assistant_message_id="",
+                agent_tools_enabled=(
+                    self._agent_runtime_enabled and self._agent_bridge is not None
+                ),
+                continuation_sidecar=continuation_sidecar,
+                continuation_target=continuation_target,
+                assessment_sink=lambda hold, decision, alert: captured.append(
+                    (hold, decision, alert)
+                ),
+                uncommitted_user_message_id=uncommitted_user_message_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - the stream preflight decides
+            logger.warning(
+                "Console compaction hold assessment unavailable; "
+                "exception_type={}",
+                type(exc).__name__,
+            )
+            return None, None
+        if not captured:
+            return None, None
+        hold, decision, alert = captured[0]
+        return (hold if decision is CompactionDecision.ASK else None), alert
+
+    def _hold_send_for_compaction(
+        self,
+        preparation: ConsoleTurnPreparation,
+        hold: ContextCompactionHold,
+        *,
+        origin: ConsoleSubmissionOrigin,
+        queue_entry_id: str | None,
+    ) -> ConsoleSubmitResult:
+        """Pause one uncommitted send at the compaction threshold."""
+
+        paused = self._pause_prepared_commit(
+            preparation.preparation_id,
+            ConsolePreparationPauseKind.CONTEXT_COMPACTION,
+        )
+        if (
+            paused is None
+            or paused.state is not ConsoleTurnPreparationState.PAUSED
+            or paused.pause_kind is not ConsolePreparationPauseKind.CONTEXT_COMPACTION
+        ):
+            return ConsoleSubmitResult(
+                False,
+                False,
+                "Prepared turn changed before provider dispatch.",
+                session_id=hold.session_id,
+                origin=origin,
+                queue_entry_id=queue_entry_id,
+            )
+        self._context_compaction_holds[preparation.preparation_id] = hold
+        visible_copy = compaction_prompt_copy(
+            used_tokens=hold.used_tokens,
+            budget_tokens=hold.budget_tokens,
+            estimated=hold.estimated,
+        )
+        self._set_run_state(
+            ConsoleRunState.blocked(visible_copy),
+            session_id=hold.session_id,
+        )
+        return ConsoleSubmitResult(
+            False,
+            False,
+            visible_copy,
+            session_id=hold.session_id,
+            origin=origin,
+            queue_entry_id=queue_entry_id,
+            preparation_id=preparation.preparation_id,
+            provider_started=False,
+        )
+
     async def _apply_conversation_memory_preflight(
         self,
         *,
@@ -26660,8 +27182,18 @@ class ConsoleChatController:
         continuation_target: ContinuationRestoreTarget | None = None,
         thinking_sidecar: tuple[ProviderThinkingSidecar, ...] = (),
         thinking_policy: ThinkingHistoryPolicy = "auto",
+        assessment_sink: "Callable[[ContextCompactionHold, CompactionDecision, str | None], None] | None" = None,
+        uncommitted_user_message_id: str | None = None,
+        ask_bypassed: bool = False,
     ) -> tuple[list[dict[str, Any]], ConsoleSubmitResult | None]:
-        """Revalidate memory and optionally run one automatic summary call."""
+        """Revalidate memory and optionally run one automatic summary call.
+
+        TASK-34350: ``assessment_sink`` turns this into a side-effect-free
+        probe -- it receives the decision and its numbers, and the request is
+        returned unchanged before anything compacts or blocks.
+        ``ask_bypassed`` is the user's one-shot "Send without compacting" for
+        a send held at the threshold.
+        """
         from tldw_chatbook.Chat.console_visual_transcript import (
             count_semantic_images,
             plan_visual_compaction,
@@ -26689,11 +27221,29 @@ class ConsoleChatController:
             or service is None
             or not callable(prepare)
             or owner is None
-            or owner.persisted_conversation_id is None
         ):
             return provider_messages, None
-        snapshots = self._durable_context_snapshots(session_id)
+        snapshots = (
+            self._durable_context_snapshots(
+                session_id, uncommitted_user_message_id=uncommitted_user_message_id
+            )
+            if owner.persisted_conversation_id is not None
+            else None
+        )
         if not snapshots:
+            if assessment_sink is not None and not owner.ephemeral:
+                # TASK-34350: a durable chat's first message is assessed for
+                # capacity alone (nothing to compact yet), so a request that
+                # cannot fit is refused before commit, like a later one.
+                self._assess_request_capacity_only(
+                    session_id=session_id,
+                    owner=owner,
+                    resolution=resolution,
+                    provider_messages=provider_messages,
+                    prepare=prepare,
+                    agent_tools_enabled=agent_tools_enabled,
+                    assessment_sink=assessment_sink,
+                )
             return provider_messages, None
         conversation_id = owner.persisted_conversation_id
         effective = self._select_session_effective_memory(
@@ -26827,14 +27377,44 @@ class ConsoleChatController:
             if ruling is None:
                 return _flatten_preflight_messages(semantic), None
             decision, micro_escalated = ruling
+        if assessment_sink is not None:
+            budget = resolved.effective_conversation_budget_tokens or 0
+            assessment_sink(
+                ContextCompactionHold(
+                    session_id=session_id,
+                    used_tokens=(
+                        prepared_before.accounting.memory_tokens
+                        + prepared_before.accounting.compactable_tokens
+                    ),
+                    trigger_tokens=int(budget * resolved.policy.trigger_ratio),
+                    budget_tokens=budget,
+                    # Only a budget the window sets rests on its estimate; a
+                    # custom budget below capacity does not (live 2026-10-04).
+                    estimated=(
+                        capacity.limit_source == "estimated"
+                        and resolved.effective_conversation_budget_tokens
+                        == resolved.available_conversation_capacity_tokens
+                    ),
+                ),
+                decision,
+                self._context_overflow_alert(
+                    decision, resolved, capacity, prepared_before, resolution
+                ),
+            )
+            return provider_messages, None
         logger.info("console_context_policy_decision")
         if decision in {CompactionDecision.OFF, CompactionDecision.BELOW_TRIGGER}:
             return _flatten_preflight_messages(semantic), None
+        if decision is CompactionDecision.ASK and ask_bypassed:
+            return _flatten_preflight_messages(semantic), None
         if decision is CompactionDecision.ASK:
+            # A composer send is held before it is committed (TASK-34350);
+            # this is the path for sends that cannot show the hold card.
             result = blocked(
                 (
                     "Conversation context reached its compaction threshold. "
-                    "Review and approve compaction before sending again."
+                    "Use Compact now in Conversation settings > Context and "
+                    "memory, then send again."
                 )
             )
             return provider_messages, result
@@ -26849,39 +27429,12 @@ class ConsoleChatController:
             # request still fits must not turn that advisory threshold into
             # an admission failure.  Block only when the immutable prepared
             # request proves that the effective input ceiling is exceeded.
-            if not prepared_before.known_overflow:
-                return _flatten_preflight_messages(semantic), None
-            if (
-                resolved.policy.failure_behavior
-                is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
-            ):
-                return _flatten_preflight_messages(semantic), None
-            if decision is CompactionDecision.NON_COMPACTABLE:
-                limiting_reason = (
-                    "No older complete conversation turns are available to compact."
-                )
-                recovery = (
-                    "Reduce the active request, system/tool/source context, or "
-                    "response maximum."
-                )
-            else:
-                limiting_reason = (
-                    resolved.validation_errors[0]
-                    if resolved.validation_errors
-                    else "The effective model input ceiling is unavailable."
-                )
-                recovery = (
-                    "Repair the model limit, reduce mandatory context or the "
-                    "response maximum, or allow older turns to be omitted."
-                )
-            result = blocked(
-                (
-                    "This request cannot fit the selected model. "
-                    f"{limiting_reason} Summarizing older turns cannot make "
-                    f"enough room. {recovery}"
-                )
+            alert = self._context_overflow_alert(
+                decision, resolved, capacity, prepared_before, resolution
             )
-            return provider_messages, result
+            if alert is None:
+                return _flatten_preflight_messages(semantic), None
+            return provider_messages, blocked(alert)
 
         requested_representation = resolved.policy.compaction_representation
         if effective.kind is EffectiveMemoryKind.GENERATED_RANGE:
@@ -27222,6 +27775,7 @@ class ConsoleChatController:
         trusted_profile_user_message_id: str | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
+        compaction_ask_bypassed: bool = False,
     ) -> ConsoleSubmitResult:
         from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
 
@@ -27258,6 +27812,7 @@ class ConsoleChatController:
                         propagate_trace_call_persistence_errors
                     ),
                     trusted_profile_user_message_id=trusted_profile_user_message_id,
+                    compaction_ask_bypassed=compaction_ask_bypassed,
                 )
         finally:
             if isinstance(turn_context, ConsoleTurnExecutionContext):
@@ -27298,6 +27853,7 @@ class ConsoleChatController:
         trusted_profile_user_message_id: str | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
         work_chain_id: str | None = None,
+        compaction_ask_bypassed: bool = False,
     ) -> ConsoleSubmitResult:
         try:
             owner_id = self.store.session_id_for_message(assistant_message_id)
@@ -27443,6 +27999,8 @@ class ConsoleChatController:
                 continuation_target=continuation_target,
                 thinking_sidecar=thinking_sidecar,
                 thinking_policy=thinking_policy,
+                # TASK-34350: the user already answered this send's hold.
+                ask_bypassed=compaction_ask_bypassed,
             )
             if context_block is not None:
                 return context_block
@@ -32018,3 +32576,6 @@ class ConsoleChatController:
             # of one lost race.
             visible_copy=visible_copy,
         )
+
+
+

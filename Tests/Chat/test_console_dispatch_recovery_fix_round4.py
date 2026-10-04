@@ -12,6 +12,7 @@ from Tests.Chat.test_console_automatic_library_preparation import (
     _PolicyCoordinator,
     _capture_staged_evidence,
     _real_retrieval_controller_for_launch,
+    _wire_retrieval_evidence_owner,
     _staged_evidence_launch,
 )
 from Tests.Chat.test_console_dispatch_recovery import _restored_store
@@ -52,7 +53,7 @@ async def _accepted_evidence_recovery(
             release_override,
         )
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
-    controller._rag_capture_provider = retrieval._capture_console_staged_rag
+    _wire_retrieval_evidence_owner(controller, retrieval)
     monkeypatch.setattr(
         retrieval_module,
         "capture_console_staged_evidence_for_chat",
