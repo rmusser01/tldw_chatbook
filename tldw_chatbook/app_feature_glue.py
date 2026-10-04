@@ -734,6 +734,7 @@ class FeatureGlueMixin:
         exclusive group, so the two paths can never run concurrently.
         """
         self._startup_model_catalog_refresh_scheduled = True
+        self._model_catalog_notice_quiet = True  # setup's own choice (AC#11)
         self.run_worker(
             self._refresh_model_catalogs,
             exclusive=True,

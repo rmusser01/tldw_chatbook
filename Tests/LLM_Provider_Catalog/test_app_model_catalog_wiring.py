@@ -591,3 +591,14 @@ def test_only_the_pass_setup_released_is_marked_quiet(monkeypatch, after_setup):
     )
     host.run_worker.assert_called_once()
     assert getattr(host, "_model_catalog_notice_quiet", False) is after_setup
+
+
+def test_the_setup_summary_consent_pass_is_marked_quiet() -> None:
+    """Live (g5-r1-ant): the Summary's 'Keep model lists fresh' consent runs
+    the pass through refresh_model_catalogs_now, not the scheduler -- the
+    toast still showed beside the arrival line. Its only caller is setup."""
+    host = _ScheduleHost()
+    host.refresh_model_catalogs_now = TldwCli.refresh_model_catalogs_now.__get__(host)
+    host.refresh_model_catalogs_now()
+    host.run_worker.assert_called_once()
+    assert host._model_catalog_notice_quiet is True
