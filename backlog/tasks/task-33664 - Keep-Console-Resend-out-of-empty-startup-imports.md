@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 15:46'
+updated_date: '2026-10-04 15:54'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -415,6 +415,20 @@ ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; exis
 Reason: real-controller and mounted Close qualification must exercise the existing preferred progress boundary and both retained native/saved causal identities; no production narrowing, new authority, readiness/config adapter or weakened assertion.
 
 Independent interim review confirms the older single persisted-ID cancellation expectation is stale: its source is exact both465 and incomingf800, while native+saved cancellation is exact prior465 and required by ADR199. Strengthen that exact test to require native and persisted IDs once each. The mounted incoming Close failure helper patches close_progress, but this PR uses begin_close_progress; retarget only its failure injection to the actual preferred boundary and strengthen exact latched-fence dictionaries to both IDs while preserving all notification/retry/privacy/usage and stale-incarnation assertions. Preserve the original136P1F controller and mounted1F78.683s receipts. Add direct delegated observations of the real wake-fence, scratch-close and queue mark_closing calls to the six new partial/progress-failure variants, with the successful control proving those probes are live; require the exact surviving fence and failed generation after uncertain rollback. Keep production bytes unchanged beyond the already RED-verified existing acquisition/rollback boundary fix. Run only the newly changed owning tests/affected mounted node once, retain all prior results by relevant source identity, then independent immutable review.
+
+## Owner-comment hand-declared schema expectation follow-through — October 4
+
+ADR required: no new ADR
+ADR path: backlog/decisions/208-migration-sql-files-are-the-executed-source.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; existing schema-parity and backup policies apply.
+Reason: correct only the independent test literal to include the already qualified fleet_progress_messages table; no runtime/schema/owner/permission/dependency/gate/ceiling change.
+
+Fresh prepublication pagination found owner comment IC_kwDOOcyyl88AAAABZH5Iqg updated14:18:35Z; publication stopped before any attempt, push or body update. Its sequential77/file-backed migration/current test and backup gates are covered by immutable a016 and the completed71-case schema selection. The hand-declared expected_table_columns.py does omit fleet_progress_messages, a real unqualified test contract gap. Reopen CLI AC3/In Progress before this narrow follow-through; keep AC4 checked and all previous plan/notes/source/budget approvals unchanged.
+
+1. Preserve original feedback/body/hash, failed prepublication preread/absence/fourzero/resolved/fullpagination, local68150 closure/sourcea016 and both original Ready reports/raw/XML. Record no publication mutation. The owner conditional future v78 collision and observed laterdev9c1d are separately UNQUALIFIED; do not inspect/fetch/rebase that concurrency before fresh newhead all-four gates.
+2. Run the existing real SQLite historical-bootstrap case for stop_version76 ONCE before changing the literal to expose its intended missing-table assertion. Do not run the whole historical sweep or repeat any prior completed test/budget. Then add exactly the ten hand-reviewed fleet_progress_messages columns from its existing SQL, preserving every other literal entry, assertion and source byte.
+3. Run only that changed owning76 case and the owner-requested core schema policy/fresh-constructor equality case for chachanotes ONCE after the literal change. Preserve any failure/setup/warning evidence; no readiness/config/marker/adapter bypass. Existing dictionary eight-case completed constructor/catalog validation remains evidence, not a newly rerun core-owner sweep.
+4. Fatal/new-line/static/source preservation and immutable independent Ready must authenticate only the one test-literal change plus prospective docs. All application/native/packages/Packaging/Performance/scripts/workflows/CSS and current guard/MAX bytes remain exactly approved a016. Carry the original5PASS96.382s budget qualification by authenticated unchanged relevant source and original raw/XML/review identity, explicitly NOT a new run or measurement. NEVER rerun completed original five.
+5. CLI AC3Done only after new immutable source/test and carried-budget approval; append four-owned canonical documentation follow-through preserving3709/full27921outsidefour/allhistory. Fresh465 Qodo/fullpagination/classified owner feedback/actualrefs/liveprotection before ONE exactobserved465lease publication. All fresh newhead conceptual gates including BOTH UI shards/Qodo/live strict protection before later concurrency inspection/rebase or normal protected head-matched merge; verify MERGED actualparents/tree/concurrency before pause/report.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
