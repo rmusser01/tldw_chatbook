@@ -2325,6 +2325,36 @@ class ConsoleTraceService:
             ),
             rendered_system_slot=rendered_system_slot,
         )
+        if reserved_call is not None and reserved_call.call_sequence > 0:
+            previous = self.repository.get_call_by_logical_identity(
+                cursor,
+                owner_id=reserved_call.owner_id,
+                segment_id=reserved_call.segment_id,
+                turn_id=reserved_call.turn_id,
+                run_id=reserved_call.run_id,
+                call_sequence=reserved_call.call_sequence - 1,
+            )
+            if previous is not None and previous.state is TraceCallState.ERROR:
+                prior_header = self.repository.get_request_header(
+                    cursor, previous.request_header_id
+                )
+                if prior_header is None or (
+                    self._resolve_system_composition(prior_header)
+                    != self._resolve_system_composition(header)
+                    or tuple(
+                        item
+                        for item in prior_header.components
+                        if item.component_kind == "rendered_system_part"
+                    )
+                    != tuple(
+                        item
+                        for item in header.components
+                        if item.component_kind == "rendered_system_part"
+                    )
+                ):
+                    # Compare sanitized immutable components at the final
+                    # dispatch boundary, including SINGLE_PREAMBLE providers.
+                    raise ValueError("trace_tool_chain_unavailable")
         if child_state is not None:
             root = _ProjectionRoot(
                 projection.root,

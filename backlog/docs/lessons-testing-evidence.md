@@ -18360,3 +18360,24 @@ test ASTs restore after removing only scoped harness/cleanup substitutions.
 **PR #2953, 2026-10-04.** On identical sources, Linux credential polling measured 10.125 os.open/tick against a 6.75 ceiling, then its same-head retry passed at 6.75 in both variants. A local call-through audit attributed every traced idle open to storage_admission._local_pause_requested / Admission.pause_requested on executor threads: each native backup-pause probe opened 37 descriptors on that private macOS path, and two or three probes landed in the idle phase. Those are real guard costs, not additional credential-poll admissions. No stack was captured in the failing Linux job, so the local attribution does not prove that job's exact cause.
 
 Before attributing a timing-dependent storage count to the UI callback, trace all threads and retain the failed census, successful repeat and exact source identities. Keep actual native pause/admission checks and the existing ceilings intact; an observed passing repeat is not a universal flake repair.
+
+## Captured model retries need the real controller and the actual provider parser
+
+**TASK-34367 / TASK-34368, 2026-10-04.** Live DeepSeek setup received HTTP 200,
+but the strict parser rejected the documented choice-level `logprobs: null`.
+The adapter wrapped that as a retryable provider failure. The agent bridge
+classified the next attempt as TOOL_LOOP while the first trace remained
+DISPATCH_STARTED: the store deferred its ERROR handoff until the one assistant
+owning both attempts became terminal. The next call therefore refused with
+`trace_tool_chain_unavailable`. Isolated ownership fixes and gateway tests did
+not exercise this ordering.
+
+Use a real controller, gateway, store and SQLite trace ledger for a typed
+429/500 -> successful retry, both before and after a real tool response. Also
+feed documented complete/SSE envelopes through the actual provider adapter;
+mocking parsed reply strings misses the trigger. Assert ordered durable call
+states and the mounted recovery/composer surfaces. Fault sealing, cancel its
+await and later save a real assistant owner to test custody and settlement
+fingerprints. Retry negatives must include changed system content in both
+single-preamble and distinct-role formats, because unchanged message rows alone
+do not prove unchanged provider input.
