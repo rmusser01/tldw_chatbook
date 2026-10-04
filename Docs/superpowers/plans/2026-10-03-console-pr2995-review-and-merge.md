@@ -273,6 +273,17 @@ Reason: amend the existing interrupt-host cross-module contract and define the e
 - [ ] Fatal Ruff, exact touched formatter BASE inheritance ratchet and source whitespace; final actual line/method counts and source/doc/global/patch/callback/lock maps must qualify the prescribed gates. Commit only selected source/tests/exact derived owners. Freeze task-9-report.md, task-9-freeze-map.json and task-9-safe-evidence-manifest.json with source/receipt hashes and safe regular JSON/log/XML copies. Obtain independent scoped spec/quality review; no source/index/HEAD root mutations while writer active. Source worker does not run final startup/public navigation or publish/merge.
 - [ ] After structural source and review close, root performs one necessary actual final startup/import/public-navigation qualification on latest integrated source. Earlier58 results remain historical. Verify fresh dev/current-head Qodo/required checks/PerfGuard, then publish/respond/merge under normal gates. No redundant broad final feature review; earlier broad review and exact unchanged owner evidence carry with the focused structural/integration reviews.
 
+#### Task9 checkpoint qualification repair scope
+
+ADR required: no new ADR
+ADR path: existing ADR220; existing test private-profile contract remains unchanged.
+Reason: repair only reproduced fixture admission failures, preserving production authority and the selected ownership contract.
+
+- [ ] Preserve original d0aba508 checkpoint report/freeze/manifest and all38 pinned artifact hashes. Add separately named qualification-extension report/maps/manifests; never overwrite the original receipts or relabel setup-refusal observations as functional RED.
+- [ ] Apply the exact34-function selection in task-9-profile-authorized-selection.json:32 failed config/prompt/timeout reader functions receive only the existing per-test bootstrap_profile decorator (and pytest import where absent); two actual skill-script submit functions receive only canonical private_profile_test/import/request plus assert await controller.hook_admission_reason() is None immediately after _bridged_controller(tmp_path). Preserve every original statement/assertion, reader signature/body and all nonselected function ASTs. No module-wide marker, config/conftest/source policy, reset, skip/xfail/timeout or assertion weakening.
+- [ ] Rerun only the38 failed/error cohort1 nodes, including the three already corrected explicit fake-host constructors. Diagnose the separate background notification failure against actual ordering before any additional repair; immutable BASE passed that case, so profile attribution alone does not justify a timing/assertion/wait change.
+- [ ] Execute pending approved cohorts2/4/5 once at stable corrected source. Carry127 cohort1 passes,16 I1 cases,13 static passes and14 moved characterization passes by exact source/AST mapping. The inherited two-method provider-await guard remains a separate open diagnosis; no waiver or source/guard change is authorized by this fixture scope. Root final loading/navigation remains after independent source review.
+
 ### Task 10: Place pure fork projections with their existing owner and restore the store cap
 
 **Execution order:** Task10 source repair may precede Task9 implementation. Task9 remains a read-only proposal until its current-dev projection and canonical contract are selected. All source workers execute sequentially.
