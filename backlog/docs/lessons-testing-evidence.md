@@ -100,10 +100,18 @@ a pusher-side alias (`answer = self._answer`) all read as "a different
 future" and were dropped. The census stayed byte-identical and all 228
 tests passed. Running the previous head's checker and the new one over
 hand-written shapes found six lost shapes; working through what the rule
-actually has to prove found 23. **For a precision fix:** run the old and
-new checker over the shapes the fix drops, and drop a match only when the
-new rule PROVES it unrelated -- a name match in another scope proves
-nothing.
+actually has to prove found 23. **And a third time, on the fix for those.**
+The "proof" that replaced the name match showed only that the callback
+settles a DIFFERENT future -- never that the awaited future is independent
+of it. A done-callback, a relay that awaits or polls the settled future, or
+a handoff chains the two, and the await hangs exactly as before: 18 more
+shapes 5918cfd1df reported were silent, again with a byte-identical census
+and a green suite. **For a precision fix:** run the old and new checker over
+the shapes the fix drops, write down what dropping a match actually
+requires (here: the awaited future cannot depend on anything the callback
+settles), and check that the rule establishes THAT -- not a weaker
+neighbour of it. A name match in another scope proves nothing, and neither
+does "it settles something else".
 
 ## A provider preset's own tests never touched the surfaces users set it up with
 
