@@ -8814,6 +8814,64 @@ def _auxiliary_request(**overrides) -> AuxiliaryCompletionRequest:
     return AuxiliaryCompletionRequest(**values)
 
 
+@pytest.mark.asyncio
+async def test_native_helper_has_4096_output_ceiling_and_one_usage_owner():
+    from time import monotonic
+
+    from Tests.Chat.response_rules_fixtures import source
+    from tldw_chatbook.Chat.response_rules.resources import RuleHelperPool
+
+    charged, calls = [], []
+    pool = RuleHelperPool(
+        usage_sink=lambda *entry: charged.append(entry),
+        current=lambda _origin: True,
+        clock=monotonic,
+    )
+    lease = pool.try_acquire(source(), purpose="checking", deadline=monotonic() + 30)
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **kwargs: calls.append(kwargs) or "answer"
+    )
+    await gateway.complete_auxiliary(
+        _auxiliary_request(
+            resolution=_auxiliary_resolution(max_tokens=None), max_output_tokens=8000
+        ),
+        rule_lease=lease,
+    )
+    assert calls[0]["max_tokens"] == 4096
+    assert calls[0]["request_retries"] == 0
+    assert len(charged) == 1 and charged[0][2] is None
+    with pytest.raises(RuntimeError, match="rule_helper_lease_already_used"):
+        await lease.run_sync(lambda: "another", lambda _reply: None)
+
+
+@pytest.mark.asyncio
+async def test_native_helper_rejects_compaction_route_before_adapter_entry():
+    from time import monotonic
+
+    from Tests.Chat.response_rules_fixtures import source
+    from tldw_chatbook.Chat.response_rules.resources import RuleHelperPool
+    from tldw_chatbook.Chat.console_trace_provenance import (
+        ConsoleRequestRoute,
+        TraceProvenanceAlignmentError,
+    )
+
+    calls = []
+    pool = RuleHelperPool(
+        usage_sink=lambda *_args: None, current=lambda _origin: True, clock=monotonic
+    )
+    lease = pool.try_acquire(source(), purpose="checking", deadline=monotonic() + 30)
+    gateway = ConsoleProviderGateway(
+        chat_api_call_fn=lambda **kwargs: calls.append(kwargs) or "answer"
+    )
+    with pytest.raises(TraceProvenanceAlignmentError):
+        await gateway.complete_auxiliary(
+            _auxiliary_request(),
+            route=ConsoleRequestRoute.AUTO_COMPACTION,
+            rule_lease=lease,
+        )
+    assert calls == [] and pool.unsettled_count == 0 and not lease.acceptance_current
+
+
 def test_auxiliary_request_is_frozen_and_copies_nested_input() -> None:
     message = {"role": "user", "content": "BLOCK-CANARY"}
     required = ["rewritten_prompt"]

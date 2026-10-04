@@ -148,6 +148,7 @@ from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.DB.base_db import run_owned_db_call
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.response_rules.resources import RuleHelperPool
     from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity
     from tldw_chatbook.Chat.console_voice_promotion import (
         VoicePromotionOwner,
@@ -1043,6 +1044,7 @@ class ConsoleRuntime:
         # ran. See `set_chat_store` and friends.
         self._chat_store: Any | None = None
         self._provider_gateway: Any | None = None
+        self._rule_helper_pool: RuleHelperPool | None = None
         self._agent_bridge: Any | None = None
         self._worktree_recovery = None
         self._agent_runs_db: Any | None = None
@@ -1679,6 +1681,26 @@ class ConsoleRuntime:
             return tuple(acknowledged)
 
     # -- handle writes (the screen's properties, and 59 test sites) --------
+
+    def set_rule_helper_pool(self, pool: RuleHelperPool) -> None:
+        """Bind one app-wide physical resource owner before rule dispatch."""
+        from .response_rules.resources import RuleHelperPool
+
+        if not isinstance(pool, RuleHelperPool):
+            raise TypeError("rule_helper_pool")
+        if self._disposed:
+            raise RuntimeError("console_runtime_disposed")
+        if self._rule_helper_pool is not None and self._rule_helper_pool is not pool:
+            raise RuntimeError("rule_helper_pool_already_bound")
+        self._rule_helper_pool = pool
+
+    @property
+    def response_rule_cleanup_pending(self) -> bool:
+        """Report retained physical work even after logical runtime shutdown."""
+        return (
+            self._rule_helper_pool is not None
+            and self._rule_helper_pool.unsettled_count > 0
+        )
 
     def set_chat_store(self, value: Any) -> None:
         """Replace the store handle (a test double, or `None` to rebuild)."""
@@ -4902,6 +4924,8 @@ class ConsoleRuntime:
         with self._execution_capacity_lock:
             with self._canvas_native_lock:
                 self._disposed = True
+        if self._rule_helper_pool is not None:
+            self._rule_helper_pool.close_admission()
         self._seal_hooks_v2()
         with self._run_hooks_lock:
             engine = self.run_hooks_engine
@@ -4953,6 +4977,8 @@ class ConsoleRuntime:
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + max(0.0, float(timeout_seconds))
+        if self._rule_helper_pool is not None:
+            self._rule_helper_pool.close_admission()
 
         # The hook owner survives a cancelled dispose caller. Teardown producers
         # have the fixed notification window before final queue closure.

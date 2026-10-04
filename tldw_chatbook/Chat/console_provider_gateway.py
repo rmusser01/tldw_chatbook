@@ -181,6 +181,7 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (
 )
 from tldw_chatbook.Utils.tls_trust import build_httpx_async_client
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.response_rules.resources import RuleHelperLease
     # Imported lazily in resolve_finish_policy: keeping the engine off the
     # module scope keeps it out of the UI-ready census (ADR-097 ratchet).
     from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
@@ -5242,6 +5243,66 @@ class ConsoleProviderGateway:
         request: AuxiliaryCompletionRequest,
         *,
         route: ConsoleRequestRoute | None = None,
+        rule_lease: RuleHelperLease | None = None,
+    ) -> AuxiliaryCompletionResult:
+        """Run a sensitive completion, optionally under native-rule custody."""
+        if rule_lease is None:
+            return await self._complete_auxiliary(request, route=route)
+        from .response_rules.models import MAX_HELPER_OUTPUT_TOKENS
+        from .response_rules.resources import RuleHelperLease
+
+        if not isinstance(rule_lease, RuleHelperLease):
+            raise TypeError("rule_lease")
+        try:
+            if not isinstance(request, AuxiliaryCompletionRequest):
+                raise TypeError("request must be an AuxiliaryCompletionRequest")
+            if route is not None:
+                raise TraceProvenanceAlignmentError(
+                    "native rule helper route must be capture-off"
+                )
+            if not rule_lease.acceptance_current:
+                raise asyncio.CancelledError
+            remaining = rule_lease.remaining_seconds
+            timeout = request.resolution.request_timeout
+            resolution = replace(
+                request.resolution,
+                request_timeout=min(
+                    remaining,
+                    timeout if timeout is not None and timeout > 0 else remaining,
+                ),
+                request_retries=0,
+            )
+            request = replace(
+                request,
+                resolution=resolution,
+                max_output_tokens=min(
+                    request.max_output_tokens,
+                    MAX_HELPER_OUTPUT_TOKENS,
+                    (
+                        resolution.max_tokens
+                        if resolution.max_tokens is not None
+                        else MAX_HELPER_OUTPUT_TOKENS
+                    ),
+                ),
+            )
+            async with asyncio.timeout(remaining):
+                result = await self._complete_auxiliary(request, rule_lease=rule_lease)
+            if not rule_lease.acceptance_current:
+                raise asyncio.CancelledError
+            return result
+        except BaseException:
+            rule_lease.cancel_acceptance("retired")
+            raise
+        finally:
+            rule_lease.release_unused()
+
+    async def _complete_auxiliary(
+        self,
+        request: AuxiliaryCompletionRequest,
+        *,
+        route: ConsoleRequestRoute | None = None,
+        rule_lease: RuleHelperLease | None = None,
+        native_accounting: bool = False,
     ) -> AuxiliaryCompletionResult:
         """Run exactly one sensitive, non-streaming completion.
 
@@ -5260,6 +5321,14 @@ class ConsoleProviderGateway:
             )
         if route is not None:
             request_route_provenance(route)
+        if rule_lease is not None and request.resolution.provider in {
+            "llama_cpp",
+            "local_llamacpp",
+        }:
+            return await rule_lease.run_async(
+                lambda: self._complete_auxiliary(request, native_accounting=True),
+                lambda result: result.usage,
+            )
         admission = self._capture_off_admission(route)
         automatic = current_automatic_work()
         if automatic is not None:
@@ -5282,7 +5351,11 @@ class ConsoleProviderGateway:
             list[Mapping[str, Any]], _thaw_auxiliary_value(request.messages)
         )
         prepared = None
-        call_signals = None
+        call_signals = (
+            ConsoleProviderStreamSignals().new_usage_call()
+            if native_accounting
+            else None
+        )
         if automatic is not None:
             prepared = self.prepare_chat_request(
                 resolution,
@@ -5334,7 +5407,7 @@ class ConsoleProviderGateway:
                                 "_automatic_prepared": prepared,
                                 "_automatic_signals": call_signals,
                             }
-                            if automatic is not None
+                            if call_signals is not None
                             else {}
                         ),
                         request_timeout=resolution.request_timeout,
@@ -5345,18 +5418,54 @@ class ConsoleProviderGateway:
                         adapter_admission=admission,
                     )
                 else:
-                    kwargs = (self._chat_api_kwargs_from_prepared(resolution, prepared) if prepared is not None else self._auxiliary_chat_api_kwargs(request, resolution))
+                    kwargs = (
+                        self._chat_api_kwargs_from_prepared(resolution, prepared)
+                        if prepared is not None
+                        else self._auxiliary_chat_api_kwargs(request, resolution)
+                    )
                     with _automatic_generation(prepared, call_signals):
                         context = copy_context()
-                        response = await asyncio.to_thread(
-                            context.run,
-                            self._complete_sensitive_sync,
-                            kwargs,
-                            admission,
-                            resolution.provider,
-                        )
-                        if call_signals is not None and isinstance(response, Mapping):
-                            _maybe_record_usage(response, call_signals)
+                        if rule_lease is None:
+                            response = await asyncio.to_thread(
+                                context.run,
+                                self._complete_sensitive_sync,
+                                kwargs,
+                                admission,
+                                resolution.provider,
+                            )
+                            if call_signals is not None and isinstance(
+                                response, Mapping
+                            ):
+                                _maybe_record_usage(response, call_signals)
+                        else:
+
+                            def native_worker():
+                                try:
+                                    raw = context.run(
+                                        self._complete_sensitive_sync,
+                                        kwargs,
+                                        admission,
+                                        resolution.provider,
+                                    )
+                                    if call_signals is not None and isinstance(
+                                        raw, Mapping
+                                    ):
+                                        _maybe_record_usage(raw, call_signals)
+                                    return raw
+                                finally:
+                                    if call_signals is not None:
+                                        call_signals.close_usage_call()
+
+                            response = await rule_lease.run_sync(
+                                native_worker,
+                                lambda raw: (
+                                    ProviderUsage.from_provider_payload(
+                                        raw.get("usage"), provider=provider, model=model
+                                    )
+                                    if isinstance(raw, Mapping)
+                                    else None
+                                ),
+                            )
         except AutomaticWorkRefused:
             raise
         except asyncio.CancelledError:
@@ -5387,10 +5496,14 @@ class ConsoleProviderGateway:
                 status_code=status_code if isinstance(status_code, int) else 502,
             ) from None
         finally:
-            if call_signals is not None:
+            if call_signals is not None and rule_lease is None:
                 call_signals.close_usage_call()
 
         usage: ProviderUsage | None = None
+        if native_accounting and call_signals is not None:
+            usage = ProviderUsage.from_provider_payload(
+                call_signals.usage_snapshot(), provider=provider, model=model
+            )
         if response is not _UNSUPPORTED_RESPONSE:
             text = self._auxiliary_response_text(response)
             if isinstance(response, Mapping):

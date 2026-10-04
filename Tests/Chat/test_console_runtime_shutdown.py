@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import weakref
 from dataclasses import replace
+from threading import Event
+from time import monotonic
 
 import pytest
 
@@ -21,6 +23,46 @@ from tldw_chatbook.Chat.console_chat_store import (
     ConsoleDispatchSettlementError,
 )
 from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+
+@pytest.mark.asyncio
+async def test_shutdown_retains_native_helper_physical_cleanup():
+    from Tests.Chat.response_rules_fixtures import source
+    from Tests.Chat.test_console_provider_gateway import _auxiliary_request
+    from Tests.Chat.test_response_rules_resources import await_event, await_settlement
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    from tldw_chatbook.Chat.response_rules.resources import RuleHelperPool
+
+    runtime = ConsoleRuntime(app=None)
+    pool = RuleHelperPool(
+        usage_sink=lambda *_args: None, current=lambda _origin: True, clock=monotonic
+    )
+    runtime.set_rule_helper_pool(pool)
+    started, release = Event(), Event()
+
+    def adapter(**_kwargs):
+        started.set()
+        assert release.wait(2)
+        return "late answer"
+
+    lease = pool.try_acquire(source(), purpose="checking", deadline=monotonic() + 30)
+    task = asyncio.create_task(
+        ConsoleProviderGateway(chat_api_call_fn=adapter).complete_auxiliary(
+            _auxiliary_request(), rule_lease=lease
+        )
+    )
+    try:
+        await await_event(started)
+        await runtime.dispose(timeout_seconds=0)
+        assert not lease.acceptance_current
+        assert runtime.response_rule_cleanup_pending
+        assert pool.unsettled_count == 1
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await await_settlement(pool)
+    assert not runtime.response_rule_cleanup_pending
 
 
 class _FleetDrainBridge:
