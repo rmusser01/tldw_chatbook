@@ -1,5 +1,7 @@
 """Behavioral evidence for native maintenance admission."""
 
+from Tests.subprocess_pipes import pipe_ready, read_line as line
+
 
 def test_publication_never_overwrites_existing_file(tmp_path):
     import pytest
@@ -15,11 +17,11 @@ def test_publication_never_overwrites_existing_file(tmp_path):
 
 import json
 import os
-import select
 import sqlite3
 import subprocess
 import sys
 import threading
+import time
 
 import pytest
 
@@ -28,6 +30,7 @@ from tldw_chatbook.Backup_Recovery.admission import (
     AdmissionError,
     AdmissionCancelled,
     AdmissionTimeout,
+    fcntl,
 )
 
 _CHILD = """
@@ -58,16 +61,6 @@ try:
 except Exception as error:
     print(type(error).__name__ + ":" + str(error), flush=True)
 """
-
-
-def line(child):
-    assert select.select([child.stdout], [], [], 10)[0], "child did not respond"
-    data = bytearray()
-    while not data.endswith(b"\n"):
-        part = os.read(child.stdout.fileno(), 1)
-        assert part, "child exited before response"
-        data.extend(part)
-    return data.decode().strip()
 
 
 @pytest.fixture
@@ -132,7 +125,7 @@ def test_maintenance_excludes_child_across_target_inode_replacement(registered, 
         replacement.write_bytes(b"new")
         os.replace(replacement, source)
         child = launch(admission.control_root, "normal")
-        assert not select.select([child.stdout], [], [], 0.1)[0]
+        assert not pipe_ready(child.stdout, 0.1)
     assert line(child) == "entered"
     release(child)
     assert source.read_bytes() == b"new"
@@ -141,13 +134,24 @@ def test_maintenance_excludes_child_across_target_inode_replacement(registered, 
     }
 
 
-@pytest.mark.parametrize("kind", ["hardlink", "symlink", "same_path", "nested"])
+@pytest.mark.parametrize(
+    "kind",
+    ["hardlink", "junction" if os.name == "nt" else "symlink", "same_path", "nested"],
+)
 def test_aliases_share_maintenance_boundary(tmp_path, launch, kind):
     source = tmp_path / "source"
-    if kind == "nested":
+    if kind in {"nested", "junction"}:
         source.mkdir()
-        alias = source / "child"
-        alias.write_bytes(b"data")
+        if kind == "nested":
+            alias = source / "child"
+            alias.write_bytes(b"data")
+        else:
+            alias = tmp_path / "alias"
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(alias), str(source)],
+                check=True,
+                capture_output=True,
+            )  # nosec B603 B607 -- fixed native junction command and owned paths.
     else:
         source.write_bytes(b"data")
         alias = tmp_path / "alias"
@@ -159,10 +163,17 @@ def test_aliases_share_maintenance_boundary(tmp_path, launch, kind):
             alias = source
     admission = Admission(tmp_path / "control")
     admission.register("a", (source,))
+    if kind == "junction":
+        # Native Windows admission refuses reparse points rather than resolving
+        # them. Verify that boundary without requiring symlink privileges.
+        with pytest.raises(OSError, match="windows_reparse_point_refused"):
+            admission.register("b", (alias,))
+        assert "b" not in _registry_state(admission)["entries"]
+        return
     admission.register("b", (alias,))
     with admission.maintenance(("a",), 2):
         child = launch(admission.control_root, "normal", ("b",))
-        assert not select.select([child.stdout], [], [], 0.1)[0]
+        assert not pipe_ready(child.stdout, 0.1)
     assert line(child) == "entered"
     release(child)
 
@@ -176,7 +187,7 @@ def test_real_sqlite_transaction_and_connection_retire_before_capture(tmp_path, 
     writer = launch(admission.control_root, "normal", extra=database)
     assert line(writer) == "entered"
     capture = launch(admission.control_root, "maintenance")
-    assert not select.select([capture.stdout], [], [], 0.1)[0]
+    assert not pipe_ready(capture.stdout, 0.1)
     release(writer)
     assert line(capture) == "entered"
     with sqlite3.connect(database) as connection:
@@ -231,8 +242,27 @@ def test_known_incompatible_is_refused_until_os_lifetime_ends(registered, launch
             pass
     client.kill()
     client.wait(timeout=10)
-    with admission.maintenance(("a",), 2):
-        pass
+    # Windows releases a terminated process's byte locks asynchronously:
+    # https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-lockfileex
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            with admission.maintenance(("a",), 2):
+                break
+        except AdmissionError as error:
+            if os.name != "nt" or str(error) != "known_incompatible_client":
+                raise
+            assert (
+                time.monotonic() < deadline
+            ), "terminated client's lock did not retire"
+            threading.Event().wait(0.01)
+
+
+def _registry_state(admission):
+    """Observe a settled native generation under its real registry lock."""
+    with admission._directory() as parent:
+        with admission._lock(parent, "registry.lock", fcntl.LOCK_SH):
+            return admission._read(parent).model_dump()
 
 
 def test_remap_reserves_old_and_new_aliases_without_blocking_retirement(
@@ -248,7 +278,7 @@ def test_remap_reserves_old_and_new_aliases_without_blocking_retirement(
     remap = launch(admission.control_root, "remap", extra=target)
     # A process-local read-only observation synchronizes the persisted reservation.
     for _ in range(200):
-        state = json.loads((admission.control_root / "registry.json").read_text())
+        state = _registry_state(admission)
         if state["entries"]["a"]["pending"]:
             break
         threading.Event().wait(0.01)
@@ -256,13 +286,13 @@ def test_remap_reserves_old_and_new_aliases_without_blocking_retirement(
     blocked = launch(admission.control_root, "normal", ("b",))
     assert line(blocked) == "AdmissionError:remap_recovery_required"
     release(old)
-    assert not select.select([remap.stdout], [], [], 0.1)[0]
+    assert not pipe_ready(remap.stdout, 0.1)
     release(new)
     assert line(remap) == "remapped"
     assert remap.wait(timeout=10) == 0
     with admission.maintenance(("a",), 2):
         child = launch(admission.control_root, "normal", ("b",))
-        assert not select.select([child.stdout], [], [], 0.1)[0]
+        assert not pipe_ready(child.stdout, 0.1)
     assert line(child) == "entered"
     release(child)
     assert source.read_bytes() == b"original"
@@ -333,7 +363,7 @@ def test_crashed_remapping_process_keeps_fail_closed_reservation(
     assert line(writer) == "entered"
     remap = launch(admission.control_root, "remap", extra=target)
     for _ in range(200):
-        state = json.loads((admission.control_root / "registry.json").read_text())
+        state = _registry_state(admission)
         if state["entries"]["a"]["pending"]:
             break
         threading.Event().wait(0.01)
@@ -358,7 +388,7 @@ def test_opposing_namespace_orders_do_not_deadlock(registered, tmp_path, launch)
     first = launch(admission.control_root, "maintenance", ("b", "a"))
     assert line(first) == "entered"
     second = launch(admission.control_root, "maintenance", ("a", "b"))
-    assert not select.select([second.stdout], [], [], 0.1)[0]
+    assert not pipe_ready(second.stdout, 0.1)
     release(first)
     assert line(second) == "entered"
     release(second)
@@ -369,7 +399,7 @@ def test_crashed_maintenance_holder_reopens_admission(registered, launch):
     maintenance = launch(admission.control_root, "maintenance")
     assert line(maintenance) == "entered"
     writer = launch(admission.control_root, "normal")
-    assert not select.select([writer.stdout], [], [], 0.1)[0]
+    assert not pipe_ready(writer.stdout, 0.1)
     maintenance.kill()
     maintenance.wait(timeout=10)
     assert line(writer) == "entered"

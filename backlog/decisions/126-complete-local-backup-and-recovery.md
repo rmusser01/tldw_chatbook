@@ -1247,3 +1247,32 @@ claimed. The [portable report and manifest](../../Docs/superpowers/qa/2026-10-06
 bind raw setup/failure history, exact source snapshots, measurement scope and
 unchanged baseline static diagnostics. These targeted checks do not renew the
 original completed PR budgets or certify broader platform/capture coverage.
+
+
+### TASK-34408 clarification — bootstrap directory creation durability (2026-10-04)
+
+Registration must durably establish newly created bootstrap ancestry before it
+publishes a pending fence. Use the existing intent-before-mutation pattern: an
+exclusive private `.tldw-bootstrap-directory-create.pending` in the pinned parent
+is flushed before mkdir; mkdir, its parent barrier and intent retirement use
+that same native parent handle. Any surviving intent in the ancestry refuses a
+retry, including one using different case or a Windows short-name alias. No
+permission change can reinterpret an interrupted creation as completed.
+
+A fixed private `ancestry-settled.json` records the bootstrap directory identity
+and canonical path only after creation settles, before any new pending record.
+It cannot be established over an unresolved legacy pending record. Readers
+validate it as local control evidence. New publication reflushes the pending
+record and its containing directory; unchanged system ancestors need no write
+access. Legacy pending evidence without this receipt retains the previous
+required ancestor barriers, and failures remain refusals. No recovery evidence
+is automatically repaired or removed after an interrupted creation.
+
+Receipt identity follows the TASK-34200 amendment: Windows persists its NTFS
+volume serial and inode; POSIX persists the inode and canonical path with a null
+device field, because POSIX device numbers can change across a reboot. Readers
+compare the receipt with the actual pinned directory, not an earlier path probe.
+
+This corrects the Windows system-directory flush failure while preserving the
+existing native identity, privacy and required persistence contracts. See
+`Docs/superpowers/plans/2026-10-04-windows-recovery-verification-fixes.md`.

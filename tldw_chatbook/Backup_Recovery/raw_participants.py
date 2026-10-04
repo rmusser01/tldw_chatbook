@@ -89,10 +89,7 @@ class _RawParticipant:
                     and source._CONFIG_CACHE is not None
                 )
             if state.owner == "eval.definitions":
-                return (
-                    source._config == source._persisted_config
-                    and source.persistence_error is None
-                )
+                return source.persistence_safe_point() == "ready"
             if state.owner == "ui.themes":
                 return not source.is_modified
             return True
