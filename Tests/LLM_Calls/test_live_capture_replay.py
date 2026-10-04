@@ -21,6 +21,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from Tests.fixtures.cloud_live.capture import uncovered_keys
@@ -31,6 +32,9 @@ from tldw_chatbook.LLM_Calls.hosted_chat_streaming import SSERecord
 from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
     HostedProviderResolution,
     HostedProviderStream,
+)
+from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
+    discover_openai_compatible_models,
 )
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
@@ -178,6 +182,37 @@ def test_captured_stream_parses_under_its_record(
     except (HostedChatProtocolError, ChatProviderError) as error:
         pytest.fail(f"{type(error).__name__}: {error} -- {_evidence(record, capture)}")
     assert stream.terminal_turn.finish_reason is not None
+
+
+@pytest.mark.asyncio
+async def test_captured_listing_discovers_in_its_recorded_shape(capture: dict[str, Any]) -> None:
+    """The listing sample, served in the shape the provider sent, discovers every id.
+
+    Together answers /models with a bare array (TASK-34361); an envelope
+    listing is served as ``{"data": [...]}``.
+
+    Args:
+        capture: One captured fixture; its ``models_response`` holds the
+            listing sample and whether it came in the ``data`` envelope.
+    """
+    listing = capture.get("models_response")
+    if not listing:
+        pytest.skip("no model listing captured")
+    record = RECORDS_BY_KEY[capture["server"]]
+    sample = listing["sample"]
+    body = {"data": sample} if listing.get("envelope", True) else sample
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=body))
+    ) as client:
+        result = await discover_openai_compatible_models(
+            provider=record.key,
+            provider_list_key=record.config_key,
+            endpoint=record.default_base_url or "https://engine.invalid/v1",
+            api_key="secret",
+            client=client,
+        )
+    assert result.status == "success", result.error
+    assert [model.model_id for model in result.models] == [entry["id"] for entry in sample]
 
 
 @pytest.mark.parametrize(

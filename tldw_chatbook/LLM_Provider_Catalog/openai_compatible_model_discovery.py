@@ -549,6 +549,11 @@ def _scrub_model_metadata_value(
                 raise ValueError("Invalid models response: metadata key is invalid")
             if _is_sensitive_metadata_key(key):
                 continue
+            if type(nested_value) is str and len(nested_value) > MODEL_METADATA_MAX_VALUE_CHARS:
+                # Drop the field, keep the model: Together ships chat templates
+                # up to 16 KB in config.chat_template, and rejecting them
+                # listed nothing for every Together user (TASK-34361).
+                continue
             result[key] = _scrub_model_metadata_value(
                 nested_value,
                 depth=depth + 1,
@@ -840,6 +845,10 @@ async def discover_openai_compatible_models(
                         "Use an endpoint that returns a JSON object with a data array of model IDs.",
                     ),
                 )
+            if type(payload) is list:
+                # Together answers /models with the bare array, no envelope
+                # (TASK-34361, Tests/fixtures/cloud_live/together.json).
+                payload = {"data": payload}
             if type(payload) is not dict or type(payload.get("data")) is not list:
                 return None, ModelDiscoveryResult(
                     provider=provider,
