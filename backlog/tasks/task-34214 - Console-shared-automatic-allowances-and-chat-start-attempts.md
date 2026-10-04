@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 23:24'
-updated_date: '2026-10-03 06:27'
+updated_date: '2026-10-04 07:08'
 labels:
   - console
   - agents
@@ -32,7 +32,7 @@ Keep agent-created chats within the originating automatic-work allowance while p
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: yes
-ADR path: backlog/decisions/211-console-chat-destinations-and-bounded-starts.md
+ADR path: backlog/decisions/219-console-chat-destinations-and-bounded-starts.md
 Reason: Implements the approved shared automatic-allowance ownership and durable chat-start authority contract.
 
 Detailed plan: Docs/superpowers/plans/2026-10-02-console-chat-destinations-and-starts.md, Task 1.
@@ -50,7 +50,7 @@ Allocation provenance: CLI assigned TASK-33803. A fresh scan of all locally avai
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Implemented the shared-allowance and native chat-start foundation under [ADR-211](../decisions/211-console-chat-destinations-and-bounded-starts.md). Existing local chain/run ownership guards remain intact; target primaries retain no cross-conversation parent.
+Implemented the shared-allowance and native chat-start foundation under [ADR-211](../decisions/219-console-chat-destinations-and-bounded-starts.md). Existing local chain/run ownership guards remain intact; target primaries retain no cross-conversation parent.
 
 AgentRunsDB v19 adds direct immutable allowance-root membership, indexed root-wide accounting, and body-free exact-target native attempts. Preparation reserves one generation atomically with target membership; acceptance consumes it once, abort refunds only prepared uncommitted work, and completion has no survivor delivery side effects. Wakes and starts check both active-attempt tables. Admission/refusal observations, deadlines, pause/review state, usage settlement and startup recovery resolve the canonical root. AutomaticWorkContext selects the explicit wake/chat_start reader and keeps its acceptance latch unset until the coordinator marks both fences complete.
 
@@ -63,6 +63,8 @@ TDD evidence: initial missing-interface RED 9 failed; descendant settlement/cont
 Independent Task 1 review: spec compliant and quality Approved; no blocking findings. Root accounting, local run ownership, native CAS, recovery and both migration paths verified. Live source ownership, shared capacity, conversation receipt and post-receipt acceptance latch are explicit the feature implementation task obligations. ADR-211 applies. Final scoped evidence: 100 tests passed plus lint, new-file formatting and formatter ratchet.
 
 Canonical report/review and exact verification logs: Docs/superpowers/qa/2026-10-02-console-chat-starts/README.md. the feature implementation task task review now confirms live ownership, shared physical capacity, the second conversation receipt and acceptance-latch order. Both task gates and the final whole-branch review plus its single scoped fix review are approved. Final fix 9cb68f456e preserves the foundation ownership contracts; complete evidence and qualifications are in the canonical QA record. The named branch remains for the user integration decision.
+
+Canonical ADR identity updated on 2026-10-04: current governance is ADR-219 (backlog/decisions/219-console-chat-destinations-and-bounded-starts.md), mechanically renamed from ADR-211 after confirming the distinct earlier PR2918 claim. Historical notes, source revisions and QA retain their original ADR number claims; the decision and runtime policy are unchanged.
 <!-- SECTION:NOTES:END -->
 
 Current-dev publication identity: 34214 replaces unmerged 33804. The landed TASK33802 census keeps its identity; the design/foundation/feature chain moved together to preserve dependency ordering. Historical QA retains original identifiers and bytes. Current evidence: Docs/superpowers/qa/2026-10-03-console-chat-starts-dev-integration/README.md.

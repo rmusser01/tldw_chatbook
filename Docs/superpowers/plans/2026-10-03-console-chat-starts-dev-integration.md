@@ -11,7 +11,7 @@
 **Spec:** `Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md` at immutable reviewed source `53065745187aaf4d47fc4357bb9096aa28fd5673`; snapshot supplied in this plan's SDD directory until the feature patch restores the canonical file. Existing feature tasks TASK-34214/TASK-34215 and follow-ups TASK-34215.1/TASK-34215.2 bind the deliverable.
 
 ADR required: no
-ADR path: `backlog/decisions/211-console-chat-destinations-and-bounded-starts.md` (existing), with current ADR-163, ADR-126, ADR-158 and both exact ADR-147 provider-routing/archive contracts retained.
+ADR path: `backlog/decisions/219-console-chat-destinations-and-bounded-starts.md` (existing), with current ADR-163, ADR-126, ADR-158 and both exact ADR-147 provider-routing/archive contracts retained.
 Reason: integrate the approved design with already-shipped owners and migrations. No new continuation policy, runtime, dependency or permission authority is introduced.
 
 ## Global Constraints
@@ -40,7 +40,7 @@ Reason: integrate the approved design with already-shipped owners and migrations
 - Controller-owned: Backlog/plan/QA currentness, task-ID collision, final publication.
 
 **Interfaces:**
-- Consumes: ADR-211 native start/allowance/draft contracts; dev `ContinuationReceipt`/`ContinuationAdmission`, `ConsoleDurableTurnAcceptance.continuation_receipt/user_root_fork`, `run_owned_db_call`/`operation_owned_connection`, hook preflight and maintenance/native shutdown owners.
+- Consumes: ADR-219 native start/allowance/draft contracts; dev `ContinuationReceipt`/`ContinuationAdmission`, `ConsoleDurableTurnAcceptance.continuation_receipt/user_root_fork`, `run_owned_db_call`/`operation_owned_connection`, hook preflight and maintenance/native shutdown owners.
 - Produces: fresh and migrated schemas22/76; combined exact acceptance and lifecycle behavior with current tests, retained historical recovery variants and no extra Stop scheduling authority.
 
 - [x] **Step 1: Read the requirements, immutable source and compatibility assessment before edits.** Read this task's Backlog file, supplied spec/ADR snapshots and `/private/tmp/console-chat-dev-compatibility-01a0fa6c.md`. Read current relevant ADRs, design-language/component-patterns and relevant test/lifetime lessons. Inspect the actual helper contracts rather than treating the assessment as authority.

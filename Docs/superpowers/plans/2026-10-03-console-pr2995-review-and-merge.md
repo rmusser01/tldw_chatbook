@@ -4,14 +4,14 @@
 
 **Goal:** Rebase PR #2995 on latest dev, repair the remaining composer defect and CI failures, address posted Qodo feedback, and merge the verified PR.
 
-**Architecture:** Preserve ADR-211's durable acceptance and original allowance boundaries. Compare visible handoff ownership using authored draft identity rather than cursor navigation. Defer startup imports where the feature breaches ADR-097; retain current dev runtime contracts.
+**Architecture:** Preserve ADR-219's durable acceptance and original allowance boundaries. Compare visible handoff ownership using authored draft identity rather than cursor navigation. Defer startup imports where the feature breaches ADR-097; retain current dev runtime contracts.
 
 **Tech Stack:** Python 3.12, Textual 8.x, SQLite, pytest, GitHub CLI.
 
 **Spec:** Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md
 
 ADR required: no
-ADR path: backlog/decisions/211-console-chat-destinations-and-bounded-starts.md; backlog/decisions/097-boot-budget-ratchets.md
+ADR path: backlog/decisions/219-console-chat-destinations-and-bounded-starts.md; backlog/decisions/097-boot-budget-ratchets.md
 Reason: Restore approved draft ownership and startup ratchets; no new schema or authority policy.
 
 ## Global Constraints
@@ -102,14 +102,14 @@ Reason: Restore approved draft ownership and startup ratchets; no new schema or 
 - Modify: tldw_chatbook/Chat/console_chat_controller.py (native-start owned durable-commit task only).
 - Modify: tldw_chatbook/Chat/message_metadata.py (shared named handoff launch status values, no new module).
 - Test: Tests/Chat/test_console_chat_start.py; directly affected automatic-work ledger and controller/owned-DB lifecycle controls; startup ratchets after combined fixes.
-- Read: qodo-runtime-triage.md; ADR-211; lessons-testing-evidence.md; existing owned DB call contracts.
+- Read: qodo-runtime-triage.md; ADR-219; lessons-testing-evidence.md; existing owned DB call contracts.
 
 **Interfaces:**
 - Consumes: original finite allowance root, exact attempt/runtime owner, dual-store receipt, loop-owned source/target/lifetime checks, operation-owned database connection and physically running commit task.
 - Produces: accepted-unreceipted attempt leaves active state and requires explicit review in-process; root pauses atomically and stays charged; slot held until all owned physical DB/provider work drains; bounded lock-contention refusal at unchanged ledger source cutoff.
 
 ADR required: no
-ADR path: backlog/decisions/211-console-chat-destinations-and-bounded-starts.md (existing).
+ADR path: backlog/decisions/219-console-chat-destinations-and-bounded-starts.md (existing).
 Reason: Implement existing accepted/uncertain charging and review contracts; use existing review state and same-owner settlement, no schema or new retry policy. Document runtime contention mitigation and retained I/O limit as implementation notes.
 
 - [x] Verify Qodo1/5/7/8 against triage and real owners. Add RED real-ledger tests for accepted/unreceipted failure and canonical-root pause/charge/no replay, blocked physical commit cancellation retaining capacity until drain, misleading preaccept exception and hostile exception-text nonlogging, and actual SQLite contention event-loop behavior/timeout restoration.
@@ -136,7 +136,7 @@ Reason: Implement existing accepted/uncertain charging and review contracts; use
 - Produces: four reported failures have evidence-backed repairs, with original runtime/successor/poll/consumption assertions intact; a final integrated startup/CI qualification.
 
 ADR required: no
-ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md (existing runtime/view ownership), backlog/decisions/097-boot-budget-ratchets.md, backlog/decisions/211-console-chat-destinations-and-bounded-starts.md.
+ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md (existing runtime/view ownership), backlog/decisions/097-boot-budget-ratchets.md, backlog/decisions/219-console-chat-destinations-and-bounded-starts.md.
 Reason: restore existing runtime generation, startup and receipt contracts; a changed ownership boundary requires controller ADR review first.
 
 - [x] Record post-Task4 BASE and four immutable7a CI failures. Run only those four nodes in original order with exact stage/claim diagnostics and private profiles. If isolated green, preserve four-file CI collection while selecting only failing nodes. No dependency installs or unexplained timeout increases; ordinary CI slowness is unproved.
@@ -158,14 +158,26 @@ Reason: restore existing runtime generation, startup and receipt contracts; a ch
 - Produces: branch descends from pinned latest dev, historical QA stays byte-identical, every non-overlap upstream path is retained, and owned behavior differs only by documented upstream contracts or separately reproduced corrective changes.
 
 ADR required: no
-ADR path: backlog/decisions/211-console-chat-destinations-and-bounded-starts.md; backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/097-boot-budget-ratchets.md; existing upstream immediate-writer and provider-auth ADRs as identified.
+ADR path: backlog/decisions/219-console-chat-destinations-and-bounded-starts.md; backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/097-boot-budget-ratchets.md; existing upstream immediate-writer and provider-auth ADRs as identified.
 Reason: restore and combine approved contracts and formatting; a new authority/storage/runtime policy requires controller scope review first.
 
 - [ ] Record current BASE and pinned dev. Preserve the reviewed feature in a named local recovery ref/bundle before rebase. Fetch latest dev and report any additional functional delta before expanding qualification. Root metadata is committed before handoff; shared dirty checkout must remain untouched.
 - [ ] Rebase with deliberate conflict resolution. Use uniform formatting/AST comparison where needed; preserve original feature logic and all upstream behavior. No blanket ours/theirs, waived guards, dropped tests, migrations renumbered without evidence, or undocumented semantic change. Keep historical QA bytes unchanged.
 - [ ] Retain per-path proof: exact blobs for non-overlap upstream paths and historical QA; AST/canonical comparisons for every owned Python overlap, retaining literal values and annotations. Account for every non-equivalent node/function; inspect source-text guards independently where formatting matters. Source reviews remain bound to pre-rebase hashes with explicit mappings.
 - [ ] Qualify native creation/commit and immediate-writer integration, actual queue/dispatch recovery owners, egress/profile overlap controls, Anthropic auth/provider persistence seams and final combined startup/import ratchets. Choose exact targeted owners after examining real upstream deltas and long stress markers; no full sweep/install/skip/suppression/budget increases. Do not duplicate all155 passing CI cases unless an actual source/fixture risk requires it; current-head external CI remains mandatory for native timeout.
+- [ ] Repair the five provider-persistence baseline cases reproduced on pinned dev: limit changes to their three test functions in Tests/Chat/test_provider_setup_persistence.py, use the existing private-profile helper and the child's admitted config path, and retain all original routing-conflict, secret-redaction, stale-write and unrelated-generation assertions. No production admission reset, allowlist, new skip/xfail marker or guard bypass. Preserve RED receipts and prove the original assertion ASTs unchanged before focused GREEN qualification.
+- [ ] Repair the reproduced fork-transition inventory drift only by adding the four already fenced, AST-identical route names to DIRECT_TRANSITION_ROUTES in Tests/Chat/test_console_fork_transition_census.py. Retain scanner logic, exact bidirectional set equality, safe exemptions and adversarial tests; run the complete small census owner and preserve original failing output plus boundary/BASE proof.
+- [ ] Correct the six demonstrated public fork mutation boundaries in Chat/console_chat_store.py under existing ADR-092: publish_first_persisted_conversation, rebind_persisted_conversation, seed_persona_roleplay and set_session_assistant_name use the existing canonical session transition owner; commit_console_settings_live covers both settings and context mutations within unchanged preparation/promotion lock order. Preserve validation/return/error behavior, nested admission and exact-session isolation.
+- [ ] prepare_session_user_display_name_override_for_commit owns an existing roleplay transition token from before live mutation through physical persistence and exact result acceptance or abandon. Release on no-op/refusal/exception. Update only chat_screen.py persist_display_name cleanup to abandon any remaining token after the existing serialized physical worker drains, including cancellation and stale/None results. Cover cancellation before the display child starts and sibling gather failure: retire only when no physical worker exists or after its actual owner drains. Do not introduce new durable writes, retries or scheduling policy. Read design-language.md before this screen edit.
+- [ ] Repair fork scanner modeling narrowly for typed settings-drain DTOs, unpublished voice-message construction and the exact existing canonical display-name delegate, with adversarial live-write/delegation/publication controls. Replace the hydration rollback raw count with exact submission branch-owner/argument checks. Retain bidirectional census, scanner ownership checks and all original protected-path assertions; no blanket safe-route exemptions.
+- [ ] Keep fresh chat project controls inside a canonical initialization boundary without adding durable UI-thread writes. A narrow fresh-empty restore dataflow model is allowed only if it proves ineligibility through the mutation point and detects eligibility-changing aliases/calls; otherwise propose the minimal typed restore-constructor initialization seam for controller approval under ADR-069/219 before its edit.
+- [ ] Add typed optional initial_project_instruction_state to restore_persisted_session with type validation and Google-style argument docs; default preserves existing durable/legacy hydration. Pass the owner-constructed new_session() state from new-chat restoration into create_session initialization, removing the external live assignment. No new durable writes or model-supplied authority. Tests preserve default restored policy, prove explicit controls are constructor-owned, and reject invalid types before publication. Existing ADR-069 and ADR-219 apply; no new authority or storage policy.
+- [ ] Add meaningful eligible-fork RED/GREEN tests that pause inside actual six-route mutations and verify fork refusal, completion/failure release and unaffected other-session authority. Cover display-name token acceptance, explicit abandon, None/stale outcomes and cancellation after physical drain at the existing settings caller. Run these exact owners and full small adversarial census; diagnose immutable BASE before any additional fixture correction.
+- [ ] Resolve the confirmed canonical ADR identity collision with open PR2918: rename only our active 211-console-chat-destinations-and-bounded-starts.md to 219-console-chat-destinations-and-bounded-starts.md, update its header and active owned README/spec/plan/Backlog/source-comment references in both ADR-211 and ADR 211 forms. Allocation proofs cover566 refs (including snapshots),92 worktree canonical filename inventories and29 open PR changed-file lists;219 is free. Preserve historical QA and original revision/number claims, all upstream decision entries, SQL/schema/runtime semantics and source qualification through exact AST/comment proofs. Recheck allocation before publication/merge.
 - [ ] Fatal Ruff, current-dev formatter/source-text/derived guards and source whitespace as appropriate. Freeze source manifests, command/output/exit receipts and honest warnings. Commit only necessary integration repairs; no push/merge by worker.
+- [ ] Incorporate the subsequent latest-dev PR2999 delta ca2992cb10 to ffb038115789cc8bf061f5cf520b5843b7074de6 after a clean metadata checkpoint: retain its round-robin UI census sharding and fail-closed aggregate, qualify the two affected Tests/CI owners and actual census checker, and prove already qualified feature/startup source bytes unchanged. Do not repeat runtime suites merely for CI-only upstream changes.
+- [ ] Incorporate the later latest-dev B0 merge83c264f28663d76b712e8a1baa6b6193bf2a0fa8 after the same clean checkpoint. Preserve ADR-212 shared Library aliases/widgets and BaseAppScreen opt-in Tab/arrival behavior, the three new census entries and upstream ADR-097 exception (pre-import557). Qualify actual Console startup/public navigation, the two BaseAppScreen Tab owners, CI census/workflow contracts and final startup ratchets; prove no extra feature budget increase and no unrelated upstream or owned QA loss.
+- [ ] Incorporate the subsequent documentation-only dev merge67fc5310471823262eb6ce344a539e699784bed8 (PR2982): retain its34 spec/ADR/Backlog paths, including ADR217 and dated012/029/033/076/126 amendments and index entries. No runtime, test or CI file changed from83c264; verify exact upstream blobs and carry already qualified source by identity without extra runtime reruns.
 - [ ] Report exact old/new SHAs, dev ancestry, conflict decisions, mappings, every qualification and limitation, self-review and proposed integration review surface. Root creates an immutable scoped integration package and obtains independent spec/quality review before publication; no duplicate broad whole-branch review.
 
 ## External review and publication

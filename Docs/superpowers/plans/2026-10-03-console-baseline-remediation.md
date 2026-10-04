@@ -8,11 +8,11 @@
 
 **Tech Stack:** Python 3.12, pytest, real SQLite, Textual 8, Ruff.
 
-**Spec:** `backlog/tasks/task-34215.1 - Clear-recorded-Console-baseline-test-failures-before-PR.md`; existing feature authority is `Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md` and ADR-211.
+**Spec:** `backlog/tasks/task-34215.1 - Clear-recorded-Console-baseline-test-failures-before-PR.md`; existing feature authority is `Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md` and ADR-219.
 
 ADR required: no
 ADR path: N/A
-Reason: Repairing test doubles preserves runtime, database, ownership and budget policy. ADR-211 continues to govern the unchanged feature.
+Reason: Repairing test doubles preserves runtime, database, ownership and budget policy. ADR-219 continues to govern the unchanged feature.
 
 ## Global Constraints
 

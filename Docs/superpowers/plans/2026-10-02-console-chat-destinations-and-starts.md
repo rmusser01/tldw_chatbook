@@ -12,8 +12,8 @@
 
 ```text
 ADR required: yes
-ADR path: backlog/decisions/211-console-chat-destinations-and-bounded-starts.md
-Reason: Extends chat creation and automatic execution contracts, shared allowance ownership, and durable recovery. ADR-211 already approves these boundaries.
+ADR path: backlog/decisions/219-console-chat-destinations-and-bounded-starts.md
+Reason: Extends chat creation and automatic execution contracts, shared allowance ownership, and durable recovery. ADR-219 already approves these boundaries.
 ```
 
 ## Global constraints
@@ -37,7 +37,7 @@ Reason: Extends chat creation and automatic execution contracts, shared allowanc
 
 ## Read before execution
 
-Read both the spec and ADR-211, each Backlog task before its changes, and:
+Read both the spec and ADR-219, each Backlog task before its changes, and:
 
 - `backlog/docs/lessons-testing-evidence.md`, `lessons-live-verification.md`, `lessons-console-wiring.md`, and `lessons-backlog-hygiene.md`.
 - ADR-150 agent creation, ADR-134/135 automatic budgets/recovery, ADR-079 workspace assistant defaults, ADR-069 project instructions and ADR-082 scratch.
@@ -214,7 +214,7 @@ attempts and manual roots remain compatible. Use injected clocks and Events,
 not timing-only assertions. Extend accepted-context tests for both attempt kinds,
 wrong owner/kind, missing acceptance and current kill switch.
 
-- [x] **7. Run focused verification and review the foundation diff.** Run all changed DB tests plus `test_automatic_work_lineage.py`; check the migration query plan uses the membership/reservation indexes without statistics. Run scoped lint/format checks below. Update the task's Implementation Notes only after the implementation passes; link ADR-211 and record both migration paths. Commit only foundation files with `feat: preserve automatic allowance across agent-created chats`.
+- [x] **7. Run focused verification and review the foundation diff.** Run all changed DB tests plus `test_automatic_work_lineage.py`; check the migration query plan uses the membership/reservation indexes without statistics. Run scoped lint/format checks below. Update the task's Implementation Notes only after the implementation passes; link ADR-219 and record both migration paths. Commit only foundation files with `feat: preserve automatic allowance across agent-created chats`.
 
 ## Task 2: Destinations, approval, durable drafts and one background start
 
@@ -478,7 +478,7 @@ Both implementation tasks are complete in the isolated branch `codex/console-cha
 ## Task 2 closure supplement — affected preview seam
 
 ADR required: no
-ADR path: backlog/decisions/211-console-chat-destinations-and-bounded-starts.md
+ADR path: backlog/decisions/219-console-chat-destinations-and-bounded-starts.md
 Reason: This routine bug fix preserves the existing preview and authority boundaries.
 
 Live/closure audit found pre-existing undefined chat-tool references in the bridge builder used by Context Next Send. Repair this directly affected tool-aware preview seam and add a focused actual-builder regression proving preview succeeds without executing chat creation. Backlog TASK34215 AC8 records the outcome before implementation. The controller ruling and its scope cost are preserved in the execution record.
@@ -486,7 +486,7 @@ Live/closure audit found pre-existing undefined chat-tool references in the brid
 ## Execution closure
 
 ADR required: yes
-ADR path: backlog/decisions/211-console-chat-destinations-and-bounded-starts.md
+ADR path: backlog/decisions/219-console-chat-destinations-and-bounded-starts.md
 Reason: Existing approved ownership, allowance and two-store recovery contract governs this implementation; no replacement ADR was needed.
 
 Foundation commit b45ce02976 and integration commits c9b3738434, 71e5fe1b9c and 967d52e1dc passed their task reviews. Canonical reports, full verification evidence, real Console/provider captures and execution rulings are preserved in [QA record](../qa/2026-10-02-console-chat-starts/README.md). The integration report documents consolidated test-owner coverage, the preview seam, blank-provider snapshot and explicit human Retry decisions, baseline fixture diagnostics and usage uncertainty. Final native-start/switcher verification is 163 passed; overlapping earlier selections are not summed. No full suite, OS power-loss test or merge has been claimed.
@@ -495,7 +495,7 @@ Foundation commit b45ce02976 and integration commits c9b3738434, 71e5fe1b9c and 
 ## Final whole-branch review closure
 
 ADR required: no
-ADR path: backlog/decisions/211-console-chat-destinations-and-bounded-starts.md
+ADR path: backlog/decisions/219-console-chat-destinations-and-bounded-starts.md
 Reason: The single final fix wave directly enforces the existing approved destination, runtime admission, disclosure and fallback-notice contracts.
 
 Commit9cb68f456e resolves all three Important findings and the Minor Persona-notice gap. The sole scoped re-review reports all four addressed and no new breakage, including a workspace move during awaited library capture. Final owner checks: 140 passed were followed by 14 passing capture/admission cases after the last refinement; all postcommit lint/format/ratchets passed. The broad 905 passed / 4 failed run remains honestly qualified: three fixture/schema cases were repaired with covering reruns, and one inherited fork fixture remains supported by exact baseline reproduction, 6,615 verified blobs and unchanged whole-function origin at overall BASE. FD growth of 258 and earlier documented baseline/live limits remain. Overlapping selections are not summed. [Final fix report](../qa/2026-10-02-console-chat-starts/final-fix-report.md), [scoped review](../qa/2026-10-02-console-chat-starts/final-fix-scoped-review.md) and [execution ledger](../qa/2026-10-02-console-chat-starts/execution-ledger.md) preserve the result. No merge, push or PR has been performed.
