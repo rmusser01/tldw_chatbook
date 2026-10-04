@@ -323,6 +323,15 @@ Reason: restore the existing legacy summary contract after an admitted functiona
 - [ ] For exactly seven existing worker-owning tests, install a test-owned cancellation Event before scheduling, preserve any previous mapping, and wrap original post-schedule span in finally. Set only that Event, cancel only its owning session if task pending, shield/drain the actual task with its existing2s completion bound and propagate failures; restore mapping only if still owned. Keep every original phase wait, successful resolution/assertion and production timeout unchanged. This closes the observed failed-assertion/pre-registration cleanup race without swallowing it.
 - [ ] Execute only22 failed/pending nodes plus four directly affected summary controls/three new controls/two host ratchets; record stable exact selections/argv before execution and preserve child failure XML separately. Apply scoped formatter/fatal/whitespace/carry checks. If a new failure exposes a different contract, freeze and propose before expanding. Commit only selected source/tests, separately freeze the new report/map/safe-manifest and return clean closed-process handoff for independent Task9 review and root final loading.
 
+#### Task9 final inherited video observer repair
+
+ADR required: no
+ADR path: N/A (test-only observation boundary; native video contract unchanged).
+Reason: four original call-list assertions observe a retired resolver seam while immutable BASE native actions already use resolve_state.
+
+- [ ] Preserve checkpoint1f315e989d, all232 frozen artifacts,27 newly passing controls and four failure receipts. Change only _video_action_screen's captured resolver and installed spy attribute from resolve to resolve_state, correcting its stale wiring-order comment. Keep its original recorder/return body, all four original test bodies/assertions/actions/waits and real native owner identity exact.
+- [ ] Run only the four failed selectors in task-9-video-observer-authorized-selection.json, with stable source hashes/exact argv. Carry all prior passes/caps/body/authority maps without replay. Verify exact two-site AST reversal and touched formatter/fatal/whitespace, then freeze separately named report/map/safe-manifest and return clean handoff for the single independent Task9 source review.
+
 ### Task 10: Place pure fork projections with their existing owner and restore the store cap
 
 **Execution order:** Task10 source repair may precede Task9 implementation. Task9 remains a read-only proposal until its current-dev projection and canonical contract are selected. All source workers execute sequentially.
