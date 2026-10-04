@@ -28,6 +28,16 @@ READY_TIMEOUT = 60.0
 OPERATION_TIMEOUT = 15.0
 
 
+def _blank_character_frame_ready(modal: Any, frame: str) -> bool:
+    """Require ready blank content, not flags sampled before a live refresh."""
+    return (
+        not modal._query_pending
+        and modal._rendered_query == ""
+        and not modal._entries
+        and "Type a Keyword" in frame
+    )
+
+
 @dataclass
 class PaintWindow:
     """One event-post lifetime, fed only by actual current-screen refreshes."""
@@ -501,11 +511,23 @@ async def run(
                 )
                 modal = await settled_modal("")
                 await pilot.pause()
+                # Activity hydration can reconcile again during pilot.pause.
+                # This untimed setup boundary needs the actual ready frame,
+                # not an earlier flag snapshot or a pending loading surface.
+                await _wait(
+                    lambda modal=modal: _blank_character_frame_ready(
+                        modal,
+                        "\n".join(
+                            strip.text for strip in modal._compositor.render_strips()
+                        ),
+                    ),
+                    "blank Character compositor frame",
+                )
                 blank = "\n".join(
                     strip.text for strip in modal._compositor.render_strips()
                 )
-                assert "Type a Keyword" in blank and not modal._entries
                 (output_dir / f"{prefix}-blank.txt").write_text(blank)
+                assert _blank_character_frame_ready(modal, blank)
 
                 # Normal startup can add unrelated built-in cards, advancing
                 # the global revision. This genuine first query lets the real

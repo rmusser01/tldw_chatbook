@@ -160,3 +160,52 @@ The failed UI receipt retains its post-run-test-unmount database descriptors and
 three registered handles; this is not terminal resource proof. One optional
 pydub warning appears in its private application log. No warning suppression,
 manual sweeping of database owners or increased timing limit was applied.
+
+## Corrected-head scale baseline and setup-frame race
+
+Frozen `c25ea51e57a404a7628ad60f3620243c8b4b6f9f` rebuilt the corpus through
+production APIs and passed fresh standalone Keyword qualification: 300 measured
+identities correct, P95 131.421958 ms, maximum loop interval 6.3825 ms,
+registered handles 0, owned database descriptors empty and ending source clean.
+Receipt: `/tmp/task31245-freeze-5uPHpo/keyword-c25/keyword-receipt.json`.
+
+The full real-owner UI matrix now ran both sizes, all 60 search cases and eight
+exact OPENED activations. Both sizes satisfied their expected page geometry
+(50 fetched, four visible at 52x20 and 11 at 120x50). Maximum busy paint was
+34.928375 ms. All eight activation loop gaps failed the unchanged 50 ms gate:
+70.528583, 69.089958, 77.304875, 88.939959, 75.369125, 102.358042,
+134.493208 and 90.637958 ms. This is a failed UI qualification, not a pass.
+Source/corpus remained unchanged. Post-run-test-unmount registered handles
+were 18; no normal native quit or final retirement was observed.
+Raw receipt: `/tmp/task31245-freeze-5uPHpo/ui-c25/ui-evidence/ui-latency-evidence.json`.
+
+Read-only diagnostics remain separate from acceptance evidence. The first
+all-generation GC observer stopped at a blank-frame assertion before activation.
+A narrower run reached all cases but exhausted its 500-event main-thread
+generation-1/2 buffer before the last three wide activations (246 dropped).
+Do not interpret their empty event lists as no-GC evidence. A stack-sampled
+run retained all 62 generation-2 events and 8,314 stack samples (no drops),
+showing rendering/layout, guarded config/storage reads and GC during some long
+gaps. Its sampling-created objects and up-to-65 ms wall observation interval
+can perturb the heap/schedule; its 14–80 ms GC spans do not prove uninstrumented
+production cost. A later low-allocation GC-only comparison again failed before
+activation. No forced collection, GC threshold, cache policy or production
+performance fix was applied. Diagnostic roots are `ui-gc-diagnostic-c25`,
+`ui-gc-bounded-c25`, `ui-activation-diagnostic-c25`, `ui-gc-only-c25` and
+`ui-gc-frame-c25` beneath the retained container above.
+
+The last diagnostic captured the exact failing blank compositor frame: pending
+true, no mounted empty-state node, and `Loading local chats…`. The harness had
+observed earlier settled flags, then yielded in `pilot.pause()` while a live
+activity projection reconciliation restarted loading. It was asserting the
+stale startup observation, not a failed completed query. The probe now waits
+for the actual ready blank compositor frame after that pause. This is untimed
+setup only; measured windows, production loaders/activation, timing limits and
+all failed receipts are unchanged. Five focused REDs precede the correction;
+the fixture/probe pair passed 47 tests in 17.94s with no pytest warnings and
+strict zero retained database files (`/tmp/task31245-blank-green.log`).
+Changed Python lint and formatting pass. This routine harness correction needs
+no new ADR; ADR-120 and ADR-198 remain controlling. Repeat the frozen baseline
+and complete low-allocation observer comparison before selecting a performance
+remedy. Native, Windows, participant, resource and semantic dependency gates
+remain open.

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:09'
-updated_date: '2026-10-04 21:15'
+updated_date: '2026-10-04 21:50'
 labels:
   - console
   - switcher
@@ -135,6 +135,8 @@ PR3009 Qodo follow-up: direct cancellation during transcript publication reprodu
 2026-10-04 qualification checkpoint: watcher-free saved-sidebar hydration and six finite workspace callback ownership boundaries use existing operation-owned helpers; no pooling/GC/search policy change. Opt-in fixture captures constructor owners and explicitly registered test-owned temporary databases, with final quiescence after successful runtime disposal. Expanded read-only macOS census includes current basetemp, SQLite/SQLite3/DB sidecars and strict process failure independent of successful bodies. Valid REDs and failed intermediate attempts retained. Final combined155 passed479.69s/no warnings/strict exit0/zero retained DB files after every teardown; activation71 passed197.45s/strict0/zero DB files, with subsequent secondary-profile fixture extension covered by rename14 and final155. AC17 checked for targeted automated lifetime evidence only; native keyboard/quit, Windows, participants, full corpus and performance remain unwaived. Eleven artifact guards green; changed clean paths Ruff/format clean, immutable formatter baseline and no introduced diagnostics. Independent reviews found no remaining scoped issue. QA: Docs/QA/task-31245/ownership-qualification-2026-10-04.md. In Progress, semantics dependency not waived; fixture rebuild proposal pending, no PR yet.
 
 2026-10-04 user-approved fixture rebuild: checked-in test-only fresh-root/source guards, offline private environment and existing profile/network backstops; production-API selected-branch corpus and independent 30-query oracle; drained cancellation worker, integrity/descriptor checks, nearest-rank receipt; separate small native dataset/manual launcher. Independent review findings for missing-head acceptance, completion source drift and nondeterministic timestamps reproduced and fixed; re-review clean. Final bounded fixture+measurement contracts 41 passed8.70s/no warnings/strict0/zero DB files after every teardown. Latest-dev repair integration85 passed317.79s/no warnings/strict0. Tooling checkpoint Docs/QA/task-31245/fixture-rebuild-2026-10-04.md; current full-scale/native/external evidence remains unqualified and semantics dependency is not waived. Existing ADR120/198, no new ADR or production policy. Freeze/clean-process smoke/full corpus measurement next; no PR yet.
+
+Fixture tooling frozen at f7b4227e36, synthetic first-send profile corrected at c25ea51e57. Fresh c25 standalone Keyword: 300 samples correct, P95 131.421958ms, loop max6.3825ms, zero retained DB resources. Full UI matrix:60 searches+8 exact activations, busy max34.928375ms, all8 activation loop gaps fail50ms limit (69–134ms); post-run-test handles18, not final native retirement. Read-only observer diagnostics retained with causal limits. Confirmed separate untimed setup-frame race; narrow actual-frame wait corrected,47 targeted tests17.94s/no warnings/strictzeroDB, independent review clean. Details Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. No GC/cache policy change, no acceptance waived; native/Windows/participants/resource/performance and TASK31246 dependency remain open.
 <!-- SECTION:NOTES:END -->
 
 ### Approved native follow-up — 2026-09-07

@@ -13,6 +13,31 @@ from Tests.Benchmarks.console_character_switcher_latency import (
 )
 
 
+@pytest.mark.parametrize(
+    "pending,query,entries,frame,expected",
+    [
+        (True, "", (), "Loading local chats…", False),
+        (False, "", (), "Loading local chats…", False),
+        (False, "", (), "Type a Keyword to search local Character chats", True),
+        (False, "query", (), "Type a Keyword", False),
+        (False, "", (object(),), "Type a Keyword", False),
+    ],
+)
+def test_blank_setup_requires_current_ready_compositor_frame(
+    pending, query, entries, frame, expected
+):
+    from types import SimpleNamespace
+
+    from Tests.Benchmarks.console_character_switcher_latency import (
+        _blank_character_frame_ready,
+    )
+
+    modal = SimpleNamespace(
+        _query_pending=pending, _rendered_query=query, _entries=entries
+    )
+    assert _blank_character_frame_ready(modal, frame) is expected
+
+
 def test_busy_latency_requires_a_current_refresh_and_uses_posted_time():
     screen = object()
     window = PaintWindow("search", "query", 1_000_000_000, screen=screen)
