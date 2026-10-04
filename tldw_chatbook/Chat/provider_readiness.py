@@ -909,9 +909,14 @@ def get_provider_readiness(
             recovery=None,
         )
 
-    if configured_provider_credential_source(
-        provider_settings
-    ) != "none" and is_encrypted_config_value(provider_settings.get("api_key")):
+    # Only a source that reads the saved key can be blocked by it: "none"
+    # sends nothing, and "environment" never reads it -- that source falls
+    # through to "Missing API key", which names the unset variable (Qodo
+    # round, PR #3000).
+    if configured_provider_credential_source(provider_settings) in (
+        None,
+        "stored",
+    ) and is_encrypted_config_value(provider_settings.get("api_key")):
         return ProviderReadiness(
             provider=provider_name,
             provider_key=provider_key,

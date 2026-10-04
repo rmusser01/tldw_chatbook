@@ -27,6 +27,7 @@ import toml
 import tldw_chatbook.config as _bootstrap_config
 from Tests.Backup_Recovery.config_test_support import install_config_source
 from tldw_chatbook.Utils.config_encryption import ConfigEncryption
+from tldw_chatbook.Utils.log_sanitizer import redact_user_paths
 
 PASSWORD_A = "first-master-pw"
 PASSWORD_B = "second-master-pw"
@@ -126,6 +127,56 @@ def test_second_enable_with_the_same_password_is_an_idempotent_no_op(cfg, config
     assert cfg.get_encryption_password() == PASSWORD_A
 
 
+def test_same_password_enable_unlocking_a_locked_session_publishes_settings(
+    cfg, config_path, monkeypatch
+):
+    # Qodo round (PR #3000, finding 3): a session that imported the encrypted
+    # file without the password holds ciphertext in the published
+    # `config.settings`. The same-password fast path installed the password
+    # and returned True, but never republished -- every reader of the global
+    # kept the locked values (and the generation never moved).
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert cfg.enable_config_encryption(PASSWORD_A) is True
+    encrypted_bytes = config_path.read_bytes()
+    cfg.clear_encryption_password()
+    locked = install_config_source(monkeypatch)
+    try:
+        assert locked.get_encryption_password() is None
+        assert locked.is_encrypted_config_value(
+            locked.settings["api_settings"]["openai"]["api_key"]
+        )
+        generation = locked._CONFIG_GENERATION
+
+        assert locked.enable_config_encryption(PASSWORD_A) is True
+
+        assert config_path.read_bytes() == encrypted_bytes
+        assert locked.get_encryption_password() == PASSWORD_A
+        assert locked.settings["api_settings"]["openai"]["api_key"] == PLAINTEXT_KEY
+        assert locked._CONFIG_GENERATION > generation
+    finally:
+        _reset_config_state(locked)
+
+
+def test_same_password_enable_publish_failure_keeps_the_session_locked(
+    cfg, config_path, monkeypatch
+):
+    # The unlock above publishes; if that publish fails the call reports
+    # failure and the session keeps the password its published view matches.
+    assert cfg.enable_config_encryption(PASSWORD_A) is True
+    encrypted_bytes = config_path.read_bytes()
+    cfg.clear_encryption_password()
+
+    def failing_publish(*_args, **_kwargs):
+        raise ValueError("Configuration runtime reload failed")
+
+    monkeypatch.setattr(cfg, "_publish_runtime_config_unlocked", failing_publish)
+
+    assert cfg.enable_config_encryption(PASSWORD_A) is False
+
+    assert config_path.read_bytes() == encrypted_bytes
+    assert cfg.get_encryption_password() is None
+
+
 def test_same_password_enable_over_a_plaintext_secret_is_refused(cfg, config_path):
     # The no-op is only for a file that is already fully encrypted under the
     # typed password; one that still holds a plaintext secret is refused
@@ -201,6 +252,61 @@ def test_enable_on_a_missing_file_removes_it_again_on_failure(
 
     assert cfg.enable_config_encryption(PASSWORD_A) is False
     assert not config_path.exists()
+
+
+def test_rollback_removes_a_created_file_only_through_path_validation(
+    cfg, config_path, monkeypatch
+):
+    # Qodo round (PR #3000, finding 5): the rollback's unlink() is the one
+    # raw filesystem call in the lifecycle; it goes through
+    # path_validation.validate_path_simple, and a rejected path is never
+    # removed (the session then holds the password the file still answers to).
+    config_path.unlink()
+
+    def failing_publish(*_args, **_kwargs):
+        raise ValueError("Configuration runtime reload failed")
+
+    real_validate = cfg.validate_path_simple
+
+    def rejecting_validate(user_path, *args, **kwargs):
+        if str(user_path) == str(config_path):
+            raise ValueError("Path contains dangerous pattern")
+        return real_validate(user_path, *args, **kwargs)
+
+    monkeypatch.setattr(cfg, "_publish_runtime_config_unlocked", failing_publish)
+    monkeypatch.setattr(cfg, "validate_path_simple", rejecting_validate)
+
+    assert cfg.enable_config_encryption(PASSWORD_A) is False
+
+    assert config_path.exists()
+    assert cfg.get_encryption_password() == PASSWORD_A
+
+
+def test_strict_decrypt_failures_log_the_operation_and_config_path_only(
+    cfg, config_path
+):
+    # Qodo round (PR #3000, finding 6): these refusals logged a fixed string
+    # with no context. They now name the operation and the config file --
+    # and never the password, the key, or any ciphertext.
+    from loguru import logger
+
+    config_path.write_text(toml.dumps(_stranded_document()))
+    records: list[str] = []
+    sink = logger.add(lambda message: records.append(str(message)), level="ERROR")
+    try:
+        assert cfg.disable_config_encryption(PASSWORD_B) is False
+        assert cfg.change_encryption_password(PASSWORD_B, "third-master-pw") is False
+    finally:
+        logger.remove(sink)
+
+    text = "\n".join(records)
+    # The path goes through redact_user_paths (home collapsed to ~), the
+    # inventory's sanctioned transform for a persistent sink.
+    logged_path = redact_user_paths(str(config_path))
+    assert f"action=disable, config_path={logged_path}" in text
+    assert f"action=change, config_path={logged_path}" in text
+    for secret in (PASSWORD_A, PASSWORD_B, "third-master-pw", PLAINTEXT_KEY, "enc:"):
+        assert secret not in text
 
 
 def test_disable_refuses_a_stranded_file_without_writing(cfg, config_path):
@@ -370,6 +476,35 @@ def test_reset_strips_every_encrypted_value_and_the_encryption_table(cfg, config
     assert cfg.get_encryption_password() is None
 
 
+def test_reset_strips_encrypted_values_inside_arrays(cfg, config_path):
+    # Qodo round (PR #3000, finding 4): the strip recursed into tables but
+    # copied arrays unchanged, so an `enc:` string in a TOML array -- or in
+    # an array of tables -- survived a reset that reported success.
+    engine = ConfigEncryption()
+    document = _stranded_document()
+    document["general"]["fallback_keys"] = [
+        "plain-entry",
+        engine.encrypt_value("listed-secret", PASSWORD_A),
+        ["nested-plain", engine.encrypt_value("nested-secret", PASSWORD_A)],
+    ]
+    document["mcp_servers"] = [
+        {
+            "name": "search",
+            "api_key": engine.encrypt_value("table-secret", PASSWORD_A),
+        }
+    ]
+    config_path.write_text(toml.dumps(document))
+
+    assert cfg.reset_encrypted_config_values() is True
+
+    text = config_path.read_text()
+    assert "enc:" not in text
+    restored = tomllib.loads(text)
+    assert restored["general"]["fallback_keys"] == ["plain-entry", ["nested-plain"]]
+    assert restored["mcp_servers"] == [{"name": "search"}]
+    assert "encryption" not in restored
+
+
 def test_rekey_adopts_an_earlier_password_that_reads_every_key(cfg, config_path):
     # Review round 2 (R2-F5): in the stranded state (verifier for B, keys
     # under A) the user who remembers A could only reset -- deleting keys A
@@ -522,6 +657,53 @@ def test_an_environment_key_still_beats_a_stranded_saved_key():
 
     assert readiness.ready is True
     assert readiness.api_key == "sk-env-sentinel-key"
+
+
+def test_an_environment_sourced_provider_names_its_variable_not_a_stale_saved_key():
+    # Qodo round (PR #3000, finding 7): with credential_source "environment"
+    # the saved key is never read, so a leftover `enc:` value there is not
+    # the problem. Readiness blamed it ("re-enter the key in Providers &
+    # Models") instead of naming the unset environment variable.
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    ciphertext = ConfigEncryption().encrypt_value(PLAINTEXT_KEY, PASSWORD_A)
+    readiness = get_provider_readiness(
+        "OpenAI",
+        {
+            "api_settings": {
+                "openai": {
+                    "api_key": ciphertext,
+                    "credential_source": "environment",
+                    "api_key_env_var": "OPENAI_API_KEY",
+                }
+            }
+        },
+        environ={},
+    )
+
+    assert readiness.ready is False
+    assert readiness.api_key is None
+    assert readiness.reason == "Missing API key"
+    assert readiness.env_var == "OPENAI_API_KEY"
+    assert "OPENAI_API_KEY" in readiness.recovery
+
+
+def test_a_stored_source_provider_still_reports_its_encrypted_saved_key():
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    ciphertext = ConfigEncryption().encrypt_value(PLAINTEXT_KEY, PASSWORD_A)
+    readiness = get_provider_readiness(
+        "OpenAI",
+        {
+            "api_settings": {
+                "openai": {"api_key": ciphertext, "credential_source": "stored"}
+            }
+        },
+        environ={"OPENAI_API_KEY": "sk-env-sentinel-key"},
+    )
+
+    assert readiness.ready is False
+    assert readiness.reason == "Saved API key is still encrypted"
 
 
 def test_a_deliberately_keyless_provider_ignores_a_stranded_saved_key():
