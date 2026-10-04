@@ -1231,6 +1231,7 @@ def resolve_console_value_layers(
     edited: frozenset[str] = frozenset(),
     chat_settings: ConsoleSessionSettings | None = None,
     extra_sources: Sequence[Mapping[str, object]] = (),
+    excluded_model_profile_fields: frozenset[str] = frozenset(),
 ) -> dict[str, ConsoleValueLayer]:
     """Name the parameter-stack layer each shown value comes from (spec §6).
 
@@ -1245,12 +1246,19 @@ def resolve_console_value_layers(
         chat_settings: This chat's committed settings when the shown pair is
             its pair; a value that differs from the default chain is the chat's.
         extra_sources: ADR-147 registry params, as the builder takes them.
+        excluded_model_profile_fields: Model-default fields to skip, so a
+            blank Settings model default names the layer it inherits from
+            (TASK-33007.5), as the builder takes them.
 
     Returns:
         ``{name: layer}`` for every name.
     """
     _effective, layers = _console_default_layers(
-        app_config, provider, model, extra_sources=extra_sources
+        app_config,
+        provider,
+        model,
+        excluded_model_profile_fields=excluded_model_profile_fields,
+        extra_sources=extra_sources,
     )
     defaults = (
         build_default_console_session_settings(

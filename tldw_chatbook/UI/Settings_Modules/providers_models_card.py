@@ -56,6 +56,7 @@ from ...LLM_Provider_Catalog.model_catalog_settings import (
 )
 from ...Widgets.model_search_picker import ModelSearchPicker, PickerSearchInput
 from ..Screens.settings_context_memory import model_context_window_state
+from .settings_field_rows import compose_model_defaults
 from ..Screens.settings_provider_view_model import (
     custom_endpoint_rows,
     provider_picker_summary,
@@ -68,9 +69,7 @@ from ..Screens.settings_screen import (
     INSTANT_APPLY_BEHAVIOR_COPY,
     MODEL_DISCOVERY_CAPABILITY_WARNING,
     MODEL_DISCOVERY_EMPTY_COPY,
-    MODEL_PROFILE_STREAMING_SELECT_OPTIONS,
     PROVIDER_MANUAL_SELECT_VALUE,
-    PROVIDER_MODEL_PROFILE_FIELD_KEYS,
     PROVIDER_TEST_GUIDANCE,
     QWENCLOUD_API_MODE_HELP_COPY,
     QWENCLOUD_API_MODE_INVALID_COPY,
@@ -1259,6 +1258,16 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 classes="settings-applies-to",
                 markup=False,
             )
+        # TASK-33007.5: Model defaults follows Default model, open, titled
+        # with the pair it edits; core rows first, then a closed Sampling
+        # disclosure that names what the provider does not accept.
+        yield from compose_model_defaults(
+            screen,
+            provider,
+            str(values["model"]),
+            values,
+            registry_locked=registry_locked,
+        )
         yield Static("Context capacity", classes="destination-section")
         yield Static(
             screen._provider_model_context_window_status(
@@ -1429,275 +1438,6 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         # like the catalog block above: threaded config writes, one
         # shared status line, no partial-apply states.
         yield from compose_custom_endpoints_section(screen)
-        # task-189: sampling and provider-specific tuning live below the
-        # Connect block in a collapsed-by-default disclosure.
-        model = str(values["model"])
-        # TASK-33001.2: a row the provider+model request does not carry is
-        # hidden and disabled (never a focus stop), as the gated rows were.
-        row_supported = {
-            draft_key: screen._model_profile_field_supported(
-                provider, draft_key, model
-            )
-            for draft_key in PROVIDER_MODEL_PROFILE_FIELD_KEYS
-        }
-        with Collapsible(
-            title="Generation defaults",
-            collapsed=screen._generation_defaults_collapsed,
-            id="settings-generation-defaults",
-            disabled=registry_locked,
-        ):
-            yield Static(
-                "Selected model defaults",
-                id="settings-selected-model-defaults-title",
-                classes="destination-section",
-            )
-            yield Static(
-                "Global fallbacks live under Console Behavior; these values apply only "
-                "to the provider+model above.",
-                classes="settings-detail-row",
-            )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["temperature"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=screen._profile_input_value(
-                        values["model_profile_temperature"]
-                    ),
-                    id="settings-model-profile-temperature",
-                    classes="settings-compact-input",
-                    placeholder="0.0 - 2.0",
-                )
-            with Horizontal(
-                id="settings-model-profile-top-p-row",
-                classes=screen._gated_profile_row_classes(
-                    row_supported["model_profile_top_p"]
-                ),
-            ):
-                yield Static(
-                    MODEL_FIELD_LABELS["top_p"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=screen._profile_input_value(values["model_profile_top_p"]),
-                    id="settings-model-profile-top-p",
-                    classes="settings-compact-input",
-                    disabled=not row_supported["model_profile_top_p"],
-                    placeholder="0.0 - 1.0",
-                )
-            with Horizontal(
-                id="settings-model-profile-min-p-row",
-                classes=screen._gated_profile_row_classes(
-                    row_supported["model_profile_min_p"]
-                ),
-            ):
-                yield Static(
-                    MODEL_FIELD_LABELS["min_p"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=screen._profile_input_value(values["model_profile_min_p"]),
-                    id="settings-model-profile-min-p",
-                    classes="settings-compact-input",
-                    disabled=not row_supported["model_profile_min_p"],
-                    placeholder="optional 0.0 - 1.0",
-                )
-            with Horizontal(
-                id="settings-model-profile-top-k-row",
-                classes=screen._gated_profile_row_classes(
-                    row_supported["model_profile_top_k"]
-                ),
-            ):
-                yield Static(
-                    MODEL_FIELD_LABELS["top_k"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=screen._profile_input_value(values["model_profile_top_k"]),
-                    id="settings-model-profile-top-k",
-                    classes="settings-compact-input",
-                    disabled=not row_supported["model_profile_top_k"],
-                    placeholder="optional whole number",
-                    restrict=r"^[0-9]*$",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["max_tokens"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=screen._profile_input_value(
-                        values["model_profile_max_tokens"]
-                    ),
-                    id="settings-model-profile-max-tokens",
-                    classes="settings-compact-input",
-                    placeholder="optional whole number",
-                    restrict=r"^[0-9]*$",
-                )
-            with Horizontal(
-                id="settings-model-profile-seed-row",
-                classes=screen._gated_profile_row_classes(
-                    row_supported["model_profile_seed"]
-                ),
-            ):
-                yield Static(
-                    MODEL_FIELD_LABELS["seed"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=screen._profile_input_value(values["model_profile_seed"]),
-                    id="settings-model-profile-seed",
-                    classes="settings-compact-input",
-                    disabled=not row_supported["model_profile_seed"],
-                    placeholder="optional whole number",
-                    restrict=r"^[0-9]*$",
-                )
-            with Horizontal(
-                id="settings-model-profile-presence-penalty-row",
-                classes=screen._gated_profile_row_classes(
-                    row_supported["model_profile_presence_penalty"]
-                ),
-            ):
-                yield Static(
-                    MODEL_FIELD_LABELS["presence_penalty"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=screen._profile_input_value(
-                        values["model_profile_presence_penalty"]
-                    ),
-                    id="settings-model-profile-presence-penalty",
-                    classes="settings-compact-input",
-                    disabled=not row_supported["model_profile_presence_penalty"],
-                    placeholder="-2.0 - 2.0",
-                )
-            with Horizontal(
-                id="settings-model-profile-frequency-penalty-row",
-                classes=screen._gated_profile_row_classes(
-                    row_supported["model_profile_frequency_penalty"]
-                ),
-            ):
-                yield Static(
-                    MODEL_FIELD_LABELS["frequency_penalty"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=screen._profile_input_value(
-                        values["model_profile_frequency_penalty"]
-                    ),
-                    id="settings-model-profile-frequency-penalty",
-                    classes="settings-compact-input",
-                    disabled=not row_supported["model_profile_frequency_penalty"],
-                    placeholder="-2.0 - 2.0",
-                )
-            # task-189: one summary line replaces per-row "Unavailable
-            # for <provider>" placeholders; unsupported rows are hidden.
-            support_copy = screen._provider_generation_support_copy(provider, model)
-            support_summary = Static(
-                support_copy,
-                id="settings-provider-generation-support",
-                classes="settings-detail-row",
-            )
-            support_summary.set_class(
-                not support_copy, "settings-gated-profile-hidden"
-            )
-            yield support_summary
-            with Horizontal(
-                id="settings-model-profile-reasoning-effort-row",
-                classes=screen._gated_profile_row_classes(
-                    row_supported["model_profile_reasoning_effort"]
-                )
-                + " settings-select-row",
-            ):
-                yield Static(
-                    MODEL_FIELD_LABELS["reasoning_effort"], classes="settings-input-label"
-                )
-                yield screen._model_profile_enum_select(
-                    provider,
-                    "model_profile_reasoning_effort",
-                    values,
-                )
-            with Horizontal(
-                id="settings-model-profile-reasoning-summary-row",
-                classes=screen._gated_profile_row_classes(
-                    row_supported["model_profile_reasoning_summary"]
-                )
-                + " settings-select-row",
-            ):
-                yield Static(
-                    MODEL_FIELD_LABELS["reasoning_summary"], classes="settings-input-label"
-                )
-                yield screen._model_profile_enum_select(
-                    provider,
-                    "model_profile_reasoning_summary",
-                    values,
-                )
-            with Horizontal(
-                id="settings-model-profile-verbosity-row",
-                classes=screen._gated_profile_row_classes(
-                    row_supported["model_profile_verbosity"]
-                )
-                + " settings-select-row",
-            ):
-                yield Static(
-                    MODEL_FIELD_LABELS["verbosity"], classes="settings-input-label"
-                )
-                yield screen._model_profile_enum_select(
-                    provider,
-                    "model_profile_verbosity",
-                    values,
-                )
-            with Horizontal(
-                id="settings-model-profile-thinking-effort-row",
-                classes=screen._gated_profile_row_classes(
-                    row_supported["model_profile_thinking_effort"]
-                )
-                + " settings-select-row",
-            ):
-                yield Static(
-                    MODEL_FIELD_LABELS["thinking_effort"], classes="settings-input-label"
-                )
-                yield screen._model_profile_enum_select(
-                    provider,
-                    "model_profile_thinking_effort",
-                    values,
-                )
-            with Horizontal(
-                id="settings-model-profile-thinking-budget-tokens-row",
-                classes=screen._gated_profile_row_classes(
-                    row_supported["model_profile_thinking_budget_tokens"]
-                ),
-            ):
-                yield Static(
-                    MODEL_FIELD_LABELS["thinking_budget_tokens"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=screen._model_profile_input_value(
-                        provider,
-                        "model_profile_thinking_budget_tokens",
-                        model,
-                        values["model_profile_thinking_budget_tokens"],
-                    ),
-                    id="settings-model-profile-thinking-budget-tokens",
-                    classes="settings-compact-input",
-                    placeholder=screen._model_profile_input_placeholder(
-                        provider,
-                        "model_profile_thinking_budget_tokens",
-                        model,
-                    ),
-                    restrict=r"^[0-9]*$",
-                    disabled=not row_supported[
-                        "model_profile_thinking_budget_tokens"
-                    ],
-                )
-            with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["streaming"], classes="settings-input-label"
-                )
-                yield Select(
-                    list(MODEL_PROFILE_STREAMING_SELECT_OPTIONS),
-                    value=screen._streaming_select_value(
-                        values["model_profile_streaming"]
-                    ),
-                    id="settings-model-profile-streaming",
-                    classes="settings-compact-select",
-                    allow_blank=True,
-                    prompt="Inherit default",
-                    compact=True,
-                )
         # TASK-33007.4 (AC#5): the catalog, key-policy, manual-entry,
         # sampling-route and endpoint-key rows moved to the Inspector's
         # config-key disclosure (compose_providers_models_inspector).

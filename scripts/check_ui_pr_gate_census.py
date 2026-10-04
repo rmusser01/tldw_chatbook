@@ -210,7 +210,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-25907.23 / 34800 adds seven bounded privacy/currentness entries.
 # PR2921: production Library Dreams reader and native modal layout/owner checks.
 # PR3010 adds two bounded native rule phase/Stop event node IDs.
-MINIMUM_FILES = 190
+# TASK-33007.5 raised it to 136: test_settings_model_defaults_rows.py (~75 s
+# serial) gates Settings' Model defaults rows, the one-row Select rows on
+# Providers & Models and Console Behavior, and a real save of a blanked field.
+MINIMUM_FILES = 191
 
 
 def read_census(path: Path) -> list[str]:

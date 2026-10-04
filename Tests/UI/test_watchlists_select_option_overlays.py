@@ -392,19 +392,25 @@ async def test_a_bordered_compact_select_keeps_its_frame_under_focus_and_hover()
     `#settings-provider-value` only as a hidden manual-entry compat control
     (`settings-provider-manual-hidden`, zero-size), which made this pin
     IndexError on an empty paint. The contract outlives the exemplar
-    (~21 bordered compact Selects remain), so it is pinned on the Console
+    (~21 bordered compact Selects remain), so it was pinned on the Console
     Behavior compaction-mode Select instead, scrolled into view first the
     way a user reaches it.
+
+    TASK-33007.5, rewritten on purpose: Providers & Models and Console
+    Behavior now draw their Selects one row tall with the compact input's left
+    edge (spec §6, R14), so that exemplar has no frame by design. The contract
+    is pinned on the Speech default voice profile Select, still compact AND bordered; the
+    frameless one-row shape is pinned in test_settings_model_defaults_rows.py.
     """
     app = _build_test_app()
     host = StyledSettingsDestinationHarness(app, "settings")
     async with host.run_test(size=(180, 50)) as pilot:
-        await _open_settings_category(pilot, "#settings-category-console-behavior")
+        await _open_settings_category(pilot, "#settings-category-speech-tts")
         screen = pilot.app.screen
         await _wait_for_selector(
-            screen, pilot, "#settings-console-context-compaction-mode", timeout=5.0
+            screen, pilot, "#settings-speech-default-profile", timeout=5.0
         )
-        select = screen.query_one("#settings-console-context-compaction-mode", Select)
+        select = screen.query_one("#settings-speech-default-profile", Select)
         assert "-textual-compact" in select.classes, (
             "precondition: this control is the compact-AND-bordered shape"
         )
@@ -429,7 +435,7 @@ async def test_a_bordered_compact_select_keeps_its_frame_under_focus_and_hover()
             f"painted {_painted_rows(screen, select.region)!r}"
         )
 
-        await pilot.hover("#settings-console-context-compaction-mode")
+        await pilot.hover("#settings-speech-default-profile")
         await pilot.pause()
         assert _frame() == (rest_top, rest_bottom), (
             "and on hover -- a frame that appears and disappears under the "

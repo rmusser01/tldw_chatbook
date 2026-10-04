@@ -112,6 +112,11 @@ async def test_every_providers_models_card_control_is_hit_testable(request, size
         for disclosure in card.query(Collapsible):
             disclosure.collapsed = False
         await pilot.pause()
+        # TASK-33007.5, extended on purpose: an expanded Collapsible scrolls
+        # itself into view with an animation (Textual's _watch_collapsed); the
+        # nested Sampling disclosure made that scroll land after the first
+        # control's scroll_visible, so the pane is let settle first.
+        await pilot.wait_for_scheduled_animations()
 
         controls = _card_controls(card)
         assert len(controls) >= _MIN_CONTROLS, (

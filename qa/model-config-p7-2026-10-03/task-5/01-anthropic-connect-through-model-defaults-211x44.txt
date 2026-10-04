@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │ │ │  ▶ Prompt-cache snapshots                                                                                         │ │  │  │  │  Save (s) — no changes                  │
+│ █  > Providers & Models      │  │  │ │ │                                                                                                                   │ │  │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │ │ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │  │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │ │                                                                                                                       │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │  Connect                                                                                                              │  │  │  │ Applies to                              │
+│      Appearance              │  │  │ │ Provider                │ Anthropic                          new-chat default configured: Anthropic · 59 more         │  │  │  │  New chats: yes                         │
+│      Theme                   │  │  │ │ Sign in with            │ API key                         ▼                                                           │▃ │  │  │  Unused open chats: follow the saved    │
+│      Splash Screen           │  │  │ │  Choose Claude subscription to use the plan Claude Code is signed in with instead of an API key.                      │  │  │  │  default                                │
+│      Console Behavior        │  │  │ │ API key                 │ Local config key saved;    Clear   saved in config  masked · used before the env var        │  │  │  │  Chats with work: keep their own;       │
+│  Data & Privacy              │  │  │ │ Env var                 │ ANTHROPIC_API_KEY                  not set          safer: keeps keys out of config.toml    │  │  │  │  switch there with Alt+M                │
+│      Storage                 │  │  │ │ Endpoint                │ https://api.anthropic.com          built-in         blank uses the provider default         │  │  │  │  Model defaults: chats that switch to   │
+│      Workspaces              │  │  │ │ Key check                Ready · not tested                                                                Test (t)   │  │  │  │  this model pick them up                │
+│      Tool Profiles           │  │  │ │  Provider settings have not been saved this session.                                                                  │  │  │  │ Next new chat will use                ▁ │
+│      Privacy & Security      │  │  │ │                                                                                                                       │  │  │  │  Anthropic · claude-sonnet-4-5          │
+│      Network                 │  │  │ │  Default model for new chats                                                                                          │  │  │  │  T 1 · max 8192 · stream Off            │
+│      My Profile              │  │  │ │ Model                   │ claude-sonnet-4-5                  new-chat default type to search · Custom ID for others   │  │  │  │ Focused field guide                     │
+│  Troubleshooting             │  │  │ │ Applies to               new chats (Ctrl+T, temporary, workspace). Open chat “Chat 1” is unused and will use          │  │  │  │  Focused setting: None — Tab to a       │
+│      Diagnostics (view)      │  │  │ │                          Anthropic · claude-sonnet-4-5.                                                               │  │  │  │  setting                                │
+│      About (view)            │  │  │ │  ▼ Model defaults · Anthropic · claude-sonnet-4-5                                                                     │  │  │  │  Purpose: Configure the default         │
+│      Agents                  │  │  │ │ Temperature             │ 0.0 - 2.0      Console Behavior inherits 1.0 · Console Behavior                             │  │  │  │  provider, model, endpoint, and         │
+│  Expert                      │  │  │ │ Max tokens              │ 8192           model default    Longest reply the model may write, in tokens.               │  │  │  │  credential source.                     │
+│      Hooks                   │  │  │ │ Streaming               │ Inherit     ▼  provider         inherits Off · provider                                     │  │  │  │  Save: staged - press s to save, r to   │
+│      Internal Prompts        │  │  │ │ Thinking                │ Inherit     ▼  provider         blank = provider default                                    │  │  │  │  revert                                 │
+│      Advanced Config         │  │  │ │ Thinking budget         │ >= 1024        provider         blank = provider default                                    │  │  │  │  Validation: test provider readiness    │
+│   Domain Defaults ▸ (11)     │  │  │ │  ▶ Sampling · Top P 0.9 · Anthropic does not accept 7 fields (open to list them)                                      │  │  │  │  before saving these defaults           │
+│                              │  │  │ │                                                                                                                       │  │  │  │  ▶ config key                           │
+│                              │  │  │ │  Context capacity                                                                                                     │  │  │  │ Key                                     │
+│                              │  │  │ │  Detected context window: 200,000 tokens.                                                                             │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
