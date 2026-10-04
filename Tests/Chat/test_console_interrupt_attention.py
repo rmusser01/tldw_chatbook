@@ -6,7 +6,9 @@ import threading
 
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
+from Tests.Chat.console_interrupt_test_bindings import (
+    make_interrupt_host as InterruptRoundHost,
+)
 from tldw_chatbook.UI.Navigation.main_navigation import CONSOLE_ATTENTION_ATTR
 
 

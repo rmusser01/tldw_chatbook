@@ -753,7 +753,9 @@ def _bare_controller(app):
     """A controller instance with only what _compose_local_provider touches."""
     controller = object.__new__(ConsoleChatController)
     controller.app = app
-    from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
+    from Tests.Chat.console_interrupt_test_bindings import (
+        make_interrupt_host as InterruptRoundHost,
+    )
 
     controller.set_pending_question = None
     controller._interrupt_host = InterruptRoundHost(controller)

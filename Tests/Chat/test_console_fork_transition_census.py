@@ -1420,6 +1420,8 @@ def test_external_console_modules_do_not_write_live_fork_fields_directly() -> No
         CONTROLLER_PATH,
         IMAGE_RECOVERY_PATH,
         RETRIEVAL_PATH,
+        Path("tldw_chatbook/Chat/console_interrupt_rounds.py"),
+        Path("tldw_chatbook/Chat/console_context_compaction.py"),
     ):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         direct = _external_live_mutations(tree)

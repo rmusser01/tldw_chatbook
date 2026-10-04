@@ -8,7 +8,9 @@ from types import SimpleNamespace
 from tldw_chatbook.Chat import console_chat_controller as ccc
 from tldw_chatbook.Chat import permission_summary_service as summary_service
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
+from Tests.Chat.console_interrupt_test_bindings import (
+    make_interrupt_host as InterruptRoundHost,
+)
 from tldw_chatbook.Chat.permission_summary_service import (
     PermissionSummaryResolution,
 )

@@ -762,6 +762,8 @@ class _DeferredConsoleTerminalController:
 def build_console_controllers(
     screen: "ChatScreen",
     *,
+    read_trace_recovery_dispatch: Callable[[], Callable[..., Any]],
+    read_trace_recovery_state: Callable[[], Callable[..., Any]],
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
     rag_top_k_accessor: Callable[[], int],
 ) -> None:
@@ -1697,6 +1699,10 @@ def build_console_controllers(
                 workspace_id
             )
         ),
+        read_trace_recovery_dispatch=read_trace_recovery_dispatch,
+        read_trace_recovery_state=read_trace_recovery_state,
+        read_trace_recovery_started=lambda: screen._start_console_transcript_sync_timer,
+        read_trace_recovery_finished=lambda: screen._sync_native_console_chat_ui,
     )
     #: Dictation's own state and lifecycle moved to
     #: `ConsoleDictationController` (wave-1 console decomposition,

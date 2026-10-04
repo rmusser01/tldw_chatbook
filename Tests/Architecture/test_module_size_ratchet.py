@@ -98,6 +98,9 @@ _BUDGETS: dict[str, int] = {
     # (FeatureGlueMixin); governed there, so governed here.
     "tldw_chatbook/app_feature_glue.py": 742,
     "tldw_chatbook/Chat/console_chat_controller.py": 29367,
+    # ADR-220: existing interrupt and compaction owners gain explicit coordination.
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": 6479,
+    "tldw_chatbook/Chat/console_context_compaction.py": 4185,
     "tldw_chatbook/Chat/console_chat_store.py": 22344,
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,

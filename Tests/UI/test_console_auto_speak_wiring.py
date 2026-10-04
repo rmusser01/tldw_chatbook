@@ -16,6 +16,7 @@ from tldw_chatbook.Event_Handlers.TTS_Events.tts_events import (
     TTSMessageSpeechRequestEvent,
 )
 from tldw_chatbook.UI.Console_Modules.wiring import build_console_controllers
+from tldw_chatbook.UI.Screens import chat_screen
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     AutoSpeakConsentModal,
     ConsoleAutoSpeakCoordinator,
@@ -161,6 +162,10 @@ def test_console_wiring_opens_auto_speak_consent_on_owning_app() -> None:
         screen,
         rag_source_types_accessor=lambda: (),
         rag_top_k_accessor=lambda: 10,
+        read_trace_recovery_dispatch=lambda: (
+            chat_screen.dispatch_trace_call_recovery_action
+        ),
+        read_trace_recovery_state=lambda: chat_screen.trace_call_recovery_state,
     )
     modal = AutoSpeakConsentModal(
         "PocketChat TTS",

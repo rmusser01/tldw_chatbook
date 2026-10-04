@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_message_actions import ConsoleMessageActionService
 from tldw_chatbook.UI.Console_Modules import video as video_controller_module
 from tldw_chatbook.UI.Console_Modules.wiring import build_console_controllers
+from tldw_chatbook.UI.Screens import chat_screen
 from Tests.UI.console_controller_stubs import (
     stub_fleet_controller,
     stub_library_activity_controller,
@@ -97,6 +98,10 @@ def _video_action_screen(tmp_path, *, container="mp4"):
         screen,
         rag_source_types_accessor=lambda: (),
         rag_top_k_accessor=lambda: 8,
+        read_trace_recovery_dispatch=lambda: (
+            chat_screen.dispatch_trace_call_recovery_action
+        ),
+        read_trace_recovery_state=lambda: chat_screen.trace_call_recovery_state,
     )
     screen._console_video_store = video_store
     return (
