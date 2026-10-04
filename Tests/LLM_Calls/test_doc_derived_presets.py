@@ -347,10 +347,14 @@ def test_stream_options_only_where_the_record_asks(key: str) -> None:
 
 
 def test_existing_presets_keep_their_payload_contract() -> None:
-    """The new flags default off for every preset that predates them."""
+    """The new flags default off for every preset that predates them.
+
+    Together asks for stream usage: its live capture showed usage arrives only
+    on request (Tests/fixtures/cloud_live/together.json, TASK-34362).
+    """
     for key in EXISTING_ENGINE_KEYS:
         record = RECORDS_BY_KEY[key]
-        assert record.stream_include_usage is False, key
+        assert record.stream_include_usage is (key == "together"), key
         assert record.stream_usage_optional is False, key
         assert record.status_envelope_key is None, key
 

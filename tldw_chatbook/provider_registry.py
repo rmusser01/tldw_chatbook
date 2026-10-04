@@ -330,6 +330,12 @@ DATABRICKS = ProviderRecord(
 # 2026-07-22) rejects schemas lacking ``additionalProperties: false`` or
 # using pattern/format/minLength/oneOf -- most of Chatbook's tool schemas --
 # so opting in would break tool turns (TASK-33500).
+#
+# Together, captured live 2026-10-04 (Tests/fixtures/cloud_live/together.json,
+# TASK-33640): stream choices carry ``logprobs`` (null), and a stream sends
+# usage only when ``stream_options.include_usage`` asks (a final chunk with no
+# choices). Without both, every streamed reply failed (TASK-34362). /models
+# answers with a bare array, which discovery accepts (TASK-34361).
 TOGETHER = ProviderRecord(
     key="together",
     config_key="Together",
@@ -354,6 +360,8 @@ TOGETHER = ProviderRecord(
     base_url_suffix=None,   # the default URL is already complete
     reasoning_disposition="ignored",
     auth_scheme="bearer",
+    choice_allowances=frozenset({"logprobs"}),
+    stream_include_usage=True,
 )
 FIREWORKS = ProviderRecord(
     key="fireworks",

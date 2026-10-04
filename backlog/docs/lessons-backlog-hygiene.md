@@ -1227,3 +1227,14 @@ merge, force-push):**
   ignored or empty server-side filter still selects nothing.
 - Dry-run first: print the run ids and their `headBranch` values, read them, and only
   then cancel.
+
+## `backlog task edit --notes` replaces the notes; `--append-notes` adds (TASK-33640, 2026-10-04)
+
+**Incident.** Adding a one-paragraph update to TASK-33640 with `--notes` silently
+deleted its existing Implementation Notes: the harness write-up, the six no-key probe
+findings and the nine-item Qodo round (12 lines). Only `git diff --stat` on the task file
+showed it (`2 insertions(+), 12 deletions(-)`); the CLI printed nothing unusual.
+
+**What to do.** Use `--notes` only on a task with no notes yet. To add to a task that
+has history, use `--append-notes`. After any task edit, check `git diff --stat` on the
+file: deletions you did not intend mean the edit replaced something.

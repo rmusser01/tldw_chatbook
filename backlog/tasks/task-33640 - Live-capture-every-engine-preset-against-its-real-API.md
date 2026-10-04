@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@Robert'
 created_date: '2026-09-30 04:00'
-updated_date: '2026-10-03 01:24'
+updated_date: '2026-10-04 18:01'
 labels:
   - providers
   - live
@@ -53,4 +53,6 @@ No-key probe (user request): capture.py --no-auth probed 29 presets with shipped
 - (6) Venice answers a missing key with 402 (x402 payment protocol), and the others with 401/403.
 
 Qodo round (9 findings, all fixed): (1) a capture with no successful round is no longer written or counted, and the replay test fails any such fixture; (2) Google-style docstrings on every public function; (3) HTTP error responses are closed via `with error:`; (4) isolated uncovered_keys unit tests cover every level plus allowances; (5) a 200 stream that is empty or lacks [DONE] fails replay (stream_verdict), and the capture flags it; (6) TLDW_LIVE_<KEY>_API_KEY_ENV_VAR names an alternate key variable that is read before the registry candidates, as the engine does with api_key_env_var (StepFun STEP_API_KEY, Meta MODEL_API_KEY); (7) the serialized fixture is scanned for the live credential and every occurrence redacted before writing; (8) overrides are validated by a Pydantic CaptureOverrides model (http(s) URL with no query/userinfo, single-line model and header values, env-var-name check), and a bad value skips the provider without echoing the value; (9) --keys-file goes through Utils/path_validation.validate_path_simple. A mutation of each of 1/6/7/9 turns its test red.
+
+2026-10-04: Together captured with a real key (Tests/fixtures/cloud_live/together.json). It surfaced three bugs, fixed in the same PR: discovery rejected Together's bare-array listing and its 16 KB chat-template metadata (TASK-34361), and every streamed reply failed on logprobs and missing usage (TASK-34362). The record changes cite the fixture (AC #5 holds for Together). The other 15 key-only listings are still unseen.
 <!-- SECTION:NOTES:END -->

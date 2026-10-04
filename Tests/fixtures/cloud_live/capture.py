@@ -373,6 +373,14 @@ def _stream(target: Target, url: str, body: dict[str, Any]) -> tuple[int, list[s
     return status, payloads
 
 
+def _listed(body: Any) -> list[Any] | None:
+    """A listing's model entries: the ``data`` envelope, or Together's bare array (TASK-34361)."""
+    if isinstance(body, list):
+        return body
+    data = body.get("data") if isinstance(body, dict) else None
+    return data if isinstance(data, list) else None
+
+
 def choose_model(target: Target, listing: Any) -> str | None:
     """Pick the model a capture uses.
 
@@ -388,7 +396,7 @@ def choose_model(target: Target, listing: Any) -> str | None:
         return target.model_override
     ids = [
         entry.get("id")
-        for entry in (listing.get("data") if isinstance(listing, dict) else None) or []
+        for entry in _listed(listing) or []
         if isinstance(entry, dict) and isinstance(entry.get("id"), str)
     ]
     chat_ids = [model for model in ids if not _NON_CHAT.search(model)]
@@ -480,7 +488,7 @@ def capture(target: Target) -> Path | None:
         return None
     if stream_status == 200 and not stream_complete:
         print("  ! the stream was cut off before [DONE]; its replay will fail until recaptured")
-    listed = (listing or {}).get("data") if isinstance(listing, dict) else None
+    listed = _listed(listing)
     fixture = {
         "server": record.key,
         "base_url": target.base_url_display,
@@ -491,7 +499,8 @@ def capture(target: Target) -> Path | None:
         "stream_events": events,
         "models_response": (
             None if listed is None
-            else {"count": len(listed), "sample": listed[:MAX_LISTED_MODELS]}
+            else {"count": len(listed), "envelope": isinstance(listing, dict),
+                  "sample": listed[:MAX_LISTED_MODELS]}
         ),
         "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -549,7 +558,7 @@ def probe_without_key(record: ProviderRecord) -> Path | None:
     fake = ({"api-key": PROBE_KEY} if record.auth_scheme == "api_key_header"
             else {"Authorization": f"Bearer {PROBE_KEY}"})
     listing = _plain_request(f"{base}/{record.discovery_route or 'models'}", None, {}, 30.0)
-    listed = listing["body"].get("data") if isinstance(listing["body"], dict) else None
+    listed = _listed(listing["body"])
     # A real model id, so a provider that checks the model before the key still
     # answers the key question: override, else the public listing, else a seed.
     override = os.environ.get(_env_name(record, "MODEL"), "").strip()

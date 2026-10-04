@@ -90,11 +90,17 @@ def test_settings_defaults_carry_no_model_key(key: str) -> None:
 # --- allowances: empty + provisional (Task 2 fixture reality) ---
 
 
+# Allowances a live capture proved, with the fixture that proves them.
+_CAPTURED_CHOICE_ALLOWANCES = {
+    "together": frozenset({"logprobs"}),  # cloud_live/together.json (TASK-34362)
+}
+
+
 @pytest.mark.parametrize("key", PRESET_KEYS)
 def test_allowances_ship_empty_pending_first_capture(key: str) -> None:
     record = RECORDS_BY_KEY[key]
     assert record.response_allowances == frozenset()
-    assert record.choice_allowances == frozenset()
+    assert record.choice_allowances == _CAPTURED_CHOICE_ALLOWANCES.get(key, frozenset())
     assert record.message_allowances == frozenset()
 
 

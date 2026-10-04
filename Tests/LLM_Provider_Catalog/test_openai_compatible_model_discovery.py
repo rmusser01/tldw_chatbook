@@ -744,6 +744,26 @@ async def test_discovery_returns_typed_error_for_invalid_response():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("body", [["runtime-a"], [{"name": "no-id"}], [[{"id": "nested"}]]])
+async def test_bare_array_listing_of_non_model_objects_stays_invalid(body):
+    """TASK-34361 accepts Together's bare array, but only of model objects."""
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body))
+    ) as client:
+        result = await discover_openai_compatible_models(
+            provider="Custom",
+            provider_list_key="Custom",
+            endpoint="https://api.example.test/v1",
+            api_key=None,
+            client=client,
+        )
+
+    assert result.status == "error"
+    assert result.error is not None
+    assert result.error.kind == "invalid_response"
+
+
+@pytest.mark.asyncio
 async def test_discovery_returns_typed_error_for_non_json_response():
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
@@ -1126,7 +1146,7 @@ def test_normalize_models_rejects_unsafe_or_oversized_model_ids(model_id):
             }
         },
         {"many": list(range(300))},
-        {"large": "x" * 5000},
+        {"large": ["x" * 5000]},
     ],
 )
 def test_normalize_models_rejects_unbounded_metadata(metadata):
@@ -1138,6 +1158,22 @@ def test_normalize_models_rejects_unbounded_metadata(metadata):
             endpoint_fingerprint="https://api.example.test/v1",
             now_iso="2026-08-12T00:00:00Z",
         )
+
+
+def test_normalize_models_drops_an_oversized_field_but_keeps_the_model():
+    """TASK-34361: Together's 16 KB chat templates rejected the whole listing."""
+    models = normalize_models_response(
+        {"data": [{"id": "templated", "context_length": 8192,
+                   "config": {"chat_template": "x" * 16_317, "stop": ["</s>"]}}]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    assert [model.model_id for model in models] == ["templated"]
+    assert dict(models[0].metadata_raw_safe["config"]) == {"stop": ("</s>",)}
+    assert models[0].metadata_raw_safe["context_length"] == 8192
 
 
 @pytest.mark.asyncio

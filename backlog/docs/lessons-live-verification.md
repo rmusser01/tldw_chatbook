@@ -3739,3 +3739,21 @@ whether any of them contradicts what you just added. When a change adds copy
 that explains a state, grep the capture for the competing copies the app already
 has for nearby states ("waiting for dispatch", "Send blocked", "Unsent turn",
 "Failed"). A test that asserts only your new string cannot see them.
+
+## A no-key probe that passes says nothing about a key-only listing (TASK-34361/34362, 2026-10-04)
+
+**Incident.** The TASK-33640 no-key probes were green for Together: its chat route
+existed and a bad key mapped to "authentication failed". Its model listing answered 401
+without a key, so nothing checked the listing's shape. The first capture with a real key
+found three bugs that had kept Together from working at all:
+- `/v1/models` is a bare JSON array, which discovery rejected;
+- 30 of its 264 models carry a chat template of up to 16 KB, and one oversized field
+  rejected the whole listing;
+- every streamed reply failed on a null `logprobs` key and a missing usage chunk.
+
+Non-streamed replies worked, which is how these hid.
+
+**What to do.** Treat a no-key probe as covering only what it actually saw (routes and
+the error mapping), and say so. 15 key-only listings remain unseen as of this entry. When
+a key arrives, run the capture and also run the app's own discovery and a streamed reply
+through the engine against the real API, not just the replay.
