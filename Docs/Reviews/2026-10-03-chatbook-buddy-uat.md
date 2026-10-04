@@ -124,6 +124,12 @@ Merged current dev `49206beea90d35ea9e6842ffa44e4b274db29d8a` cleanly at `ebe2b2
 
 Both controlled Buddy send and durable-draft cases passed: **2 tests in 72.83 seconds**, using mock replies. Backlog guards pass for4995 records; profile path and diagnostic inventories remain consistent. Independent integration review found no actionable compatibility or lifecycle issue. [Separate provider integration receipt](artifacts/buddy-uat-20261003/pr3011-provider-dev-20261004.json) retains exact tested source and log hashes. These two repeated cases do not increase the earlier49 or334 unique totals. Both1535-pass hosted UI runs retain their original head attribution, and accepted native and human voice evidence remains accepted. Existing ADR094/139/147 apply; this integration creates no new Buddy contract.
 
+## Hosted CI budget follow-up — 2026-10-04
+
+On published `ae297322cd7be531b70192d62e910a4cc068c521`, PR Fast Lane passed 1249 + 135 cases, UI shard1 passed465, and UI shard2 passed all1070 cases in1132.73s. GitHub canceled shard2 during pytest shutdown when its unchanged20-minute job budget expired (1215s including shutdown); its job is canceled, and the required aggregate must reject it. The current-head latency guard passed. These observed passes retain their source attribution and do not establish a green aggregate.
+
+The follow-up reuses PR2918's exact one-line third-shard change, as prescribed by the existing CI capacity task. Every census file still runs exactly once, in census order within its shard. The20-minute cap, minimal dependency set, fail-fast:false and aggregate requirement for every shard to succeed remain unchanged. Existing ADR103 applies; no new ADR boundary. The two targeted CI contract files pass, including real partition commands for1,2,3,5shards and failure enforcement; independent review found no actionable findings. No product, test assertion or human/native/voice UAT change. Fresh hosted results are required for the new publication. Receipt: `artifacts/buddy-uat-20261003/pr3011-ui-shard-budget-20261004.json`.
+
 ## Coverage limits and retained attempts
 
 - TASK-32108 is closed against its four recorded qualification outcomes. TASK-31585 AC9 retains the separate exact-native-revision and full application-configured OpenAI human realtime coverage limits. Earlier Chatbook native and local human voice acceptance is preserved; server React evidence remains separate.
