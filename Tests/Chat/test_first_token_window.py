@@ -16,6 +16,9 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.Chat.provider_failures import describe_stream_failure
+
+#: The first-token wait line's opening words.
+_WAITING = "Waiting for a reply"
 from tldw_chatbook.Chat.stream_stall_watchdog import (
     DEFAULT_LOCAL_FIRST_TOKEN_TIMEOUT_SECONDS,
     StreamStallError,
@@ -122,28 +125,23 @@ def test_a_long_wait_for_the_first_token_shows_elapsed_and_a_cold_load_hint() ->
     usage = SimpleNamespace(started_at=0.0, output_tokens=0, source="local")
     snapshot = SimpleNamespace(status="running", steps=(), turn_usage=usage)
 
-    early = console_turn_activity_text(snapshot, now=5.0)
-    late = console_turn_activity_text(snapshot, now=42.0)
+    early = console_turn_activity_text(snapshot, now=5.0, self_hosted=True)
+    late = console_turn_activity_text(snapshot, now=42.0, self_hosted=True)
     # Live: a cold llama.cpp streams a stray delta or two while it is still
     # processing the prompt -- that is not the answer starting.
     usage.output_tokens = 2
-    stray = console_turn_activity_text(snapshot, now=91.0)
-    assert stray.startswith("Waiting for the model to start answering")
+    stray = console_turn_activity_text(snapshot, now=91.0, self_hosted=True)
+    assert stray.startswith(_WAITING)
     assert "1m 31s" in stray
     usage.output_tokens = 40
-    answering = console_turn_activity_text(snapshot, now=91.0)
+    answering = console_turn_activity_text(snapshot, now=91.0, self_hosted=True)
     assert answering.startswith("Generating…")
     usage.output_tokens = 0
 
     assert early.startswith("Generating…") and "5s" in early
-    assert late.startswith("Waiting for the model to start answering")
+    assert late.startswith(_WAITING)
     assert "42s" in late
-    assert "can take a few minutes" in late
-    from tldw_chatbook.UI.Console_Modules.composer_run_controls import (
-        STOP_RUN_KEY_LABEL,
-    )
-
-    assert f"Stop: {STOP_RUN_KEY_LABEL}" in late
+    assert "may still be loading" in late
 
 
 def test_a_first_send_with_no_published_usage_still_times_the_wait() -> None:
@@ -158,7 +156,7 @@ def test_a_first_send_with_no_published_usage_still_times_the_wait() -> None:
     assert console_turn_activity_text(unpublished, now=50.0) == ""
     for snapshot in (unpublished, running):
         line = console_turn_activity_text(snapshot, now=50.0, turn_started_at=10.0)
-        assert line.startswith("Waiting for the model to start answering"), line
+        assert line.startswith(_WAITING), line
         assert "40s" in line
     finished = SimpleNamespace(status="done", steps=(), turn_usage=None)
     assert console_turn_activity_text(finished, now=50.0, turn_started_at=10.0) == ""
@@ -378,3 +376,98 @@ def test_the_read_floor_follows_a_configured_longer_gap_window(monkeypatch) -> N
     assert self_hosted_read_timeout(900) == 900
     monkeypatch.setenv("TLDW_STREAM_STALL_TIMEOUT_SECONDS", "0")  # watchdog off
     assert self_hosted_read_timeout(120) == 120
+
+
+def test_the_cold_load_hint_is_for_self_hosted_models_only() -> None:
+    """A-F6: a cloud reasoning model can think for a while before its first
+    visible token; it is not loading anything."""
+    from tldw_chatbook.UI.Console_Modules.agent import console_turn_activity_text
+
+    usage = SimpleNamespace(started_at=0.0, output_tokens=0, source="provider")
+    snapshot = SimpleNamespace(status="running", steps=(), turn_usage=usage)
+
+    cloud = console_turn_activity_text(snapshot, now=42.0)
+
+    assert cloud.startswith(_WAITING) and "42s" in cloud
+    assert "loading" not in cloud
+
+
+@pytest.mark.parametrize("self_hosted", [True, False])
+def test_the_whole_wait_line_fits_the_reply_header_at_120_columns(self_hosted) -> None:
+    """B-F3 (live, 120x40): the line rides the assistant row's one-line
+    header, which has 64 cells with the rail open; it was cut at 'a large',
+    hiding the hint. Every elapsed value up to an hour fits."""
+    from rich.cells import cell_len
+
+    from tldw_chatbook.UI.Console_Modules.agent import console_turn_activity_text
+
+    usage = SimpleNamespace(started_at=0.0, output_tokens=3, source="local")
+    snapshot = SimpleNamespace(status="running", steps=(), turn_usage=usage)
+
+    for now in (16.0, 99.0, 599.0, 3599.0):
+        line = console_turn_activity_text(snapshot, now=now, self_hosted=self_hosted)
+        assert line.startswith(_WAITING)
+        assert cell_len(line) <= 62, (cell_len(line), line)
+
+
+class _WaitingController:
+    """The controller seams ``console_turn_activity`` reads, for a running
+    first send whose bridge has published nothing yet."""
+
+    def __init__(self, provider: str) -> None:
+        from tldw_chatbook.UI.Screens.chat_screen import ConsoleRunStatus
+
+        self.run_state = SimpleNamespace(status=ConsoleRunStatus.STREAMING)
+        self.store = SimpleNamespace(
+            active_session_id="sess-1",
+            session_settings=lambda _sid: SimpleNamespace(provider=provider),
+        )
+
+
+def _waiting_view(provider: str):
+    from tldw_chatbook.UI.Console_Modules.agent import ConsoleAgentController
+
+    class _View(ConsoleAgentController):
+        def __init__(self) -> None:
+            self._controller = _WaitingController(provider)
+
+        @property
+        def _console_chat_controller(self):
+            return self._controller
+
+        @property
+        def _console_agent_bridge(self):
+            unpublished = SimpleNamespace(status="idle", steps=(), turn_usage=None)
+            return SimpleNamespace(live_snapshot=lambda _cid: unpublished)
+
+        @property
+        def _current_console_rail_conversation_id(self):
+            return lambda: "conv-1"
+
+    return _View()
+
+
+@pytest.mark.parametrize(
+    ("provider", "hinted"), [("custom", True), ("llama_cpp", True), ("openai", False)]
+)
+def test_the_view_times_an_unpublished_first_send_from_when_it_saw_it_run(
+    monkeypatch, provider, hinted
+) -> None:
+    """C-F4: the wiring, not just the pure function. The view records when it
+    first saw the run and hands that in; the session's provider decides the
+    hint. Live, the first send showed a bare 'Generating…' for 230 s."""
+    from tldw_chatbook.UI.Console_Modules import agent as agent_module
+
+    clock = [1000.0]
+    monkeypatch.setattr(
+        agent_module, "time", SimpleNamespace(monotonic=lambda: clock[0])
+    )
+    view = _waiting_view(provider)
+
+    assert view.console_turn_activity().startswith("Generating…")
+    clock[0] += 20.0
+    line = view.console_turn_activity()
+
+    assert line.startswith(_WAITING), line
+    assert "20s" in line
+    assert ("may still be loading" in line) is hinted

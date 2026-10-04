@@ -433,6 +433,7 @@ def console_turn_activity_text(
     pending_approval: bool = False,
     pending_copy: str = "",
     turn_started_at: float | None = None,
+    self_hosted: bool = False,
 ) -> str:
     """Return the live activity line for one in-flight Console turn.
 
@@ -505,6 +506,8 @@ def console_turn_activity_text(
             round``) -- never inferred from a tool name.
         turn_started_at: TASK-34100.5 -- when the view first saw this
             turn running; the elapsed base before any call usage exists.
+        self_hosted: Whether the session's provider is self-hosted; only
+            then does a long first-token wait add the cold-load hint.
         pending_copy: Qodo #4 -- the waiting label for the KIND of round
             actually outstanding (``console_chat_models.console_pending_
             round_copy_for``): "Waiting for your answer" for an ask_user
@@ -579,14 +582,15 @@ def console_turn_activity_text(
         ):
             # TASK-34100.5 AC#5: the answer has not started (a cold local
             # model still processing the prompt streams at most a stray
-            # delta) -- say so, with the cold-load hint and the way out.
+            # delta) -- say so; a self-hosted model gets the cold-load hint.
+            # The line rides the reply's one-line header (64 cells at
+            # 120x40), so it stays short; the composer's Stop ends the wait.
             return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
                 segment
                 for segment in (
                     CONSOLE_TURN_ACTIVITY_FIRST_TOKEN,
                     elapsed,
-                    usage_label,
-                    _FIRST_TOKEN_HINT,
+                    _FIRST_TOKEN_HINT if self_hosted else "",
                 )
                 if segment
             )
@@ -614,15 +618,29 @@ def console_turn_activity_text(
     )
 
 
+def _viewed_provider_is_self_hosted(controller: Any, session_id: Any) -> bool:
+    """Whether the viewed session's provider is self-hosted (review A-F6)."""
+    store = getattr(controller, "store", None)
+    read = getattr(store, "session_settings", None)
+    if not callable(read) or not session_id:
+        return False
+    try:
+        provider = getattr(read(session_id), "provider", None)
+    except Exception:  # noqa: BLE001 -- the hint is optional copy
+        return False
+    from tldw_chatbook.Chat.provider_readiness import is_self_hosted_provider
+
+    return is_self_hosted_provider(provider)
+
+
 #: TASK-34100.5 AC#5: the first-token wait copy and when it replaces
 #: "Generating…" (a warm model answers well inside this).
 _FIRST_TOKEN_HINT_AFTER_SECONDS = 15.0
 #: Live run (llama.cpp, CPU, 4.4k-token prompt, 2026-10-03): stray deltas
 #: during prompt processing read "~1-2 local output tok" for 3+ minutes.
 _FIRST_TOKEN_MIN_OUTPUT = 8
-CONSOLE_TURN_ACTIVITY_FIRST_TOKEN = "Waiting for the model to start answering"
-#: The Stop key is composer_run_controls.STOP_RUN_KEY_LABEL (a test pins it).
-_FIRST_TOKEN_HINT = "a large local model can take a few minutes to load · Stop: Ctrl+G"
+CONSOLE_TURN_ACTIVITY_FIRST_TOKEN = "Waiting for a reply"
+_FIRST_TOKEN_HINT = "the model may still be loading"
 
 
 def _live_usage_label(usage: Any) -> str:
@@ -1119,6 +1137,7 @@ class ConsoleAgentController:
             pending_approval=pending_approval,
             pending_copy=pending_copy,
             turn_started_at=seen[1],
+            self_hosted=_viewed_provider_is_self_hosted(controller, viewed),
         )
 
     def console_turn_activity_abandon_action(self) -> str:

@@ -402,7 +402,7 @@ fails without playing a truncated file.
 | Chip | What it shows |
 |---|---|
 | **Provider** / **Model** | The active provider and model for this session. The provider shows its display name — "llama.cpp", "OpenAI", or a custom endpoint's own name — never its config key; a long name is shortened with "…" and shows in full when the chip has focus. |
-| **Assistant** / **Library** | The active assistant; the Library chip summarizes the two independent conversation controls, **Auto: Never / Automatic** and **Assistant: Blocked / Allowed**, in plain words, for example **Library · Auto off · Agent access off**. Open it to edit those controls and see whether allowed assistant tools use **Direct / RAG** mode. |
+| **Assistant** / **Library** | The active assistant; the Library chip summarizes the two independent conversation controls in plain words, **Auto off/on · Agent access off/on**, for example **Library · Auto off · Agent access off** (its editor labels them **Auto: Never / Automatic** and **Assistant: Blocked / Allowed**). Open it to edit those controls and see whether allowed assistant tools use **Direct / RAG** mode. |
 | **Sources** / **Tools** | Staged source count (e.g. "Sources: 0"); tool readiness (e.g. "Tools: 10 ready" — hidden until tools are counted). |
 | **Approvals** | Pending approvals; press Enter or Space on it to jump to the approval card. |
 | **Scope** | Appears when retrieval is narrowed ("Scope: N"); Enter or Space opens the scope picker. |
@@ -1120,10 +1120,11 @@ run, use **Stop**, **Ctrl+G**, or `/stop` instead.
   (`[chat_defaults] first_token_timeout_seconds`, or
   `TLDW_FIRST_TOKEN_TIMEOUT_SECONDS`); gaps between later tokens keep the
   90-second stall window (`stream_stall_timeout_seconds`). After 15 seconds
-  with no token the reply line reads "Waiting for the model to start
-  answering · 42s · a large local model can take a few minutes to load ·
-  Stop: Esc". If the wait runs out, the failure says the model may still be
-  loading and names that setting, or suggests a smaller model.
+  with no answer the reply line reads "Waiting for a reply · 42s · the model
+  may still be loading" (a cloud model's line has no loading hint). The
+  composer's **Stop** (Ctrl+G) ends the wait. If the wait runs out, the
+  failure says the model may still be loading and names that setting, or
+  suggests a smaller model.
 - **There's no Tools chip before the first send.** Tools are counted lazily,
   so the chip stays hidden until your first send in the session; it then
   reads e.g. "Tools: 10 ready".
