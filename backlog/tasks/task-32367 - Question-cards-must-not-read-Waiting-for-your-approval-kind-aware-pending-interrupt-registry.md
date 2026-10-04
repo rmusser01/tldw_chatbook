@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-04 09:23'
+updated_date: '2026-10-04 09:29'
 labels:
   - console
   - approvals
@@ -177,6 +177,15 @@ Latest-dev Chat settings Phase6 owner integration (PR #2992), planned before reb
 ADR required: no new ADR.
 ADR path: backlog/decisions/095-conversation-owned-console-generation-settings.md; existing ADR031/033/097/150/161/195/212.
 Reason: direct integration of the merged owner layout and settings boundaries, with no new selected architecture or acceptance criterion.
+
+Latest-dev wizard extraction integration (PR #3001), planned before rebase:
+1. Preserve the merged owner lazy step modules, worker/recovery error contract, step lifecycle and bootstrap config restoration. Read owner notes and new relevant lessons; deferred wizard riders remain outside the selected Console scope.
+2. Snapshot/rebase with auto off; retain all owned runtime/native bytes, compose generated CSS, both lessons appendices and actual diagnostic inventory. Incoming unowned sources, budgets/ratchets/profile markers remain exact upstream.
+3. Run focused step-module/lifecycle/worker/bootstrap-restore contracts plus startup/boot CSS, latency and CI guards and actual artifact preflight. Prior Console UI/models, Phase6 and governance baseline receipts retain their actual533-pin source anchors; reuse only unchanged feature dependencies, never relabel old commands.
+4. Publish safely after preceding-head gates/review; require fresh exact-head clean resolved Qodo/all5checks including bothUIshards, then final task metadata qualification before normal protected merge.
+ADR required: no new ADR.
+ADR path: existing owner ADR126/097 and selected Console ADR095/150/195/212.
+Reason: integrate already merged extraction and lifecycle boundaries without new selected architecture or AC; no wizard rider implementation.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
