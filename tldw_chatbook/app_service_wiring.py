@@ -1040,6 +1040,7 @@ class ServiceWiringMixin:
                 PersonaBuddyController,
                 load_local_persona_portrait,
             )
+            from .Persona_Buddy.interaction import parse_preferences
             from .Persona_Buddy.preferences import (  # noqa: PLC0415
                 parse_persona_buddy_preferences,
             )
@@ -1057,9 +1058,9 @@ class ServiceWiringMixin:
                 profile_root=get_user_data_dir(),
                 reduced_motion=lambda: bool(
                     self.app_config.get("appearance", {}).get("reduce_motion", False)
-                    or not self.app_config.get("buddy_interaction", {}).get(
-                        "animated", True
-                    )
+                    or not parse_preferences(
+                        self.app_config.get("buddy_interaction", {})
+                    ).animated
                 ),
                 scheduler=self.call_after_refresh,
                 on_change=self._notify_persona_buddy_changed,

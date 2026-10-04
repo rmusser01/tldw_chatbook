@@ -1,0 +1,196 @@
+{
+  "base": "01a2020981c6197e5cd9945e5287567ad977edfe",
+  "branch": "codex/chatbook-buddy-uat",
+  "verification_status": "Four scoped Chatbook repairs verified; parent native/human voice UAT remains In Progress.",
+  "production_and_test_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "958552eeec74477bbc76b2891aa9239d9f8ac9a80fc5719e59d8a062a0856d54",
+    "tldw_chatbook/UI/Screens/home_screen.py": "0c1cca82be1076cc2e48582742429fb2f4445c539dec8005927ba9ec708352c2",
+    "tldw_chatbook/UI/Navigation/buddy_management.py": "03ff044872bd83ac512adedeff7b5e5b94fd0372bb9375184fce9817461448ba",
+    "tldw_chatbook/app_service_wiring.py": "4224347adaaef849b5728c90dc5ae8769366ea64954b0ca30c9858e8519a5957",
+    "tldw_chatbook/app_lifecycle.py": "b5fd115b5868100378250370d94319c40e9b6269b3025f7a2532f7c993b9dc41",
+    "tldw_chatbook/config.py": "ae6542e60ecc3967b6f0d264ee2981a18cf0fca4ccdcff5542f12993b0f173d3",
+    "Tests/Persona_Buddy/test_buddy_management_coordinator.py": "b77dc6f756211b1cc70338dca80ccda3cf745f95af7efee55c545f5ef6ea34ff",
+    "Tests/Persona_Buddy/test_persona_buddy_preferences.py": "90eebc952dd493187fccbf6aa6e4d4ff4f9404d42b07bcd5039f8926509340e3",
+    "Tests/UI/test_buddy_conversation_layout.py": "1df2d16194f2753eba607a60616a920f3717a44f474fc5759c17a12a4ede1a75",
+    "Tests/UI/test_buddy_management_journey.py": "b2acc6320082a4c49ae2ec27424775cdc91be065111f0127e82611675fcbd24f",
+    "Tests/UI/test_console_dictation_buddy.py": "1919830cc7e5af24b4886d95e52ae45dd36df76b342d245451fc4f42785f4577",
+    "Tests/UI/test_persona_buddy_app_mount.py": "4878a4e85c80965192f4396361e283247ab840058b2e0cf3b9140dbf89ac36cb",
+    "Tests/UI/test_home_console_resume.py": "59a5a46393e5afa351944daedd2e300a1fd2508d6c857264ed2c3ed5bea329d5",
+    "Tests/Persona_Buddy/test_buddy_interaction_config_projection.py": "7c7d38ea0369f9265be13a878ba4d76e09aaad9d94963f23c5f927fb612fe408",
+    "Tests/UI/test_console_shutdown_recompose.py": "215676257339a0bffdd20420e77efb6ed79b678f128a88846d0b9e2c1e7e039a"
+  },
+  "earlier_two_repairs_source_and_test_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "6bb090345cd04d7a81376b96687ea295544287dffa5a4cce357c8b13dd040cbb",
+    "tldw_chatbook/UI/Screens/home_screen.py": "0c1cca82be1076cc2e48582742429fb2f4445c539dec8005927ba9ec708352c2",
+    "tldw_chatbook/config.py": "ae6542e60ecc3967b6f0d264ee2981a18cf0fca4ccdcff5542f12993b0f173d3",
+    "Tests/UI/test_buddy_management_journey.py": "b2acc6320082a4c49ae2ec27424775cdc91be065111f0127e82611675fcbd24f",
+    "Tests/UI/test_buddy_conversation_layout.py": "1df2d16194f2753eba607a60616a920f3717a44f474fc5759c17a12a4ede1a75",
+    "Tests/UI/test_console_dictation_buddy.py": "1919830cc7e5af24b4886d95e52ae45dd36df76b342d245451fc4f42785f4577",
+    "Tests/UI/test_persona_buddy_app_mount.py": "4878a4e85c80965192f4396361e283247ab840058b2e0cf3b9140dbf89ac36cb",
+    "Tests/UI/test_home_console_resume.py": "6cdbd827959f2bbc4990171ca1932f5cbbaf9591e0a7d8650e5df696fd850a47",
+    "Tests/Persona_Buddy/test_persona_buddy_preferences.py": "90eebc952dd493187fccbf6aa6e4d4ff4f9404d42b07bcd5039f8926509340e3",
+    "Tests/Persona_Buddy/test_buddy_interaction_config_projection.py": "2b6016c6a17c5ea2c3ab20ac38ecdcd596b0a34d03b12730f2930be069a800fa"
+  },
+  "rendered_evidence_sha256": {
+    "buddy-cold-management-fixed.png": "93b541e459612ab47a6e39af5e3d02b541924662611176e9aa3b669d21eb0190",
+    "buddy-final-cold-settings.png": "93b541e459612ab47a6e39af5e3d02b541924662611176e9aa3b669d21eb0190",
+    "buddy-final-independent-draft.png": "82691a7e80e7ec699929327b38d40744398abf03e7df38f75c4bbf1f4f782899",
+    "buddy-final-warm-resume.png": "5629adb3ab0f692f194d28e78162db4133b869ca5d88f63fa94baa6d5db05d42",
+    "buddy-independent-draft-fixed.png": "3de5f422522adc04bb32af0beeb3f566c281ea5f070b98baa1e4e1f2840939fc",
+    "buddy-moved-and-resized.png": "6683a4f9e70e96c4df92c86ea44645ebb115b36aa3bac58e070a5e70ff15a381",
+    "buddy-owner-after-restart-fixed.png": "dd0d1f0af72937dbca01af6358bcff65b59a642dc303d0fe5071c857a57e57df",
+    "buddy-settings-after-restart-fixed.png": "33839097ed16613a14d885f3c23d4e8a325bf2b2c6279a9e8b5f3bf2b954e0c0",
+    "buddy-static-library.png": "ac6b7b01dc65b94dff8173131e08f2c14eb133e16e273f1e19faa84fe5d4f0c3",
+    "home-resume-before-fix.png": "ad19c50d6463f85d6296ef2727af66feb15945a6bb6329b583f3bdd2903194d7",
+    "home-resume-fixed.png": "17cf009e465e39aa240a77a52554be286274ccc917773ac7a1bf2187122dd986",
+    "buddy-final-visible.png": "d0534e48498b759705f5c3738a14a53832622e5f2c9e8d1f8762479351c61f0c"
+  },
+  "screenshot_attribution": {
+    "earlier_two_repairs": "The seven original PNGs qualify the earlier Home/config repair stage. They are not attributed to later motion, cold management or lifecycle source changes.",
+    "cold_management": "buddy-cold-management-fixed.png qualifies the first cold-management source stage; launch receipt retained locally.",
+    "final": "The four buddy-final-* PNGs were captured from the fresh runtime whose six production hashes match final static verification."
+  },
+  "final_runtime_source_sha256": {
+    "tldw_chatbook/UI/Screens/chat_screen.py": "958552eeec74477bbc76b2891aa9239d9f8ac9a80fc5719e59d8a062a0856d54",
+    "tldw_chatbook/UI/Screens/home_screen.py": "0c1cca82be1076cc2e48582742429fb2f4445c539dec8005927ba9ec708352c2",
+    "tldw_chatbook/config.py": "ae6542e60ecc3967b6f0d264ee2981a18cf0fca4ccdcff5542f12993b0f173d3",
+    "tldw_chatbook/app_service_wiring.py": "4224347adaaef849b5728c90dc5ae8769366ea64954b0ca30c9858e8519a5957",
+    "tldw_chatbook/app_lifecycle.py": "b5fd115b5868100378250370d94319c40e9b6269b3025f7a2532f7c993b9dc41",
+    "tldw_chatbook/UI/Navigation/buddy_management.py": "03ff044872bd83ac512adedeff7b5e5b94fd0372bb9375184fce9817461448ba"
+  },
+  "runtime": {
+    "name": "Chatbook Textual through supported textual-serve",
+    "port": 18770,
+    "normal_profile_used": false,
+    "physical_microphone_opened": false,
+    "provider_requests_sent": false
+  },
+  "targeted_runs": {
+    "earlier_two_repairs": {
+      "tests": "225",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "407.893",
+      "xml_sha256": "3828935c940b13b945f02658bafcdd016be91f61215dfab458d466a46df7adad",
+      "log_sha256": "97e4cefdf939e09a273262465afe75a17255ec8e3809be1f6ea308b66a757a1f",
+      "local_stem": "/private/tmp/chatbook-buddy-uat-final-20261003"
+    },
+    "motion_followup": {
+      "tests": "88",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "146.306",
+      "xml_sha256": "09ca8355cbffd62f1cdcf285f5b2153931ad6d15c246fa418b8d4d871cee24ae",
+      "log_sha256": "1b540d800dbb09233fdff5b5e26e2791a873afebd29623eded9180a1d43f52ab",
+      "local_stem": "/private/tmp/chatbook-buddy-motion-green-20261003"
+    },
+    "persona_assignment_guard": {
+      "tests": "33",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "86.816",
+      "xml_sha256": "6f682dc39abb7c8937be97763ce1f2ff1897515adfea44b911f0be67c6164486",
+      "log_sha256": "1e8ec7c50f669b623015a31812768b6330c908990ae3dbbc3ac5875b4d712817",
+      "local_stem": "/private/tmp/chatbook-buddy-persona-guard-20261003"
+    },
+    "held_resume_red": {
+      "tests": "1",
+      "failures": "1",
+      "errors": "0",
+      "skipped": "0",
+      "time": "35.637",
+      "xml_sha256": "24d028327a79d87a39a7382a1ae49bf1dad12907f23205eacd9daeafadf64fce",
+      "log_sha256": "85f9cf8c57c86e9ceacd49b3359528b1884be90fd12f9bdfed75076e3f0fa7a7",
+      "local_stem": "/private/tmp/chatbook-resume-shutdown-red-v2-20261003"
+    },
+    "held_resume_green": {
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "143.947",
+      "xml_sha256": "298e0ba8c01dbdae4bbb513d0412f815784865417db956b7725bc3c675cbe041",
+      "log_sha256": "f42152f488fd99cb0a5abc50dbde96fc8f7efe6c08b5d7bdb4b67ead4918d6cb",
+      "local_stem": "/private/tmp/chatbook-resume-shutdown-green-20261003"
+    },
+    "queued_remount_red": {
+      "tests": "1",
+      "failures": "1",
+      "errors": "0",
+      "skipped": "0",
+      "time": "5.509",
+      "xml_sha256": "bcf3ae42377a9a41b6f4620fed3a8abfc8f5a7787920e33d749c919a63bc61a1",
+      "log_sha256": "f02250f93869dfbf7a4a66f998cd544b67c3d825618e011b0343eaafc04154fe",
+      "local_stem": "/private/tmp/chatbook-queued-shutdown-red-v3-20261003"
+    },
+    "final_combined": {
+      "tests": "64",
+      "failures": "1",
+      "errors": "0",
+      "skipped": "0",
+      "time": "356.121",
+      "xml_sha256": "7aad1ba59fabc2424b49eb6be66b0153063c23a72cb3eead8c0639c8d48a88cf",
+      "log_sha256": "9dc014b1194eeba22ccbbe84f1e453dfc33cd91c72b34340eee1b34cce03a2f0",
+      "local_stem": "/private/tmp/chatbook-buddy-final-repairs-20261003"
+    },
+    "corrected_queued_regression": {
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "3.251",
+      "xml_sha256": "051c8c687b0245af4cfb94177b42096c0e13604c404ea1512c1466f61e127c76",
+      "log_sha256": "edf1cdd6f8993713e402ba00c8779db62091ce5cdfbd8adb5b0f51fe19863590",
+      "local_stem": "/private/tmp/chatbook-queued-shutdown-final-20261003"
+    },
+    "existing_shutdown_guards": {
+      "tests": "14",
+      "failures": "2",
+      "errors": "0",
+      "skipped": "1",
+      "time": "25.841",
+      "xml_sha256": "96d4bd73e0c5edefce00acb2ba4261e6295ef91611ce359f1593f14b199c3699",
+      "log_sha256": "4a1adc1fa6c29933013a521bccfb0522faea83e637d53a6f464e08ac8d5afd8b",
+      "local_stem": "/private/tmp/chatbook-console-shutdown-guards-20261003"
+    }
+  },
+  "final_checks": {
+    "unique_passing_checks": 64,
+    "composition": "63 passed in final_combined; corrected queued-remount outcome passed separately. The combined failure was an over-specific test assertion expecting empty mounts instead of no mount calls. No product source changed after that run."
+  },
+  "static": {
+    "base": "01a2020981c6197e5cd9945e5287567ad977edfe",
+    "baseline_diagnostics": 487,
+    "current_diagnostics": 487,
+    "introduced": [],
+    "removed": [],
+    "compiled": [
+      "tldw_chatbook/UI/Screens/chat_screen.py",
+      "tldw_chatbook/UI/Screens/home_screen.py",
+      "tldw_chatbook/UI/Navigation/buddy_management.py",
+      "tldw_chatbook/app_service_wiring.py",
+      "tldw_chatbook/app_lifecycle.py",
+      "tldw_chatbook/config.py"
+    ],
+    "source_sha256": {
+      "tldw_chatbook/UI/Screens/chat_screen.py": "958552eeec74477bbc76b2891aa9239d9f8ac9a80fc5719e59d8a062a0856d54",
+      "tldw_chatbook/UI/Screens/home_screen.py": "0c1cca82be1076cc2e48582742429fb2f4445c539dec8005927ba9ec708352c2",
+      "tldw_chatbook/UI/Navigation/buddy_management.py": "03ff044872bd83ac512adedeff7b5e5b94fd0372bb9375184fce9817461448ba",
+      "tldw_chatbook/app_service_wiring.py": "4224347adaaef849b5728c90dc5ae8769366ea64954b0ca30c9858e8519a5957",
+      "tldw_chatbook/app_lifecycle.py": "b5fd115b5868100378250370d94319c40e9b6269b3025f7a2532f7c993b9dc41",
+      "tldw_chatbook/config.py": "ae6542e60ecc3967b6f0d264ee2981a18cf0fca4ccdcff5542f12993b0f173d3"
+    }
+  },
+  "independent_review": "Final lifecycle, warm Resume, malformed motion and cold saved-target admission reviewed; no remaining actionable findings. Queued shutdown regression independently passed.",
+  "existing_worker_guard_base_control_sha256": "aa55896bf7e5c2ce0299a1e318eaed61d9aa3ad23e8b8fff99f71b190d0498d3",
+  "coverage_limits": [
+    "No full test sweep",
+    "No normal profile access",
+    "No physical Terminal UAT",
+    "No physical microphone/playback or configured OpenAI realtime acceptance",
+    "Unsent draft preservation covers navigation and modal dismissal, not process exit"
+  ]
+}

@@ -1563,7 +1563,7 @@ def _console_library_rag_profile_top_k() -> int:
 
 
 def _console_screen_is_torn_down(screen: Any) -> bool:
-    """Whether ``screen``'s message pump has begun closing.
+    """Whether the screen or its app-owned Console runtime is closing.
 
     task-15860 (cross-suite leak). Three deliberate choices:
 
@@ -1589,7 +1589,15 @@ def _console_screen_is_torn_down(screen: Any) -> bool:
       they are absent from ``dir(ChatScreen)``, and a spec'd mock -- like
       a never-mounted screen -- correctly reads as LIVE.
     """
-    return bool(getattr(screen, "_closing", False) or getattr(screen, "_closed", False))
+    # App shutdown begins before Textual closes the screen message pumps.
+    # Its retained task also fences cancellation rollback and sync re-arming.
+    app = getattr(screen, "app_instance", None)
+    runtime_shutdown = getattr(app, "_console_runtime_shutdown_task", None)
+    return bool(
+        getattr(screen, "_closing", False)
+        or getattr(screen, "_closed", False)
+        or isinstance(runtime_shutdown, asyncio.Task)
+    )
 
 
 def _console_inspector_turn_preview(content: Any) -> str:
@@ -16969,6 +16977,9 @@ class ChatScreen(BaseAppScreen):
 
     def _start_resume_navigation_startup(self) -> None:
         """Start the one ordered worker for an explicit saved-chat resume."""
+        if _console_screen_is_torn_down(self):
+            self._resume_navigation_startup_in_progress = False
+            return
         self.run_worker(
             self._consume_resume_navigation_startup(),
             exclusive=True,
@@ -22416,6 +22427,8 @@ class ChatScreen(BaseAppScreen):
 
     def _focus_console_composer_if_needed(self, *, force: bool = False) -> None:
         """Focus the native Console composer when no other control owns focus."""
+        if _console_screen_is_torn_down(self):
+            return
         if self._console_composer_collapsed:
             self._focus_console_workbench_target("console-native-composer")
             return
@@ -23764,6 +23777,20 @@ class ChatScreen(BaseAppScreen):
         # so every subsequent resume refreshes normally.
         mount_already_refreshed = self._console_mount_visit_refreshed
         self._console_mount_visit_refreshed = False
+        if not mount_already_refreshed and (
+            self._pending_resume_local_conversation_id is not None
+            or self._pending_character_conversation_target is not None
+        ):
+            # A cached Console skips on_mount. Give its exact navigation target
+            # the same ordered consumption before ordinary session restoration.
+            # Track the hedge so switching away retains the request for return.
+            self._resume_navigation_startup_in_progress = True
+            self._console_resume_handoff_timers = [
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self._start_resume_navigation_startup,
+                )
+            ]
         ordered_resume_active = self._resume_navigation_startup_in_progress
         # task-18310: reconcile the Console session against the registry's
         # active workspace on every ordinary resume, including the mount's
