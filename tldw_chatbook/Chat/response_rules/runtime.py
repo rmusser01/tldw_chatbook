@@ -28,6 +28,7 @@ from .evidence import capture_rule_input
 from .models import (
     MAX_HELPER_SECONDS,
     RuleAssessment,
+    RuleBinding,
     RuleCandidate,
     RuleLearningResult,
     RuleInput,
@@ -129,13 +130,20 @@ class ResponseRuleRuntime:
             controller.store.subscribe_response_rule_invalidation(self.invalidate)
         )
         queue.bind_native_assessment_lookup(
-            self.current_assessment, rules=self.pinned_rules
+            self.current_assessment,
+            rules=self.pinned_rules,
+            limit_reached=self.correction_limit_reached,
         )
         controller.response_rules = self
 
     def state(self, session_id: str) -> RuleRuntimeState:
         """Return retained status for a mounted or detached view."""
         return self._states.get(session_id, RuleRuntimeState("idle", None, None, ""))
+
+    def correction_limit_reached(self, source: RuleSource) -> None:
+        """Project only a still-current owner's exhausted correction chain."""
+        if self.acceptance_current(source):
+            self._project(source.session_id, phase="idle", reason="correction_limit")
 
     def scopes(self, session_id: str) -> tuple[RuleScope, RuleScope | None, RuleScope]:
         """Resolve local ownership through the actual selected Chat."""
@@ -220,7 +228,13 @@ class ResponseRuleRuntime:
             if task is not None and not committing and not task.done():
                 task.cancel()
             if source is not None or task is not None or session_id in self._states:
-                self._project(session_id, phase="idle", reason=reason)
+                self._project(
+                    session_id,
+                    phase="idle",
+                    assessment=None,
+                    learning=None,
+                    reason=reason,
+                )
 
         try:
             on_loop = asyncio.get_running_loop() is self._loop
@@ -261,7 +275,21 @@ class ResponseRuleRuntime:
     ) -> str | None:
         chats = self.controller.store
         session_id = chats.session_id_for_message(message_id)
-        if self._closed or not self.effective_rules(session_id):
+        if self._closed:
+            return None
+        try:
+            effective = self.effective_rules(session_id)
+        except Exception:  # noqa: BLE001 -- rules cannot block requested work.
+            logger.warning("response_rule_lookup_unavailable")
+            self._project(
+                session_id,
+                phase="idle",
+                assessment=None,
+                learning=None,
+                reason="rules_unavailable",
+            )
+            return None
+        if not effective:
             return None
         self._loop = asyncio.get_running_loop()
         existing = self._boundaries.get(session_id)
@@ -597,7 +625,22 @@ class ResponseRuleRuntime:
                 session_id, phase="idle", learning=result, reason=result.reason
             )
             if result.state == "active":
-                await self._initial_repair(session_id, result, inputs)
+                try:
+                    await self._initial_repair(session_id, result, inputs)
+                except asyncio.CancelledError:
+                    result = replace(result, reason="initial_repair_cancelled")
+                    self._project(
+                        session_id, phase="idle", learning=result, reason=result.reason
+                    )
+                    owner = asyncio.current_task()
+                    if owner is not None and owner.cancelling():
+                        raise
+                except Exception:  # noqa: BLE001 -- activation already committed.
+                    logger.warning("response_rule_initial_repair_unavailable")
+                    result = replace(result, reason="initial_repair_unavailable")
+                    self._project(
+                        session_id, phase="idle", learning=result, reason=result.reason
+                    )
             return result
         except asyncio.CancelledError:
             owner = asyncio.current_task()
@@ -666,6 +709,33 @@ class ResponseRuleRuntime:
         )
         self._project(session_id, phase="idle")
 
+    async def activate_tested(
+        self,
+        result: RuleLearningResult,
+        scope: RuleScope,
+        *,
+        expected_binding_revision: int,
+    ) -> RuleBinding:
+        """Commit a reviewed editor result under the same live epoch lock."""
+        if (
+            result.reason not in {"tested", "validation_reused"}
+            or result.rule is None
+            or result.validation is None
+        ):
+            raise ValueError("validated_editor_result_required")
+        source = result.validation.source
+        if scope not in self.scopes(source.session_id):
+            raise ValueError("rule_scope_changed")
+        return await asyncio.to_thread(
+            self.store.activate,
+            result.rule,
+            result.validation,
+            scope,
+            expected_binding_revision=expected_binding_revision,
+            current=lambda: self.acceptance_current(source),
+            admission_lock=self._lock,
+        )
+
     async def test_edit(
         self,
         session_id: str,
@@ -708,6 +778,8 @@ class ResponseRuleRuntime:
             None,
         )
         cases = dict(old.fixtures) if old is not None else None
+        if example_message_id is not None:
+            cases, prior = None, None
         if cases is not None and prior is not None:
             for case in prior.case_results:
                 if case.case_type == "recorded_violation":
@@ -722,7 +794,7 @@ class ResponseRuleRuntime:
                 self.builder.validate_edit(
                     source,
                     candidate,
-                    inputs.request_text,
+                    candidate.title,
                     inputs,
                     prior,
                     resolution=resolution,

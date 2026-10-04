@@ -1,11 +1,11 @@
 ---
 id: TASK-34360
 title: Own response rule learning and assessment in Console runtime
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-04 05:55'
-updated_date: '2026-10-04 10:53'
+updated_date: '2026-10-04 10:57'
 labels: []
 dependencies:
   - TASK-34359

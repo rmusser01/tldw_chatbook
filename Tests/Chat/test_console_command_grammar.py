@@ -102,6 +102,8 @@ def test_default_console_registry_registers_prompt_system_skills_prefill_and_gen
         "generate-video",
         "stream-video",
         "steer",
+        "omfg",
+        "rules",
         "redirect",
         "stop",
         "emergency-stop",

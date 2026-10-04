@@ -3379,7 +3379,11 @@ class ChatScreen(BaseAppScreen):
 
         modal_contract = _conversation_settings_modal_module()
         modal = modal_contract.ConsoleSettingsModal(
-            settings=store.session_settings(session_id) or settings,  # committed: unsaved-edits baseline
+            open_response_rules=lambda: self._response_rules_ui.open_manager(
+                self._console_runtime().ensure_response_rules().scopes(session_id)[0]
+            ),
+            settings=store.session_settings(session_id)
+            or settings,  # committed: unsaved-edits baseline
             origin=origin,
             initial_draft=initial_draft,
             transfer=transfer,
@@ -12083,9 +12087,23 @@ class ChatScreen(BaseAppScreen):
         self._reveal_console_inspector_rail()
 
     @on(ConsoleRunChip.OpenRequested)
-    def _console_run_chip_activated(self, event: ConsoleRunChip.OpenRequested) -> None:
-        """Open the Inspector rail at the live run rows (FB-08)."""
+    async def _console_run_chip_activated(
+        self, event: ConsoleRunChip.OpenRequested
+    ) -> None:
+        """Open rule details for a rule status, or the live run Inspector."""
         event.stop()
+        controller = self._console_chat_controller
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else None
+        rules = controller.response_rules if controller is not None else None
+        if rules is not None and session_id is not None:
+            state = rules.state(session_id)
+            if state.phase != "idle" or (
+                not controller.run_state_for(session_id).is_stop_allowed
+                and (state.assessment is not None or state.learning is not None)
+            ):
+                await self._response_rules_ui.open_manager(rules.scopes(session_id)[0])
+                return
         self._reveal_console_inspector_rail()
 
     def _reveal_console_inspector_rail(self) -> None:
@@ -18424,8 +18442,22 @@ class ChatScreen(BaseAppScreen):
             )
         controller = self._console_chat_controller
         run_state = controller.run_state if controller is not None else None
+        from tldw_chatbook.UI.Console_Modules.response_rules import rule_status
+
+        if controller is not None and controller.has_pending_approval_round(
+            session_id or ""
+        ):
+            return f"{console_pending_round_copy_for(controller, session_id or '')}."
+        rules = controller.response_rules if controller is not None else None
+        rule_state = (
+            rules.state(session_id)
+            if rules is not None and session_id is not None
+            else None
+        )
+        if rule_state is not None and rule_state.phase != "idle":
+            return rule_status(rule_state)
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
-            return ""
+            return rule_status(rule_state) if rule_state is not None else ""
         # `has_pending_approval_round` reads the controller's round
         # registry, which `run_round` (console_interrupt_rounds.py) feeds
         # for ALL FIVE interrupt-round kinds -- approval, skill_install,
@@ -19193,28 +19225,8 @@ class ChatScreen(BaseAppScreen):
         "endpoint": "action_open_console_new_endpoint",
     }
     _CONSOLE_COMMAND_NAME_TO_HANDLER_ID = {
-        PROMPT_COMMAND_NAME: PROMPT_COMMAND_HANDLER_ID,
-        SYSTEM_COMMAND_NAME: SYSTEM_COMMAND_HANDLER_ID,
-        SKILLS_COMMAND_NAME: SKILLS_COMMAND_HANDLER_ID,
-        FEWER_PERMISSION_PROMPTS_COMMAND_NAME: (
-            FEWER_PERMISSION_PROMPTS_COMMAND_HANDLER_ID
-        ),
-        PREFILL_COMMAND_NAME: PREFILL_COMMAND_HANDLER_ID,
-        GENERATE_IMAGE_COMMAND_NAME: GENERATE_IMAGE_COMMAND_HANDLER_ID,
-        GENERATE_VIDEO_COMMAND_NAME: GENERATE_VIDEO_COMMAND_HANDLER_ID,
-        STREAM_VIDEO_COMMAND_NAME: STREAM_VIDEO_COMMAND_HANDLER_ID,
-        REWIND_COMMAND_NAME: REWIND_COMMAND_HANDLER_ID,
-        STEER_COMMAND_NAME: STEER_COMMAND_HANDLER_ID,
-        REDIRECT_COMMAND_NAME: REDIRECT_COMMAND_HANDLER_ID,
-        EMERGENCY_STOP_COMMAND_NAME: EMERGENCY_STOP_COMMAND_HANDLER_ID,
-        STOP_COMMAND_NAME: STOP_COMMAND_HANDLER_ID,
-        RESEARCH_COMMAND_NAME: RESEARCH_COMMAND_HANDLER_ID,
-        HELP_COMMAND_NAME: HELP_COMMAND_HANDLER_ID,
-        DOCTOR_COMMAND_NAME: DOCTOR_COMMAND_HANDLER_ID,
-        **{
-            _name: CONSOLE_ACTION_COMMAND_HANDLER_ID
-            for _name, _hint in CONSOLE_ACTION_COMMANDS
-        },
+        command.name: command.handler_id
+        for command in default_console_registry().commands()
     }
 
     def _console_unknown_command_hint(self, name: str) -> str:
@@ -19262,6 +19274,8 @@ class ChatScreen(BaseAppScreen):
                 await self._append_native_console_system_message(video_blocked)
                 return
         dispatch_map = {
+            "learn-response-rule": self._response_rules_ui.learn,
+            "manage-response-rules": self._response_rules_ui.manage,
             "insert-prompt": self._console_command_insert_prompt,
             "apply-system": self._console_command_apply_system,
             SKILLS_COMMAND_HANDLER_ID: self._console_command_skills,

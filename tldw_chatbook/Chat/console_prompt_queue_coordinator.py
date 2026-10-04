@@ -185,6 +185,7 @@ class ConsolePromptQueueCoordinator:
         self._native_settlements: set[tuple[str, str, str]] = set()
         self._native_assessment_lookup = lambda _source, _key: None
         self._native_rules_lookup = lambda _source: ()
+        self._native_limit_reached = lambda _source: None
         self._stop_outcomes = {}
         self._sealed_continuations: set[str] = set()
         self._continuation_admission_current = lambda _request: not self._maintenance_paused
@@ -525,10 +526,12 @@ class ConsolePromptQueueCoordinator:
         lookup: Callable[[RuleSource, str], RuleAssessment | None],
         *,
         rules: Callable[[RuleSource], tuple[RuleRevision, ...]] | None = None,
+        limit_reached: Callable[[RuleSource], None] | None = None,
     ) -> None:
         """Bind runtime-owned assessments and their exact pinned definitions."""
         self._native_assessment_lookup = lookup
         self._native_rules_lookup = rules or (lambda _source: ())
+        self._native_limit_reached = limit_reached or (lambda _source: None)
 
     def offer_native_correction(
         self, session_id: str, proposal: NativeCorrectionProposal
@@ -734,6 +737,9 @@ class ConsolePromptQueueCoordinator:
         )
         native_count = previous.native_turns if previous else 0
         started = chain.continuation_started or time.monotonic()
+        if count >= 3 or native_count >= 2 or time.monotonic() - started >= 120:
+            self._native_limit_reached(source)
+            return None
         if (
             self._shutting_down
             or self._maintenance_paused
@@ -743,9 +749,6 @@ class ConsolePromptQueueCoordinator:
             or self._needs_approval(session_id)
             or session_id in self._sealed_continuations
             or session_id in self._dispatch_recoveries
-            or count >= 3
-            or native_count >= 2
-            or time.monotonic() - started >= 120
             or not self._continuation_admission_current(chain.request)
         ):
             return None
@@ -900,7 +903,7 @@ class ConsolePromptQueueCoordinator:
             lifecycle,
             event,
             outcome,
-            PluginContextText(text, (), origins),
+            PluginContextText(text, (), origins) if hook_message else str(text),
             gate,
             next_request.turn_id,
         )
@@ -1035,7 +1038,7 @@ class ConsolePromptQueueCoordinator:
 
     def continuation_input(
         self, session_id: str, entry_id: str | None, text: str
-    ) -> PluginContextText | None:
+    ) -> str | None:
         """Restore only host-issued, whole live input, never parsed metadata."""
         if self._claimed_machine_entry(session_id, entry_id) is None:
             return None

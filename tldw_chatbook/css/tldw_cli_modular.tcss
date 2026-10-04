@@ -10836,6 +10836,43 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 .console-popover-value { width: $ds-size-8; height: $ds-control-height-compact; }
 .console-popover-source { width: $ds-size-18; }
 
+/* ===== MODULE: features/_console_response_rules.tcss ===== */
+
+ResponseRulesModal {
+    align: center middle;
+    background: $ds-surface-raised;
+}
+ResponseRulesModal #response-rules-dialog {
+    width: $ds-percent-95;
+    height: $ds-percent-95;
+    border: solid $ds-control-edge;
+    padding: $ds-space-0 $ds-space-inline;
+    background: $ds-surface-panel;
+}
+ResponseRulesModal #rr-notice, ResponseRulesModal #rr-status {
+    height: auto;
+    max-height: $ds-size-3;
+    color: $ds-text-muted;
+}
+ResponseRulesModal #rr-body {
+    height: $ds-width-fill;
+}
+ResponseRulesModal #rr-rules {
+    height: $ds-size-4;
+}
+ResponseRulesModal #rr-details, ResponseRulesModal #rr-examples {
+    height: auto;
+}
+ResponseRulesModal .rr-actions {
+    height: $ds-control-height;
+    margin: $ds-space-0;
+}
+ResponseRulesModal .rr-actions Button {
+    width: $ds-width-fill;
+    min-width: $ds-size-8;
+    margin: $ds-space-0;
+}
+
 /* ===== MODULE: features/_library.tcss ===== */
 
 

@@ -199,6 +199,55 @@ async def test_real_agent_service_reply_uses_the_owned_rule_boundary(native):
 
 
 @pytest.mark.asyncio
+async def test_real_completed_tool_work_is_retained_during_native_repair(
+    native, monkeypatch
+):
+    from Tests.Chat.test_console_agent_bridge import _ChunkGateway, _fence
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Tools.tool_executor import CalculatorTool
+
+    runtime, rules, chats, session, gateway, controller = native
+    activate(native)
+    executions = []
+    execute = CalculatorTool.execute
+
+    async def observed(self, expression):
+        executions.append(expression)
+        return await execute(self, expression)
+
+    monkeypatch.setattr(CalculatorTool, "execute", observed)
+    scripts = _ChunkGateway(
+        [
+            [_fence("calculator", {"expression": "6*7"})],
+            ["Missing proof"],
+            ["Evidence: the retained calculator result is 42."],
+        ]
+    )
+    gateway.stream_chat = scripts.stream_chat
+    controller._agent_bridge = ConsoleAgentBridge(
+        agent_runs_db=controller._agent_bridge.runs_db,
+        store=chats,
+        provider_gateway=gateway,
+    )
+    controller._agent_runtime_enabled = True
+    result = await runtime.wait_for_turn(
+        runtime.accept_turn(request(native, "Calculate 6*7 and explain result"))
+    )
+    assert result.accepted, result.visible_copy
+    assert scripts.calls == 3
+    messages = chats.read_only_messages_for_session(session.id)
+    assert executions == ["6*7"], [
+        m.content for m in messages if m.role is ConsoleMessageRole.TOOL
+    ]
+    assert sum(m.role is ConsoleMessageRole.TOOL for m in messages) == 1
+    assert any(
+        m.role is ConsoleMessageRole.ASSISTANT and m.content == "Missing proof"
+        for m in messages
+    )
+    assert rules.state(session.id).assessment.outcome == "pass"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("hooks", [True, False])
 @pytest.mark.parametrize("model_cap", [1, 2])
 async def test_real_agent_remaining_budget_limits_native_repairs(
@@ -233,6 +282,71 @@ async def test_real_agent_remaining_budget_limits_native_repairs(
     if engine is not None:
         assert not engine.lifecycle_owner.inherited_budgets
         assert not engine.lifecycle_owner.terminal_budgets
+
+
+@pytest.mark.asyncio
+async def test_exhausted_native_repairs_report_the_correction_limit(native):
+    runtime, rules, _chats, session, gateway, _controller = native
+    activate(native)
+    gateway.reply = "Missing proof"
+    await runtime.wait_for_turn(runtime.accept_turn(request(native)))
+    assert len(gateway.payloads) == 3
+    assert rules.state(session.id).reason == "correction_limit"
+
+
+@pytest.mark.asyncio
+async def test_committed_rule_stays_active_if_initial_repair_configuration_is_unavailable(
+    native, monkeypatch
+):
+    _owner, rules, _chats, session, gateway, controller = native
+    seed(native)
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("fixture local storage unavailable")
+
+    monkeypatch.setattr(controller, "resolve_turn_configuration_snapshot", unavailable)
+    result = await rules.learn(session.id, "The answer omitted evidence")
+    assert rules.store.list_bindings(rules.scopes(session.id)[0])[0].state == "enabled"
+    assert result.state == "active"
+    assert result.reason == "initial_repair_unavailable"
+    assert gateway.payloads == []
+
+
+@pytest.mark.asyncio
+async def test_rule_lookup_failure_does_not_block_ordinary_generation(
+    native, monkeypatch
+):
+    runtime, rules, chats, session, gateway, controller = native
+    seed(native)
+    gateway.reply = "Evidence: the requested answer"
+
+    def unavailable(_session):
+        raise ValueError("too_many_effective_rules")
+
+    monkeypatch.setattr(rules, "effective_rules", unavailable)
+    turn = runtime.accept_turn(request(native))
+    await runtime._turn_custody[turn].task
+    assert gateway.payloads
+    assert chats.get_message(chats.active_leaf(session.id)).status == "complete"
+    assert rules.state(session.id).reason == "rules_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_disabling_rule_clears_its_live_success_verdict(native):
+    runtime, rules, _chats, session, gateway, _controller = native
+    activate(native)
+    gateway.reply = "Evidence: complete"
+    await runtime.wait_for_turn(runtime.accept_turn(request(native)))
+    assert rules.state(session.id).assessment.outcome == "pass"
+    scope = rules.scopes(session.id)[0]
+    binding = rules.store.list_bindings(scope)[0]
+    rules.store.set_binding(
+        replace(binding, state="disabled"),
+        expected_binding_revision=binding.binding_revision,
+    )
+    await asyncio.sleep(0)
+    assert rules.state(session.id).assessment is None
+    assert rules.state(session.id).learning is None
 
 
 @pytest.mark.asyncio
