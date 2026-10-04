@@ -25,6 +25,7 @@ from textual.widgets import Button, Input
 
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_app_quit_in_flight_modals import (
+    _click_when_shown,
     _recording_cleanup,
     _video_waiting_in_the_save_picker,
 )
@@ -279,7 +280,7 @@ async def test_discard_and_quit_over_the_picker_exits_without_reopening_the_choi
         assert cleanups == []
         assert picker in app.screen_stack
         quit_approved.append(True)
-        assert await pilot.click("#confirm-button")
+        assert await _click_when_shown(app, pilot, "#confirm-button")
         await _until_exited(
             app, cleanups, "Discard and quit to reach the approved shutdown"
         )

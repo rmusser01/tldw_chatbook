@@ -69,6 +69,30 @@ def _still_working_notices(app) -> list[str]:
     ]
 
 
+async def _click_when_shown(app, pilot, selector: str) -> bool:
+    """Click ``selector`` on the top screen once it is laid out.
+
+    A just-pushed prompt is on the stack before its buttons are placed, and
+    Pilot aims at the widget's region, which is empty until then: a click
+    made that early lands on the backdrop and answers nothing.
+
+    Args:
+        app: The running app.
+        pilot: Its pilot.
+        selector: The button to click on the top screen.
+
+    Returns:
+        Pilot's answer: whether the click landed on that widget.
+    """
+
+    def shown() -> bool:
+        found = app.screen.query(selector)
+        return bool(found) and found.first().region.area > 0
+
+    await _until(pilot, shown, f"{selector} to be shown", timeout=5.0)
+    return await pilot.click(selector)
+
+
 async def _assert_ctrl_q_waits_for(app, pilot, modal, cleanups, what: str) -> None:
     """Ctrl+Q over ``modal`` mid-operation stays, and says it is still working.
 
@@ -356,7 +380,7 @@ async def test_a_stuck_operation_still_lets_a_repeated_ctrl_q_quit(monkeypatch):
             "Ctrl+Q to ask again",
             timeout=5.0,
         )
-        await pilot.click("#confirm-button")
+        await _click_when_shown(app, pilot, "#confirm-button")
         await _until(
             pilot,
             lambda: cleanups == [True],
@@ -412,7 +436,7 @@ async def test_a_fork_that_finishes_under_the_quit_question_closes_after_wait(
         assert app.screen is question, "the dialog's close must not pop the question"
         assert modal in app.screen_stack, "covered, the dialog cannot close yet"
 
-        await pilot.click("#cancel-button")  # Wait
+        await _click_when_shown(app, pilot, "#cancel-button")  # Wait
         await _until(
             pilot,
             lambda: modal not in app.screen_stack,
@@ -499,7 +523,7 @@ async def _assert_ctrl_q_asks_before_discarding_the_video(
         "the second Ctrl+Q to ask again",
         timeout=5.0,
     )
-    await pilot.click("#confirm-button")
+    await _click_when_shown(app, pilot, "#confirm-button")
     await _until(
         pilot,
         lambda: cleanups == [True],
@@ -669,7 +693,7 @@ async def test_ctrl_q_while_the_interview_discard_runs_waits_then_quits(
         coordinator.release_discard.set()
         await _until(
             pilot,
-            lambda: screen not in app.screen_stack,
+            lambda: screen not in app.screen_stack and bool(results),
             "the finished discard to close the interview",
         )
         assert results == [ProfileInterviewResult("discarded", (), None)]
@@ -776,9 +800,70 @@ async def test_an_interview_discard_finishing_while_covered_still_closes_it(
         cover.dismiss(None)
         await _until(
             pilot,
-            lambda: screen not in app.screen_stack,
+            lambda: screen not in app.screen_stack and bool(results),
             "the interview to finish its close once uncovered",
         )
         assert results == [ProfileInterviewResult("discarded", (), None)]
         assert app.screen is console
+        assert app._exception is None
+
+
+async def test_an_interview_discard_finishing_under_the_quit_question_closes_after_wait(
+    monkeypatch, held_discard_coordinator
+):
+    """The cover is Ctrl+Q's own "Quit while still working?" this time.
+
+    The interview keeps a close refused while covered (``_close_with``) and
+    finishes it on ScreenResume, so Wait returns to the Console, not to an
+    interview left open and busy over a discarded draft.
+    """
+    from tldw_chatbook.UI.Screens.profile_interview_screen import (
+        ProfileInterviewResult,
+    )
+
+    title = "Quit while still working?"
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups = _recording_cleanup(app, monkeypatch)
+    coordinator = held_discard_coordinator
+    results: list[object] = []
+    async with app.run_test(size=(140, 44)) as pilot:
+        console = await _mounted_console(app, pilot)
+        screen = await _interview_discarding(app, pilot, coordinator, results)
+        await _assert_ctrl_q_waits_for(app, pilot, screen, cleanups, "interview")
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_dialogs_titled(app, title)) or bool(cleanups),
+            "the repeated Ctrl+Q to ask before quitting past the discard",
+            timeout=5.0,
+        )
+        assert cleanups == []
+        assert app.screen is _dialogs_titled(app, title)[0]
+
+        coordinator.release_discard.set()
+        await _until(
+            pilot,
+            lambda: any(call[0] == "discard" for call in coordinator.calls),
+            "the discard to finish under the question",
+        )
+        await pilot.pause(0.3)
+        assert screen in app.screen_stack, "covered, the interview cannot close yet"
+        assert results == []
+
+        await _click_when_shown(app, pilot, "#cancel-button")  # Wait
+        await _until(
+            pilot,
+            lambda: screen not in app.screen_stack and bool(results),
+            "the interview to close once Wait uncovered it",
+        )
+        assert results == [ProfileInterviewResult("discarded", (), None)]
+        assert app.screen is console
+        await _until(
+            pilot,
+            lambda: app._quit_in_progress is False,
+            "the quit guard to clear after Wait",
+        )
+        assert cleanups == []
         assert app._exception is None
