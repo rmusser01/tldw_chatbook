@@ -1523,3 +1523,19 @@ advances the composer's draft generation; typing does not. Restore with
 is not marked as a paste. **When a fix lets the user act during something that
 used to block them, grep that flow for every save/clear/restore of shared UI
 state and ask what happens if they typed in between.**
+
+**Fourth trap: the same holds for "the active chat", in every handler, not
+just the one you fixed (PR #3006 review).** Handing every slash command to a
+worker made all of them run with the Console live, and most handlers resolve
+"the active session" or clear "the composer" after an await -- written when
+the send parked the pump, so nothing could change in between. A mounted repro:
+`/system Terse`, prompt search parked, switch to a new chat, release -- the
+prompt applied to the NEW chat and wiped its typed draft. An audit of all 17
+handlers found four more that answered after an await (`/doctor`, `/skills`,
+`/fewer-permission-prompts`, `/stream-video`), and live, `/stream-video`
+against a loopback server holding the request posted its error into the chat
+switched to. The fix binds the command to its origin in the worker
+(`command_handoff.COMMAND_ORIGIN`): refuse at start and after an await when
+that chat no longer shows, and post awaited answers with an explicit
+`session_id`. **Making a call asynchronous changes the contract of everything
+it calls: list each handler's awaits and what it re-reads after them.**
