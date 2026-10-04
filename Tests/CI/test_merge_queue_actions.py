@@ -51,6 +51,15 @@ def _check(conclusion="success", completed="2026-10-03T11:58:00Z", url="https://
     return check
 
 
+# gh's real error format for API failures: `gh: <message> (HTTP NNN)` (verified live).
+DISPATCH_ERRORS = {
+    422: "gh: Workflow does not have 'workflow_dispatch' trigger (HTTP 422)",
+    404: "gh: No ref found for: feat/1 (HTTP 404)",
+    403: "gh: Resource not accessible by integration (HTTP 403)",
+    502: "gh: Server Error (HTTP 502)",
+}
+
+
 class FakeGh:
     """Records every mutating call; serves scripted reads.
 
@@ -62,11 +71,12 @@ class FakeGh:
     Lists page like the real API: the PR line `line_page_size` at a time through a cursor, REST
     lists `mq.PER_PAGE` at a time. `late_runs[sha]` joins the head's runs from its second
     unfiltered runs read on, i.e. a run another queue run started after this one decided.
+    A dispatch of a `dispatch_refused` workflow fails with `DISPATCH_ERRORS[dispatch_status]`.
     """
 
     def __init__(self, nodes, *, checks=None, runs=None, comments=None, rebase_error=False,
                  reread=None, dispatch_refused=(), rebase_lag=1, disarm_error=False,
-                 line_page_size=None, late_runs=None):
+                 line_page_size=None, late_runs=None, dispatch_status=422):
         self.nodes = {n["number"]: n for n in nodes}
         self.checks = checks or {}
         self.runs = runs or {}
@@ -78,6 +88,7 @@ class FakeGh:
         self.disarm_error = disarm_error
         self.line_page_size = line_page_size
         self.late_runs = late_runs or {}
+        self.dispatch_status = dispatch_status
         self.runs_reads = {}
         self.reread_counts = {}
         self.rereads_since_rebase = None
@@ -139,7 +150,8 @@ class FakeGh:
     def rest(self, method, path, fields=None):
         if method == "GET" and "/check-runs" in path:
             self.reads += 1
-            return {"check_runs": self._page(self.checks.get(path.split("/commits/")[1].split("/")[0], []), path)}
+            checks = self.checks.get(path.split("/commits/")[1].split("/")[0], [])
+            return {"total_count": len(checks), "check_runs": self._page(checks, path)}
         if method == "GET" and "/actions/runs?" in path:
             self.reads += 1
             sha = path.split("head_sha=")[1].split("&")[0]
@@ -150,12 +162,12 @@ class FakeGh:
                 self.runs_reads[sha] = self.runs_reads.get(sha, 0) + 1
             if self.runs_reads.get(sha, 0) >= 2 and "status=" not in path:
                 runs = runs + self.late_runs.get(sha, [])
-            return {"workflow_runs": self._page(runs, path)}
+            return {"total_count": len(runs), "workflow_runs": self._page(runs, path)}
         if method == "POST" and path.endswith("/dispatches"):
             workflow = path.split("/workflows/")[1].split("/")[0]
             self._record(("dispatch", workflow, dict(fields or {})))
             if workflow in self.dispatch_refused:
-                raise mq.GhError("HTTP 422: Workflow does not have 'workflow_dispatch' trigger")
+                raise mq.GhError(DISPATCH_ERRORS[self.dispatch_status])
             return None
         if method == "POST" and path.endswith("/cancel"):
             self._record(("cancel", path.split("/runs/")[1].split("/")[0]))
@@ -512,33 +524,60 @@ def test_a_live_required_run_on_the_second_page_of_workflow_runs_is_seen():
     assert not any(c[0] == "dispatch" for c in gh.calls)
 
 
+@pytest.mark.parametrize("status", [422, 404])
 @pytest.mark.parametrize(("checks", "decided"), [([_check("failure")], "retry"), ([], "dispatch")])
-def test_refused_ci_dispatch_evicts_and_the_line_moves_on(checks, decided):
-    """Qodo #3: a branch whose derived-artifacts.yml refuses dispatch (HTTP 422) must not stall
-    the line: evict it with the error, then decide for the next PR in the same run."""
+def test_refused_ci_dispatch_evicts_and_the_line_moves_on(checks, decided, status):
+    """Qodo #3: a branch that refuses the dispatch (422: its derived-artifacts.yml is broken or
+    lacks the trigger; 404: its ref is gone) must not stall the line: evict it with the error,
+    then decide for the next PR in the same run."""
     gh = FakeGh([_node(1, state="BLOCKED"), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")],
-                checks={OLD: checks}, dispatch_refused={"derived-artifacts.yml"})
+                checks={OLD: checks}, dispatch_refused={"derived-artifacts.yml"}, dispatch_status=status)
     decisions = _run(gh)
     assert [(n, a.kind) for n, a in decisions] == [(1, decided), (2, "evict")]
     assert ("disarm", "PR_1") in gh.calls and ("disarm", "PR_2") in gh.calls
     comment = next(c for c in gh.calls if c[0] == "comment" and c[1] == 1)
     assert f"<!-- merge-queue:evict-dispatch:{OLD} -->" in comment[2]
-    assert "CI dispatch failed: HTTP 422: Workflow does not have" in comment[2]
+    assert f"CI dispatch failed: {DISPATCH_ERRORS[status]}" in comment[2]
     assert not any(c[0] == "comment" and "merge-queue:retry:" in c[2] for c in gh.calls)
 
 
-def test_refused_ci_dispatch_after_a_rebase_evicts_on_the_new_head():
+@pytest.mark.parametrize("status", [422, 404])
+def test_refused_ci_dispatch_after_a_rebase_evicts_on_the_new_head(status):
     runs = {OLD: [{"id": 12, "path": ".github/workflows/perf-guard.yml", "event": "pull_request",
                    "status": "in_progress", "conclusion": None}]}
     gh = FakeGh([_node(1), _node(2, armed="2026-10-03T11:00:00Z", state="DIRTY")], runs=runs,
-                dispatch_refused={"derived-artifacts.yml"})
+                dispatch_refused={"derived-artifacts.yml"}, dispatch_status=status)
     decisions = _run(gh)
     assert [(n, a.kind) for n, a in decisions] == [(1, "rebase"), (2, "evict")]
     comment = next(c for c in gh.calls if c[0] == "comment" and c[1] == 1)
     assert f"<!-- merge-queue:evict-dispatch:{NEW} -->" in comment[2]
-    assert "CI dispatch failed: HTTP 422" in comment[2]
+    assert f"CI dispatch failed: {DISPATCH_ERRORS[status]}" in comment[2]
     assert not any(c[0] == "cancel" for c in gh.calls), "an evicted PR's old runs are left alone"
     assert not any(c[0] == "comment" and "merge-queue:rebased:" in c[2] for c in gh.calls)
+
+
+@pytest.mark.parametrize("status", [502, 403])
+@pytest.mark.parametrize(("state", "checks"), [("BLOCKED", []), ("BLOCKED", [_check("failure")]), ("BEHIND", [])],
+                         ids=["dispatch", "retry", "after-rebase"])
+def test_a_github_side_dispatch_error_fails_the_run_and_disarms_nobody(state, checks, status):
+    """Spec section 8: a 5xx, rate limit or 403 is GitHub's error, not the branch's. Evicting on
+    it, with the same-run hand-over, would disarm every front one outage touches. The run must
+    fail instead, before any disarm, so the next event retries."""
+    nodes = [_node(1, state=state)] + [_node(i, armed=f"2026-10-03T1{i}:00:00Z", state="BLOCKED") for i in range(2, 6)]
+    gh = FakeGh(nodes, checks={OLD: checks}, dispatch_refused={"derived-artifacts.yml"}, dispatch_status=status)
+    with pytest.raises(mq.GhError, match=rf"\(HTTP {status}\)"):
+        _run(gh)
+    assert not any(c[0] == "disarm" for c in gh.calls)
+    assert not any(c[0] == "comment" for c in gh.calls)
+    assert [c[2]["ref"] for c in gh.calls if c[0] == "dispatch"] == ["feat/1"], "nothing behind the front was touched"
+
+
+def test_rest_pages_stop_at_total_count_without_a_false_cap_error():
+    """Exactly MAX_PAGES full pages is a complete list when total_count says so; one more item is not."""
+    full = [_check("cancelled", url=f"https://run/c{i}") for i in range(mq.MAX_PAGES * mq.PER_PAGE)]
+    assert len(mq.read_checks(FakeGh([], checks={OLD: full}), OLD)) == mq.MAX_PAGES * mq.PER_PAGE
+    with pytest.raises(mq.GhError, match="partial view"):
+        mq.read_checks(FakeGh([], checks={OLD: full + [_check()]}), OLD)
 
 
 @pytest.mark.parametrize("checks", [[], [_check("failure")]], ids=["dispatch", "retry"])

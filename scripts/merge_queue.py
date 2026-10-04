@@ -47,6 +47,9 @@ MAX_PAGES = 10
 PASSING = frozenset({"success", "neutral", "skipped"})
 LIVE_RUN_STATUSES = frozenset({"queued", "in_progress", "waiting", "requested", "pending"})
 BROKEN_RUN_CONCLUSIONS = frozenset({"failure", "startup_failure", "timed_out"})
+# gh reports API errors as `gh: <message> (HTTP NNN)` (verified live). These two mean the branch
+# itself refuses the required-check dispatch; every other error is GitHub's and is retried.
+BRANCH_REFUSALS = ("(HTTP 422)", "(HTTP 404)")
 
 
 @dataclass(frozen=True)
@@ -360,12 +363,15 @@ def read_pr(gh: GhApi, number: int) -> PrState:
 
 
 def _rest_pages(gh: GhApi, path: str, key: str) -> list[dict]:
-    """Every item of a paged REST list: pages are followed while a full page comes back."""
+    """Every item of a paged REST list: pages are followed until `total_count` (when the response
+    has one) is reached or a short page comes back."""
     items: list[dict] = []
     for page in range(1, MAX_PAGES + 1):
-        batch = (gh.rest("GET", f"{path}&per_page={PER_PAGE}&page={page}") or {}).get(key, [])
+        data = gh.rest("GET", f"{path}&per_page={PER_PAGE}&page={page}") or {}
+        batch = data.get(key, [])
         items += batch
-        if len(batch) < PER_PAGE:
+        total = data.get("total_count")
+        if len(batch) < PER_PAGE or (total is not None and len(items) >= total):
             return items
     raise GhError(f"more than {MAX_PAGES * PER_PAGE} {key} for {path}; refusing to decide on a partial view")
 
@@ -539,13 +545,20 @@ def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -
 
 
 def _dispatch_required(gh: GhApi, pr: PrState, log: Callable[[str], None]) -> bool:
-    """Dispatch the required check on the PR's head; a refused dispatch evicts the PR.
+    """Dispatch the required check on the PR's head; a branch-side refusal evicts the PR.
+
+    Only HTTP 422 (the branch's workflow is broken or lacks the trigger) and HTTP 404 (the ref
+    is gone) are the branch's fault. Anything else (5xx, rate limit, network, 403) re-raises, so
+    the run fails and the next event retries (spec section 8): evicting on those would disarm
+    every front an outage touches.
 
     Returns True if the PR was evicted (the line moves on), False if the run was started.
     """
     try:
         dispatch(gh, REQUIRED_WORKFLOW, pr.head_ref, pr.number)
     except GhError as exc:
+        if not any(code in str(exc) for code in BRANCH_REFUSALS):
+            raise
         return _evict(gh, pr, Action("evict", f"CI dispatch failed: {str(exc)[:200]}", slug="dispatch"), log)
     return False
 
@@ -640,8 +653,11 @@ def apply(
         return _rebase(gh, pr, log, sleep)
     if action.kind in ("dispatch", "retry"):
         # Two queue runs (merge-queue.yml and a queue-tick) can decide the same dispatch for the
-        # same head. Whoever dispatches first makes a live run; the other sees it here and stands
-        # down. The window left is the seconds between this read and the POST (spec section 7).
+        # same head. Once the first one's run is listed, the other sees it here and stands down.
+        # This narrows the race but cannot close it: the window left is the time between this
+        # read and the POST, plus GitHub's delay between a dispatch returning and its run showing
+        # up in the runs list, which no read can see. A duplicate is one extra queued run (spec
+        # section 7).
         if any(c.status != "completed" for c in required_run_stand_ins(gh, pr.head_sha, ())):
             log(f"  #{pr.number}: a required run appeared on {pr.head_sha[:10]} since the decision; not dispatching")
             return False

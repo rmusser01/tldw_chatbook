@@ -187,10 +187,14 @@ never rebased, dispatched or commented on.
 - **Dispatch** of the PR's workflows happens only after this run's own rebase succeeded, or under the dispatch rows of the
   table above.
   - Under the dispatch and retry rows, the queue re-reads the head's live `derived-artifacts.yml` runs immediately before
-    dispatching. If one appeared since the decision (a racing queue run dispatched first), it dispatches nothing.
-  - If GitHub refuses the required-check dispatch (for example HTTP 422 because the branch's `derived-artifacts.yml` is
-    broken or lacks the trigger), the queue evicts the PR ("CI dispatch failed: <first 200 characters>") and moves on to
-    the next front in the same run. After a rebase the eviction names the new head.
+    dispatching. If one appeared since the decision (a racing queue run dispatched first and its run is already listed),
+    it dispatches nothing.
+  - If the branch refuses the required-check dispatch, the queue evicts the PR ("CI dispatch failed: <first 200
+    characters>") and moves on to the next front in the same run. After a rebase the eviction names the new head. Only
+    two answers count as the branch refusing: HTTP 422 (the branch's `derived-artifacts.yml` is broken or lacks the
+    trigger) and HTTP 404 (the ref is gone). Any other error (5xx, rate limit, network, 403) is GitHub's, not the
+    branch's. The run fails instead (section 8), so an outage never disarms the fronts it touches. After a rebase, the
+    dispatch row recovers it once the head is older than 3 minutes.
 - **Evict** means `disablePullRequestAutoMerge` plus one comment. The disarm is best-effort: two racing runs (a merge fires
   both `push` to `dev` and `closed`) can evict the same PR, and the second disarm hits an already-disarmed PR. Re-arming
   puts the PR at the back of the line.
@@ -207,9 +211,10 @@ never rebased, dispatched or commented on.
   queue and dev's post-merge checks.
 - Every action is safe to repeat. Two queue runs racing produce at most one rebase: the pinned head makes the second
   mutation fail, and the post-failure re-read (above) makes the losing run see the moved head and do nothing, instead of
-  counting the refusal as its own failure. A duplicate dispatch is at worst one extra queued run: the pre-dispatch re-read
-  of live runs (above) closes the window down to the seconds between that read and the dispatch. Evictions are
-  idempotent.
+  counting the refusal as its own failure. A duplicate dispatch is at worst one extra queued run. The pre-dispatch re-read
+  of live runs (above) narrows the window but cannot close it: what is left is the time between that read and the
+  dispatch, plus GitHub's delay between a dispatch returning and its run appearing in the runs list, which no read can
+  see. Evictions are idempotent.
 
 ## 8. Failure handling
 
