@@ -64,12 +64,20 @@ def test_native_sqlite_sidecars_reopen_with_exact_private_owner(tmp_path, monkey
     from tldw_chatbook.DB.private_sqlite import connect_private_sqlite
 
     native, win = windows_files._native(), WindowsOS()
-    # Never infer custody from synthetic Windows chmod/stat values.
-    win.chmod(tmp_path, 0o700)
-    root, config = tmp_path / "bootstrap", tmp_path / "config.toml"
+    # Print native token and inherited fixture custody before any hardening.
+    print("WINDOWS_TOKEN_RECEIPT=" + json.dumps({
+        "token_user_sid": _token_sid(native, 1),
+        "token_owner_sid": _token_sid(native, 4),
+        "fixture_parent": _security_receipt(tmp_path),
+    }, sort_keys=True))
+    # Explicit-owner creation avoids pretending an elevated pytest directory
+    # belongs to TokenUser merely because TokenOwner is Administrators.
+    parent = tmp_path / "explicit-user-private"
+    win.mkdir(parent, 0o700)
+    root, config = parent / "bootstrap", parent / "config.toml"
     monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(config))
-    database = tmp_path / "native.db"
+    database = parent / "native.db"
     first = connect_private_sqlite("db.base", database)
     try:
         assert first.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
@@ -79,7 +87,7 @@ def test_native_sqlite_sidecars_reopen_with_exact_private_owner(tmp_path, monkey
         receipt = {
             "token_user_sid": _token_sid(native, 1),
             "token_owner_sid": _token_sid(native, 4),
-            "parent": _security_receipt(tmp_path),
+            "parent": _security_receipt(parent),
             "database": _security_receipt(database),
             "wal": _security_receipt(str(database) + "-wal"),
             "shm": _security_receipt(str(database) + "-shm"),
