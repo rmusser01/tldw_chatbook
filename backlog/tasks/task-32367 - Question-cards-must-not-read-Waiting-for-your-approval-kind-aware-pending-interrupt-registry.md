@@ -3,11 +3,11 @@ id: TASK-32367
 title: >-
   Question cards must not read Waiting for your approval (kind-aware
   pending-interrupt registry)
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-04 09:46'
+updated_date: '2026-10-04 10:11'
 labels:
   - console
   - approvals
@@ -278,4 +278,6 @@ Integrated latest dev 057e62eaec5343ffce9445cfb32881e756dd7634, owner encryption
 Integrated latest dev df2ba424de63576d36d9c3e38387c84285303f1c, Chat settings Phase6 PR2992, under existing ADR095/031/033/097/150/161/195/212. No new architecture or selected AC.75 owned non-overlap runtime/native paths byte-exact; reverse feature Python/lessons patches recover exact dev; shared approval CSS semantics retained with obsolete owner cap removed.12 metadata patches exact; actual generators reproduce;533 stable pins (22 overrides+51 additions),73SQL pins; census135/floor133; owner budgets/ratchets and ordinary profile/admission/worker/canary guards retained. Fresh targeted 387 passed/389 collected, 2 inherited failures reproduced exactly on unmodified dev; real preflight 127.78s; zero-newRuff35/signatures/Backlog checks pass. QA oct04_chat_settings_phase6_latest_dev_integration retains actual receipts/source maps and prior anchors; no full-suite/fullLibrary/Architecture A-B/newnative/Auth/livekey/server claim. Owner deferred riders and broader settings/admission failures are outside selected work. Remain In Progress pending fresh final-head all5checks including bothUIshards/clean resolvedQodo, then final Done-metadata qualification and protected normalmerge; auto off.
 
 Integrated latest dev a1571e86db29440c8bb3616f6c8ae25925b8ee7d, wizard extraction PR3001, under existing owner ADR126/097 and selected Console ADR095/150/195/212; no new architecture; measured CSS integration AC7 planned before repair.80 owned runtime/native paths byte-exact,14 metadata patches raw-exact; both lessons appendices retained; actual generators reproduce.565 pins (6 overrides+32 additions),73SQL files, census135/floor133; incoming unowned sources/budgets/ratchets/profile contracts exactdev, except the demonstrated disabled-nav CSS subject repair. Pre-repair275>274 style-index regression retained at01b7 anchor, then existing guard and mounted disabled cue pass on repaired sources. Fresh 166 passed/168 collected with2 governance failures reproduced exactly on unmodified dev; focused step/lifecycle/worker/bootstrap-restore, startup/latency/CI and scoped ratchets/governance. Preflight 90.55s; zero-newRuff35/signatures/Backlog/census pass. Prior387passes/2baseline reds, ConsoleUI/models/Phase6 contracts retain actual533-pin8e54 anchor, not relabelled as565-pin runs; new app/bootstrap independently checked. QA oct04_wizard_extraction_latest_dev_integration preserves maps/receipts/limits and prior native/reader/MRO/W003 anchors. No broad wizard/full-suite/fullLibrary/Architecture A-B/newnative/Auth/livekey/server claim or guard/getter/marker/cap override. Remain In Progress pending fresh exact-head all5checks/resolved cleanQodo, then final Done metadata and protected normalmerge; auto off.
+
+Final published-head qualification on 9ce818ea85f750826c6e75eaa1fe11ee474d3990: all five hosted checks (including both UI matrix shards) (PR Fast Lane, UI Fast Lane, Derived Artifacts and UI latency guardrails) pass; exact-head Qodo reports zero active bugs/rule violations/cross-repo conflicts and every review thread is resolved. Latest dev is a1571e86db29440c8bb3616f6c8ae25925b8ee7d; all 565 source pins match the reviewed/qualified tree. Mark Done only after these verified gates. Protected normal merge and fresh checks/review on the final task-metadata head remain required.
 <!-- SECTION:NOTES:END -->
