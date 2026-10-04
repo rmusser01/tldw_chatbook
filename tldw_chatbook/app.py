@@ -1,4 +1,3 @@
-
 # ADR-126: fence recovery and enroll before any runtime/config imports.
 from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
 
@@ -147,6 +146,7 @@ from tldw_chatbook.Home.active_work_adapter import (
     HomeControlResult,
     UnavailableHomeActiveWorkAdapter,
 )
+
 # TASK-33011: the Library ingest queue (``LibraryIngestQueueMixin`` and its
 # module-level helpers) lives in ``app_ingest_queue.py``. It is a base class of
 # ``TldwCli``, so it is imported eagerly. The private helpers are re-exported
@@ -330,6 +330,7 @@ from tldw_chatbook.Media import (  # noqa: E402
 from tldw_chatbook.Prompt_Management.prompt_scope_service import (  # noqa: E402
     build_prompt_scope_service,
 )
+
 # NOTE (boot budget, ADR-097): `Workspaces.agent_provisioning` is imported
 # lazily inside `_wire_workspace_agent_provisioning` (in
 # `app_service_wiring.py`; itself deferred to a post-ready timer) so it stays
@@ -350,6 +351,7 @@ from tldw_chatbook.runtime_policy.engine import PolicyEngine  # noqa: E402
 from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer  # noqa: E402
 from tldw_chatbook.runtime_policy.registry import CAPABILITY_REGISTRY  # noqa: E402
 from tldw_chatbook.runtime_policy.types import PolicyDecision, RuntimeSourceState  # noqa: E402
+
 # TASK-33011: TldwCli's service composition (the lazy service properties, the
 # ``_wire_*`` methods and their Notes-sync/Collections-capture helpers) lives in
 # ``app_service_wiring.py``. It is a base class of ``TldwCli``, so it is imported
@@ -366,10 +368,12 @@ from tldw_chatbook.app_service_wiring import (
     _resolve_collections_note_reference,  # noqa: F401 -- re-export
     _wire_notes_sync_services,
 )
+
 # TASK-33011: TldwCli's lifecycle, shutdown and quit flow lives in
 # ``app_lifecycle.py`` (``LifecycleMixin``), a base class of ``TldwCli``.
 from tldw_chatbook.app_lifecycle import LifecycleMixin, _DIAGNOSTICS_COMPONENT_APP
 from tldw_chatbook.app_navigation import NavigationMixin
+
 # TASK-33011: the command-palette providers (and their key-display helpers) live in
 # ``app_command_providers.py``. ``TldwCli.COMMANDS`` names the classes, so they are
 # imported eagerly and re-exported here for callers that import them from app.py.
@@ -652,11 +656,6 @@ def _usable_cpu_count() -> int:
     return max(1, os.cpu_count() or 1)
 
 
-
-
-
-
-
 # Home's open-eval-runs feed queries pending and failed statuses separately;
 # this cap bounds both queries (a count, not a listing -- anything beyond it
 # still reads as "runs need attention").
@@ -671,8 +670,6 @@ _HOME_EVAL_RUN_QUERY_LIMIT = 50
 APP_CONFIG = load_settings()
 
 # Early logging configuration removed - handled by configure_application_logging() during app initialization
-
-
 
 
 # --- Main App ---
@@ -722,10 +719,6 @@ def _build_notes_scope_service(
         sync_scope_service=sync_scope_service,
         folder_repository=folder_repository,
     )
-
-
-
-
 
 
 def _select_profile_database(notes_service: object | None) -> Any:
@@ -884,9 +877,7 @@ class TldwCli(
         if not saved:
             # A profile whose config cannot be written still gets the correct
             # in-memory lifecycle for this run; boot must not fail over it.
-            logger.warning(
-                "Could not stamp the Library lifecycle for a new profile."
-            )
+            logger.warning("Could not stamp the Library lifecycle for a new profile.")
 
     def _get_default_css(self) -> list[tuple[tuple[str, str], str, int, str]]:
         """Add the consolidated widget-defaults stylesheet as one CSS source.
@@ -1020,14 +1011,12 @@ class TldwCli(
     last_note_import_dir: Optional[Path] = None
     # Add attributes to hold the handlers (optional, but can be useful)
 
-
     llamacpp_server_process: Optional[subprocess.Popen] = None
     llamafile_server_process: Optional[subprocess.Popen] = None
     vllm_server_process: Optional[subprocess.Popen] = None
     ollama_server_process: Optional[subprocess.Popen] = None
     mlx_server_process: Optional[subprocess.Popen] = None
     onnx_server_process: Optional[subprocess.Popen] = None
-
 
     # User ID for notes, will be initialized in __init__
     current_user_id: str = "default_user"  # Will be overridden by self.notes_user_id
@@ -1443,9 +1432,7 @@ class TldwCli(
         # composes every authority owner and attaches one complete guard.
         self.tool_pack_service: Any | None = None
         self.tool_pack_service_unavailable_reason: str | None = "not_ready"
-        self.tool_pack_receipt_reconciliation_unavailable_reason: str | None = (
-            "not_run"
-        )
+        self.tool_pack_receipt_reconciliation_unavailable_reason: str | None = "not_run"
         self._tool_pack_wiring_started = False
         self._tool_pack_composition_worker: Worker | None = None
         self._tool_profile_operations = None
@@ -1807,15 +1794,20 @@ class TldwCli(
 
         def counts():
             return {
-                "pending": len(list_runs(status="pending", limit=_HOME_EVAL_RUN_QUERY_LIMIT)),
-                "failed": len(list_runs(status="failed", limit=_HOME_EVAL_RUN_QUERY_LIMIT)),
+                "pending": len(
+                    list_runs(status="pending", limit=_HOME_EVAL_RUN_QUERY_LIMIT)
+                ),
+                "failed": len(
+                    list_runs(status="failed", limit=_HOME_EVAL_RUN_QUERY_LIMIT)
+                ),
             }
 
         try:
             if (
                 type(service) is LocalEvaluationsService
                 and type(service.db) is EvalsDB
-                and getattr(list_runs, "__func__", None) is LocalEvaluationsService.list_runs
+                and getattr(list_runs, "__func__", None)
+                is LocalEvaluationsService.list_runs
             ):
                 return run_finite_local_worker(counts)
             return counts()
@@ -1838,7 +1830,8 @@ class TldwCli(
         try:
             if (
                 type(db) is MediaDatabase
-                and getattr(counter, "__func__", None) is MediaDatabase.count_read_it_later_media
+                and getattr(counter, "__func__", None)
+                is MediaDatabase.count_read_it_later_media
             ):
                 return int(run_finite_local_worker(counter))
             return int(counter())
@@ -2215,7 +2208,6 @@ class TldwCli(
 
         # Initialize current log widget reference
         self._current_log_widget = None
-
 
     def _setup_logging(self):
         """Set up logging for the application.
@@ -2902,7 +2894,9 @@ class TldwCli(
         before; only real navigation -- dispatched through this handler --
         gains the fix.
         """
-        if getattr(self, "_screen_navigation_paused", False) or getattr(self, "_shutting_down", False):
+        if getattr(self, "_screen_navigation_paused", False) or getattr(
+            self, "_shutting_down", False
+        ):
             return
         worker = self.run_worker(
             self._run_admitted_screen_navigation(message),
@@ -2911,7 +2905,8 @@ class TldwCli(
             exit_on_error=False,
         )
         self._screen_navigation_workers = {
-            prior for prior in getattr(self, "_screen_navigation_workers", ())
+            prior
+            for prior in getattr(self, "_screen_navigation_workers", ())
             if not prior.is_finished
         }
         self._screen_navigation_workers.add(worker)
@@ -2960,7 +2955,6 @@ class TldwCli(
     @on(TTSProgressEvent)
     async def handle_tts_progress_event(self, event: TTSProgressEvent) -> None:
         return await _speech().handle_tts_progress_event(self, event)
-
 
     @on(TTSPlaybackEvent)
     async def handle_tts_playback_event(self, event: TTSPlaybackEvent) -> None:
@@ -3512,9 +3506,7 @@ class TldwCli(
         client = self.served_canvas_control
         if client is None or self._served_canvas_control_start_task is not None:
             return
-        task = asyncio.create_task(
-            client.start(), name="start_served_canvas_control"
-        )
+        task = asyncio.create_task(client.start(), name="start_served_canvas_control")
         self._served_canvas_control_start_task = task
 
         def observe(completed: asyncio.Task[None]) -> None:
@@ -3712,9 +3704,7 @@ class TldwCli(
 
         app_config = self.app_config
         if isinstance(app_config, dict):
-            app_config.setdefault(WIZARD_STATE_SECTION, {})[
-                ENV_KEY_NOTICE_KEY
-            ] = True
+            app_config.setdefault(WIZARD_STATE_SECTION, {})[ENV_KEY_NOTICE_KEY] = True
 
         def _write() -> None:
             from tldw_chatbook.config import save_settings_to_cli_config
@@ -3735,9 +3725,7 @@ class TldwCli(
                     "(category=persistence, error_type=save_returned_false)"
                 )
 
-        self.run_worker(
-            _write, thread=True, group="first-run-env-key-notice-flag"
-        )
+        self.run_worker(_write, thread=True, group="first-run-env-key-notice-flag")
 
     def _push_first_run_wizard(self) -> None:
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
@@ -4101,11 +4089,8 @@ class TldwCli(
                 )
                 if callable(apply_chrome):
                     apply_chrome()
-            self._schedule_startup_model_catalog_refresh(
-                after_setup_completion=True
-            )
+            self._schedule_startup_model_catalog_refresh(after_setup_completion=True)
             return
-
 
         if completed is not True:
             self.post_message(NavigateToScreen(exit_route, screen_context))
@@ -4170,7 +4155,6 @@ class TldwCli(
         except Exception as exc:
             self.notify(f"Failed to open setup wizard: {exc}", severity="error")
 
-
     async def _push_initial_screen(self) -> None:
         """Push the configured initial screen for screen-based navigation startup."""
         if getattr(self, "_initial_screen_pushed", False):
@@ -4200,7 +4184,6 @@ class TldwCli(
                 if cause is not None:
                     message += f": {type(cause).__name__}: {cause}"
                 raise RuntimeError(message) from cause
-
 
         # TASK-24459: an initial tab of schedules/evals needs its split-off
         # feature CSS exactly like an in-app navigation does.
@@ -4683,7 +4666,9 @@ class TldwCli(
         def start_subscriptions_fts_backfill() -> Worker | None:
             from tldw_chatbook.Backup_Recovery.activation import execution_allowed
 
-            if not execution_allowed(("db.subscriptions",), get_subscriptions_db_path()):
+            if not execution_allowed(
+                ("db.subscriptions",), get_subscriptions_db_path()
+            ):
                 return None
             # task-688: index subscription_items rows scraped before the FTS5
             # index existed, so search covers a user's whole back catalogue
@@ -4760,7 +4745,10 @@ class TldwCli(
                 try:
                     worker = self._start_boot_worker(key)
                 except Exception as error:
-                    if isinstance(error, RecoveryRequired) and str(error) == "storage_locally_paused":
+                    if (
+                        isinstance(error, RecoveryRequired)
+                        and str(error) == "storage_locally_paused"
+                    ):
                         # Native intent can arrive after admission but before a
                         # starter reads its config. Retain all unstarted keys;
                         # the existing reconcile timer retries after readmission.
@@ -5017,8 +5005,12 @@ class TldwCli(
                 )
                 if migration is None or not migration.ready:
                     return
-                from tldw_chatbook.Chat.citation_legacy_migration import CitationLegacyMigrationService
-                from tldw_chatbook.Chat.citation_trace_repository import CitationTraceRepository
+                from tldw_chatbook.Chat.citation_legacy_migration import (
+                    CitationLegacyMigrationService,
+                )
+                from tldw_chatbook.Chat.citation_trace_repository import (
+                    CitationTraceRepository,
+                )
 
                 repository = getattr(migration, "repository", None)
                 db = getattr(migration, "db", None)
@@ -5570,7 +5562,6 @@ class TldwCli(
             notify()
         except Exception:  # noqa: BLE001 -- a focus nudge must never crash the app
             logger.warning("app: terminal-focus-regained forwarding failed")
-
 
     ########################################################################
     #

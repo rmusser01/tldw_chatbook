@@ -2875,8 +2875,8 @@ class LibraryNotesController:
         identity = self._remember_library_notes_responsive_focus(identity)
         self._transition_library_notes_presentation(compact, identity)
     def _mark_library_notes_user_interaction(self) -> None:
-        """End resize suppression only when a real input event can own changes."""
-        self._library_notes_resize_settling = False
+        """Real input ends resize suppression and a leaked restore guard (TASK-32171)."""
+        self._library_notes_resize_settling = self._library_notes_restoring_focus = False
     def _apply_library_notes_footer_context(self) -> None:
         """Persist region help and hide only compact Notes ancillary indicators."""
         shortcuts = self._library_notes_footer_shortcuts()

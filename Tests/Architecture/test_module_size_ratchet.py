@@ -75,7 +75,10 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app.py": 5712,
     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
     # 4,999 lines it is larger than two rows below, so it is born governed.
-    "tldw_chatbook/app_ingest_queue.py": 4999,
+    # 2026-10-03 (PR #2993): TASK-20973's provenance block added 16 lines;
+    # the signature probe moved beside the poller's other pure helpers in
+    # Library/server_ingest_reconcile.py: 5,015 -> 4,985.
+    "tldw_chatbook/app_ingest_queue.py": 4985,
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
@@ -99,11 +102,16 @@ _BUDGETS: dict[str, int] = {
     # TASK-33622.14: the aggregate Roleplay draft guard moved to
     # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
     # over this row; the move brings it to 16,397).
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16397,
+    # 2026-10-03 (PR #2993, owner decision): +128 is formatter reflow only
+    # (TASK-26000 series, Ruff 0.15.22; the file is AST-identical to the
+    # 16,397-line version), so the row is re-measured, not grown.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16525,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7764,
+    # 2026-10-03 (PR #2993, owner decision): re-measured at 7,811 after the
+    # same formatter reflow (+60 over dev's 7,751, AST-identical).
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7811,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

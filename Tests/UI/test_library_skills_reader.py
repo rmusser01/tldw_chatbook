@@ -109,9 +109,7 @@ async def test_skills_mount_three_retained_roles_and_default_to_overview(
         assert screen.query_one("#library-skill-overview-region").display is True
         assert work.is_mounted and work.display
 
-        selected_row = screen.query_one(
-            "#library-skill-row-release-notes", Button
-        )
+        selected_row = screen.query_one("#library-skill-row-release-notes", Button)
         assert selected_row.has_class("is-selected")
         assert str(selected_row.label).startswith("› ")
 

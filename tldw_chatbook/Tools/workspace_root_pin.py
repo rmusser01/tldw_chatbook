@@ -145,7 +145,10 @@ def _pin_posix(locator: Path, expected: DirectoryIdentity) -> PinnedWorkspaceRoo
         if _posix_identity(root_fd) != expected:
             raise WorkspaceRootPinError("workspace root identity mismatch")
         os.fchdir(root_fd)
-        if directory_identity_from_stat(os.stat(".", follow_symlinks=False)) != expected:
+        if (
+            directory_identity_from_stat(os.stat(".", follow_symlinks=False))
+            != expected
+        ):
             raise WorkspaceRootPinError("workspace root identity mismatch")
         return PinnedWorkspaceRoot(
             canonical_locator=locator,
@@ -195,7 +198,9 @@ def _pin_windows(locator: Path, expected: DirectoryIdentity) -> PinnedWorkspaceR
         if (identity.device, identity.inode) != (expected.device, expected.inode):
             raise WorkspaceRootPinError("workspace root identity mismatch")
         _windows_set_current_directory(str(locator))
-        verification, verified_identity, verified_reparse = _windows_open_directory(Path("."))
+        verification, verified_identity, verified_reparse = _windows_open_directory(
+            Path(".")
+        )
         try:
             if verified_reparse or (
                 verified_identity.device,

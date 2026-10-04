@@ -286,12 +286,19 @@ def test_raw_getters_read_the_requested_profile_without_seeding(tmp_path):
     store.ensure_profile("portable")
     store.set_global_default("deny", profile_id="portable")
     store.set_server_default("local:docs", "ask", profile_id="portable")
-    store.set_tool_state("local:docs", "search", "allow", definition_hash="a" * 64, profile_id="portable")
+    store.set_tool_state(
+        "local:docs", "search", "allow", definition_hash="a" * 64, profile_id="portable"
+    )
     before_bytes = path.read_bytes()
 
     assert store.get_global_default(profile_id="portable") == "deny"
-    assert store.get_server_entry("local:docs", profile_id="portable")["default"] == "ask"
-    assert store.get_tool_entry("local:docs", "search", profile_id="portable")["state"] == "allow"
+    assert (
+        store.get_server_entry("local:docs", profile_id="portable")["default"] == "ask"
+    )
+    assert (
+        store.get_tool_entry("local:docs", "search", profile_id="portable")["state"]
+        == "allow"
+    )
     assert store.get_server_entry("local:missing", profile_id="unseeded") is None
     assert path.read_bytes() == before_bytes
 
@@ -481,9 +488,7 @@ def test_high_risk_tag_floors_inherited_allow_to_ask():
 
 
 def test_explicit_tool_override_allow_is_not_floored():
-    eff = resolve_builtin_state(
-        _payload(tool_state="allow"), _ref(tags=("mutates",))
-    )
+    eff = resolve_builtin_state(_payload(tool_state="allow"), _ref(tags=("mutates",)))
     assert eff.state == "allow"
     assert eff.origin == "tool_override"
     assert eff.risk_floored is False
@@ -534,9 +539,15 @@ def test_mcp_resolver_is_unaffected_by_the_builtin_floor():
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 
     tool = HubTool(
-        server_key="local:x", server_label="x", source="local",
-        name="t", description="d", input_schema=None, tags=(),
-        stale=False, executable=True,
+        server_key="local:x",
+        server_label="x",
+        source="local",
+        name="t",
+        description="d",
+        input_schema=None,
+        tags=(),
+        stale=False,
+        executable=True,
     )
     assert resolve_effective_state({}, tool).state == "ask"
 
@@ -559,7 +570,9 @@ def test_hash_free_keys_contains_exactly_the_builtin_namespace():
     the real weakening" guarantee still holds with two members."""
     from tldw_chatbook.MCP.readiness import BUILTIN_SERVER_KEY
 
-    assert HASH_FREE_SERVER_KEYS == frozenset({BUILTIN_TOOL_SERVER_KEY, BUILTIN_SERVER_KEY})
+    assert HASH_FREE_SERVER_KEYS == frozenset(
+        {BUILTIN_TOOL_SERVER_KEY, BUILTIN_SERVER_KEY}
+    )
 
 
 def test_builtin_server_is_hash_free():
@@ -809,9 +822,15 @@ def test_reads_tag_does_not_floor_an_mcp_tool():
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 
     tool = HubTool(
-        server_key="local:x", server_label="x", source="local",
-        name="t", description="d", input_schema=None, tags=("reads",),
-        stale=False, executable=True,
+        server_key="local:x",
+        server_label="x",
+        source="local",
+        name="t",
+        description="d",
+        input_schema=None,
+        tags=("reads",),
+        stale=False,
+        executable=True,
     )
     eff = resolve_effective_state(_payload(global_default="allow"), tool)
     assert eff.state == "allow"
@@ -826,9 +845,15 @@ def test_mutates_still_floors_an_mcp_tool():
     from tldw_chatbook.MCP.hub_tool_catalog import HubTool
 
     tool = HubTool(
-        server_key="local:x", server_label="x", source="local",
-        name="t", description="d", input_schema=None, tags=("mutates",),
-        stale=False, executable=True,
+        server_key="local:x",
+        server_label="x",
+        source="local",
+        name="t",
+        description="d",
+        input_schema=None,
+        tags=("mutates",),
+        stale=False,
+        executable=True,
     )
     eff = resolve_effective_state(_payload(global_default="allow"), tool)
     assert eff.state == "ask"
@@ -838,9 +863,7 @@ def test_mutates_still_floors_an_mcp_tool():
 def test_explicit_builtin_tool_override_beats_the_reads_floor():
     """An explicit user choice is still not floored -- same rule the
     `mutates` path already follows."""
-    eff = resolve_builtin_state(
-        _payload(tool_state="allow"), _ref(tags=("reads",))
-    )
+    eff = resolve_builtin_state(_payload(tool_state="allow"), _ref(tags=("reads",)))
     assert eff.state == "allow"
     assert eff.origin == "tool_override"
     assert eff.risk_floored is False
@@ -885,13 +908,17 @@ def test_mutators_write_only_the_named_profile(store):
     store.ensure_profile("ws-w-1")
     store.set_tool_state("local:__local__", "fs_write", "deny", profile_id="ws-w-1")
     payload = store.load()
-    named = payload["profiles"]["ws-w-1"]["servers"]["local:__local__"]["tools"]["fs_write"]
+    named = payload["profiles"]["ws-w-1"]["servers"]["local:__local__"]["tools"][
+        "fs_write"
+    ]
     assert named["state"] == "deny"
     assert "local:__local__" not in payload["profiles"]["default"]["servers"]
 
 
 def test_resolver_inherits_level_by_level(store):
-    store.set_tool_state(PROFILE_TEST_SERVER_KEY, "fs_read", "allow", definition_hash=None)
+    store.set_tool_state(
+        PROFILE_TEST_SERVER_KEY, "fs_read", "allow", definition_hash=None
+    )
     store.set_server_default(PROFILE_TEST_SERVER_KEY, "ask", profile_id="ws-w-1")
     payload = store.load()
     # named server default beats default-profile tool override (per-level chain)
@@ -977,9 +1004,7 @@ def test_arg_rule_field_glob_patterns_match_one_field(tmp_path) -> None:
         {
             "field": "query",
             "pattern": "docs *",
-            "definition_hash": definition_hash(
-                tool.description, tool.input_schema
-            ),
+            "definition_hash": definition_hash(tool.description, tool.input_schema),
         }
     ]
 
@@ -1088,9 +1113,7 @@ def test_list_tool_arg_rules_omits_hand_written_field_pattern_rules(tmp_path) ->
         {
             "field": "query",
             "pattern": "docs *",
-            "definition_hash": definition_hash(
-                tool.description, tool.input_schema
-            ),
+            "definition_hash": definition_hash(tool.description, tool.input_schema),
         }
     ]
     store.save(payload)
@@ -1197,8 +1220,12 @@ def test_remove_tool_arg_rule_only_deletes_the_matching_rule(tmp_path) -> None:
         definition_hash=definition_hash(tool.description, tool.input_schema),
     )
     rules = store.list_tool_arg_rules("srv", "search")
-    keep_id = next(r["rule_id"] for r in rules if json.loads(r["args_json"])["query"] == "y")
-    remove_id = next(r["rule_id"] for r in rules if json.loads(r["args_json"])["query"] == "x")
+    keep_id = next(
+        r["rule_id"] for r in rules if json.loads(r["args_json"])["query"] == "y"
+    )
+    remove_id = next(
+        r["rule_id"] for r in rules if json.loads(r["args_json"])["query"] == "x"
+    )
 
     assert store.remove_tool_arg_rule("srv", "search", remove_id) is True
 
@@ -1323,9 +1350,7 @@ def test_list_tool_arg_rules_lists_an_inherited_rule_with_its_owner(
     assert rules[0]["profile_id"] == "default"
     assert json.loads(rules[0]["args_json"]) == {"query": "x"}
     # A rule stored in the reviewed profile names that profile, not an ancestor.
-    assert (
-        store.list_tool_arg_rules("srv", "search")[0]["profile_id"] == "default"
-    )
+    assert store.list_tool_arg_rules("srv", "search")[0]["profile_id"] == "default"
 
 
 def test_removing_an_inherited_rule_targets_its_owning_profile(tmp_path) -> None:
@@ -1350,9 +1375,7 @@ def test_removing_an_inherited_rule_targets_its_owning_profile(tmp_path) -> None
 
     # Aiming at the reviewed profile changes nothing (the pre-fix behaviour).
     assert (
-        store.remove_tool_arg_rule(
-            "srv", "search", rule["rule_id"], profile_id="child"
-        )
+        store.remove_tool_arg_rule("srv", "search", rule["rule_id"], profile_id="child")
         is False
     )
     assert arg_rule_allows(store.load(), tool, {"query": "x"}, profile_id="child")

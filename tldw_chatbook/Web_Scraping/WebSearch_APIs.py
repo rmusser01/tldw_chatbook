@@ -139,7 +139,10 @@ def _safe_search_error(error: Exception) -> str:
         "connection": "Could not connect to the search provider.",
         "timeout": "Search request timed out.",
         "http": "Search provider returned an HTTP error.",
-    }.get(_search_error_kind(error), "Search request failed. Check the configured backend.")
+    }.get(
+        _search_error_kind(error),
+        "Search request failed. Check the configured backend.",
+    )
 
 
 def _set_search_processing_error(output: dict) -> None:
@@ -148,11 +151,13 @@ def _set_search_processing_error(output: dict) -> None:
     if kind not in ("auth", "rate_limit", "connection", "timeout", "http", "request"):
         kind = "response"
     output.clear()
-    output.update({
-        "results": [],
-        "processing_error": "Search provider returned an invalid response.",
-        "error_kind": kind,
-    })
+    output.update(
+        {
+            "results": [],
+            "processing_error": "Search provider returned an invalid response.",
+            "error_kind": kind,
+        }
+    )
 
 
 # Common error handling and retry mechanisms
@@ -260,7 +265,11 @@ def initialize_config() -> dict[str, dict[str, Any]]:
     config_data = load_settings()
     raw = load_cli_config_and_ensure_existence()
     search_engines = {}
-    for section in ("search_engine_specific_settings", "search_engines_keys", "SearchEngines"):
+    for section in (
+        "search_engine_specific_settings",
+        "search_engines_keys",
+        "SearchEngines",
+    ):
         search_engines.update(config_data.get(section, {}))
     search_engines.update(raw.get("SearchEngines", {}))
     for backend in BACKENDS:
@@ -325,7 +334,9 @@ def _sanitize_sub_questions(raw_values: Any) -> List[str]:
         dropped (first occurrence wins).
     """
     if isinstance(raw_values, dict):
-        raw_values = raw_values.get("sub_questions", raw_values.get("search_queries", []))
+        raw_values = raw_values.get(
+            "sub_questions", raw_values.get("search_queries", [])
+        )
 
     if isinstance(raw_values, str):
         candidates: List[Any] = [raw_values]
@@ -548,7 +559,9 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
     sub_queries = _sanitize_sub_questions(sub_query_dict.get("sub_questions", []))
     question_key = question.strip().casefold()
     sub_queries = [
-        sub_query for sub_query in sub_queries if sub_query.strip().casefold() != question_key
+        sub_query
+        for sub_query in sub_queries
+        if sub_query.strip().casefold() != question_key
     ]
 
     # Cap total fan-out at search_default_max_queries (final review,
@@ -590,15 +603,18 @@ def generate_and_search(question: str, search_params: Dict) -> Dict:
     phase1_start = time.monotonic()
     phase1_budget_raw = search_params.get("phase1_time_budget_s")
     try:
-        phase1_budget = float(phase1_budget_raw) if phase1_budget_raw is not None else None
+        phase1_budget = (
+            float(phase1_budget_raw) if phase1_budget_raw is not None else None
+        )
     except (TypeError, ValueError):
         phase1_budget = None
 
     for n, q in enumerate(all_queries):
-        if phase1_budget is not None and (time.monotonic() - phase1_start) >= phase1_budget:
-            warning = (
-                f"deadline reached during search fan-out; searched {n} of {len(all_queries)} queries"
-            )
+        if (
+            phase1_budget is not None
+            and (time.monotonic() - phase1_start) >= phase1_budget
+        ):
+            warning = f"deadline reached during search fan-out; searched {n} of {len(all_queries)} queries"
             logger.warning(warning)
             web_search_results_dict["warnings"].append(warning)
             break
@@ -741,8 +757,12 @@ async def analyze_and_aggregate(
     # 4. Score/filter results
     logger.info("Scoring and filtering search results")
     sub_questions = sub_query_dict.get("sub_questions", [])
-    relevance_llm_timeout_s = float(search_params.get("relevance_llm_timeout_s", 30.0) or 30.0)
-    relevance_scrape_timeout_s = float(search_params.get("relevance_scrape_timeout_s", 30.0) or 30.0)
+    relevance_llm_timeout_s = float(
+        search_params.get("relevance_llm_timeout_s", 30.0) or 30.0
+    )
+    relevance_scrape_timeout_s = float(
+        search_params.get("relevance_scrape_timeout_s", 30.0) or 30.0
+    )
     # task-3260: default False when the key is absent -- the dead-wired
     # research-service caller (never sets this) keeps today's no-robots-
     # check behavior; web_deep_search (the tool) always places the real
@@ -919,9 +939,7 @@ def _credentialed_search_request(
                 continue
             collected += chunk
             if len(collected) > max_bytes:
-                raise EgressFetchError(
-                    f"response exceeds {max_bytes} bytes", url=url
-                )
+                raise EgressFetchError(f"response exceeds {max_bytes} bytes", url=url)
     finally:
         close = getattr(response, "close", None)
         if close is not None:
@@ -929,8 +947,6 @@ def _credentialed_search_request(
     response._content = bytes(collected)
     response._content_consumed = True
     return response
-
-
 
 
 def analyze_question(question: str, api_endpoint) -> Dict:
@@ -1388,7 +1404,9 @@ async def search_result_relevance(
                             # getting to run promptly.
                             is_public = await asyncio.wait_for(
                                 asyncio.get_running_loop().run_in_executor(
-                                    _get_dns_guard_executor(), is_public_http_url, result["url"]
+                                    _get_dns_guard_executor(),
+                                    is_public_http_url,
+                                    result["url"],
                                 ),
                                 timeout=scrape_timeout_s,
                             )
@@ -1446,7 +1464,10 @@ async def search_result_relevance(
                                     # result via its existing fallback
                                     # content (never discard). Log names the
                                     # HOST only, never the query.
-                                    host = urlparse(result.get("url") or "").hostname or "unknown"
+                                    host = (
+                                        urlparse(result.get("url") or "").hostname
+                                        or "unknown"
+                                    )
                                     logger.debug(
                                         f"Skipping scrape for result {result_id}: "
                                         f"robots.txt disallows {host!r}; falling "
@@ -1454,11 +1475,14 @@ async def search_result_relevance(
                                     )
                                 else:
                                     scraped_content = await asyncio.wait_for(
-                                        scrape_article(result["url"]), timeout=scrape_timeout_s
+                                        scrape_article(result["url"]),
+                                        timeout=scrape_timeout_s,
                                     )
                                     scraped_text = ""
                                     if isinstance(scraped_content, dict):
-                                        scraped_text = str(scraped_content.get("content") or "").strip()
+                                        scraped_text = str(
+                                            scraped_content.get("content") or ""
+                                        ).strip()
                                     elif isinstance(scraped_content, str):
                                         scraped_text = scraped_content.strip()
                                     if scraped_text:
@@ -1509,7 +1533,9 @@ async def search_result_relevance(
 
                         summary = None
                         try:
-                            summary = await asyncio.wait_for(_summ_call(), timeout=llm_timeout_s)
+                            summary = await asyncio.wait_for(
+                                _summ_call(), timeout=llm_timeout_s
+                            )
                         except asyncio.CancelledError:
                             raise
                         except Exception as summ_error:
@@ -1524,7 +1550,9 @@ async def search_result_relevance(
                         # "Llama: Error occurred while ..." and used to be
                         # stored here AS the evidence (task-17382).
                         if _is_summary_failure(summary) or not summary:
-                            summary = source_content[:2000] or "Summary generation failed"
+                            summary = (
+                                source_content[:2000] or "Summary generation failed"
+                            )
 
                         relevant_results[result_id] = {
                             "content": summary,  # Store the summary instead of full content
@@ -1609,11 +1637,16 @@ def review_and_select_results(
         return {}
 
     results_list = web_search_results_dict.get("results")
-    is_results_shape = "results" in web_search_results_dict and isinstance(results_list, list)
+    is_results_shape = "results" in web_search_results_dict and isinstance(
+        results_list, list
+    )
 
     if is_results_shape:
         candidates = [
-            (str(result.get("id", idx)) if isinstance(result, dict) else str(idx), result)
+            (
+                str(result.get("id", idx)) if isinstance(result, dict) else str(idx),
+                result,
+            )
             for idx, result in enumerate(results_list)
             if isinstance(result, dict)
         ]
@@ -1747,7 +1780,9 @@ def _estimate_confidence(
     if relevant_count <= 0:
         return 0.0
     coverage = min(relevant_count, 10) / 10.0
-    chunk_success = 1.0 if chunk_count == 0 else (chunk_count - failed_chunks) / chunk_count
+    chunk_success = (
+        1.0 if chunk_count == 0 else (chunk_count - failed_chunks) / chunk_count
+    )
     base = 0.35 + 0.45 * coverage
     modifier = 0.6 + 0.4 * chunk_success
     llm_bonus = 0.1 if has_llm and failed_chunks == 0 else (0.05 if has_llm else 0.0)
@@ -1837,7 +1872,9 @@ def aggregate_results(
     concatenated_texts = "\n\n".join(entry_texts)
 
     if not api_endpoint:
-        logger.warning("No final answer LLM configured; returning evidence summaries only.")
+        logger.warning(
+            "No final answer LLM configured; returning evidence summaries only."
+        )
         chunk_metadata = [
             {
                 "chunk_index": info["index"],
@@ -1853,7 +1890,8 @@ def aggregate_results(
             str(res.get("content") or "") for _, res in relevant_results.items()
         )
         fallback_answer: FinalAnswerDict = {
-            "text": combined_text or "Unable to generate a final answer without an LLM.",
+            "text": combined_text
+            or "Unable to generate a final answer without an LLM.",
             "evidence": evidence_payload,
             "confidence": _estimate_confidence(
                 len(evidence_payload), len(chunk_infos), 0, has_llm=False
@@ -1903,7 +1941,7 @@ def aggregate_results(
                 "3. Mention the reasoning notes when helpful.\n"
                 "4. Preserve all [n] citation markers exactly as they appear; "
                 "never renumber, merge, or drop them.\n\n"
-                f"<chunk index=\"{info['index']}\">\n{info['text']}\n</chunk>"
+                f'<chunk index="{info["index"]}">\n{info["text"]}\n</chunk>'
             )
             chunk_used_fallback = False
             try:
@@ -2250,7 +2288,9 @@ def perform_websearch(
             )
 
             if web_search_results_dict.get("processing_error"):
-                web_search_results_dict["processing_error"] = "Search provider returned an invalid response."
+                web_search_results_dict["processing_error"] = (
+                    "Search provider returned an invalid response."
+                )
             return web_search_results_dict
 
         elif search_engine.lower() == "kagi":
@@ -2311,7 +2351,9 @@ def perform_websearch(
         )
 
         if web_search_results_dict.get("processing_error"):
-            web_search_results_dict["processing_error"] = "Search provider returned an invalid response."
+            web_search_results_dict["processing_error"] = (
+                "Search provider returned an invalid response."
+            )
         return web_search_results_dict
 
     except Exception as e:
@@ -2331,7 +2373,10 @@ def perform_websearch(
             labels={"engine": search_engine.lower(), "error_type": type(e).__name__},
         )
 
-        return {"processing_error": _safe_search_error(e), "error_kind": _search_error_kind(e)}
+        return {
+            "processing_error": _safe_search_error(e),
+            "error_kind": _search_error_kind(e),
+        }
 
 
 def test_perform_websearch_google():
@@ -2482,7 +2527,9 @@ def test_perform_websearch_yandex():
 #
 
 
-def process_web_search_results(search_results: Union[Dict, str], search_engine: str) -> Dict:
+def process_web_search_results(
+    search_results: Union[Dict, str], search_engine: str
+) -> Dict:
     """
     Process raw search results into standardized format.
 
@@ -2579,7 +2626,9 @@ def process_web_search_results(search_results: Union[Dict, str], search_engine: 
     if not isinstance(search_results, dict) and not (
         isinstance(search_results, str) and search_engine.lower() in ("tavily", "searx")
     ):
-        raise TypeError("search_results must be a dictionary (or a string for tavily/searx)")
+        raise TypeError(
+            "search_results must be a dictionary (or a string for tavily/searx)"
+        )
 
     # Only a dict carries this request-echo metadata; a string payload (see
     # above) has none of it, so every field below falls back to its default.
@@ -2638,7 +2687,9 @@ def process_web_search_results(search_results: Union[Dict, str], search_engine: 
     except Exception:  # noqa: BLE001 - public parser boundary receives untrusted provider data.
         _set_search_processing_error(web_search_results_dict)
 
-    if web_search_results_dict.get("processing_error") or web_search_results_dict.get("error"):
+    if web_search_results_dict.get("processing_error") or web_search_results_dict.get(
+        "error"
+    ):
         _set_search_processing_error(web_search_results_dict)
         logger.error("Search provider returned an invalid response")
     return web_search_results_dict
@@ -2753,9 +2804,7 @@ def search_web_bing(
 
     # Get default country from config if not provided
     if not bing_country:
-        bing_country = search_settings.get(
-            "bing_country_code", "US"
-        )
+        bing_country = search_settings.get("bing_country_code", "US")
 
     # Construct market code (language-COUNTRY format)
     mkt = f"{bing_lang}-{bing_country}"
@@ -2801,7 +2850,6 @@ def search_web_bing(
             timeout=10,
         )
         response.raise_for_status()
-
 
         try:
             bing_search_results = response.json()
@@ -3008,7 +3056,11 @@ def search_web_brave(
     if search_type not in ("web", "ai"):
         raise ValueError("Invalid search type. Please choose 'ai' or 'web'.")
     if not brave_api_key:
-        key_name = "brave_search_api_key" if search_type == "web" else "brave_search_ai_api_key"
+        key_name = (
+            "brave_search_api_key"
+            if search_type == "web"
+            else "brave_search_ai_api_key"
+        )
         brave_api_key = search_settings.get(key_name, "")
     if not brave_api_key:
         raise ValueError("Please provide a valid Brave Search API subscription key")
@@ -3024,7 +3076,9 @@ def search_web_brave(
         "country": country,
         "search_lang": search_lang or "en",
         "count": result_count or 10,
-        "safesearch": "moderate" if safesearch == "active" else safesearch or "moderate",
+        "safesearch": "moderate"
+        if safesearch == "active"
+        else safesearch or "moderate",
         "result_filter": result_filter or "web",
     }
     if ui_lang and "-" in ui_lang:
@@ -3198,7 +3252,12 @@ def search_web_duckduckgo(
     for _ in range(5):
         # task-3060: bound worst-case latency per bootstrap/pagination call
         # (this loop can issue up to 5 requests.post calls, all this one site).
-        response = requests.post("https://html.duckduckgo.com/html", data=payload, timeout=SEARCH_BACKEND_TIMEOUT_S, verify=requests_verify())
+        response = requests.post(
+            "https://html.duckduckgo.com/html",
+            data=payload,
+            timeout=SEARCH_BACKEND_TIMEOUT_S,
+            verify=requests_verify(),
+        )
         response.raise_for_status()
         resp_content = response.content
         tree = document_fromstring(resp_content)
@@ -3386,13 +3445,29 @@ def test_parse_duckduckgo_results():
 # `key` -- the Google CSE API credential written into `params` below -- is
 # deliberately absent: any key not listed here, now or added in the future,
 # is dropped from the logged view instead of exposed by default.
-SAFE_GOOGLE_SEARCH_PARAM_KEYS: frozenset = frozenset({
-    "q", "c2coff", "cr", "cx", "num", "dateRestrict", "exactTerms",
-    "excludeTerms", "filter", "gl", "hl", "lr", "safe", "sort",
-})
+SAFE_GOOGLE_SEARCH_PARAM_KEYS: frozenset = frozenset(
+    {
+        "q",
+        "c2coff",
+        "cr",
+        "cx",
+        "num",
+        "dateRestrict",
+        "exactTerms",
+        "excludeTerms",
+        "filter",
+        "gl",
+        "hl",
+        "lr",
+        "safe",
+        "sort",
+    }
+)
 
 
-def _safe_search_params_for_log(params: Dict[str, Any], safe_keys: frozenset) -> Dict[str, Any]:
+def _safe_search_params_for_log(
+    params: Dict[str, Any], safe_keys: frozenset
+) -> Dict[str, Any]:
     """Return an allowlisted, credential-free view of a request params dict.
 
     Only keys present in ``safe_keys`` are copied through; everything else
@@ -3458,26 +3533,26 @@ def search_web_google(
 
         # Handle results_origin_country
         if results_origin_country is None:
-            limit_country_search = search_settings[
-                "limit_google_search_to_country"
-            ]
+            limit_country_search = search_settings["limit_google_search_to_country"]
             if limit_country_search:
-                results_origin_country = search_settings[
-                    "google_search_country"
-                ]
+                results_origin_country = search_settings["google_search_country"]
         if results_origin_country:
             # Google cr uses countryXX tokens; gl is the separate bare country code.
             # Keep existing cr expressions (including boolean combinations) intact.
-            if len(results_origin_country) == 2 and results_origin_country.isascii() and results_origin_country.isalpha():
+            if (
+                len(results_origin_country) == 2
+                and results_origin_country.isascii()
+                and results_origin_country.isalpha()
+            ):
                 country_code = results_origin_country.upper()
-                results_origin_country = "country" + ("UK" if country_code == "GB" else country_code)
+                results_origin_country = "country" + (
+                    "UK" if country_code == "GB" else country_code
+                )
             params["cr"] = results_origin_country
 
         # Handle google_search_engine_id
         if google_search_engine_id is None:
-            google_search_engine_id = search_settings[
-                "google_search_engine_id"
-            ]
+            google_search_engine_id = search_settings["google_search_engine_id"]
         if not google_search_engine_id:
             raise ValueError(
                 "Please set a valid Google Search Engine ID in the config file"
@@ -3486,9 +3561,7 @@ def search_web_google(
 
         # Handle google_search_api_key
         if google_search_api_key is None:
-            google_search_api_key = search_settings[
-                "google_search_api_key"
-            ]
+            google_search_api_key = search_settings["google_search_api_key"]
         if not google_search_api_key:
             raise ValueError(
                 "Please provide a valid Google Search API subscription key"
@@ -3561,7 +3634,11 @@ def search_web_google(
         # `requests`'s own HTTPError/ConnectionError text embeds the full
         # request URL -- including the key -- via `response.url`. Redact at
         # the formatting point rather than trust the exception's shape.
-        logger.error("Error during API request: {} (HTTP {})", _safe_search_error(re), getattr(getattr(re, "response", None), "status_code", "unknown"))
+        logger.error(
+            "Error during API request: {} (HTTP {})",
+            _safe_search_error(re),
+            getattr(getattr(re, "response", None), "status_code", "unknown"),
+        )
         raise
 
     except Exception as e:
@@ -3572,12 +3649,8 @@ def search_web_google(
 def test_search_google():
     search_settings = initialize_config()["search_engines"]
     search_query = "How can I bake a cherry cake?"
-    google_search_api_key = search_settings[
-        "google_search_api_key"
-    ]
-    google_search_engine_id = search_settings[
-        "google_search_engine_id"
-    ]
+    google_search_api_key = search_settings["google_search_api_key"]
+    google_search_engine_id = search_settings["google_search_engine_id"]
     result_count = 10
     c2coff = "1"
     results_origin_country = "countryUS"
@@ -3883,19 +3956,25 @@ def search_web_searx(
         return json.dumps({"error": issue})
     parsed_url = urlparse(searx_url)
     params = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
-    params.update({
-        "q": search_query,
-        "format": "json",
-        "language": language,
-        "time_range": time_range,
-        "safesearch": safesearch,
-        "pageno": pageno,
-        "categories": categories,
-    })
+    params.update(
+        {
+            "q": search_query,
+            "format": "json",
+            "language": language,
+            "time_range": time_range,
+            "safesearch": safesearch,
+            "pageno": pageno,
+            "categories": categories,
+        }
+    )
     search_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}?{urlencode(params)}"
     session = searx_create_session()
     try:
-        response = session.get(search_url, headers={"Accept": "application/json"}, timeout=SEARCH_BACKEND_TIMEOUT_S)
+        response = session.get(
+            search_url,
+            headers={"Accept": "application/json"},
+            timeout=SEARCH_BACKEND_TIMEOUT_S,
+        )
         response.raise_for_status()
         payload = response.json()
         hits = payload.get("results") if isinstance(payload, dict) else payload
@@ -3904,7 +3983,12 @@ def search_web_searx(
         # The parser validates each result; malformed results remain explicit failures.
         return json.dumps(hits)
     except requests.exceptions.RequestException as error:
-        return json.dumps({"error": _safe_search_error(error), "error_kind": _search_error_kind(error)})
+        return json.dumps(
+            {
+                "error": _safe_search_error(error),
+                "error_kind": _search_error_kind(error),
+            }
+        )
     finally:
         session.close()
 
@@ -3918,7 +4002,9 @@ def test_search_searx():
     print(result)
 
 
-def parse_searx_results(searx_search_results: "list | dict | str", web_search_results_dict: dict) -> None:
+def parse_searx_results(
+    searx_search_results: "list | dict | str", web_search_results_dict: dict
+) -> None:
     """Parse SearX/SearXNG results into the standardized shape.
 
     Unlike every other backend in this file, the local `search_web_searx`
@@ -3957,7 +4043,9 @@ def parse_searx_results(searx_search_results: "list | dict | str", web_search_re
             raise ValueError(f"Invalid Searx response: {e}") from e
 
     if isinstance(searx_search_results, dict) and "error" in searx_search_results:
-        web_search_results_dict["error_kind"] = searx_search_results.get("error_kind", "request")
+        web_search_results_dict["error_kind"] = searx_search_results.get(
+            "error_kind", "request"
+        )
         raise ValueError(searx_search_results["error"])
 
     if not isinstance(searx_search_results, list):
@@ -3968,22 +4056,26 @@ def parse_searx_results(searx_search_results: "list | dict | str", web_search_re
 
     for i, item in enumerate(searx_search_results):
         if not isinstance(item, dict):
-            raise ValueError(f"Unexpected Searx result item at index {i}: expected an object")
+            raise ValueError(
+                f"Unexpected Searx result item at index {i}: expected an object"
+            )
         url = item.get("link") or item.get("url") or ""
         snippet = item.get("snippet") or item.get("content") or ""
-        web_search_results_dict["results"].append({
-            "title": item.get("title", ""),
-            "url": url,
-            "content": snippet,
-            "metadata": {
-                "date_published": item.get("publishedDate", None),
-                "author": None,
-                "source": None,
-                "language": None,
-                "relevance_score": None,
-                "snippet": snippet or None,
-            },
-        })
+        web_search_results_dict["results"].append(
+            {
+                "title": item.get("title", ""),
+                "url": url,
+                "content": snippet,
+                "metadata": {
+                    "date_published": item.get("publishedDate", None),
+                    "author": None,
+                    "source": None,
+                    "language": None,
+                    "relevance_score": None,
+                    "snippet": snippet or None,
+                },
+            }
+        )
 
 
 ######################### Serper.dev Search #########################
@@ -4013,7 +4105,9 @@ def search_web_serper(
     search_settings = initialize_config()["search_engines"]
     serper_api_key = search_settings.get("serper_search_api_key", "")
     if not serper_api_key:
-        raise ValueError("Please provide a valid Serper API key ([SearchEngines] serper_search_api_key)")
+        raise ValueError(
+            "Please provide a valid Serper API key ([SearchEngines] serper_search_api_key)"
+        )
     headers = {"X-API-KEY": serper_api_key, "Content-Type": "application/json"}
     payload = {
         "q": search_query,
@@ -4033,7 +4127,9 @@ def search_web_serper(
     return response.json()
 
 
-def parse_serper_results(serper_search_results: dict, web_search_results_dict: dict) -> None:
+def parse_serper_results(
+    serper_search_results: dict, web_search_results_dict: dict
+) -> None:
     """Parse Serper organic results into the standardized shape.
 
     answerBox/knowledgeGraph blocks are deliberately ignored — organic web
@@ -4050,20 +4146,22 @@ def parse_serper_results(serper_search_results: dict, web_search_results_dict: d
     if "results" not in web_search_results_dict:
         web_search_results_dict["results"] = []
     for result in (serper_search_results or {}).get("organic", []):
-        web_search_results_dict["results"].append({
-            "title": result.get("title", ""),
-            "url": result.get("link", ""),
-            "content": result.get("snippet", ""),
-            "metadata": {
-                "date_published": result.get("date", None),
-                "author": None,
-                "source": None,
-                "language": None,
-                "relevance_score": None,
-                "position": result.get("position", None),
-                "snippet": result.get("snippet", None),
-            },
-        })
+        web_search_results_dict["results"].append(
+            {
+                "title": result.get("title", ""),
+                "url": result.get("link", ""),
+                "content": result.get("snippet", ""),
+                "metadata": {
+                    "date_published": result.get("date", None),
+                    "author": None,
+                    "source": None,
+                    "language": None,
+                    "relevance_score": None,
+                    "position": result.get("position", None),
+                    "snippet": result.get("snippet", None),
+                },
+            }
+        )
 
 
 ######################### Exa Search #########################
@@ -4091,7 +4189,9 @@ def search_web_exa(search_query: str, result_count: Optional[int] = None) -> dic
     search_settings = initialize_config()["search_engines"]
     exa_api_key = search_settings.get("exa_search_api_key", "")
     if not exa_api_key:
-        raise ValueError("Please provide a valid Exa API key ([SearchEngines] exa_search_api_key)")
+        raise ValueError(
+            "Please provide a valid Exa API key ([SearchEngines] exa_search_api_key)"
+        )
     headers = {"x-api-key": exa_api_key, "Content-Type": "application/json"}
     payload = {
         "query": search_query,
@@ -4125,19 +4225,21 @@ def parse_exa_results(exa_search_results: dict, web_search_results_dict: dict) -
     for result in (exa_search_results or {}).get("results", []):
         highlights = result.get("highlights") or []
         snippet = highlights[0] if highlights else ""
-        web_search_results_dict["results"].append({
-            "title": result.get("title", ""),
-            "url": result.get("url", ""),
-            "content": snippet,
-            "metadata": {
-                "date_published": result.get("publishedDate", None),
-                "author": result.get("author", None),
-                "source": None,
-                "language": None,
-                "relevance_score": None,
-                "snippet": snippet or None,
-            },
-        })
+        web_search_results_dict["results"].append(
+            {
+                "title": result.get("title", ""),
+                "url": result.get("url", ""),
+                "content": snippet,
+                "metadata": {
+                    "date_published": result.get("publishedDate", None),
+                    "author": result.get("author", None),
+                    "source": None,
+                    "language": None,
+                    "relevance_score": None,
+                    "snippet": snippet or None,
+                },
+            }
+        )
 
 
 ######################### Tavily Search #########################
@@ -4217,7 +4319,9 @@ def test_search_tavily():
     print(result)
 
 
-def parse_tavily_results(tavily_search_results: "dict | str", web_search_results_dict: dict) -> None:
+def parse_tavily_results(
+    tavily_search_results: "dict | str", web_search_results_dict: dict
+) -> None:
     """Parse Tavily results into the standardized shape.
 
     The backend returns a dict with hits under "results" and raises request
@@ -4249,21 +4353,27 @@ def parse_tavily_results(tavily_search_results: "dict | str", web_search_results
 
     for i, result in enumerate((tavily_search_results or {}).get("results", [])):
         if not isinstance(result, dict):
-            raise ValueError(f"Unexpected Tavily result item at index {i}: expected an object")
+            raise ValueError(
+                f"Unexpected Tavily result item at index {i}: expected an object"
+            )
         content = result.get("content", "")
-        web_search_results_dict["results"].append({
-            "title": result.get("title", ""),
-            "url": result.get("url", ""),
-            "content": content,
-            "metadata": {
-                "date_published": result.get("published_date") or result.get("publishedDate") or None,
-                "author": None,
-                "source": None,
-                "language": None,
-                "relevance_score": result.get("score", None),
-                "snippet": content or None,
-            },
-        })
+        web_search_results_dict["results"].append(
+            {
+                "title": result.get("title", ""),
+                "url": result.get("url", ""),
+                "content": content,
+                "metadata": {
+                    "date_published": result.get("published_date")
+                    or result.get("publishedDate")
+                    or None,
+                    "author": None,
+                    "source": None,
+                    "language": None,
+                    "relevance_score": result.get("score", None),
+                    "snippet": content or None,
+                },
+            }
+        )
 
 
 ######################### Yandex Search #########################
@@ -4296,11 +4406,18 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
     search_settings = initialize_config()["search_engines"]
     yandex_api_key = search_settings.get("yandex_search_api_key", "")
     if not yandex_api_key:
-        raise ValueError("Please provide a valid Yandex Search API key ([SearchEngines] yandex_search_api_key)")
+        raise ValueError(
+            "Please provide a valid Yandex Search API key ([SearchEngines] yandex_search_api_key)"
+        )
     folder_id = search_settings.get("yandex_search_folder_id", "")
     if not folder_id:
-        raise ValueError("Please provide the Yandex Cloud folder id ([SearchEngines] yandex_search_folder_id)")
-    headers = {"Authorization": f"Api-Key {yandex_api_key}", "Content-Type": "application/json"}
+        raise ValueError(
+            "Please provide the Yandex Cloud folder id ([SearchEngines] yandex_search_folder_id)"
+        )
+    headers = {
+        "Authorization": f"Api-Key {yandex_api_key}",
+        "Content-Type": "application/json",
+    }
     payload = {
         "query": {"searchType": "SEARCH_TYPE_COM", "queryText": search_query},
         "folderId": folder_id,
@@ -4318,7 +4435,9 @@ def search_web_yandex(search_query: str, result_count: Optional[int] = None) -> 
     return response.json()
 
 
-def parse_yandex_results(yandex_search_results: dict, web_search_results_dict: dict) -> None:
+def parse_yandex_results(
+    yandex_search_results: dict, web_search_results_dict: dict
+) -> None:
     """Decode rawData base64 XML and parse docs into the standardized shape.
 
     Raises on an in-XML <error> element except code 15 (no matches).
@@ -4355,23 +4474,28 @@ def parse_yandex_results(yandex_search_results: dict, web_search_results_dict: d
         url_el = doc.find("url")
         title_el = doc.find("title")
         passages = [
-            " ".join("".join(p.itertext()).split())
-            for p in doc.findall(".//passage")
+            " ".join("".join(p.itertext()).split()) for p in doc.findall(".//passage")
         ]
         content = " ".join(passages).strip()
-        web_search_results_dict["results"].append({
-            "title": "".join(title_el.itertext()).strip() if title_el is not None else "",
-            "url": url_el.text.strip() if url_el is not None and url_el.text else "",
-            "content": content,
-            "metadata": {
-                "date_published": None,
-                "author": None,
-                "source": None,
-                "language": None,
-                "relevance_score": None,
-                "snippet": content or None,
-            },
-        })
+        web_search_results_dict["results"].append(
+            {
+                "title": "".join(title_el.itertext()).strip()
+                if title_el is not None
+                else "",
+                "url": url_el.text.strip()
+                if url_el is not None and url_el.text
+                else "",
+                "content": content,
+                "metadata": {
+                    "date_published": None,
+                    "author": None,
+                    "source": None,
+                    "language": None,
+                    "relevance_score": None,
+                    "snippet": content or None,
+                },
+            }
+        )
 
 
 #

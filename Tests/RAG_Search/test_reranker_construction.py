@@ -524,9 +524,7 @@ async def test_experiment_only_inherits_base_reranker_when_explicitly_enabled(
     assert "reranking_skipped" not in results[0].metadata
     assert metrics[-1]["reranked"] is False
 
-    overridden_results = await service.search(
-        "query", rerank=True, user_id="user-1"
-    )
+    overridden_results = await service.search("query", rerank=True, user_id="user-1")
 
     assert base_reranker.calls == 1
     assert "reranking_skipped" not in overridden_results[0].metadata

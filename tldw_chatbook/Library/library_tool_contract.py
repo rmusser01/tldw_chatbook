@@ -334,54 +334,57 @@ def _descriptor(
         item_type=item_type,
         operation=operation,
         route=f"{item_type}.{operation}",
-        description=description + (
-            _WRITING_DESCRIPTION_TAIL if writing else _DESCRIPTION_TAIL
-        ),
+        description=description
+        + (_WRITING_DESCRIPTION_TAIL if writing else _DESCRIPTION_TAIL),
         input_schema=input_schema,
         mutates=writing,
     )
 
 
 def _structure_schema() -> dict:
-    return _get_schema({
-        "max_nodes": {
-            "type": "integer",
-            "default": DEFAULT_MAX_NODES,
-            "minimum": 1,
-            "maximum": MAX_MAX_NODES,
-            "description": "Maximum navigation nodes per page (paging is by nodes, never by bytes).",
-        },
-        "node_cursor": {
-            "type": "string",
-            "maxLength": MAX_CURSOR_CHARS,
-            "description": "Opaque continuation cursor from a previous structure read.",
-        },
-    })
+    return _get_schema(
+        {
+            "max_nodes": {
+                "type": "integer",
+                "default": DEFAULT_MAX_NODES,
+                "minimum": 1,
+                "maximum": MAX_MAX_NODES,
+                "description": "Maximum navigation nodes per page (paging is by nodes, never by bytes).",
+            },
+            "node_cursor": {
+                "type": "string",
+                "maxLength": MAX_CURSOR_CHARS,
+                "description": "Opaque continuation cursor from a previous structure read.",
+            },
+        }
+    )
 
 
 def _chunk_fetch_schema() -> dict:
-    schema = _get_schema({
-        "chunk_index": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Zero-based chunk index within the selected family, from the structure tool's chunk_span or the fetch errors' valid range.",
-        },
-        "chunk_type": {
-            "type": "string",
-            "description": "Chunk family filter; defaults to the primary (flat) family. Required when the item has multiple families (the error lists them).",
-        },
-        "context": {
-            "type": "integer",
-            "default": 0,
-            "minimum": 0,
-            "maximum": MAX_CHUNK_CONTEXT,
-            "description": "Neighbor chunks to include on each side, within the result byte budget.",
-        },
-        "revision": {
-            "type": "string",
-            "description": "Revision token from a structure read; a mismatch returns a stale-address error.",
-        },
-    })
+    schema = _get_schema(
+        {
+            "chunk_index": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Zero-based chunk index within the selected family, from the structure tool's chunk_span or the fetch errors' valid range.",
+            },
+            "chunk_type": {
+                "type": "string",
+                "description": "Chunk family filter; defaults to the primary (flat) family. Required when the item has multiple families (the error lists them).",
+            },
+            "context": {
+                "type": "integer",
+                "default": 0,
+                "minimum": 0,
+                "maximum": MAX_CHUNK_CONTEXT,
+                "description": "Neighbor chunks to include on each side, within the result byte budget.",
+            },
+            "revision": {
+                "type": "string",
+                "description": "Revision token from a structure read; a mismatch returns a stale-address error.",
+            },
+        }
+    )
     schema["required"] = ["id", "chunk_index"]
     return schema
 
@@ -521,48 +524,50 @@ def _rechunk_schema() -> dict:
     flat modes are exclusive by construction in the handler (a `template`
     name governs its own options; without one, the plain keys govern).
     """
-    return _get_schema({
-        "spec": {
-            "type": "object",
-            "properties": {
-                "template": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "A saved spec (custom chunking template) name; its own options govern this run. An unresolvable name is a named refusal, never a silent fallback.",
+    return _get_schema(
+        {
+            "spec": {
+                "type": "object",
+                "properties": {
+                    "template": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "A saved spec (custom chunking template) name; its own options govern this run. An unresolvable name is a named refusal, never a silent fallback.",
+                    },
+                    "method": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Plain chunking method (e.g. words, sentences) when no template is named.",
+                    },
+                    "max_size": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Plain chunk-size bound when no template is named.",
+                    },
+                    "overlap": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Plain chunk overlap; omitted = 0, NOT the engine's 100 default (an omitted overlap never invalidates a small max_size).",
+                    },
                 },
-                "method": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Plain chunking method (e.g. words, sentences) when no template is named.",
-                },
-                "max_size": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "Plain chunk-size bound when no template is named.",
-                },
-                "overlap": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "description": "Plain chunk overlap; omitted = 0, NOT the engine's 100 default (an omitted overlap never invalidates a small max_size).",
-                },
+                "additionalProperties": False,
+                "description": (
+                    "FLAT one-run chunking override: {template?: name} OR"
+                    " {method?, max_size?, overlap?} -- NOT the nested chunking"
+                    " template body library_save_chunk_spec saves. Omit spec"
+                    " entirely to re-run the item's stored chunking config."
+                    " A named template governs its own options; otherwise the"
+                    " plain keys govern, and an omitted overlap is 0, not the"
+                    " engine's 100 default."
+                ),
             },
-            "additionalProperties": False,
-            "description": (
-                "FLAT one-run chunking override: {template?: name} OR"
-                " {method?, max_size?, overlap?} -- NOT the nested chunking"
-                " template body library_save_chunk_spec saves. Omit spec"
-                " entirely to re-run the item's stored chunking config."
-                " A named template governs its own options; otherwise the"
-                " plain keys govern, and an omitted overlap is 0, not the"
-                " engine's 100 default."
-            ),
-        },
-        "reindex": {
-            "type": "boolean",
-            "default": False,
-            "description": "Opt-in forced vector re-index after the re-chunk (delete + re-add, best-effort). Default false: the call replaces chunk rows only.",
-        },
-    })
+            "reindex": {
+                "type": "boolean",
+                "default": False,
+                "description": "Opt-in forced vector re-index after the re-chunk (delete + re-add, best-effort). Default false: the call replaces chunk rows only.",
+            },
+        }
+    )
 
 
 LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
@@ -570,143 +575,200 @@ LIBRARY_TOOL_DESCRIPTORS: dict[str, LibraryToolDescriptor] = {
     for d in (
         # -- Media ------------------------------------------------------------
         _descriptor(
-            "library_list_media", "media", "list",
+            "library_list_media",
+            "media",
+            "list",
             "List your Library media items (bounded page, exact total, most recently updated first).",
             _list_schema(),
         ),
         _descriptor(
-            "library_get_media", "media", "get",
+            "library_get_media",
+            "media",
+            "get",
             "Read one media item's textual metadata/content segment by opaque stable ID; never returns binary data or filesystem paths.",
-            _get_schema({
-                "max_chars": _max_chars_property(),
-                "cursor": _cursor_property(),
-            }),
+            _get_schema(
+                {
+                    "max_chars": _max_chars_property(),
+                    "cursor": _cursor_property(),
+                }
+            ),
         ),
         _descriptor(
-            "library_search_media", "media", "search",
+            "library_search_media",
+            "media",
+            "search",
             "Lexically search media titles, content, and keywords (literal, case-insensitive; no semantic/embedding search).",
             _search_schema(),
         ),
         _descriptor(
-            "library_get_media_structure", "media", "structure",
+            "library_get_media_structure",
+            "media",
+            "structure",
             "Read one media item's heading/section navigation tree annotated with stored-chunk spans (structure map with chunk-unit addresses; node-paginated).",
             _structure_schema(),
         ),
         _descriptor(
-            "library_get_media_chunk", "media", "chunk",
+            "library_get_media_chunk",
+            "media",
+            "chunk",
             "Fetch one stored chunk of a media item by chunk address (index + optional family), reusing the stored chunk rows verbatim; neighbors optional within the byte budget.",
             _chunk_fetch_schema(),
         ),
         _descriptor(
-            "library_list_chunk_specs", "media", "spec_list",
+            "library_list_chunk_specs",
+            "media",
+            "spec_list",
             "List saved chunking specs (custom chunking templates) with method, tags, and validity/reserved flags (bounded page).",
             _list_schema(),
         ),
         _descriptor(
-            "library_save_chunk_spec", "media", "spec_save",
+            "library_save_chunk_spec",
+            "media",
+            "spec_save",
             "Create or update one custom chunking spec (custom chunking template); built-in specs are never mutated and refusals return the validator's full error list.",
             _spec_save_schema(),
             writing=True,
         ),
         _descriptor(
-            "library_rechunk_media", "media", "rechunk",
+            "library_rechunk_media",
+            "media",
+            "rechunk",
             "Re-chunk one media item now: replace its stored chunk rows in one transaction under the stored chunking config or a flat one-run spec override (a named template governs its own options; unresolvable names are refused, never silently re-chunked another way); the vector re-index is opt-in via reindex: true.",
             _rechunk_schema(),
             writing=True,
         ),
         # -- Notes ------------------------------------------------------------
         _descriptor(
-            "library_list_notes", "note", "list",
+            "library_list_notes",
+            "note",
+            "list",
             "List your notes (bounded page, exact total, most recently updated first).",
             _list_schema(),
         ),
         _descriptor(
-            "library_get_note", "note", "get",
+            "library_get_note",
+            "note",
+            "get",
             "Read one note's content in bounded, revision-aware chunks by opaque stable ID.",
-            _get_schema({
-                "max_chars": _max_chars_property(),
-                "cursor": _cursor_property(),
-            }),
+            _get_schema(
+                {
+                    "max_chars": _max_chars_property(),
+                    "cursor": _cursor_property(),
+                }
+            ),
         ),
         _descriptor(
-            "library_search_notes", "note", "search",
+            "library_search_notes",
+            "note",
+            "search",
             "Lexically search note titles, content, and keywords, with optional spelling-exact whole-keyword and exact portable-folder filters (literal lexical query, case-insensitive; no semantic/embedding search).",
             _note_search_schema(),
         ),
         _descriptor(
-            "library_save_note", "note", "save",
+            "library_save_note",
+            "note",
+            "save",
             "Save one note: create by default, or update an existing note when note_id and expected_version are supplied together (exactly one without the other is refused; a stale version returns content_changed). Organization changes use additive ensure_keywords, an authoritative stable folder_id or a one-level folder (never both), and expected_organization_version on updates; existing user keywords and folder memberships are preserved. Notes have no unique title, so a re-run should search by title (library_search_notes) and update by id rather than create a duplicate. For notes derived from Library media, begin the content with this provenance header so staleness is detectable: 'source: <media id>\\nrevision: <media revision>\\nchapter: <chapter title>\\nchunks: <first>-<last>' (revision is load-bearing: a chunk span is meaningless without the media version it was derived from).",
             _save_note_schema(),
             writing=True,
         ),
         # -- Prompts ----------------------------------------------------------
         _descriptor(
-            "library_list_prompts", "prompt", "list",
+            "library_list_prompts",
+            "prompt",
+            "list",
             "List your saved prompts (bounded page, exact total).",
             _list_schema(),
         ),
         _descriptor(
-            "library_get_prompt", "prompt", "get",
+            "library_get_prompt",
+            "prompt",
+            "get",
             "Read one prompt's metadata and a bounded section (details, system_prompt, user_prompt, or prompt_definition) by opaque stable ID.",
-            _get_schema({
-                "section": {
-                    "type": "string",
-                    "enum": ["details", "system_prompt", "user_prompt", "prompt_definition"],
-                    "description": "Optional manifest section to read; omitted returns a bounded overview plus the section manifest.",
-                },
-                "max_chars": _max_chars_property(),
-                "cursor": _cursor_property(),
-            }),
+            _get_schema(
+                {
+                    "section": {
+                        "type": "string",
+                        "enum": [
+                            "details",
+                            "system_prompt",
+                            "user_prompt",
+                            "prompt_definition",
+                        ],
+                        "description": "Optional manifest section to read; omitted returns a bounded overview plus the section manifest.",
+                    },
+                    "max_chars": _max_chars_property(),
+                    "cursor": _cursor_property(),
+                }
+            ),
         ),
         _descriptor(
-            "library_search_prompts", "prompt", "search",
+            "library_search_prompts",
+            "prompt",
+            "search",
             "Lexically search prompt names, details, prompt text, and keywords (literal, case-insensitive).",
             _search_schema(),
         ),
         # -- Skills -----------------------------------------------------------
         _descriptor(
-            "library_list_skills", "skill", "list",
+            "library_list_skills",
+            "skill",
+            "list",
             "List your managed local skills (bounded page, exact total).",
             _list_schema(),
         ),
         _descriptor(
-            "library_get_skill", "skill", "get",
+            "library_get_skill",
+            "skill",
+            "get",
             "Read one skill's safe metadata and, when trusted, SKILL.md content or a supporting file selected via its manifest token, by opaque stable ID.",
-            _get_schema({
-                "file_token": {
-                    "type": "string",
-                    "description": "Opaque supporting-file token from this skill's file manifest; never a filesystem path.",
-                },
-                "max_chars": _max_chars_property(),
-                "cursor": _cursor_property(),
-            }),
+            _get_schema(
+                {
+                    "file_token": {
+                        "type": "string",
+                        "description": "Opaque supporting-file token from this skill's file manifest; never a filesystem path.",
+                    },
+                    "max_chars": _max_chars_property(),
+                    "cursor": _cursor_property(),
+                }
+            ),
         ),
         _descriptor(
-            "library_search_skills", "skill", "search",
+            "library_search_skills",
+            "skill",
+            "search",
             "Lexically search skill names, descriptions, and metadata keywords (literal, case-insensitive; restricted content is never reproduced).",
             _search_schema(),
         ),
         # -- Conversations ----------------------------------------------------
         _descriptor(
-            "library_list_conversations", "conversation", "list",
+            "library_list_conversations",
+            "conversation",
+            "list",
             "List your conversations (bounded page, exact total, most recently updated first).",
             _list_schema(),
         ),
         _descriptor(
-            "library_get_conversation", "conversation", "get",
+            "library_get_conversation",
+            "conversation",
+            "get",
             "Read one conversation's metadata and a text-only message page (exact message total) by opaque stable ID.",
-            _get_schema({
-                "message_limit": {
-                    "type": "integer",
-                    "default": DEFAULT_MESSAGE_LIMIT,
-                    "minimum": 1,
-                    "maximum": MAX_MESSAGE_LIMIT,
-                },
-                "cursor": _cursor_property(),
-            }),
+            _get_schema(
+                {
+                    "message_limit": {
+                        "type": "integer",
+                        "default": DEFAULT_MESSAGE_LIMIT,
+                        "minimum": 1,
+                        "maximum": MAX_MESSAGE_LIMIT,
+                    },
+                    "cursor": _cursor_property(),
+                }
+            ),
         ),
         _descriptor(
-            "library_search_conversations", "conversation", "search",
+            "library_search_conversations",
+            "conversation",
+            "search",
             "Lexically search conversation titles, message text, and keywords (literal, case-insensitive).",
             _search_schema(),
         ),
@@ -763,14 +825,18 @@ def parse_public_id(value: Any, *, expected_type: str | None = None) -> tuple[st
             oversized, wrong-type, or path-like IDs.
     """
     if not isinstance(value, str) or not value:
-        raise _invalid("id must be a non-empty opaque string returned by a list or search tool")
+        raise _invalid(
+            "id must be a non-empty opaque string returned by a list or search tool"
+        )
     if not value.isascii() or len(value) > MAX_PUBLIC_ID_BYTES:
         raise _invalid("id is not a valid Library item ID")
     prefix, sep, body = value.partition(":")
     if not sep or prefix not in _PUBLIC_ID_TYPES or not body:
         raise _invalid("id is not a valid Library item ID")
     if expected_type is not None and prefix != expected_type:
-        raise _invalid(f"id names a {prefix} item; this tool reads {expected_type} items")
+        raise _invalid(
+            f"id names a {prefix} item; this tool reads {expected_type} items"
+        )
     padding = "=" * (-len(body) % 4)
     try:
         raw_bytes = base64.b64decode(body + padding, altchars=b"-_", validate=True)
@@ -811,7 +877,12 @@ def make_cursor(
     The payload is versioned and carries a truncated SHA-256 checksum over its
     canonical form; any single-byte tamper fails closed in :func:`parse_cursor`.
     """
-    state: dict[str, Any] = {"v": _CURSOR_VERSION, "item": item_id, "rev": revision, "off": offset}
+    state: dict[str, Any] = {
+        "v": _CURSOR_VERSION,
+        "item": item_id,
+        "rev": revision,
+        "off": offset,
+    }
     if section is not None:
         state["sec"] = section
     if message_id is not None:
@@ -940,7 +1011,9 @@ def validate_search_query(query: Any) -> str:
         raise _invalid("query must be a string")
     stripped = query.strip()
     if not stripped:
-        raise _invalid("query must not be empty; use the corresponding list tool to retrieve all items")
+        raise _invalid(
+            "query must not be empty; use the corresponding list tool to retrieve all items"
+        )
     if len(stripped) > MAX_SEARCH_QUERY_CHARS:
         raise _invalid(f"query exceeds the {MAX_SEARCH_QUERY_CHARS}-character ceiling")
     return stripped

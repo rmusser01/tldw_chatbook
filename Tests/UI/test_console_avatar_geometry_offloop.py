@@ -243,9 +243,7 @@ async def test_a_resample_finishing_after_the_viewport_moved_paints_nothing(
         release.wait(timeout=5)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(
-        character_avatar_layout, "prerender_character_avatar", blocking
-    )
+    monkeypatch.setattr(character_avatar_layout, "prerender_character_avatar", blocking)
 
     stale_box = (max(1, settled_box[0] - 3), max(1, settled_box[1] - 3))
     monkeypatch.setattr(rail, "_character_avatar_fit_box", lambda _c, _l: stale_box)
@@ -296,9 +294,7 @@ async def test_a_superseded_pass_does_not_blank_the_live_avatar(
         release.wait(timeout=5)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(
-        character_avatar_layout, "prerender_character_avatar", blocking
-    )
+    monkeypatch.setattr(character_avatar_layout, "prerender_character_avatar", blocking)
 
     box = rail.character_avatar_box
     assert box is not None
@@ -339,9 +335,7 @@ async def test_teardown_with_a_resample_in_flight_is_clean(
         release.wait(timeout=5)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(
-        character_avatar_layout, "prerender_character_avatar", blocking
-    )
+    monkeypatch.setattr(character_avatar_layout, "prerender_character_avatar", blocking)
 
     failures: list[object] = []
     original_handler = app._handle_exception
@@ -400,15 +394,11 @@ async def test_app_exit_with_a_resample_in_flight_raises_nothing(
         release.wait(timeout=5)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(
-        character_avatar_layout, "prerender_character_avatar", blocking
-    )
+    monkeypatch.setattr(character_avatar_layout, "prerender_character_avatar", blocking)
 
     failures: list[object] = []
     original_handler = app._handle_exception
-    monkeypatch.setattr(
-        app, "_handle_exception", lambda error: failures.append(error)
-    )
+    monkeypatch.setattr(app, "_handle_exception", lambda error: failures.append(error))
 
     rail.invalidate_character_avatar_geometry()
     rail._character_avatar_box = None

@@ -135,8 +135,7 @@ async def test_production_routes_own_and_preserve_contextual_footer_hints():
                     footers = list(screen.query(AppFooterStatus))
                     if (
                         footers
-                        and "use Library context in Console"
-                        in footers[0].shortcut_text
+                        and "use Library context in Console" in footers[0].shortcut_text
                     ):
                         screen_footer = footers[0]
                         break

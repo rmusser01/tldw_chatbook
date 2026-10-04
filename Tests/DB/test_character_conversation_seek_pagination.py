@@ -325,9 +325,7 @@ def test_character_conversation_read_uses_transaction_and_closes_cursor(
     assert cursor.closed is True
 
 
-def test_character_conversation_read_preserves_database_error_contract(
-    db, monkeypatch
-):
+def test_character_conversation_read_preserves_database_error_contract(db, monkeypatch):
     class FailingCursor:
         def execute(self, _query, _params):
             raise sqlite3.OperationalError("database unavailable")

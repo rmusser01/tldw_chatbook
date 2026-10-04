@@ -68,6 +68,8 @@ _SYNC_BOUNDARIES = {
     "after_commit_before_sync_projection",
     "after_projection_before_acknowledgement",
 }
+
+
 @dataclass(frozen=True)
 class _CrashSnapshot:
     boundary: CrashBoundary
@@ -379,9 +381,7 @@ def test_runtime_crash_hooks_restart_without_repeating_side_effects(
 
     def persist(event) -> None:
         store.persist_provider_continuation_event(event)
-        if boundary == "after_result_commit" and isinstance(
-            event, ToolCallFinished
-        ):
+        if boundary == "after_result_commit" and isinstance(event, ToolCallFinished):
             raise _SimulatedProcessDeath
 
     with pytest.raises(_SimulatedProcessDeath):

@@ -40,7 +40,7 @@ def _rail_text(screen) -> str:
 
 @pytest.mark.asyncio
 async def test_the_rail_never_says_the_conversation_is_none() -> None:
-    """"None" beside a named chat reads as a contradiction to a user."""
+    """ "None" beside a named chat reads as a contradiction to a user."""
     async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
         await pilot.pause(0.3)
         text = _rail_text(pilot.app.screen)

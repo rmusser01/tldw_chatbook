@@ -186,9 +186,7 @@ def e2e_bridge_env(tmp_path, monkeypatch) -> Callable[..., _E2EEnv]:
             "---\nname: demo-skill\ndescription: demo\n---\nBody.\n",
             encoding="utf-8",
         )
-        (skill_dir / "scripts" / "hello.py").write_text(
-            _HELLO_SCRIPT, encoding="utf-8"
-        )
+        (skill_dir / "scripts" / "hello.py").write_text(_HELLO_SCRIPT, encoding="utf-8")
         marker_path = tmp_path / "marker-ran.txt"
         (skill_dir / "scripts" / "marker.py").write_text(
             f"from pathlib import Path\nPath({str(marker_path)!r}).write_text('ran')\n",
@@ -273,7 +271,9 @@ def e2e_bridge_env(tmp_path, monkeypatch) -> Callable[..., _E2EEnv]:
 
         assert real_agent_service is _RealAgentService  # sanity: patched the real class
         tool = captured.get("run_skill_script_tool")
-        assert tool is not None, "expected run_reply to build the run_skill_script closure"
+        assert tool is not None, (
+            "expected run_reply to build the run_skill_script closure"
+        )
 
         return _E2EEnv(
             tool=tool,
@@ -335,7 +335,9 @@ def test_denied_confirm_never_runs_the_script(e2e_bridge_env):
 
 
 def test_policy_disabled_denies_before_any_prompt(e2e_bridge_env):
-    env = e2e_bridge_env(confirm={"allow": True, "remember": False}, policy_enabled=False)
+    env = e2e_bridge_env(
+        confirm={"allow": True, "remember": False}, policy_enabled=False
+    )
     result = env.tool("demo-skill", "scripts/hello.py", [])
     assert result.ok is False
     assert env.confirm_calls == []

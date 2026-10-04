@@ -31,10 +31,16 @@ from tldw_chatbook.Evals.word_bench.storage import (
 
 def _capture(token=" a"):
     return CellCapture(
-        prompt_mode="raw", k_requested=20, k_returned=2, content_offset=0,
-        top_k=(TokenProb(token=token, logprob=-0.5, token_id=1),
-               TokenProb(token=" the", logprob=-1.5, token_id=2)),
-        canary="pass", captured_at="2026-07-26T00:00:00Z",
+        prompt_mode="raw",
+        k_requested=20,
+        k_returned=2,
+        content_offset=0,
+        top_k=(
+            TokenProb(token=token, logprob=-0.5, token_id=1),
+            TokenProb(token=" the", logprob=-1.5, token_id=2),
+        ),
+        canary="pass",
+        captured_at="2026-07-26T00:00:00Z",
     )
 
 
@@ -91,7 +97,9 @@ def test_create_run_group_rejects_duplicate_target_ids(db, config, snippets):
     model_id = db.create_model(name="duplicated", provider="llama_cpp", model_id="m")
     dup_targets = [
         Target(id=model_id, name="duplicated", provider="llama_cpp", model_id="m"),
-        Target(id=model_id, name="duplicated-again", provider="llama_cpp", model_id="m"),
+        Target(
+            id=model_id, name="duplicated-again", provider="llama_cpp", model_id="m"
+        ),
     ]
     runs_before = len(db.list_runs(limit=10_000))
     with pytest.raises(ValueError, match="unique"):
@@ -141,7 +149,9 @@ def test_load_bench_tolerates_and_preserves_a_legacy_duplicate_target_id(db, dat
         dataset: A real eval_datasets row id fixture, required because
             eval_tasks.dataset_id carries a FOREIGN KEY to eval_datasets(id).
     """
-    target_id = db.create_model(name="legacy-target", provider="llama_cpp", model_id="m")
+    target_id = db.create_model(
+        name="legacy-target", provider="llama_cpp", model_id="m"
+    )
     task_id = db.create_task(
         name="pre-validation bench",
         task_type="logprob",
@@ -180,7 +190,9 @@ def test_load_bench_rejects_a_malformed_stored_target_id(db, dataset):
         dataset: A real eval_datasets row id fixture, required because
             eval_tasks.dataset_id carries a FOREIGN KEY to eval_datasets(id).
     """
-    target_id = db.create_model(name="legacy-target", provider="llama_cpp", model_id="m")
+    target_id = db.create_model(
+        name="legacy-target", provider="llama_cpp", model_id="m"
+    )
     task_id = db.create_task(
         name="corrupted bench",
         task_type="logprob",
@@ -214,7 +226,10 @@ def test_bench_config_construction_still_rejects_duplicates_by_default(dataset):
     """
     with pytest.raises(ValueError, match="target_ids must be unique"):
         BenchConfig(
-            name="new bench", prompt_mode="raw", top_k=20, dataset_id=dataset,
+            name="new bench",
+            prompt_mode="raw",
+            top_k=20,
+            dataset_id=dataset,
             target_ids=("dup", "dup"),
         )
 
@@ -231,10 +246,16 @@ def test_save_bench_rejects_duplicates_even_for_a_leniently_loaded_config(db, da
         dataset: A real eval_datasets row id fixture, required because
             eval_tasks.dataset_id carries a FOREIGN KEY to eval_datasets(id).
     """
-    target_id = db.create_model(name="legacy-target", provider="llama_cpp", model_id="m")
+    target_id = db.create_model(
+        name="legacy-target", provider="llama_cpp", model_id="m"
+    )
     leniently_loaded = BenchConfig(
-        name="pre-validation bench", prompt_mode="raw", top_k=20, dataset_id=dataset,
-        target_ids=(target_id, target_id), strict=False,
+        name="pre-validation bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=(target_id, target_id),
+        strict=False,
     )
     with pytest.raises(ValueError, match="target_ids must be unique"):
         save_bench(db, leniently_loaded)
@@ -277,7 +298,9 @@ def test_failed_cells_are_stored_and_distinguishable_from_not_yet_run(
     task_id = save_bench(db, config)
     group_id, run_ids = create_run_group(db, task_id, config, targets, snippets)
     first = targets[0].id
-    save_cell(db, run_ids[first], snippets[0], CellError(reason="unreachable", detail="x"))
+    save_cell(
+        db, run_ids[first], snippets[0], CellError(reason="unreachable", detail="x")
+    )
 
     grid = load_grid(db, group_id)
     assert isinstance(grid["cells"][("s1", first)], CellError)
@@ -297,13 +320,19 @@ def test_grid_renders_from_the_snapshot_after_the_bench_is_edited(
         # dataset_id through to update_task (see its docstring), so this
         # value's identity is inert either way -- but the project's fixture
         # convention is "no literal ids", and a real id costs nothing here.
-        name="loaded-nouns v2", prompt_mode="chat", top_k=5,
-        dataset_id=config.dataset_id, target_ids=(targets[0].id,), probes=(),
+        name="loaded-nouns v2",
+        prompt_mode="chat",
+        top_k=5,
+        dataset_id=config.dataset_id,
+        target_ids=(targets[0].id,),
+        probes=(),
     )
     save_bench(db, edited, task_id=task_id)
 
     grid = load_grid(db, group_id)
-    assert grid["snapshot"]["prompt_mode"] == "raw", "historical run keeps its own config"
+    assert grid["snapshot"]["prompt_mode"] == "raw", (
+        "historical run keeps its own config"
+    )
     assert grid["snapshot"]["top_k"] == 20
 
 
@@ -313,9 +342,12 @@ def test_bench_edit_round_trips_the_description(db, config, targets):
     task_id = save_bench(db, config)
 
     edited = BenchConfig(
-        name=config.name, description="Now with a real description.",
-        prompt_mode=config.prompt_mode, top_k=config.top_k,
-        dataset_id=config.dataset_id, target_ids=config.target_ids,
+        name=config.name,
+        description="Now with a real description.",
+        prompt_mode=config.prompt_mode,
+        top_k=config.top_k,
+        dataset_id=config.dataset_id,
+        target_ids=config.target_ids,
         probes=config.probes,
     )
     save_bench(db, edited, task_id=task_id)
@@ -332,9 +364,12 @@ def test_bench_edit_leaves_dataset_id_untouched(db, config, targets):
     original_dataset_id = load_bench(db, task_id).dataset_id
 
     edited = BenchConfig(
-        name=config.name, prompt_mode=config.prompt_mode, top_k=config.top_k,
+        name=config.name,
+        prompt_mode=config.prompt_mode,
+        top_k=config.top_k,
         dataset_id="some-other-dataset-id-that-does-not-exist",
-        target_ids=config.target_ids, probes=config.probes,
+        target_ids=config.target_ids,
+        probes=config.probes,
     )
     save_bench(db, edited, task_id=task_id)
 
@@ -352,7 +387,9 @@ def test_snapshot_carries_preflight_so_a_reloaded_grid_can_explain_a_column(
     preflight = {
         targets[0].id: PreflightResult(state="ok", k_returned=20, canary="pass"),
         targets[1].id: PreflightResult(
-            state="unreachable", k_returned=None, canary="unchecked",
+            state="unreachable",
+            k_returned=None,
+            canary="unchecked",
             detail="connection refused",
         ),
     }
@@ -418,7 +455,9 @@ def test_load_run_preflight_matches_load_grids_preflight(db, config, targets, sn
     preflight = {
         targets[0].id: PreflightResult(state="ok", k_returned=20, canary="pass"),
         targets[1].id: PreflightResult(
-            state="unreachable", k_returned=None, canary="unchecked",
+            state="unreachable",
+            k_returned=None,
+            canary="unchecked",
             detail="connection refused",
         ),
     }
@@ -491,7 +530,9 @@ def test_snapshot_round_trips_a_captured_continuation(db, config, targets, snipp
     continuation_text = "<|channel><|channel>thought\n<channel|>The sky is **blue"
     preflight = {
         targets[0].id: PreflightResult(
-            state="ok", k_returned=20, canary="degenerate",
+            state="ok",
+            k_returned=20,
+            canary="degenerate",
             continuation=continuation_text,
         ),
     }
@@ -549,16 +590,22 @@ def test_bench_round_trips_capture_continuations_flag(db, targets, dataset):
     on = save_bench(
         db,
         BenchConfig(
-            name="continuations on", prompt_mode="raw", top_k=20,
-            dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+            name="continuations on",
+            prompt_mode="raw",
+            top_k=20,
+            dataset_id=dataset,
+            target_ids=tuple(t.id for t in targets),
             capture_continuations=True,
         ),
     )
     off = save_bench(
         db,
         BenchConfig(
-            name="continuations off", prompt_mode="raw", top_k=20,
-            dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+            name="continuations off",
+            prompt_mode="raw",
+            top_k=20,
+            dataset_id=dataset,
+            target_ids=tuple(t.id for t in targets),
             capture_continuations=False,
         ),
     )
@@ -574,10 +621,16 @@ def test_load_bench_defaults_capture_continuations_to_false_for_a_config_saved_b
     "capture_continuations" key at all in its stored config_data -- same
     additive contract as concurrency's own `.get(..., 1)` default."""
     task_id = db.create_task(
-        name="pre-task-1710 bench", task_type="logprob", config_format="custom",
+        name="pre-task-1710 bench",
+        task_type="logprob",
+        config_format="custom",
         config_data={
-            "bench_type": BENCH_TYPE, "prompt_mode": "raw", "top_k": 20,
-            "probes": [], "target_ids": [t.id for t in targets], "concurrency": 1,
+            "bench_type": BENCH_TYPE,
+            "prompt_mode": "raw",
+            "top_k": 20,
+            "probes": [],
+            "target_ids": [t.id for t in targets],
+            "concurrency": 1,
         },
         dataset_id=dataset,
     )
@@ -593,12 +646,19 @@ def test_save_cell_persists_the_continuation_and_it_round_trips_through_load_gri
     task_id = save_bench(db, config)
     group_id, run_ids = create_run_group(db, task_id, config, targets, snippets)
     save_cell(
-        db, run_ids[targets[0].id], snippets[0], _capture(),
+        db,
+        run_ids[targets[0].id],
+        snippets[0],
+        _capture(),
     )
     with_continuation = CellCapture(
-        prompt_mode="raw", k_requested=20, k_returned=2, content_offset=0,
+        prompt_mode="raw",
+        k_requested=20,
+        k_returned=2,
+        content_offset=0,
         top_k=(TokenProb(token=" a", logprob=-0.5, token_id=1),),
-        canary="pass", captured_at="2026-08-01T00:00:00Z",
+        canary="pass",
+        captured_at="2026-08-01T00:00:00Z",
         continuation=" the model continues from here",
     )
     save_cell(db, run_ids[targets[1].id], snippets[0], with_continuation)
@@ -651,7 +711,9 @@ def test_load_grid_defaults_continuation_for_cells_recorded_before_this_change(
 
 def test_model_steering_reads_prefix_from_config(db):
     model_id = db.create_model(
-        name="steered", provider="llama_cpp", model_id="m",
+        name="steered",
+        provider="llama_cpp",
+        model_id="m",
         config={"prefix": "Be careful. "},
     )
     assert model_steering(db.get_model(model_id)) == ("Be careful. ", None)
@@ -659,7 +721,9 @@ def test_model_steering_reads_prefix_from_config(db):
 
 def test_model_steering_reads_system_prompt_from_config(db):
     model_id = db.create_model(
-        name="steered-chat", provider="llama_cpp", model_id="m",
+        name="steered-chat",
+        provider="llama_cpp",
+        model_id="m",
         config={"system_prompt": "You are terse."},
     )
     assert model_steering(db.get_model(model_id)) == (None, "You are terse.")
@@ -674,7 +738,9 @@ def test_model_steering_defaults_to_none_none_for_an_unsteered_row(db):
 
 def test_model_steering_normalizes_an_empty_prefix_to_none(db):
     model_id = db.create_model(
-        name="cleared", provider="llama_cpp", model_id="m",
+        name="cleared",
+        provider="llama_cpp",
+        model_id="m",
         config={"prefix": ""},
     )
     assert model_steering(db.get_model(model_id)) == (None, None)
@@ -682,7 +748,9 @@ def test_model_steering_normalizes_an_empty_prefix_to_none(db):
 
 def test_model_steering_normalizes_an_empty_system_prompt_to_none(db):
     model_id = db.create_model(
-        name="cleared-chat", provider="llama_cpp", model_id="m",
+        name="cleared-chat",
+        provider="llama_cpp",
+        model_id="m",
         config={"system_prompt": ""},
     )
     assert model_steering(db.get_model(model_id)) == (None, None)
@@ -694,7 +762,9 @@ def test_model_steering_raises_naming_the_model_id_when_both_are_set(db):
     hand-edited JSON); model_steering must surface it, not silently pick
     one field over the other."""
     model_id = db.create_model(
-        name="corrupt", provider="llama_cpp", model_id="m",
+        name="corrupt",
+        provider="llama_cpp",
+        model_id="m",
         config={"prefix": "a", "system_prompt": "b"},
     )
     with pytest.raises(ValueError, match=model_id):
@@ -707,13 +777,17 @@ def test_model_steering_preserves_prefix_and_system_prompt_whitespace(db):
     prefix and a leading space in a chat-mode system_prompt are both
     meaningful content, not incidental formatting."""
     prefix_id = db.create_model(
-        name="newline-prefix", provider="llama_cpp", model_id="m",
+        name="newline-prefix",
+        provider="llama_cpp",
+        model_id="m",
         config={"prefix": "\nBe careful. "},
     )
     assert model_steering(db.get_model(prefix_id)) == ("\nBe careful. ", None)
 
     system_prompt_id = db.create_model(
-        name="space-system-prompt", provider="llama_cpp", model_id="m",
+        name="space-system-prompt",
+        provider="llama_cpp",
+        model_id="m",
         config={"system_prompt": " Be terse."},
     )
     assert model_steering(db.get_model(system_prompt_id)) == (None, " Be terse.")
@@ -787,18 +861,25 @@ def test_model_steering_treats_a_real_empty_mapping_as_unsteered(db):
     it is real evidence of "deliberately unsteered", not a corrupt
     non-mapping value, and must still resolve cleanly."""
     model_id = db.create_model(
-        name="empty-config", provider="llama_cpp", model_id="m", config={},
+        name="empty-config",
+        provider="llama_cpp",
+        model_id="m",
+        config={},
     )
     assert model_steering(db.get_model(model_id)) == (None, None)
 
 
-def test_model_steering_raises_naming_the_model_id_and_field_for_a_non_string_prefix(db):
+def test_model_steering_raises_naming_the_model_id_and_field_for_a_non_string_prefix(
+    db,
+):
     """Fix round 1 (b): a present steering value that is not itself a
     string (e.g. hand-edited to a number) must not propagate into
     Target.prefix and then capture_client._build_request's string
     concatenation as an untyped value."""
     model_id = db.create_model(
-        name="numeric-prefix", provider="llama_cpp", model_id="m",
+        name="numeric-prefix",
+        provider="llama_cpp",
+        model_id="m",
         config={"prefix": 5},
     )
     with pytest.raises(ValueError, match=model_id) as exc_info:
@@ -806,9 +887,13 @@ def test_model_steering_raises_naming_the_model_id_and_field_for_a_non_string_pr
     assert "prefix" in str(exc_info.value)
 
 
-def test_model_steering_raises_naming_the_model_id_and_field_for_a_non_string_system_prompt(db):
+def test_model_steering_raises_naming_the_model_id_and_field_for_a_non_string_system_prompt(
+    db,
+):
     model_id = db.create_model(
-        name="listy-system-prompt", provider="llama_cpp", model_id="m",
+        name="listy-system-prompt",
+        provider="llama_cpp",
+        model_id="m",
         config={"system_prompt": ["x"]},
     )
     with pytest.raises(ValueError, match=model_id) as exc_info:

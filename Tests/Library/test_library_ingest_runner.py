@@ -873,13 +873,13 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
     )
     request.addfinalizer(workspace_db.close)
     provider = SimpleNamespace(get_active_context=lambda: None)
-    server_service = _app_module.ServerNotesWorkspaceService.from_server_context_provider(
-        provider
+    server_service = (
+        _app_module.ServerNotesWorkspaceService.from_server_context_provider(provider)
     )
     app = _app_module.TldwCli.__new__(_app_module.TldwCli)
     app.local_workspace_db = workspace_db
-    app.workspace_registry_service = _service_wiring_module.LocalWorkspaceRegistryService(
-        workspace_db
+    app.workspace_registry_service = (
+        _service_wiring_module.LocalWorkspaceRegistryService(workspace_db)
     )
     app.workspace_registry_service.create_workspace(
         workspace_id="restore-workspace",
@@ -964,9 +964,7 @@ def test_real_app_wires_research_association_and_restores_before_startup_resume(
                 job_id=job_id,
                 source_path=f"/restored/source-{index:03d}.txt",
                 state=(
-                    IngestJobState.FAILED
-                    if 55 <= index < 58
-                    else IngestJobState.DONE
+                    IngestJobState.FAILED if 55 <= index < 58 else IngestJobState.DONE
                 ),
                 media_id=None if 55 <= index < 58 else index + 1,
                 research_source_operation_id=operation_id,
@@ -1064,7 +1062,9 @@ async def test_writer_passes_claimed_generate_embeddings_snapshot_to_persistence
     app = _IngestRunnerHarness(db)
 
     with patch.object(
-        _ingest_queue_module, "persist_parsed_media", return_value=(777, "media-777", "saved")
+        _ingest_queue_module,
+        "persist_parsed_media",
+        return_value=(777, "media-777", "saved"),
     ) as persist:
         async with app.run_test() as pilot:
             job = app.submit_library_ingest_job(
@@ -1097,7 +1097,9 @@ async def test_writer_missing_generic_snapshot_uses_capability_defaults(
         }.get(name, fallback)
 
     with (
-        patch.object(_ingest_queue_module, "generic_option_default", side_effect=schema_default),
+        patch.object(
+            _ingest_queue_module, "generic_option_default", side_effect=schema_default
+        ),
         patch.object(
             _ingest_queue_module,
             "persist_parsed_media",
@@ -1902,7 +1904,9 @@ async def test_ebook_waits_for_existing_general_pool_to_retire(
 
         assert requested_processes == [3]
         assert len(pools[0].calls) == 1
-        assert app.library_ingest_jobs.get_job(ebook.job_id).state is IngestJobState.QUEUED
+        assert (
+            app.library_ingest_jobs.get_job(ebook.job_id).state is IngestJobState.QUEUED
+        )
 
         pools[0].trigger_success(0, {"ok": True, "payload": {}})
         for _ in range(_POLL_ATTEMPTS):
@@ -1918,7 +1922,10 @@ async def test_ebook_waits_for_existing_general_pool_to_retire(
             app.library_ingest_jobs.get_job(document.job_id).state
             is not IngestJobState.QUEUED
         )
-        assert app.library_ingest_jobs.get_job(ebook.job_id).state is IngestJobState.PARSING
+        assert (
+            app.library_ingest_jobs.get_job(ebook.job_id).state
+            is IngestJobState.PARSING
+        )
 
 
 @pytest.mark.asyncio
@@ -1945,9 +1952,7 @@ async def test_local_stt_does_not_consume_the_ebook_pool_slot(tmp_path: Path) ->
         audio_path.write_bytes(b"fixture")
         audio = app.submit_library_ingest_job(
             source_path=str(audio_path),
-            ingest_options={
-                "audio_video": {"transcription_provider": "parakeet-onnx"}
-            },
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
         ebooks = []
         for name in ("book-1.epub", "book-2.epub"):
@@ -1956,12 +1961,21 @@ async def test_local_stt_does_not_consume_the_ebook_pool_slot(tmp_path: Path) ->
             ebooks.append(app.submit_library_ingest_job(source_path=str(path)))
         await pilot.pause()
 
-        assert app.library_ingest_jobs.get_job(audio.job_id).state is IngestJobState.PARSING
+        assert (
+            app.library_ingest_jobs.get_job(audio.job_id).state
+            is IngestJobState.PARSING
+        )
         assert len(executor.calls) == 1
         assert len(pools) == 1
         assert len(pools[0].calls) == 1
-        assert app.library_ingest_jobs.get_job(ebooks[0].job_id).state is IngestJobState.PARSING
-        assert app.library_ingest_jobs.get_job(ebooks[1].job_id).state is IngestJobState.QUEUED
+        assert (
+            app.library_ingest_jobs.get_job(ebooks[0].job_id).state
+            is IngestJobState.PARSING
+        )
+        assert (
+            app.library_ingest_jobs.get_job(ebooks[1].job_id).state
+            is IngestJobState.QUEUED
+        )
 
         pools[0].trigger_success(0, {"ok": True, "payload": {}})
         await _wait_for_job_state(
@@ -1972,7 +1986,10 @@ async def test_local_stt_does_not_consume_the_ebook_pool_slot(tmp_path: Path) ->
         )
 
         assert len(pools[0].calls) == 2
-        assert app.library_ingest_jobs.get_job(audio.job_id).state is IngestJobState.PARSING
+        assert (
+            app.library_ingest_jobs.get_job(audio.job_id).state
+            is IngestJobState.PARSING
+        )
 
 
 @pytest.mark.asyncio
@@ -2033,7 +2050,10 @@ async def test_broken_ebook_pool_gates_rebuild_until_teardown_completes(
             await pilot.pause()
             assert len(pools) == 1
             for job in (second, document, late):
-                assert app.library_ingest_jobs.get_job(job.job_id).state is IngestJobState.QUEUED
+                assert (
+                    app.library_ingest_jobs.get_job(job.job_id).state
+                    is IngestJobState.QUEUED
+                )
 
             teardown_release.set()
             await _wait_for_job_state(
@@ -2786,11 +2806,13 @@ def test_unqualified_legacy_v2_folder_cannot_satisfy_a_v3_dispatch(
     monkeypatch.setattr(
         _ingest_queue_module,
         "get_cli_setting",
-        lambda key, *args: str(legacy_v2)
-        if key == "transcription.parakeet_onnx_model_dir"
-        else args[0]
-        if args
-        else None,
+        lambda key, *args: (
+            str(legacy_v2)
+            if key == "transcription.parakeet_onnx_model_dir"
+            else args[0]
+            if args
+            else None
+        ),
     )
     monkeypatch.setattr(
         _parakeet_dispatch_module,
@@ -3434,9 +3456,7 @@ async def test_parakeet_failed_attempt_reaches_faster_whisper_retry_row(
     async with app.run_test() as pilot:
         original = app.submit_library_ingest_job(
             source_path=str(source),
-            ingest_options={
-                "audio_video": {"transcription_provider": "parakeet-onnx"}
-            },
+            ingest_options={"audio_video": {"transcription_provider": "parakeet-onnx"}},
         )
         await pilot.pause()
         attempt_id = executor.calls[0]["attempt_id"]
@@ -4366,7 +4386,9 @@ async def test_pool_submission_binds_generation_and_job_and_applies_transient_pr
         generation = app._ingest_parse_pool_generation
         persisted_before_tick = tuple(store.upserts)
         lifecycle_notifications: list[str] = []
-        progress_notifications: list[tuple[dict[str, Any] | None, dict[str, Any] | None]] = []
+        progress_notifications: list[
+            tuple[dict[str, Any] | None, dict[str, Any] | None]
+        ] = []
         app.library_ingest_jobs.add_listener(
             lambda: lifecycle_notifications.append("lifecycle")
         )
@@ -4519,13 +4541,15 @@ async def test_parse_progress_batch_rejects_stale_or_ineligible_events(
         elif fence == "non_parsing":
             assert app.library_ingest_jobs.mark_writing(job.job_id) is not None
         elif fence == "terminal":
-            assert app.library_ingest_jobs.mark_failed(
-                job.job_id, error="settled"
-            ) is not None
+            assert (
+                app.library_ingest_jobs.mark_failed(job.job_id, error="settled")
+                is not None
+            )
         elif fence == "hidden":
-            assert app.library_ingest_jobs.mark_failed(
-                job.job_id, error="hidden"
-            ) is not None
+            assert (
+                app.library_ingest_jobs.mark_failed(job.job_id, error="hidden")
+                is not None
+            )
             assert app.library_ingest_jobs.dismiss(job.job_id) is not None
         elif fence == "payload_ready":
             app._ingest_parsed_payloads[job.job_id] = {"content": "ready"}
@@ -4940,7 +4964,9 @@ def test_create_pool_redirects_to_real_stderr_when_fileno_invalid(
             assert method == "spawn"
             return _RecordingContext()
 
-    monkeypatch.setattr(ingest_queue_module, "multiprocessing", _RecordingMultiprocessing())
+    monkeypatch.setattr(
+        ingest_queue_module, "multiprocessing", _RecordingMultiprocessing()
+    )
     monkeypatch.setattr(sys, "stderr", _TextualLikeStderr())
 
     mixin = LibraryIngestQueueMixin()
@@ -4987,7 +5013,9 @@ def test_create_pool_leaves_stderr_alone_when_fileno_is_valid(
             assert method == "spawn"
             return _RecordingContext()
 
-    monkeypatch.setattr(ingest_queue_module, "multiprocessing", _RecordingMultiprocessing())
+    monkeypatch.setattr(
+        ingest_queue_module, "multiprocessing", _RecordingMultiprocessing()
+    )
 
     ambient_stderr = sys.stderr
     assert ambient_stderr.fileno() >= 0  # pytest's capture stream is fd-backed
@@ -5374,7 +5402,9 @@ async def test_reingest_of_unchanged_file_still_resolves_media_id(
 # Windows Proactor event-loop setup owns an internal loopback socket pair.
 @pytest.mark.allow_network
 @pytest.mark.asyncio
-async def test_local_writer_uses_claimed_generic_overwrite_option(tmp_path: Path) -> None:
+async def test_local_writer_uses_claimed_generic_overwrite_option(
+    tmp_path: Path,
+) -> None:
     """A job's snapshot, rather than current form state, controls overwrite."""
     db = _make_db(tmp_path)
     source = _write_text_file(
@@ -5629,7 +5659,10 @@ async def test_cancel_remote_batch_asks_the_server_and_resumes_polling(
 
     class _CancellableService:
         async def cancel_media_ingest_jobs_batch(
-            self, *, batch_id: str | None = None, session_id: str | None = None,
+            self,
+            *,
+            batch_id: str | None = None,
+            session_id: str | None = None,
             reason: str | None = None,
         ):
             # Keyword-only, mirroring the real client/service signature --
@@ -5641,8 +5674,13 @@ async def test_cancel_remote_batch_asks_the_server_and_resumes_polling(
         async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100):
             return {
                 "batch_id": batch_id,
-                "jobs": [{"id": 11, "status": "cancelled",
-                          "cancellation_reason": "user asked"}],
+                "jobs": [
+                    {
+                        "id": 11,
+                        "status": "cancelled",
+                        "cancellation_reason": "user asked",
+                    }
+                ],
             }
 
     app = _IngestRunnerHarness(_make_db(tmp_path))
@@ -5689,7 +5727,10 @@ async def test_cancel_remote_batch_ignores_an_empty_batch_id(tmp_path: Path) -> 
 
     class _Service:
         async def cancel_media_ingest_jobs_batch(
-            self, *, batch_id: str | None = None, session_id: str | None = None,
+            self,
+            *,
+            batch_id: str | None = None,
+            session_id: str | None = None,
             reason: str | None = None,
         ):
             calls.append(batch_id)
@@ -5758,9 +5799,7 @@ def _use_server_runtime(app) -> None:
     """
     from types import SimpleNamespace
 
-    app.runtime_policy = SimpleNamespace(
-        state=SimpleNamespace(active_source="server")
-    )
+    app.runtime_policy = SimpleNamespace(state=SimpleNamespace(active_source="server"))
 
 
 @pytest.mark.asyncio
@@ -5795,17 +5834,19 @@ async def test_server_backend_submits_remotely_and_attaches_ids(
 
     _use_server_runtime(app)
     with _server_ingest_preference():
-      async with app.run_test() as pilot:
-        job = app.submit_library_ingest_job(source_path=str(source), title="A title")
-        assert job.origin == "server"
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(
+                source_path=str(source), title="A title"
+            )
+            assert job.origin == "server"
 
-        for _ in range(_POLL_ATTEMPTS):
-            current = app.library_ingest_jobs.get_job(job.job_id)
-            if current is not None and current.batch_id:
-                break
-            await pilot.pause(_POLL_INTERVAL)
-        else:
-            raise AssertionError("the remote ids were never attached")
+            for _ in range(_POLL_ATTEMPTS):
+                current = app.library_ingest_jobs.get_job(job.job_id)
+                if current is not None and current.batch_id:
+                    break
+                await pilot.pause(_POLL_INTERVAL)
+            else:
+                raise AssertionError("the remote ids were never attached")
 
     assert len(service.submissions) == 1
     submitted = service.submissions[0]
@@ -5831,11 +5872,11 @@ async def test_server_backend_without_a_service_fails_the_job_clearly(
 
     _use_server_runtime(app)
     with _server_ingest_preference():
-      async with app.run_test() as pilot:
-        job = app.submit_library_ingest_job(source_path=str(source))
-        failed = await _wait_for_job_state(
-            app, pilot, job.job_id, IngestJobState.FAILED
-        )
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(source_path=str(source))
+            failed = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.FAILED
+            )
 
     assert "server" in failed.error.lower()
 
@@ -5848,11 +5889,13 @@ async def test_server_backend_refuses_a_source_it_cannot_send(tmp_path: Path) ->
 
     _use_server_runtime(app)
     with _server_ingest_preference():
-      async with app.run_test() as pilot:
-        job = app.submit_library_ingest_job(source_path="https://example.com/a-post")
-        failed = await _wait_for_job_state(
-            app, pilot, job.job_id, IngestJobState.FAILED
-        )
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(
+                source_path="https://example.com/a-post"
+            )
+            failed = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.FAILED
+            )
 
     assert "clip" in failed.error.lower()
 
@@ -5866,11 +5909,11 @@ async def test_server_submit_failure_marks_the_job_failed(tmp_path: Path) -> Non
 
     _use_server_runtime(app)
     with _server_ingest_preference():
-      async with app.run_test() as pilot:
-        job = app.submit_library_ingest_job(source_path=str(source))
-        failed = await _wait_for_job_state(
-            app, pilot, job.job_id, IngestJobState.FAILED
-        )
+        async with app.run_test() as pilot:
+            job = app.submit_library_ingest_job(source_path=str(source))
+            failed = await _wait_for_job_state(
+                app, pilot, job.job_id, IngestJobState.FAILED
+            )
 
     assert failed.error
 
@@ -5987,7 +6030,9 @@ async def test_an_explicit_server_preference_routes_remotely(tmp_path: Path) -> 
     with patch(
         "tldw_chatbook.app_ingest_queue.get_cli_setting",
         side_effect=lambda *a, **k: (
-            "server" if a and a[0] == "library.ingest" and a[1:2] == ("backend",) else None
+            "server"
+            if a and a[0] == "library.ingest" and a[1:2] == ("backend",)
+            else None
         ),
     ):
         async with app.run_test() as pilot:
@@ -6009,12 +6054,14 @@ async def test_remote_poll_follows_pagination(tmp_path: Path) -> None:
     keep fetching that batch forever, which is exactly what the stop condition
     exists to prevent.
     """
+
     class _PagedService:
         def __init__(self) -> None:
             self.offsets: list[int] = []
 
-        async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100,
-                                         offset: int = 0):
+        async def list_media_ingest_jobs(
+            self, batch_id: str, *, limit: int = 100, offset: int = 0
+        ):
             self.offsets.append(offset)
             if offset == 0:
                 return {
@@ -6112,6 +6159,7 @@ async def test_a_service_without_offset_reads_one_page_instead_of_looping(
     way to advance would re-fetch the same page ``REMOTE_INGEST_MAX_PAGES``
     times per pass, every pass.
     """
+
     class _UnpagedService:
         def __init__(self) -> None:
             self.calls = 0
@@ -6202,7 +6250,9 @@ class _RecordingClipService:
         self.submissions.append(kwargs)
         return {"batch_id": "batch-9", "jobs": [{"id": 1}]}
 
-    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100, offset: int = 0):
+    async def list_media_ingest_jobs(
+        self, batch_id: str, *, limit: int = 100, offset: int = 0
+    ):
         return {"batch_id": batch_id, "jobs": []}
 
 
@@ -6301,7 +6351,9 @@ class _IdlessSubmitService:
     async def submit_ingest_jobs(self, **kwargs):
         return self.response
 
-    async def list_media_ingest_jobs(self, batch_id: str, *, limit: int = 100, offset: int = 0):
+    async def list_media_ingest_jobs(
+        self, batch_id: str, *, limit: int = 100, offset: int = 0
+    ):
         self.list_calls += 1
         return {"batch_id": batch_id, "jobs": []}
 
@@ -6347,9 +6399,7 @@ async def test_a_submission_we_cannot_track_fails_instead_of_queueing_forever(
                     break
                 await pilot.pause(_POLL_INTERVAL)
             else:
-                raise AssertionError(
-                    f"{why}: job was not failed; states={states}"
-                )
+                raise AssertionError(f"{why}: job was not failed; states={states}")
 
     job = app.library_ingest_jobs.jobs()[0]
     assert "track" in (job.error or "").lower(), job.error

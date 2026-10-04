@@ -85,15 +85,24 @@ class TestTokenCounter:
 
     def test_get_model_token_limit_current_models(self):
         assert get_model_token_limit("gpt-4o", "openai") == 128000
-        assert get_model_token_limit("claude-3-5-sonnet-20241022", "anthropic") == 200000
+        assert (
+            get_model_token_limit("claude-3-5-sonnet-20241022", "anthropic") == 200000
+        )
         assert get_model_token_limit("gemini-1.5-pro", "google") == 2097152
         assert get_model_token_limit("mistral-large", "mistral") == 128000
 
     def test_get_model_token_limit_prefers_capabilities_over_table(self, monkeypatch):
         # Capabilities must be consulted before the table, including overrides.
         import tldw_chatbook.model_capabilities as mc
-        monkeypatch.setattr(mc, "_global_capabilities", mc.ModelCapabilities({"models": {"gpt-4": {"context_window": 999999}}}))
-        assert get_model_token_limit("gpt-4", "openai") == 999999  # table would say 8192
+
+        monkeypatch.setattr(
+            mc,
+            "_global_capabilities",
+            mc.ModelCapabilities({"models": {"gpt-4": {"context_window": 999999}}}),
+        )
+        assert (
+            get_model_token_limit("gpt-4", "openai") == 999999
+        )  # table would say 8192
 
     def test_get_model_token_limit_longest_prefix_wins(self):
         # No capability pattern matches "gpt-4-32k-custom"; both "gpt-4" (8192) and
@@ -109,16 +118,27 @@ class TestTokenCounter:
         # instead of the generic 4096 default. (Qodo review #5.)
         assert get_model_token_limit("openai/gpt-4o-mini", "openrouter") == 128000
         assert get_model_token_limit("openai/gpt-4o-mini", "OpenRouter") == 128000
-        assert get_model_token_limit("anthropic/claude-3.7-sonnet", "openrouter") == 200000
-        assert get_model_token_limit("google/gemini-2.0-flash-001", "openrouter") == 1048576
+        assert (
+            get_model_token_limit("anthropic/claude-3.7-sonnet", "openrouter") == 200000
+        )
+        assert (
+            get_model_token_limit("google/gemini-2.0-flash-001", "openrouter")
+            == 1048576
+        )
 
     def test_get_model_token_limit_provider_casing_insensitive(self):
         # TitleCase provider must resolve the same conservative default as lowercase.
         # (Qodo review #6 — provider_defaults lookup was case-sensitive.)
-        assert get_model_token_limit("unknown-model", "Anthropic") == \
-            get_model_token_limit("unknown-model", "anthropic") == 200000
-        assert get_model_token_limit("unknown-model", "OpenAI") == \
-            get_model_token_limit("unknown-model", "openai") == 4096
+        assert (
+            get_model_token_limit("unknown-model", "Anthropic")
+            == get_model_token_limit("unknown-model", "anthropic")
+            == 200000
+        )
+        assert (
+            get_model_token_limit("unknown-model", "OpenAI")
+            == get_model_token_limit("unknown-model", "openai")
+            == 4096
+        )
 
     def test_format_token_display_green(self):
         """Test token display formatting - green indicator"""
@@ -156,7 +176,11 @@ class TestTokenCounter:
         text = "Hello world"  # Should be 2 tokens for most models
         encoding = get_tiktoken_encoding("gpt-3.5-turbo")
         assert encoding is not None
-        assert count_tokens_tiktoken(text, "gpt-3.5-turbo") == len(encoding.encode(text)) == 2
+        assert (
+            count_tokens_tiktoken(text, "gpt-3.5-turbo")
+            == len(encoding.encode(text))
+            == 2
+        )
 
     @pytest.mark.parametrize("text", ["a", "界界"])
     def test_tiktoken_failure_uses_conservative_character_estimator(
@@ -244,7 +268,9 @@ class TestEstimator:
 
     def test_code_sample_exceeds_word_count(self):
         code = "def f(x):\n    return [i*i for i in range(x) if i % 2 == 0]\n" * 3
-        assert estimate_tokens(code, "claude-3-5-sonnet-20241022", "anthropic") > len(code.split())
+        assert estimate_tokens(code, "claude-3-5-sonnet-20241022", "anthropic") > len(
+            code.split()
+        )
 
     def test_ascii_100_chars_in_band(self):
         # Keeps the pinned test_character_estimation_fallback assumptions valid.
@@ -252,19 +278,21 @@ class TestEstimator:
 
     def test_messages_and_chat_history_agree_for_one_message(self):
         msg = [{"role": "user", "content": "hello world foo bar"}]
-        assert count_tokens_chat_history(msg, model="claude-3-5-sonnet-20241022",
-                                         provider="anthropic") == \
-            count_tokens_messages(msg, "claude-3-5-sonnet-20241022", "anthropic")
+        assert count_tokens_chat_history(
+            msg, model="claude-3-5-sonnet-20241022", provider="anthropic"
+        ) == count_tokens_messages(msg, "claude-3-5-sonnet-20241022", "anthropic")
 
     def test_chars_estimate_provider_casing_insensitive(self):
         # The chars-path ratio lookup must be case-insensitive: "Google" (0.3)
         # must not silently fall back to the default ratio. (Qodo review #6.)
         text = "some plain english text " * 4
-        assert estimate_tokens(text, "gemini-1.5-pro", "Google") == \
-            estimate_tokens(text, "gemini-1.5-pro", "google")
+        assert estimate_tokens(text, "gemini-1.5-pro", "Google") == estimate_tokens(
+            text, "gemini-1.5-pro", "google"
+        )
         # And Google's higher ratio genuinely differs from the default bucket.
-        assert estimate_tokens(text, "gemini-1.5-pro", "Google") > \
-            estimate_tokens(text, "m", "openai")
+        assert estimate_tokens(text, "gemini-1.5-pro", "Google") > estimate_tokens(
+            text, "m", "openai"
+        )
 
 
 #

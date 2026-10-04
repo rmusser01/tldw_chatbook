@@ -113,7 +113,12 @@ _DEFAULT_DISK_STORE = object()
 
 
 def _stub(
-    monkeypatch, *, settings=None, report=None, error=None, disk_store=_DEFAULT_DISK_STORE
+    monkeypatch,
+    *,
+    settings=None,
+    report=None,
+    error=None,
+    disk_store=_DEFAULT_DISK_STORE,
 ):
     """Build a stub app + service and pin tldw_chatbook.app.load_settings."""
     if settings is None:
@@ -185,16 +190,12 @@ class _ConsentHost:
 @pytest.mark.asyncio
 async def test_consent_allow_persists_consent_and_schedules_refresh(monkeypatch):
     saved = MagicMock(return_value=True)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config", saved
-    )
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", saved)
     host = _ConsentHost()
 
     await TldwCli._handle_model_catalog_consent(host, True)
 
-    saved.assert_called_once_with(
-        {"model_catalog": {"refresh_consent_recorded": True}}
-    )
+    saved.assert_called_once_with({"model_catalog": {"refresh_consent_recorded": True}})
     host.run_worker.assert_called_once_with(
         host._refresh_model_catalogs,
         exclusive=True,
@@ -206,9 +207,7 @@ async def test_consent_allow_persists_consent_and_schedules_refresh(monkeypatch)
 @pytest.mark.asyncio
 async def test_consent_deny_persists_disabled_and_skips_refresh(monkeypatch):
     saved = MagicMock(return_value=True)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config", saved
-    )
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", saved)
     host = _ConsentHost()
 
     await TldwCli._handle_model_catalog_consent(host, False)
@@ -231,9 +230,7 @@ async def test_consent_deny_persists_disabled_and_skips_refresh(monkeypatch):
 async def test_consent_truthy_non_bool_is_treated_as_deny(monkeypatch, junk):
     """Only the boolean True counts as consent, mirroring the parser."""
     saved = MagicMock(return_value=True)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config", saved
-    )
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", saved)
     host = _ConsentHost()
 
     await TldwCli._handle_model_catalog_consent(host, junk)
@@ -246,9 +243,7 @@ async def test_consent_truthy_non_bool_is_treated_as_deny(monkeypatch, junk):
 @pytest.mark.asyncio
 async def test_consent_allow_still_refreshes_when_persist_fails(monkeypatch):
     saved = MagicMock(return_value=False)
-    monkeypatch.setattr(
-        "tldw_chatbook.config.save_settings_to_cli_config", saved
-    )
+    monkeypatch.setattr("tldw_chatbook.config.save_settings_to_cli_config", saved)
     host = _ConsentHost()
 
     await TldwCli._handle_model_catalog_consent(host, True)
@@ -411,9 +406,7 @@ async def test_refresh_posts_model_catalog_refreshed_for_refreshed_and_baseline(
     )
     app, _service = _stub(monkeypatch, report=report)
     await TldwCli._refresh_model_catalogs(app)
-    events = [
-        m for m in app.posted_messages if isinstance(m, ModelCatalogRefreshed)
-    ]
+    events = [m for m in app.posted_messages if isinstance(m, ModelCatalogRefreshed)]
     assert len(events) == 1
     assert events[0].providers == frozenset({"OpenAI", "Anthropic"})
 

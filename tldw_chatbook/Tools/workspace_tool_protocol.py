@@ -145,16 +145,22 @@ class WorkspaceToolRequest:
         root_locator = _require_path(frame.root_locator, "root_locator")
         root_identity = _identity_from_frame(frame.root_identity)
         if not frame.ancestor_identities:
-            raise WorkspaceProtocolError("ancestor_identities must be a non-empty array")
+            raise WorkspaceProtocolError(
+                "ancestor_identities must be a non-empty array"
+            )
         if len(frame.ancestor_identities) > MAX_COLLECTION_ITEMS:
-            raise WorkspaceProtocolError("ancestor_identities exceeds collection ceiling")
+            raise WorkspaceProtocolError(
+                "ancestor_identities exceeds collection ceiling"
+            )
         ancestors = tuple(
             _identity_from_frame(value) for value in frame.ancestor_identities
         )
         if intent != _EXPECTED_INTENTS[operation]:
             raise WorkspaceProtocolError("operation intent mismatch")
         arguments = _require_arguments(frame.arguments, operation=operation)
-        timeout_seconds = _require_positive_int(frame.timeout_seconds, "timeout_seconds")
+        timeout_seconds = _require_positive_int(
+            frame.timeout_seconds, "timeout_seconds"
+        )
         output_max_bytes = _require_positive_int(
             frame.output_max_bytes, "output_max_bytes"
         )
@@ -453,7 +459,9 @@ def _require_argument_value(value: Any, *, kind: str) -> None:
                 "sensitive exclusion kind",
             )
             text = _require_path(exclusion["value"], "sensitive exclusion value")
-            if "\x00" in text or (kind_value == "name" and ("/" in text or "\\" in text)):
+            if "\x00" in text or (
+                kind_value == "name" and ("/" in text or "\\" in text)
+            ):
                 raise WorkspaceProtocolError("invalid sensitive exclusions")
         return
     raise WorkspaceProtocolError("invalid argument schema")

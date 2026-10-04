@@ -130,9 +130,7 @@ def project_console_send_authority(
     # snapshots produced before the rename (persisted/replayed state), and
     # losing the lookup would leave Run reading "Ready" while retrieval is
     # blocked -- silently, and in the one line pinned above the fold.
-    source = (
-        rows.get("Retrieval") or rows.get("Sources") or rows.get("RAG/source")
-    )
+    source = rows.get("Retrieval") or rows.get("Sources") or rows.get("RAG/source")
     recovery_required = any(
         rows.get(label) is not None for label in ("Recovery action", "Next action")
     )
@@ -280,9 +278,7 @@ class ConsoleSendAuthoritySummary(Static):
         if not self.is_mounted:
             return
         try:
-            heading = self.query_one(
-                f"#{CONSOLE_AUTHORITY_SUMMARY_HEADING_ID}", Static
-            )
+            heading = self.query_one(f"#{CONSOLE_AUTHORITY_SUMMARY_HEADING_ID}", Static)
         except (NoMatches, QueryError):
             pass
         else:

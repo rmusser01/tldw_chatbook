@@ -117,9 +117,9 @@ def test_numeric_coercion_on_resume():
                 "name": "clip",
                 "prompt": "p",
                 "backend": "comfyui",
-                "seed": "42",          # hand-edited payload coerces
-                "width": 1280.0,       # whole float coerces to int
-                "fps": True,           # bools never coerce
+                "seed": "42",  # hand-edited payload coerces
+                "width": 1280.0,  # whole float coerces to int
+                "fps": True,  # bools never coerce
                 "height": "not-a-number",
             }
         }

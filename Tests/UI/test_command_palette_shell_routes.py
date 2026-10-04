@@ -25,7 +25,10 @@ from tldw_chatbook.Constants import (
 
 def test_chunking_lab_is_a_separate_library_tool_command():
     from tldw_chatbook.app import LibraryIngestProvider
-    assert any(command[1] == "open_chunking_lab" for command in LibraryIngestProvider.COMMANDS)
+
+    assert any(
+        command[1] == "open_chunking_lab" for command in LibraryIngestProvider.COMMANDS
+    )
     assert "chunking_lab" not in TabNavigationProvider.command_palette_tab_ids()
 
 
@@ -107,11 +110,15 @@ def test_legacy_routes_are_searchable_alias_terms_on_their_destination(request):
         "characters",
         "roleplay",
     } <= alias_terms["personas"]
-    assert "Roleplay" in alias_terms["personas"]  # TAB_CCP display label, deduped to one command
+    assert (
+        "Roleplay" in alias_terms["personas"]
+    )  # TAB_CCP display label, deduped to one command
     # F-034: "Roleplay" is the one public name; the retired long form no
     # longer rents a search term either.
     assert "Roleplay & Chat Dictionaries" not in alias_terms["personas"]
-    assert "personas" in alias_terms["personas"]  # still searchable via id/primary_route
+    assert (
+        "personas" in alias_terms["personas"]
+    )  # still searchable via id/primary_route
     assert {"subscriptions", "subscription", "Subscriptions"} <= alias_terms[
         "watchlists_collections"
     ]

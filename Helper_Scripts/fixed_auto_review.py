@@ -32,7 +32,9 @@ from typing import Any, Dict, List, Optional, Union
 try:
     import requests
 except ImportError:
-    logging.error("requests module not found. Please install with: pip install requests")
+    logging.error(
+        "requests module not found. Please install with: pip install requests"
+    )
     sys.exit(1)
 
 # --------------------------------------------------------------------------- #
@@ -53,18 +55,20 @@ PROVIDER = os.getenv("REVIEW_PROVIDER", "deepseek").lower()
 
 
 def chat_with_deepseek(
-        input_data: List[Dict[str, Any]],
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
-        system_message: Optional[str] = None,
-        temp: Optional[float] = None,
-        streaming: Optional[bool] = False,
-        max_tokens: Optional[int] = None,
+    input_data: List[Dict[str, Any]],
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    system_message: Optional[str] = None,
+    temp: Optional[float] = None,
+    streaming: Optional[bool] = False,
+    max_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Simplified DeepSeek chat function."""
     final_api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
     if not final_api_key:
-        raise RuntimeError("DeepSeek API Key required. Set DEEPSEEK_API_KEY environment variable.")
+        raise RuntimeError(
+            "DeepSeek API Key required. Set DEEPSEEK_API_KEY environment variable."
+        )
 
     current_model = model or "deepseek-chat"
     current_temp = temp if temp is not None else 0.1
@@ -75,7 +79,10 @@ def chat_with_deepseek(
         api_messages.append({"role": "system", "content": system_message})
     api_messages.extend(input_data)
 
-    headers = {'Authorization': f'Bearer {final_api_key}', 'Content-Type': 'application/json'}
+    headers = {
+        "Authorization": f"Bearer {final_api_key}",
+        "Content-Type": "application/json",
+    }
     data = {
         "model": current_model,
         "messages": api_messages,
@@ -84,7 +91,7 @@ def chat_with_deepseek(
         "max_tokens": current_max_tokens,
     }
 
-    api_url = 'https://api.deepseek.com/chat/completions'
+    api_url = "https://api.deepseek.com/chat/completions"
 
     try:
         response = requests.post(api_url, headers=headers, json=data, timeout=120)
@@ -99,17 +106,19 @@ def chat_with_deepseek(
 
 
 def chat_with_google(
-        input_data: List[Dict[str, Any]],
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
-        system_message: Optional[str] = None,
-        temp: Optional[float] = None,
-        max_output_tokens: Optional[int] = None,
+    input_data: List[Dict[str, Any]],
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    system_message: Optional[str] = None,
+    temp: Optional[float] = None,
+    max_output_tokens: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Simplified Google Gemini chat function."""
     final_api_key = api_key or os.getenv("GOOGLE_API_KEY")
     if not final_api_key:
-        raise RuntimeError("Google API Key required. Set GOOGLE_API_KEY environment variable.")
+        raise RuntimeError(
+            "Google API Key required. Set GOOGLE_API_KEY environment variable."
+        )
 
     current_model = model or "gemini-1.5-flash-latest"
 
@@ -118,12 +127,11 @@ def chat_with_google(
     for msg in input_data:
         role = msg.get("role")
         content = msg.get("content")
-        gemini_role = "user" if role == "user" else "model" if role == "assistant" else None
+        gemini_role = (
+            "user" if role == "user" else "model" if role == "assistant" else None
+        )
         if gemini_role and content:
-            gemini_contents.append({
-                "role": gemini_role,
-                "parts": [{"text": content}]
-            })
+            gemini_contents.append({"role": gemini_role, "parts": [{"text": content}]})
 
     generation_config = {}
     if temp is not None:
@@ -138,7 +146,7 @@ def chat_with_google(
         payload["system_instruction"] = {"parts": [{"text": system_message}]}
 
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent"
-    headers = {'x-goog-api-key': final_api_key, 'Content-Type': 'application/json'}
+    headers = {"x-goog-api-key": final_api_key, "Content-Type": "application/json"}
 
     try:
         response = requests.post(api_url, headers=headers, json=payload, timeout=120)
@@ -160,11 +168,16 @@ def chat_with_google(
             "object": "chat.completion",
             "created": int(time.time()),
             "model": current_model,
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": assistant_content.strip()},
-                "finish_reason": "stop"
-            }]
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": assistant_content.strip(),
+                    },
+                    "finish_reason": "stop",
+                }
+            ],
         }
     except requests.exceptions.HTTPError as e:
         logging.error(f"Google API HTTP error: {e}")
@@ -226,7 +239,9 @@ def _unified_diff(orig_path: Path, new_content: str) -> str:
         tmp.flush()
         cmd = ["diff", "-u", str(orig_path), tmp.name]
         try:
-            diff_bytes = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+            diff_bytes = subprocess.check_output(
+                cmd, text=True, stderr=subprocess.DEVNULL
+            )
         except subprocess.CalledProcessError as cpe:
             # diff returns exit-status 1 when files differ – this is expected
             diff_bytes = cpe.output
@@ -237,7 +252,7 @@ def _read_file_content(file_path: Path) -> str:
     """Read the current content of a file."""
     try:
         if file_path.exists():
-            return file_path.read_text(encoding='utf-8')
+            return file_path.read_text(encoding="utf-8")
     except Exception as e:
         logging.warning(f"Could not read file {file_path}: {e}")
     return ""
@@ -250,14 +265,14 @@ def _apply_multi_edits(original_content: str, edits: List[Dict[str, Any]]) -> st
         old_string = edit.get("old_string", "")
         new_string = edit.get("new_string", "")
         replace_all = edit.get("replace_all", False)
-        
+
         if old_string in content:
             if replace_all:
                 content = content.replace(old_string, new_string)
             else:
                 # Replace only first occurrence
                 content = content.replace(old_string, new_string, 1)
-    
+
     return content
 
 
@@ -285,18 +300,18 @@ def main() -> None:
         if not file_path:
             logging.error("MultiEdit requires file_path")
             sys.exit(1)
-        
+
         edits = tool_input.get("edits", [])
         if not edits:
             logging.error("MultiEdit requires edits array")
             sys.exit(1)
-        
+
         # Read current file content
         original_content = _read_file_content(file_path)
-        
+
         # Apply all edits to get the final content
         new_content = _apply_multi_edits(original_content, edits)
-        
+
     elif tool_name == "Edit":
         new_content = tool_input.get("new_string", "")
     elif tool_name == "Write":
@@ -307,7 +322,9 @@ def main() -> None:
     transcript_path = event.get("transcript_path")
 
     if not file_path or not new_content:
-        logging.error(f"Missing file_path or content. file_path='{file_path}', content_length={len(new_content) if new_content else 0}, tool_name='{tool_name}'")
+        logging.error(
+            f"Missing file_path or content. file_path='{file_path}', content_length={len(new_content) if new_content else 0}, tool_name='{tool_name}'"
+        )
         sys.exit(1)
 
     # 2️⃣ Collect context
@@ -365,8 +382,8 @@ def main() -> None:
 
         # Try to extract JSON from the content
         # Sometimes LLMs wrap JSON in markdown code blocks
-        json_start = content.find('{')
-        json_end = content.rfind('}') + 1
+        json_start = content.find("{")
+        json_end = content.rfind("}") + 1
         if json_start != -1 and json_end > json_start:
             json_str = content[json_start:json_end]
         else:
@@ -377,7 +394,11 @@ def main() -> None:
         logging.error(f"Could not parse LLM JSON: {exc}")
         logging.error(f"Raw content: {content[:1000] if content else 'None'}")
         # Fallback: assume review passed if we can't parse
-        result = {"pass": True, "issues": [], "suggest": "JSON parse error - assuming pass"}
+        result = {
+            "pass": True,
+            "issues": [],
+            "suggest": "JSON parse error - assuming pass",
+        }
     except Exception as exc:
         logging.error(f"Unexpected error parsing LLM response: {exc}")
         sys.exit(1)

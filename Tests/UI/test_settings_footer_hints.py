@@ -80,7 +80,7 @@ def test_category_footer_shortcuts_only_advertise_working_keys():
         if category is SettingsCategoryId.THEME:
             # TASK-33062: the theme list's own bindings, listed after the
             # screen-level keys (and only there).
-            assert shortcuts[-len(theme_keys):] == theme_keys
+            assert shortcuts[-len(theme_keys) :] == theme_keys
             shortcuts = shortcuts[: -len(theme_keys)]
         keys = tuple(key for key, _label in shortcuts)
         # Network owns a self-contained save path without a SettingsDraft;
@@ -127,9 +127,7 @@ async def test_profile_footer_explains_escape_hatch_while_editor_owns_keys() -> 
 
     async with host.run_test(size=(180, 50)) as pilot:
         await _settle_settings(pilot)
-        await _click_settings_category(
-            pilot, SettingsCategoryId.PERSONAL_CONTEXT.value
-        )
+        await _click_settings_category(pilot, SettingsCategoryId.PERSONAL_CONTEXT.value)
         await host.workers.wait_for_complete()
         await pilot.pause()
         screen = _active_destination_screen(host)
@@ -161,9 +159,7 @@ async def test_footer_hints_follow_the_active_category():
             await _click_settings_category(pilot, category_value)
             screen = _active_destination_screen(host)
             footer = screen.query_one(AppFooterStatus)
-            expected = {
-                label for _key, label in screen._footer_shortcut_entries()
-            }
+            expected = {label for _key, label in screen._footer_shortcut_entries()}
             if category_value == SettingsCategoryId.PERSONAL_CONTEXT.value:
                 assert expected == _PROFILE_ACTION_LABELS
             for label in expected:
@@ -399,15 +395,12 @@ def test_f1_help_has_contract_content_for_every_category():
         assert body.strip() != state.title.strip(), category
         assert state.notes, category
         assert all(note.strip() for note in state.notes), category
-        assert any(
-            note.startswith("Save contract: ") for note in state.notes
-        ), category
+        assert any(note.startswith("Save contract: ") for note in state.notes), category
         # Ownership: either the matrix's runtime-owner line, or the
         # read-only domain pages' single "Owned by X" sentence
         # (review finding 11 de-duplicated their four echoes).
         assert any(
-            note.startswith(("Runtime owner: ", "Owned by "))
-            for note in state.notes
+            note.startswith(("Runtime owner: ", "Owned by ")) for note in state.notes
         ), category
         # Verbs: either real category shortcuts, or an explicit statement
         # that none exist here.
@@ -525,9 +518,7 @@ async def test_f1_help_panel_body_carries_category_contract_when_mounted():
         ), body
         assert "Writes here: yes." in body, body
         for label in _expected_labels(SettingsCategoryId.STORAGE):
-            assert label in body, (
-                f"rendered F1 body must teach {label!r}, got {body!r}"
-            )
+            assert label in body, f"rendered F1 body must teach {label!r}, got {body!r}"
 
         await pilot.press("escape")
         await pilot.pause()
@@ -547,8 +538,7 @@ async def test_f1_help_panel_body_carries_category_contract_when_mounted():
         assert "Save contract: Applies immediately." in body, body
         assert (
             "Runtime owner: Settings global gate; Schedules runtime actions; "
-            "Artifacts collection cadence."
-            in body
+            "Artifacts collection cadence." in body
         ), body
         assert "Writes here: yes." in body, body
         assert "No shortcut keys are specific to this category." in body, body

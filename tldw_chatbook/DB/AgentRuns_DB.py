@@ -822,9 +822,7 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE change_notes ADD COLUMN diff_line_index INTEGER"
                 )
             if "diff_line_text" not in note_columns:
-                conn.execute(
-                    "ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT"
-                )
+                conn.execute("ALTER TABLE change_notes ADD COLUMN diff_line_text TEXT")
             # v20->v21 (ADR-147, TASK-32477): preset routing fields on
             # agent_definitions; resolved-target snapshot on agent_runs.
             # Same idempotent-ALTER mechanism as every column above.
@@ -848,13 +846,13 @@ class AgentRunsDB(BaseDB):
                     "TEXT NOT NULL DEFAULT '{}'"
                 )
             for column in (
-                "resolved_provider", "resolved_model",
-                "resolved_base_url", "resolved_params_json",
+                "resolved_provider",
+                "resolved_model",
+                "resolved_base_url",
+                "resolved_params_json",
             ):
                 if column not in existing_columns:
-                    conn.execute(
-                        f"ALTER TABLE agent_runs ADD COLUMN {column} TEXT"
-                    )
+                    conn.execute(f"ALTER TABLE agent_runs ADD COLUMN {column} TEXT")
             # Keep the (write-only, audit) version table in step with the
             # DDL -- append-per-version, matching the INSERT OR IGNORE
             # convention above (UPDATE would collide on the UNIQUE column
@@ -2310,6 +2308,7 @@ class AgentRunsDB(BaseDB):
             if cursor.rowcount != 1:
                 raise RuntimeError("terminal status changed during transaction")
         return True
+
     def continuation_budget(self, conversation_id: str, run_id: str) -> dict | None:
         """Read this sub-agent's recorded budget and continuation ancestors.
 

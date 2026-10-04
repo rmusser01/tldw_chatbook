@@ -436,10 +436,7 @@ class FileNotesService:
             for relative_path in uncertain_paths
         )
         entries.sort(key=lambda entry: entry.relative_path)
-        self._entry_cache = {
-            entry.relative_path: entry
-            for entry in entries
-        }
+        self._entry_cache = {entry.relative_path: entry for entry in entries}
         return ScanResult(
             status="ok",
             entries=tuple(entries),
@@ -506,7 +503,9 @@ class FileNotesService:
         """
         relative_path = opened.relative_path
         if opened.root != self.root_key:
-            return _result("unsafe", relative_path, "Opened note belongs to another root")
+            return _result(
+                "unsafe", relative_path, "Opened note belongs to another root"
+            )
         if not opened.editable:
             return _result("readonly", relative_path, opened.read_only_reason)
         if not self._root_is_online():
@@ -665,7 +664,9 @@ class FileNotesService:
 
         raw_bytes = _serialize_body(opened, body)
         if len(body) > MAX_FILE_CHARS or len(raw_bytes) > MAX_FILE_BYTES:
-            return _result("readonly", destination_path, "Edited content exceeds limits")
+            return _result(
+                "readonly", destination_path, "Edited content exceeds limits"
+            )
 
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         flags |= getattr(os, "O_NOFOLLOW", 0)
@@ -1278,9 +1279,7 @@ class FileNotesService:
                             mtime_ns=observed_file.mtime_ns,
                             content_hash=previous.content_hash,
                             editable=not oversized,
-                            read_only_reason=(
-                                "too-many-bytes" if oversized else None
-                            ),
+                            read_only_reason=("too-many-bytes" if oversized else None),
                         )
                     )
                 continue
@@ -1315,10 +1314,7 @@ class FileNotesService:
         deleted: list[str] = []
         if old_files is not None and not had_walk_error:
             missing = sorted(
-                set(old_files)
-                - set(observed)
-                - uncertain_paths
-                - pending_move_sources
+                set(old_files) - set(observed) - uncertain_paths - pending_move_sources
             )
             for relative_path in missing:
                 try:
@@ -1337,10 +1333,7 @@ class FileNotesService:
                     continue
                 deleted.append(relative_path)
         entries.sort(key=lambda entry: entry.relative_path)
-        self._entry_cache = {
-            entry.relative_path: entry
-            for entry in entries
-        }
+        self._entry_cache = {entry.relative_path: entry for entry in entries}
         return ReconcileResult(
             status="ok",
             entries=tuple(entries),
@@ -1706,9 +1699,7 @@ class FileNotesService:
     ) -> str | None:
         if self._replica is None:
             return "Replica unavailable"
-        observed_mtime_ns = (
-            file_stat.st_mtime_ns if file_stat is not None else mtime_ns
-        )
+        observed_mtime_ns = file_stat.st_mtime_ns if file_stat is not None else mtime_ns
         if observed_mtime_ns is None:
             raise ValueError("mtime_ns is required for replica upsert")
         _, pending_warning = self._materialize_pending_move(

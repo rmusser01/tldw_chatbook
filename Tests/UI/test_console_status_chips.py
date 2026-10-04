@@ -90,7 +90,9 @@ async def test_library_chip_keyboard_and_click_post_the_same_open_request() -> N
             chip.post_message = original
 
         assert len(posted) == 2
-        assert all(isinstance(item, ConsoleLibraryChip.OpenRequested) for item in posted)
+        assert all(
+            isinstance(item, ConsoleLibraryChip.OpenRequested) for item in posted
+        )
 
 
 @pytest.mark.asyncio

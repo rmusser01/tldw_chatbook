@@ -916,10 +916,7 @@ def test_credential_replacement_and_clear_are_sparse_and_secret_safe():
         {},
     )
     assert "api_key" not in cleared.section_values["api_settings.openai"]
-    assert (
-        cleared.section_values["api_settings.openai"]["credential_source"]
-        == "none"
-    )
+    assert cleared.section_values["api_settings.openai"]["credential_source"] == "none"
     assert cleared.delete_keys["api_settings.openai"] == (
         "api_key",
         "api_key_env_var",
@@ -965,12 +962,11 @@ def test_credential_source_is_persisted_for_each_authoritative_auth_decision():
     assert cleared.section_values["api_settings.custom"]["credential_source"] == (
         "none"
     )
-    assert kept.section_values["api_settings.custom"]["credential_source"] == (
-        "stored"
+    assert kept.section_values["api_settings.custom"]["credential_source"] == ("stored")
+    assert (
+        environment.section_values["api_settings.custom"]["credential_source"]
+        == "environment"
     )
-    assert environment.section_values["api_settings.custom"][
-        "credential_source"
-    ] == "environment"
 
 
 def test_unset_environment_declaration_changes_credential_routing_identity(
@@ -2214,12 +2210,16 @@ def test_template_endpoint_without_user_acceptance_is_not_explicitly_configured(
 
 _ENGINE_PRESET_RECORDS = [
     record
-    for record in __import__("tldw_chatbook.provider_registry", fromlist=["ALL_RECORDS"]).ALL_RECORDS
+    for record in __import__(
+        "tldw_chatbook.provider_registry", fromlist=["ALL_RECORDS"]
+    ).ALL_RECORDS
     if record.engine_driven and record.key != "custom-hosted"
 ]
 
 
-@pytest.mark.parametrize("record", _ENGINE_PRESET_RECORDS, ids=lambda record: record.key)
+@pytest.mark.parametrize(
+    "record", _ENGINE_PRESET_RECORDS, ids=lambda record: record.key
+)
 def test_every_engine_preset_is_owned_by_setup_persistence(record):
     """Settings and first-run setup could save no engine preset but Databricks;
     each one must resolve by key and display name to its own section."""
@@ -2252,7 +2252,9 @@ def test_every_engine_preset_saves_its_documented_url_unchanged(record):
     """The endpoint contract used to force a ``/v1`` model onto every URL:
     DeepInfra's ``/v1/openai`` was rejected and BytePlus/Kilo/Qianfan gained a
     bogus ``/v1``. Each preset's documented base must save exactly."""
-    section = _saved_engine_endpoint(record.config_key, record.key, record.default_base_url)
+    section = _saved_engine_endpoint(
+        record.config_key, record.key, record.default_base_url
+    )
     assert section["api_base_url"] == record.default_base_url
     assert section["api_key"] == "sk-test-canary-1234567890"
     assert section["model"] == "some-model"
@@ -2261,15 +2263,31 @@ def test_every_engine_preset_saves_its_documented_url_unchanged(record):
 @pytest.mark.parametrize(
     ("provider", "key", "entered", "saved"),
     [
-        ("Azure", "azure", "https://my-resource.openai.azure.com",
-         "https://my-resource.openai.azure.com/openai/v1"),
-        ("Databricks", "databricks", "https://dbc-1.cloud.databricks.com",
-         "https://dbc-1.cloud.databricks.com/openai/v1"),
-        ("Cloudflare", "cloudflare", "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1",
-         "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1"),
+        (
+            "Azure",
+            "azure",
+            "https://my-resource.openai.azure.com",
+            "https://my-resource.openai.azure.com/openai/v1",
+        ),
+        (
+            "Databricks",
+            "databricks",
+            "https://dbc-1.cloud.databricks.com",
+            "https://dbc-1.cloud.databricks.com/openai/v1",
+        ),
+        (
+            "Cloudflare",
+            "cloudflare",
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1",
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1",
+        ),
         ("Kilo", "kilo", "https://api.kilo.ai", "https://api.kilo.ai/api/gateway"),
-        ("Together", "together", "https://api.together.xyz/v1/chat/completions",
-         "https://api.together.xyz/v1"),
+        (
+            "Together",
+            "together",
+            "https://api.together.xyz/v1/chat/completions",
+            "https://api.together.xyz/v1",
+        ),
     ],
 )
 def test_engine_preset_bare_hosts_and_pasted_chat_urls_save_the_api_base(

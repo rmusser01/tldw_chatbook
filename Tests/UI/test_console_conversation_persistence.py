@@ -18,12 +18,16 @@ class _FakeDB:
     """Minimal stand-in recording writes, with switchable failure modes."""
 
     def __init__(self, *, state: str = "in-progress", missing: bool = False) -> None:
-        self.record = None if missing else {
-            "id": "conv-1",
-            "title": "Chat 1",
-            "state": state,
-            "version": 3,
-        }
+        self.record = (
+            None
+            if missing
+            else {
+                "id": "conv-1",
+                "title": "Chat 1",
+                "state": state,
+                "version": 3,
+            }
+        )
         self.updates: list[tuple[str, dict, int]] = []
         self.deletes: list[tuple[str, int]] = []
         self.raise_on_write: Exception | None = None
@@ -163,8 +167,8 @@ async def test_rename_to_the_same_title_is_a_no_op() -> None:
         console, _notes = await _console_with_db(pilot, db)
 
         captured = {}
-        console.app_instance.push_screen = lambda screen, callback=None: captured.update(
-            callback=callback
+        console.app_instance.push_screen = lambda screen, callback=None: (
+            captured.update(callback=callback)
         )
         console._workspace.open_console_conversation_rename("conv-1", "Chat 1")
         captured["callback"]("  Chat 1  ")
@@ -194,8 +198,8 @@ async def test_delete_asks_before_it_writes() -> None:
         console, _notes = await _console_with_db(pilot, db)
 
         captured = {}
-        console.app_instance.push_screen = lambda screen, callback=None: captured.update(
-            callback=callback, screen=screen
+        console.app_instance.push_screen = lambda screen, callback=None: (
+            captured.update(callback=callback, screen=screen)
         )
         console._workspace.confirm_console_conversation_delete("conv-1", "Chat 1")
 

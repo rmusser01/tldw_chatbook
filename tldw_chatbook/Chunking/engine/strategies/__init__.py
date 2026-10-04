@@ -16,15 +16,16 @@ from .words import WordChunkingStrategy
 
 # Strategy registry will be populated as strategies are implemented
 STRATEGY_REGISTRY: dict[str, type[ChunkingStrategy]] = {
-    'words': WordChunkingStrategy,
-    'sentences': SentenceChunkingStrategy,
-    'tokens': TokenChunkingStrategy,
-    'structure_aware': StructureAwareChunkingStrategy,
-    'semantic': SemanticChunkingStrategy,
-    'json': JSONChunkingStrategy,
-    'xml': XMLChunkingStrategy,
-    'fixed_size': FixedSizeChunkingStrategy,
+    "words": WordChunkingStrategy,
+    "sentences": SentenceChunkingStrategy,
+    "tokens": TokenChunkingStrategy,
+    "structure_aware": StructureAwareChunkingStrategy,
+    "semantic": SemanticChunkingStrategy,
+    "json": JSONChunkingStrategy,
+    "xml": XMLChunkingStrategy,
+    "fixed_size": FixedSizeChunkingStrategy,
 }
+
 
 def get_strategy(name: str) -> type[ChunkingStrategy]:
     """
@@ -40,8 +41,9 @@ def get_strategy(name: str) -> type[ChunkingStrategy]:
         ValueError: If strategy not found
     """
     if name not in STRATEGY_REGISTRY:
-        available = ', '.join(STRATEGY_REGISTRY.keys())
+        available = ", ".join(STRATEGY_REGISTRY.keys())
         raise ValueError(f"Unknown strategy: {name}. Available: {available}")
     return STRATEGY_REGISTRY[name]
 
-__all__ = ['STRATEGY_REGISTRY', 'get_strategy']
+
+__all__ = ["STRATEGY_REGISTRY", "get_strategy"]

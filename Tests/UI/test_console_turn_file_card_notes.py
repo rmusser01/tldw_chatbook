@@ -8,6 +8,7 @@ from ``Tests/UI/test_console_turn_file_card.py`` -- the fixture-invented-
 shapes trap has bitten this repo five separate times, so no fake provider
 shapes are hand-rolled here.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -743,9 +744,7 @@ async def test_degrade_provider_add_change_note_raises_no_crash(notes_fixture):
         await pilot.press("enter")
         await pilot.pause(0.2)
 
-        assert pilot.app.is_running, (
-            "a raising add_change_note must not crash the app"
-        )
+        assert pilot.app.is_running, "a raising add_change_note must not crash the app"
         assert card.is_mounted
 
         surviving = body.query(".console-turn-file-note-input")
@@ -880,7 +879,9 @@ async def test_two_windows_same_root_path_note_scoped_to_its_own_hunk_header(
                 note_input = inputs.first()
                 break
             await pilot.pause(0.02)
-        assert note_input is not None, "note input never opened on the turn window's hunk"
+        assert note_input is not None, (
+            "note input never opened on the turn window's hunk"
+        )
         note_input.value = "belongs to the TURN window's hunk only"
         note_input.focus()
         await pilot.press("enter")
@@ -1209,8 +1210,7 @@ async def test_note_input_swallows_up_down_arrow_keys_no_selection_move(
         await pilot.press("down")
         await pilot.pause()
         assert transcript.selected_message_id is None, (
-            "down inside a focused note input must not move transcript "
-            "row selection"
+            "down inside a focused note input must not move transcript row selection"
         )
         assert pilot.app.focused is note_input, (
             "down must not move focus off the note input"
@@ -1220,8 +1220,7 @@ async def test_note_input_swallows_up_down_arrow_keys_no_selection_move(
         await pilot.press("up")
         await pilot.pause()
         assert transcript.selected_message_id is None, (
-            "up inside a focused note input must not move transcript row "
-            "selection"
+            "up inside a focused note input must not move transcript row selection"
         )
         assert pilot.app.focused is note_input, (
             "up must not move focus off the note input"

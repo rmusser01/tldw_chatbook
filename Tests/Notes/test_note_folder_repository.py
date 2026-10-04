@@ -43,9 +43,7 @@ def repository(tmp_path) -> Iterator[LocalNoteFolderRepository]:
 
 
 def _timestamp() -> str:
-    return datetime.now(UTC).isoformat(timespec="milliseconds").replace(
-        "+00:00", "Z"
-    )
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _attach_membership(
@@ -108,28 +106,42 @@ def _insert_note(
 def _folder_rows(
     repository: LocalNoteFolderRepository,
 ) -> tuple[tuple[object, ...], ...]:
-    rows = repository.db.get_connection().execute(
-        "SELECT id, parent_id, name, normalized_name, path, normalized_path, "
-        "version, deleted, modified_at FROM note_folders ORDER BY id"
-    ).fetchall()
+    rows = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT id, parent_id, name, normalized_name, path, normalized_path, "
+            "version, deleted, modified_at FROM note_folders ORDER BY id"
+        )
+        .fetchall()
+    )
     return tuple(tuple(row) for row in rows)
 
 
 def _membership_rows(
     repository: LocalNoteFolderRepository,
 ) -> tuple[tuple[object, ...], ...]:
-    rows = repository.db.get_connection().execute(
-        "SELECT id, folder_id, note_id, ownership, owner_id, owner_active, "
-        "version, deleted, modified_at FROM note_folder_memberships ORDER BY id"
-    ).fetchall()
+    rows = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT id, folder_id, note_id, ownership, owner_id, owner_active, "
+            "version, deleted, modified_at FROM note_folder_memberships ORDER BY id"
+        )
+        .fetchall()
+    )
     return tuple(tuple(row) for row in rows)
 
 
-def _note_row(repository: LocalNoteFolderRepository, note_id: str) -> tuple[object, ...]:
-    row = repository.db.get_connection().execute(
-        "SELECT id, title, content, deleted, version FROM notes WHERE id = ?",
-        (note_id,),
-    ).fetchone()
+def _note_row(
+    repository: LocalNoteFolderRepository, note_id: str
+) -> tuple[object, ...]:
+    row = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT id, title, content, deleted, version FROM notes WHERE id = ?",
+            (note_id,),
+        )
+        .fetchone()
+    )
     assert row is not None
     return tuple(row)
 
@@ -315,9 +327,11 @@ def test_commit_time_database_contention_is_a_stable_conflict(tmp_path) -> None:
 
     reopened = CharactersRAGDB(path, client_id="contention-check")
     try:
-        count = reopened.get_connection().execute(
-            "SELECT COUNT(*) FROM note_folders WHERE name = ?", ("Blocked",)
-        ).fetchone()[0]
+        count = (
+            reopened.get_connection()
+            .execute("SELECT COUNT(*) FROM note_folders WHERE name = ?", ("Blocked",))
+            .fetchone()[0]
+        )
         assert count == 0
     finally:
         reopened.close_connection()
@@ -773,9 +787,7 @@ def test_load_tree_batch_returns_second_note_page_with_only_page_memberships(
         assert note_id is not None
         note_ids.append(note_id)
         membership_ids.append(
-            _attach_membership(
-                repository, folder_id=folder.folder_id, note_id=note_id
-            )
+            _attach_membership(repository, folder_id=folder.folder_id, note_id=note_id)
         )
 
     page = repository.load_tree_batch(
@@ -794,8 +806,7 @@ def test_load_tree_batch_pages_folders_independently_from_notes(
     repository: LocalNoteFolderRepository,
 ) -> None:
     folders = tuple(
-        repository.create_folder(name=name, parent_id=None)
-        for name in ("A", "B", "C")
+        repository.create_folder(name=name, parent_id=None) for name in ("A", "B", "C")
     )
 
     first = repository.load_tree_batch(
@@ -1137,9 +1148,9 @@ def test_placement_pages_still_default_to_title_order(
 
     page = repository.page_note_placements(parent_id=folder_id, limit=25, offset=0)
 
-    assert [
-        str(placement.note["id"]) for placement in page.placements
-    ] == orders["title"]
+    assert [str(placement.note["id"]) for placement in page.placements] == orders[
+        "title"
+    ]
 
 
 def test_unfiled_date_order_breaks_ties_by_note_id_for_page_and_locator(
@@ -1191,7 +1202,9 @@ def test_mixed_timestamp_shapes_still_order_chronologically(
     noon = "2026-01-15 12:00:00"  # schema-default shape; chronologically second
     assert noon < morning  # the raw-text trap this test pins against
 
-    _insert_note(repository, note_id="mixed-morning", title="Morning", last_modified=morning)
+    _insert_note(
+        repository, note_id="mixed-morning", title="Morning", last_modified=morning
+    )
     _insert_note(repository, note_id="mixed-noon", title="Noon", last_modified=noon)
 
     page = repository.page_note_placements(
@@ -1546,8 +1559,7 @@ def test_load_tree_batch_preserves_totals_beyond_last_page(
     repository: LocalNoteFolderRepository,
 ) -> None:
     folders = tuple(
-        repository.create_folder(name=name, parent_id=None)
-        for name in ("A", "B", "C")
+        repository.create_folder(name=name, parent_id=None) for name in ("A", "B", "C")
     )
     for title in ("One", "Two", "Three"):
         note_id = repository.db.add_note(title, title)
@@ -1760,9 +1772,7 @@ def test_rename_updates_complete_subtree_once_and_preserves_ids(
     renamed_plans = repository.get_folder(plans.folder_id)
     renamed_later = repository.get_folder(later.folder_id)
     assert (
-        renamed is not None
-        and renamed_plans is not None
-        and renamed_later is not None
+        renamed is not None and renamed_plans is not None and renamed_later is not None
     )
     assert result.folder == renamed
     assert result.affected_folder_ids == (
@@ -1787,10 +1797,14 @@ def test_rename_updates_complete_subtree_once_and_preserves_ids(
         renamed_later.normalized_path,
         renamed_later.version,
     ) == ("/Projects/Plans/Later", "/projects/plans/later", 2)
-    modified_values = repository.db.get_connection().execute(
-        "SELECT DISTINCT modified_at FROM note_folders WHERE id IN (?, ?, ?)",
-        (work.folder_id, plans.folder_id, later.folder_id),
-    ).fetchall()
+    modified_values = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT DISTINCT modified_at FROM note_folders WHERE id IN (?, ?, ?)",
+            (work.folder_id, plans.folder_id, later.folder_id),
+        )
+        .fetchall()
+    )
     assert len(modified_values) == 1
 
 
@@ -1960,10 +1974,14 @@ def test_soft_delete_and_restore_subtree_preserve_memberships_and_note_row(
     assert restored.affected_folder_ids == (work.folder_id, plans.folder_id)
     assert restored_work is not None and restored_plans is not None
     assert (restored_work.version, restored_plans.version) == (3, 3)
-    membership = repository.db.get_connection().execute(
-        "SELECT id, deleted, version FROM note_folder_memberships WHERE id = ?",
-        (membership_id,),
-    ).fetchone()
+    membership = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT id, deleted, version FROM note_folder_memberships WHERE id = ?",
+            (membership_id,),
+        )
+        .fetchone()
+    )
     assert tuple(membership) == (membership_id, 0, 1)
     note_after = tuple(
         repository.db.get_connection()
@@ -1989,10 +2007,14 @@ def test_soft_delete_advances_colliding_zulu_tombstone_timestamp(
     repository.soft_delete_folder(first.folder_id, expected_version=first.version)
     repository.soft_delete_folder(second.folder_id, expected_version=second.version)
 
-    rows = repository.db.get_connection().execute(
-        "SELECT id, modified_at FROM note_folders WHERE id IN (?, ?) ORDER BY id",
-        (first.folder_id, second.folder_id),
-    ).fetchall()
+    rows = (
+        repository.db.get_connection()
+        .execute(
+            "SELECT id, modified_at FROM note_folders WHERE id IN (?, ?) ORDER BY id",
+            (first.folder_id, second.folder_id),
+        )
+        .fetchall()
+    )
     timestamps = {str(row["modified_at"]) for row in rows}
     assert timestamps == {
         fixed_timestamp,
@@ -2091,9 +2113,7 @@ def test_multirow_mutation_rolls_back_to_its_own_boundary_when_outer_catches(
     if operation == "move":
         destination = repository.create_folder(name="Destination", parent_id=None)
     elif operation == "restore":
-        repository.soft_delete_folder(
-            root.folder_id, expected_version=expected_version
-        )
+        repository.soft_delete_folder(root.folder_id, expected_version=expected_version)
         expected_version += 1
 
     connection = repository.db.get_connection()
@@ -2129,9 +2149,7 @@ def test_multirow_mutation_rolls_back_to_its_own_boundary_when_outer_catches(
                 root.folder_id, expected_version=expected_version
             )
         else:
-            repository.restore_folder(
-                root.folder_id, expected_version=expected_version
-            )
+            repository.restore_folder(root.folder_id, expected_version=expected_version)
 
     assert _folder_rows(repository) == before
 
@@ -2211,9 +2229,7 @@ def test_restore_only_revives_descendants_from_the_target_delete_operation(
     restored_work = repository.get_folder(work.folder_id)
     restored_current = repository.get_folder(current.folder_id)
     restored_detail = repository.get_folder(detail.folder_id)
-    still_deleted_plans = repository.get_folder(
-        plans.folder_id, include_deleted=True
-    )
+    still_deleted_plans = repository.get_folder(plans.folder_id, include_deleted=True)
     assert result.affected_folder_ids == (
         work.folder_id,
         current.folder_id,
@@ -2270,9 +2286,7 @@ def test_multirow_mutation_treats_ignored_child_update_as_atomic_conflict(
                 root.folder_id, expected_version=expected_version
             )
         else:
-            repository.restore_folder(
-                root.folder_id, expected_version=expected_version
-            )
+            repository.restore_folder(root.folder_id, expected_version=expected_version)
 
     assert _folder_rows(repository) == before
 
@@ -2321,9 +2335,7 @@ def test_managed_reconcile_never_removes_manual_membership(
     )
     repository.reconcile_managed(owner_id="root-a", desired=())
 
-    active = repository.list_memberships(
-        note_ids=(note_id,), include_inactive=True
-    )
+    active = repository.list_memberships(note_ids=(note_id,), include_inactive=True)
     assert active == (manual,)
     assert _note_row(repository, note_id)[3:] == (0, 1)
 
@@ -2343,9 +2355,7 @@ def test_removing_one_managed_owner_leaves_other_owner_and_note(
     note_before = _note_row(repository, note_id)
 
     assert repository.remove_owner_memberships(owner_id="root-a") == 1
-    remaining = repository.list_memberships(
-        note_ids=(note_id,), include_inactive=True
-    )
+    remaining = repository.list_memberships(note_ids=(note_id,), include_inactive=True)
 
     assert [(item.ownership, item.owner_id) for item in remaining] == [
         ("managed", "root-b")
@@ -2373,19 +2383,17 @@ def test_attach_manual_is_idempotent_and_revives_only_latest_history(
                 (membership_id, folder.folder_id, note_id, now, now),
             )
 
-    revived = repository.attach_manual(
-        folder_id=folder.folder_id, note_id=note_id
-    )
-    repeated = repository.attach_manual(
-        folder_id=folder.folder_id, note_id=note_id
-    )
+    revived = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
+    repeated = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
 
     assert revived.membership_id == "manual-b"
     assert revived.version == 5
     assert repeated == revived
-    rows = repository.db.get_connection().execute(
-        "SELECT id, version, deleted FROM note_folder_memberships ORDER BY id"
-    ).fetchall()
+    rows = (
+        repository.db.get_connection()
+        .execute("SELECT id, version, deleted FROM note_folder_memberships ORDER BY id")
+        .fetchall()
+    )
     assert [tuple(row) for row in rows] == [
         ("manual-a", 4, 1),
         ("manual-b", 5, 0),
@@ -2461,9 +2469,7 @@ def test_conflict_copy_folder_ownership_detects_managed_candidate_and_ancestor(
     repository: LocalNoteFolderRepository,
 ) -> None:
     parent = repository.create_folder(name="Conflict copies", parent_id=None)
-    child = repository.create_folder(
-        name="My synced notes", parent_id=parent.folder_id
-    )
+    child = repository.create_folder(name="My synced notes", parent_id=parent.folder_id)
     note_id = repository.db.add_note("Managed", "body")
     assert note_id is not None
     repository.reconcile_managed(
@@ -2554,9 +2560,10 @@ def test_attach_manual_retries_a_generated_membership_id_collision(
     )
 
     assert attached.membership_id == str(replacement_id)
-    assert set(
-        repository.list_memberships(note_ids=(first_note, second_note))
-    ) == {existing, attached}
+    assert set(repository.list_memberships(note_ids=(first_note, second_note))) == {
+        existing,
+        attached,
+    }
 
 
 def test_membership_unique_classifier_distinguishes_owner_and_primary_key(
@@ -2605,9 +2612,7 @@ def test_detach_manual_succeeds_conflicts_when_stale_and_is_false_when_absent(
     folder = repository.create_folder(name="Folder", parent_id=None)
     note_id = repository.db.add_note("Note", "Body")
     assert note_id is not None
-    membership = repository.attach_manual(
-        folder_id=folder.folder_id, note_id=note_id
-    )
+    membership = repository.attach_manual(folder_id=folder.folder_id, note_id=note_id)
 
     with pytest.raises(FolderConflictError):
         repository.detach_manual(
@@ -2622,11 +2627,14 @@ def test_detach_manual_succeeds_conflicts_when_stale_and_is_false_when_absent(
         note_id=note_id,
         expected_version=membership.version,
     )
-    assert repository.detach_manual(
-        folder_id=folder.folder_id,
-        note_id=note_id,
-        expected_version=membership.version + 1,
-    ) is False
+    assert (
+        repository.detach_manual(
+            folder_id=folder.folder_id,
+            note_id=note_id,
+            expected_version=membership.version + 1,
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize("invalid_kind", ["folder", "note"])
@@ -2686,9 +2694,7 @@ def test_reconcile_is_idempotent_owner_scoped_and_revives_deleted_rows(
     assert revived.membership_id == first.membership_id
     assert revived.version == first.version + 2
     assert revived.owner_active
-    all_active = repository.list_memberships(
-        note_ids=(note_id,), include_inactive=True
-    )
+    all_active = repository.list_memberships(note_ids=(note_id,), include_inactive=True)
     assert {item.membership_id for item in all_active} == {
         manual.membership_id,
         other.membership_id,
@@ -2725,7 +2731,10 @@ def test_convert_owner_to_manual_reuses_active_and_revives_deleted_manual_rows(
     other = repository.reconcile_managed(
         owner_id="root-b", desired=((first_folder.folder_id, first_note),)
     )[0]
-    notes_before = (_note_row(repository, first_note), _note_row(repository, second_note))
+    notes_before = (
+        _note_row(repository, first_note),
+        _note_row(repository, second_note),
+    )
 
     assert repository.convert_owner_to_manual(owner_id="root-a") == 2
     assert repository.convert_owner_to_manual(owner_id="root-a") == 0
@@ -2738,14 +2747,27 @@ def test_convert_owner_to_manual_reuses_active_and_revives_deleted_manual_rows(
         active_manual.membership_id,
         deleted_manual.membership_id,
     }
-    assert next(
-        item for item in manual_rows if item.membership_id == active_manual.membership_id
-    ).version == active_manual.version
-    assert next(
-        item for item in manual_rows if item.membership_id == deleted_manual.membership_id
-    ).version == deleted_manual.version + 2
+    assert (
+        next(
+            item
+            for item in manual_rows
+            if item.membership_id == active_manual.membership_id
+        ).version
+        == active_manual.version
+    )
+    assert (
+        next(
+            item
+            for item in manual_rows
+            if item.membership_id == deleted_manual.membership_id
+        ).version
+        == deleted_manual.version + 2
+    )
     assert [item for item in memberships if item.ownership == "managed"] == [other]
-    assert (_note_row(repository, first_note), _note_row(repository, second_note)) == notes_before
+    assert (
+        _note_row(repository, first_note),
+        _note_row(repository, second_note),
+    ) == notes_before
 
 
 def test_unknown_owner_convergence_and_restore_reviews_are_deterministic(
@@ -2764,9 +2786,10 @@ def test_unknown_owner_convergence_and_restore_reviews_are_deterministic(
         owner_id="root-b", desired=((beta.folder_id, second_note),)
     )[0]
 
-    assert repository.mark_unknown_owners_inactive(
-        active_owner_ids=("root-b", "root-b")
-    ) == 2
+    assert (
+        repository.mark_unknown_owners_inactive(active_owner_ids=("root-b", "root-b"))
+        == 2
+    )
     assert repository.mark_unknown_owners_inactive(active_owner_ids=("root-b",)) == 0
     assert repository.list_memberships(note_ids=(first_note, second_note)) == (root_b,)
     assert {
@@ -2784,9 +2807,10 @@ def test_unknown_owner_convergence_and_restore_reviews_are_deterministic(
     )
     assert (reviews[0].note_count, reviews[0].folder_count) == (1, 2)
 
-    assert repository.mark_unknown_owners_inactive(
-        active_owner_ids=("root-a", "root-b")
-    ) == 2
+    assert (
+        repository.mark_unknown_owners_inactive(active_owner_ids=("root-a", "root-b"))
+        == 2
+    )
     assert repository.list_restore_reviews() == ()
 
 

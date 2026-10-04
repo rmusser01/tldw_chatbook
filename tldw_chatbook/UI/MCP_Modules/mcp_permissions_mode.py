@@ -207,7 +207,9 @@ def tool_state_kind(effective: EffectiveToolState) -> str:
         `state_text()`'s `kind` bucket -- `"ready"`, `"warning"`, or
         `"error"` for a recognized `effective.state`, else `"muted"`.
     """
-    return {"allow": "ready", "ask": "warning", "deny": "error"}.get(effective.state, "muted")
+    return {"allow": "ready", "ask": "warning", "deny": "error"}.get(
+        effective.state, "muted"
+    )
 
 
 def format_tool_state_label(effective: EffectiveToolState) -> str:
@@ -895,7 +897,9 @@ class MCPPermissionsMode(DataTableClickSelectMixin, VerticalScroll):
 
         self._apply_filter()
 
-        self.query_one("#mcp-perm-preview", Static).update(f"{echo}{preview}" if echo else preview)
+        self.query_one("#mcp-perm-preview", Static).update(
+            f"{echo}{preview}" if echo else preview
+        )
         legend_text = _LEGEND_TEXT
         for extra_line in (gate_breadcrumb, discovery_hint):
             if extra_line:

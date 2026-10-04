@@ -1603,9 +1603,7 @@ def test_list_sources_and_collections_are_bounded_redacted_and_filter_bound(
     assert first["sources"][0]["url"] == "https://sources.test/Alpha"
     assert "secret" not in first_raw
     assert mismatched["status"] == "invalid_argument"
-    assert collections["collections"][0]["id"] == (
-        f"local:watchlist:{collection_id}"
-    )
+    assert collections["collections"][0]["id"] == (f"local:watchlist:{collection_id}")
     assert collections["collections"][0]["source_count"] == 3
     assert len(first_raw.encode("utf-8")) < 30 * 1024
 
@@ -1614,8 +1612,7 @@ def test_source_metadata_page_packs_complete_rows_with_compact_continuation(
     db: SubscriptionsDB,
 ) -> None:
     collections = [
-        _collection(db, f"Collection {index} " + "集" * 4_000)
-        for index in range(20)
+        _collection(db, f"Collection {index} " + "集" * 4_000) for index in range(20)
     ]
     source_ids = []
     for index in range(6):
@@ -1855,9 +1852,7 @@ def test_get_briefing_reserves_body_budget_and_shapes_immutable_provenance(
             ],
         )
 
-    raw = _service(db).get_briefing(
-        {"briefing_id": f"local:briefing:{briefing_id}"}
-    )
+    raw = _service(db).get_briefing({"briefing_id": f"local:briefing:{briefing_id}"})
     result = _payload(raw)
     content = result["briefing"]["content"]
 
@@ -1867,9 +1862,7 @@ def test_get_briefing_reserves_body_budget_and_shapes_immutable_provenance(
     assert content["content_truncated"] is True
     assert content["body_markdown"].startswith("Readable 🧪 briefing")
     assert len(content["body_markdown"].encode("utf-8")) >= 4_096
-    assert result["briefing"]["selected_items"][0]["id"] == (
-        "local:watchlist_item:10"
-    )
+    assert result["briefing"]["selected_items"][0]["id"] == ("local:watchlist_item:10")
     assert result["briefing"]["selected_items"][0]["url"] == (
         "https://items.test/story"
     )
@@ -2011,9 +2004,7 @@ def test_operation_status_accepts_only_exact_receipts_and_scrubs_errors(
 
     overview = _payload(service.get_operations_status({"limit": 1}))
     continuation = _payload(
-        service.get_operations_status(
-            {"limit": 1, "cursor": overview["next_cursor"]}
-        )
+        service.get_operations_status({"limit": 1, "cursor": overview["next_cursor"]})
     )
     mismatched = _payload(
         service.get_operations_status(
@@ -2025,16 +2016,16 @@ def test_operation_status_accepts_only_exact_receipts_and_scrubs_errors(
     )
     run = _payload(run_raw)
     briefing = _payload(
-        service.get_operation_status(
-            {"operation_id": f"local:briefing:{briefing_id}"}
-        )
+        service.get_operation_status({"operation_id": f"local:briefing:{briefing_id}"})
     )
     invalid = _payload(service.get_operation_status({"operation_id": str(run_id)}))
 
     assert overview["status"] == "ok"
     assert overview["has_more"] is True
     assert continuation["has_more"] is False
-    assert {row["id"] for row in overview["operations"] + continuation["operations"]} == {
+    assert {
+        row["id"] for row in overview["operations"] + continuation["operations"]
+    } == {
         f"local:watchlist_run:{run_id}",
         f"local:briefing:{briefing_id}",
     }

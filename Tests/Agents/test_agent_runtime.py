@@ -47,8 +47,14 @@ def fence(name, args):
 
 
 def make_deps(
-    turns, *, invoke=None, spawn=None, cancel=None, clock=None,
-    fork_chat=None, new_chat=None,
+    turns,
+    *,
+    invoke=None,
+    spawn=None,
+    cancel=None,
+    clock=None,
+    fork_chat=None,
+    new_chat=None,
 ):
     """Deps whose call_model pops scripted ModelTurns."""
     script = list(turns)
@@ -68,9 +74,7 @@ def make_deps(
                 source="builtin",
             )
         ],
-        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(
-            accepted=(CALC,)
-        ),
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(accepted=(CALC,)),
         should_cancel=cancel or (lambda: False),
         clock=clock or (lambda: 0.0),
         fork_chat=fork_chat,
@@ -171,7 +175,9 @@ def test_tool_record_audience_inventory_keeps_raw_payload_only_in_model_history(
         raw_argument not in str(step) and raw_result not in str(step)
         for step in out.steps
     )
-    assert all(raw_argument not in str(row) and raw_result not in str(row) for row in records)
+    assert all(
+        raw_argument not in str(row) and raw_result not in str(row) for row in records
+    )
     proposals = [step for step in display_steps if step.kind == "tool_proposed"]
     assert proposals and all(step.args == {"audience": "display"} for step in proposals)
     assert all(not step.args for step in trace_steps if step.kind == "tool_proposed")
@@ -250,9 +256,7 @@ def test_ordinary_tool_steps_share_the_native_call_id() -> None:
     )
 
     pair = [
-        step
-        for step in out.steps
-        if step.kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
+        step for step in out.steps if step.kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
     ]
     assert [step.call_id for step in pair] == ["native-call-1", "native-call-1"]
 
@@ -338,9 +342,7 @@ def test_idless_fence_tool_steps_share_one_deterministic_call_id() -> None:
     )
 
     pair = [
-        step
-        for step in out.steps
-        if step.kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
+        step for step in out.steps if step.kind in {STEP_TOOL_CALL, STEP_TOOL_RESULT}
     ]
     assert pair[0].call_id
     assert pair[1].call_id == pair[0].call_id
@@ -964,8 +966,7 @@ def test_detect_cycle_period5_is_none_too_long():
     # A period-5 cycle exceeds MAX_LOOP_PERIOD -- never checked, so it must
     # never be detected even with two full repeats present.
     assert (
-        _detect_cycle(_keys("A", "B", "C", "D", "E", "A", "B", "C", "D", "E"))
-        is None
+        _detect_cycle(_keys("A", "B", "C", "D", "E", "A", "B", "C", "D", "E")) is None
     )
 
 
@@ -1035,13 +1036,9 @@ def test_cancel_recognized_after_final_answer_with_no_tool_call():
     # turn used to return RUN_DONE immediately without one more recheck.
     flags = iter([False, True])
     trace_steps = []
-    deps = make_deps(
-        [ModelTurn(text="Tokyo.")], cancel=lambda: next(flags, True)
-    )
+    deps = make_deps([ModelTurn(text="Tokyo.")], cancel=lambda: next(flags, True))
     deps.on_trace_step = trace_steps.append
-    out = run_agent_loop(
-        CFG, [{"role": "user", "content": "hi"}], [CALC], deps
-    )
+    out = run_agent_loop(CFG, [{"role": "user", "content": "hi"}], [CALC], deps)
     assert out.status == RUN_CANCELLED
     assert out.final_text == "Tokyo."
     assert [step.kind for step in trace_steps] == [
@@ -1130,8 +1127,8 @@ def test_budget_omitted_load_preserves_current_working_set():
         omitted_for_budget=("builtin:new_tool",)
     )
     invoked = []
-    deps.invoke_tool = lambda call: invoked.append(call.name) or ToolResult(
-        ok=True, content="42"
+    deps.invoke_tool = lambda call: (
+        invoked.append(call.name) or ToolResult(ok=True, content="42")
     )
     out = run_agent_loop(
         AgentConfig(
@@ -1327,7 +1324,9 @@ def test_token_budget_sentinel_zero_never_trips():
 def test_token_budget_done_on_crossing_turn_completes():
     # The final-answer turn itself crosses the budget -> still RUN_DONE
     # (stop-the-loop, not fail-the-answer), and total_tokens is reported.
-    cfg = AgentConfig(model="m", system_prompt="s", budget=RunBudget(max_total_tokens=50))
+    cfg = AgentConfig(
+        model="m", system_prompt="s", budget=RunBudget(max_total_tokens=50)
+    )
     out = run([ModelTurn(text="the answer", tokens=100)], config=cfg)
     assert out.status == RUN_DONE
     assert out.final_text == "the answer"
@@ -1513,9 +1512,7 @@ def test_spawn_passes_agent_kwarg_only_when_present():
         [
             ModelTurn(text=fence(SPAWN_TOOL_NAME, {"task": "plain"})),
             ModelTurn(
-                text=fence(
-                    SPAWN_TOOL_NAME, {"task": "named", "agent": "researcher"}
-                )
+                text=fence(SPAWN_TOOL_NAME, {"task": "named", "agent": "researcher"})
             ),
             ModelTurn(text="done"),
         ],
@@ -1586,7 +1583,10 @@ def test_chat_create_tools_fall_through_when_not_wired():
 
 def test_chat_create_pin_gating_matrix():
     from tldw_chatbook.Agents.agent_service import _chat_create_runtime_schemas
-    from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY, AGENT_KIND_SUBAGENT
+    from tldw_chatbook.Agents.agent_models import (
+        AGENT_KIND_PRIMARY,
+        AGENT_KIND_SUBAGENT,
+    )
 
     tool = lambda args: ToolResult(ok=True, content="{}")  # noqa: E731
     # TASK-32531: sub-agents now receive the tools too (children share the

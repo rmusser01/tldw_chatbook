@@ -474,9 +474,7 @@ def _insert_memory_banner_selection(
                 else MemoryCoverageKind.PREFIX
             ),
             origin_kind=(
-                MemoryOriginKind.MANUAL_REWIND
-                if manual
-                else MemoryOriginKind.AUTOMATIC
+                MemoryOriginKind.MANUAL_REWIND if manual else MemoryOriginKind.AUTOMATIC
             ),
             selection_anchor_message_id=ids["u2"] if manual else None,
         )
@@ -542,7 +540,15 @@ def _restart_memory_banner_state(db_path, conversation_id: str):
         provider_rows,
     )
     presentation = derive_console_memory_banner_presentation(effective, messages)
-    return db, controller, messages, effective, dispatch_effective, projection, presentation
+    return (
+        db,
+        controller,
+        messages,
+        effective,
+        dispatch_effective,
+        projection,
+        presentation,
+    )
 
 
 class _MemoryBannerTranscriptHarness(ConsolidatedCSSApp):
@@ -609,7 +615,13 @@ def _transcript_message_snapshot(
 
 
 @pytest.mark.parametrize(
-    ("case", "expected_kind", "expected_banner_kind", "expected_anchor", "expected_copy"),
+    (
+        "case",
+        "expected_kind",
+        "expected_banner_kind",
+        "expected_anchor",
+        "expected_copy",
+    ),
     [
         (
             "auto",
@@ -833,9 +845,7 @@ async def test_file_backed_banner_add_replace_clear_restore_is_presentation_only
     session_id = store.active_session_id
     assert session_id is not None
     selected_id = next(
-        message.id
-        for message in messages
-        if message.persisted_message_id == ids["a2"]
+        message.id for message in messages if message.persisted_message_id == ids["a2"]
     )
     replacement = ConsoleMemoryBannerPresentation(
         kind="prefix",
@@ -879,18 +889,20 @@ async def test_file_backed_banner_add_replace_clear_restore_is_presentation_only
 
                 banners = transcript.query(".console-transcript-summary-banner")
                 assert len(banners) == expected_banner_count
-                assert _persisted_transcript_snapshot(
-                    restarted_db,
-                    conversation_id,
-                ) == persisted_before
+                assert (
+                    _persisted_transcript_snapshot(
+                        restarted_db,
+                        conversation_id,
+                    )
+                    == persisted_before
+                )
                 assert _store_tree_snapshot(store, session_id) == tree_before
                 assert _transcript_message_snapshot(transcript) == transcript_before
                 assert len(transcript._messages) == len(transcript_before)
                 assert transcript.selected_message_id == selected_id
                 assert transcript.to_plain_text(width=80) == plain_before
                 assert all(
-                    transcript.query_one(f"#console-message-{message_id}")
-                    is widget
+                    transcript.query_one(f"#console-message-{message_id}") is widget
                     for message_id, widget in widgets_before.items()
                 )
     finally:
@@ -986,10 +998,13 @@ async def test_mounted_file_backed_sibling_navigation_clears_and_restores_banner
             assert transcript.selected_message_id == selected_id
             assert transcript.to_plain_text(width=80) == sibling_plain
             assert _transcript_message_snapshot(transcript) == sibling_transcript
-            assert _persisted_transcript_snapshot(
-                restarted_db,
-                conversation_id,
-            ) == sibling_persisted_before_ui
+            assert (
+                _persisted_transcript_snapshot(
+                    restarted_db,
+                    conversation_id,
+                )
+                == sibling_persisted_before_ui
+            )
             assert _store_tree_snapshot(store, session_id) == sibling_tree_before_ui
             assert all(
                 transcript.query_one(f"#console-message-{message_id}") is widget
@@ -1020,10 +1035,13 @@ async def test_mounted_file_backed_sibling_navigation_clears_and_restores_banner
             assert _transcript_message_snapshot(transcript) == main_transcript
             assert returned_persisted_before_ui == main_persisted
             assert returned_tree_before_ui == main_tree
-            assert _persisted_transcript_snapshot(
-                restarted_db,
-                conversation_id,
-            ) == returned_persisted_before_ui
+            assert (
+                _persisted_transcript_snapshot(
+                    restarted_db,
+                    conversation_id,
+                )
+                == returned_persisted_before_ui
+            )
             assert _store_tree_snapshot(store, session_id) == returned_tree_before_ui
             assert all(
                 transcript.query_one(f"#console-message-{message_id}") is widget
@@ -1319,16 +1337,13 @@ def test_legacy_flat_before_first_then_new_root_restart_preserves_all_rows():
         )
         db.set_conversation_active_leaf(conversation_id, new_root_id)
 
-        _restarted_store, _restarted_session = _resume_into_store(
-            db, conversation_id
-        )
+        _restarted_store, _restarted_session = _resume_into_store(db, conversation_id)
         durable_rows = db.get_messages_for_conversation(conversation_id)
         durable_ids = {row["id"] for row in durable_rows}
         assert durable_ids == original_ids | {new_root_id}
         assert len(durable_rows) == len(original_ids) + 1
         assert all(
-            db.get_message_by_id(message_id) is not None
-            for message_id in original_ids
+            db.get_message_by_id(message_id) is not None for message_id in original_ids
         )
     finally:
         db.close_connection()
@@ -2153,7 +2168,9 @@ def test_local_command_resume_restores_one_anchored_display_only_marker(tmp_path
     blocks = bridge.resume_marker_messages(conversation_id)
     resumed = inject_resume_agent_markers(
         [
-            ConsoleChatMessage(role=ConsoleMessageRole.USER, content="normal user prompt"),
+            ConsoleChatMessage(
+                role=ConsoleMessageRole.USER, content="normal user prompt"
+            ),
             ConsoleChatMessage(
                 role=ConsoleMessageRole.ASSISTANT,
                 content="normal assistant reply",
@@ -2163,7 +2180,9 @@ def test_local_command_resume_restores_one_anchored_display_only_marker(tmp_path
         blocks,
     )
 
-    markers = [message for message in resumed if message.role is ConsoleMessageRole.TOOL]
+    markers = [
+        message for message in resumed if message.role is ConsoleMessageRole.TOOL
+    ]
     assert len(markers) == 1
     marker = markers[0]
     assert resumed.index(marker) == 2

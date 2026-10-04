@@ -8,7 +8,13 @@ import pytest
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.word_bench.models import (
-    BenchConfig, CellCapture, CellError, PreflightResult, Snippet, Target, TokenProb,
+    BenchConfig,
+    CellCapture,
+    CellError,
+    PreflightResult,
+    Snippet,
+    Target,
+    TokenProb,
 )
 from tldw_chatbook.Evals.word_bench.runner import CancelToken, WordBenchRunner
 from tldw_chatbook.Evals.word_bench.storage import load_grid, save_bench
@@ -20,9 +26,13 @@ from tldw_chatbook.Evals.word_bench.storage import load_grid, save_bench
 
 def _cap(canary="pass"):
     return CellCapture(
-        prompt_mode="raw", k_requested=5, k_returned=1, content_offset=0,
+        prompt_mode="raw",
+        k_requested=5,
+        k_returned=1,
+        content_offset=0,
         top_k=(TokenProb(token=" a", logprob=-0.5, token_id=1),),
-        canary=canary, captured_at="2026-07-26T00:00:00Z",
+        canary=canary,
+        captured_at="2026-07-26T00:00:00Z",
     )
 
 
@@ -56,8 +66,10 @@ async def test_runner_fills_the_grid_row_major(db, config, targets, snippets):
     await runner.run(config, targets, snippets, task_id)
 
     assert order == [
-        ("The protestors were", "base"), ("The protestors were", "steered"),
-        ("The rioters were", "base"), ("The rioters were", "steered"),
+        ("The protestors were", "base"),
+        ("The protestors were", "steered"),
+        ("The rioters were", "base"),
+        ("The rioters were", "steered"),
     ]
 
 
@@ -88,8 +100,13 @@ async def test_progress_reports_group_level_totals(db, config, targets, snippets
     seen = []
     task_id = save_bench(db, config)
     runner = WordBenchRunner(db, lambda t: FakeClient([]))
-    await runner.run(config, targets, snippets, task_id,
-                     progress=lambda done, total: seen.append((done, total)))
+    await runner.run(
+        config,
+        targets,
+        snippets,
+        task_id,
+        progress=lambda done, total: seen.append((done, total)),
+    )
 
     assert seen == [(1, 4), (2, 4), (3, 4), (4, 4)], (
         "progress must be reported once per cell, not just once at the end"
@@ -124,13 +141,14 @@ async def test_a_raising_progress_callback_does_not_strand_the_run(
     assert len(runs) == len(targets)
     for run in runs:
         assert run["status"] == "completed", (
-            "a throwing progress callback must not strand the run row at "
-            "'running'"
+            "a throwing progress callback must not strand the run row at 'running'"
         )
 
 
 @pytest.mark.asyncio
-async def test_cancel_stops_the_run_and_keeps_completed_cells(db, config, targets, snippets):
+async def test_cancel_stops_the_run_and_keeps_completed_cells(
+    db, config, targets, snippets
+):
     token = CancelToken()
     order = []
 
@@ -150,7 +168,9 @@ async def test_cancel_stops_the_run_and_keeps_completed_cells(db, config, target
 
 
 @pytest.mark.asyncio
-async def test_cancelled_run_rows_read_cancelled_not_pending(db, config, targets, snippets):
+async def test_cancelled_run_rows_read_cancelled_not_pending(
+    db, config, targets, snippets
+):
     """Without an explicit status transition, every eval_runs row created by
     create_run_group sits at its 'pending' default forever -- indistinguishable
     from a run that hasn't started. A cancelled run group must read
@@ -190,7 +210,9 @@ async def test_completed_run_rows_read_completed(db, config, targets, snippets):
 
 
 @pytest.mark.asyncio
-async def test_degenerate_canary_propagates_onto_every_cell(db, config, targets, snippets):
+async def test_degenerate_canary_propagates_onto_every_cell(
+    db, config, targets, snippets
+):
     """The preflight warning must not be lost between preflight and grid."""
     task_id = save_bench(db, config)
     runner = WordBenchRunner(db, lambda t: FakeClient([], canary="degenerate"))
@@ -201,7 +223,9 @@ async def test_degenerate_canary_propagates_onto_every_cell(db, config, targets,
 
 
 @pytest.mark.asyncio
-async def test_canary_pass_verdict_is_also_stamped_onto_every_cell(db, config, targets, snippets):
+async def test_canary_pass_verdict_is_also_stamped_onto_every_cell(
+    db, config, targets, snippets
+):
     """The stamp is unconditional: a verified target's cells must say 'pass',
     not the client's placeholder 'unchecked'."""
     task_id = save_bench(db, config)
@@ -251,8 +275,11 @@ async def test_explicit_concurrency_of_one_still_produces_strict_row_major_order
     explicitly (rather than relying on BenchConfig's default) per
     TASK-707's acceptance criteria."""
     config1 = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in targets),
         concurrency=1,
     )
     order = []
@@ -261,8 +288,10 @@ async def test_explicit_concurrency_of_one_still_produces_strict_row_major_order
     await runner.run(config1, targets, snippets, task_id)
 
     assert order == [
-        ("The protestors were", "base"), ("The protestors were", "steered"),
-        ("The rioters were", "base"), ("The rioters were", "steered"),
+        ("The protestors were", "base"),
+        ("The protestors were", "steered"),
+        ("The rioters were", "base"),
+        ("The rioters were", "steered"),
     ]
 
 
@@ -281,8 +310,11 @@ async def test_concurrency_above_one_runs_a_row_in_parallel_bounded_by_the_setti
         Target(id=extra_id, name="extra", provider="llama_cpp", model_id="m")
     ]
     config3 = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in all_targets),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in all_targets),
         concurrency=2,
     )
 
@@ -305,9 +337,13 @@ async def test_concurrency_above_one_runs_a_row_in_parallel_bounded_by_the_setti
             if not active[snippet]:
                 del active[snippet]
             return CellCapture(
-                prompt_mode="raw", k_requested=5, k_returned=1, content_offset=0,
+                prompt_mode="raw",
+                k_requested=5,
+                k_returned=1,
+                content_offset=0,
                 top_k=(TokenProb(token=" a", logprob=-0.5, token_id=1),),
-                canary="unchecked", captured_at="2026-07-26T00:00:00Z",
+                canary="unchecked",
+                captured_at="2026-07-26T00:00:00Z",
             )
 
     task_id = save_bench(db, config3)
@@ -331,8 +367,11 @@ async def test_concurrency_above_one_saves_a_row_in_target_order_regardless_of_c
     order -- the slower target here finishes AFTER the faster one, but
     progress/save must still process the row in `targets` list order."""
     config2 = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in targets),
         concurrency=2,
     )
 
@@ -346,9 +385,13 @@ async def test_concurrency_above_one_saves_a_row_in_target_order_regardless_of_c
         async def capture(self, snippet, target, mode, top_k):
             await asyncio.sleep(self._delay)
             return CellCapture(
-                prompt_mode="raw", k_requested=5, k_returned=1, content_offset=0,
+                prompt_mode="raw",
+                k_requested=5,
+                k_returned=1,
+                content_offset=0,
                 top_k=(TokenProb(token=" a", logprob=-0.5, token_id=1),),
-                canary="unchecked", captured_at="2026-07-26T00:00:00Z",
+                canary="unchecked",
+                captured_at="2026-07-26T00:00:00Z",
             )
 
     # targets[0] ("base") is deliberately the SLOWER of the two, so it
@@ -359,7 +402,10 @@ async def test_concurrency_above_one_saves_a_row_in_target_order_regardless_of_c
     runner = WordBenchRunner(db, lambda t: SkewedDelayClient(delays[t.id]))
     progress_order: list[int] = []
     outcome = await runner.run(
-        config2, targets, snippets, task_id,
+        config2,
+        targets,
+        snippets,
+        task_id,
         progress=lambda done, total: progress_order.append(done),
     )
 
@@ -375,8 +421,11 @@ async def test_concurrency_above_one_saves_a_row_in_target_order_regardless_of_c
 async def test_concurrency_field_must_be_at_least_one(targets, dataset):
     with pytest.raises(ValueError, match="concurrency"):
         BenchConfig(
-            name="x", prompt_mode="raw", top_k=5,
-            dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+            name="x",
+            prompt_mode="raw",
+            top_k=5,
+            dataset_id=dataset,
+            target_ids=tuple(t.id for t in targets),
             concurrency=0,
         )
 
@@ -390,8 +439,11 @@ async def test_cancel_token_stops_a_concurrent_run_between_rows_without_strandin
     dispatched is allowed to finish), but no run row may be left at
     "running"."""
     config2 = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in targets),
         concurrency=2,
     )
     token = CancelToken()
@@ -406,9 +458,13 @@ async def test_cancel_token_stops_a_concurrent_run_between_rows_without_strandin
             if len(seen_snippets) == 2:
                 token.cancel()
             return CellCapture(
-                prompt_mode="raw", k_requested=5, k_returned=1, content_offset=0,
+                prompt_mode="raw",
+                k_requested=5,
+                k_returned=1,
+                content_offset=0,
                 top_k=(TokenProb(token=" a", logprob=-0.5, token_id=1),),
-                canary="unchecked", captured_at="2026-07-26T00:00:00Z",
+                canary="unchecked",
+                captured_at="2026-07-26T00:00:00Z",
             )
 
     task_id = save_bench(db, config2)
@@ -435,8 +491,11 @@ async def test_external_task_cancellation_marks_rows_cancelled_and_reraises(
     BaseException; the runner must catch it, mark rows cancelled, and
     re-raise (never swallow it)."""
     config_n = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in targets),
         concurrency=concurrency,
     )
     gate = asyncio.Event()
@@ -453,9 +512,7 @@ async def test_external_task_cancellation_marks_rows_cancelled_and_reraises(
     task_id = save_bench(db, config_n)
     runner = WordBenchRunner(db, lambda t: BlockingClient())
 
-    run_task = asyncio.ensure_future(
-        runner.run(config_n, targets, snippets, task_id)
-    )
+    run_task = asyncio.ensure_future(runner.run(config_n, targets, snippets, task_id))
     await gate.wait()
     run_task.cancel()
 
@@ -495,7 +552,9 @@ async def test_run_closes_every_client_it_created(db, config, targets, snippets)
     runner = WordBenchRunner(db, lambda t: _ClosableFakeClient([], closed))
     await runner.run(config, targets, snippets, task_id)
 
-    assert len(closed) == len(targets), "every client the run created must be closed exactly once"
+    assert len(closed) == len(targets), (
+        "every client the run created must be closed exactly once"
+    )
 
 
 @pytest.mark.asyncio
@@ -525,8 +584,11 @@ async def test_run_closes_clients_even_when_hard_cancelled(
     db, dataset, targets, snippets
 ):
     config1 = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in targets),
         concurrency=1,
     )
     gate = asyncio.Event()
@@ -547,9 +609,7 @@ async def test_run_closes_clients_even_when_hard_cancelled(
     task_id = save_bench(db, config1)
     runner = WordBenchRunner(db, lambda t: BlockingClosableClient())
 
-    run_task = asyncio.ensure_future(
-        runner.run(config1, targets, snippets, task_id)
-    )
+    run_task = asyncio.ensure_future(runner.run(config1, targets, snippets, task_id))
     await gate.wait()
     run_task.cancel()
 
@@ -588,8 +648,11 @@ async def test_capture_continuations_on_calls_capture_with_continuation_and_stor
     db, targets, dataset, snippets
 ):
     config = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in targets),
         capture_continuations=True,
     )
     continuation_calls = []
@@ -604,14 +667,11 @@ async def test_capture_continuations_on_calls_capture_with_continuation_and_stor
     outcome = await runner.run(config, targets, snippets, task_id)
 
     assert len(continuation_calls) == len(snippets) * len(targets), (
-        "capture_with_continuation must be called once per cell when the "
-        "flag is on"
+        "capture_with_continuation must be called once per cell when the flag is on"
     )
     grid = load_grid(db, outcome.group_id)
     assert len(grid["cells"]) == len(snippets) * len(targets)
-    assert all(
-        c.continuation == " the model continues" for c in grid["cells"].values()
-    )
+    assert all(c.continuation == " the model continues" for c in grid["cells"].values())
 
 
 @pytest.mark.asyncio
@@ -624,8 +684,11 @@ async def test_capture_continuations_on_preserves_the_cell_when_continuation_cap
     pins that it survives the runner's own plumbing (_capture_cell's
     dataclasses.replace) too."""
     config = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in targets),
         capture_continuations=True,
     )
 
@@ -653,8 +716,11 @@ async def test_capture_continuations_on_a_failed_cell_is_still_stored_as_a_celle
     itself; the runner must store the CellError as-is, not attempt to
     attach a continuation to it."""
     config = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in targets),
         capture_continuations=True,
     )
 
@@ -684,8 +750,11 @@ async def test_capture_continuations_on_the_canary_stamp_does_not_erase_the_cont
     explicitly too, or every stamped cell would silently regress to "" no
     matter what capture_with_continuation captured."""
     config = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in targets),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in targets),
         capture_continuations=True,
     )
 
@@ -702,7 +771,9 @@ async def test_capture_continuations_on_the_canary_stamp_does_not_erase_the_cont
 
     grid = load_grid(db, outcome.group_id)
     assert all(c.canary == "degenerate" for c in grid["cells"].values())
-    assert all(c.continuation == " stamped continuation" for c in grid["cells"].values())
+    assert all(
+        c.continuation == " stamped continuation" for c in grid["cells"].values()
+    )
 
 
 @pytest.mark.asyncio
@@ -721,9 +792,13 @@ async def test_capture_continuations_on_does_not_raise_effective_concurrency_bey
         Target(id=extra_id, name="extra", provider="llama_cpp", model_id="m")
     ]
     config = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in all_targets),
-        concurrency=2, capture_continuations=True,
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in all_targets),
+        concurrency=2,
+        capture_continuations=True,
     )
 
     active: set[str] = set()
@@ -740,9 +815,13 @@ async def test_capture_continuations_on_does_not_raise_effective_concurrency_bey
             await asyncio.sleep(0.005)  # stands in for the continuation request
             active.discard(target.name)
             return CellCapture(
-                prompt_mode="raw", k_requested=5, k_returned=1, content_offset=0,
+                prompt_mode="raw",
+                k_requested=5,
+                k_returned=1,
+                content_offset=0,
                 top_k=(TokenProb(token=" a", logprob=-0.5, token_id=1),),
-                canary="unchecked", captured_at="2026-08-01T00:00:00Z",
+                canary="unchecked",
+                captured_at="2026-08-01T00:00:00Z",
             ), " continued"
 
     task_id = save_bench(db, config)

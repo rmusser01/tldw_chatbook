@@ -42,6 +42,7 @@ Tests 1 and 2 run through the real `_hybrid_search` seam on an untouched
 `RAGConfig()`, so they fail if the shipped DEFAULT moves -- not merely if the
 fusion arithmetic is wrong.
 """
+
 import asyncio
 from fractions import Fraction
 
@@ -138,7 +139,9 @@ def _fuse_through_the_seam(
     monkeypatch.setattr(service, "_keyword_search", fake_keyword_search)
 
     fused = asyncio.run(
-        service._hybrid_search("plant maintenance record", top_k=top_k, include_citations=False)
+        service._hybrid_search(
+            "plant maintenance record", top_k=top_k, include_citations=False
+        )
     )
     return [row.id for row in fused]
 
@@ -183,7 +186,9 @@ def test_fts_only_row_outranks_a_vector_only_row_at_vector_rank_10(monkeypatch):
     # AC#1's product-level claim: with a vector leg of top_k DISTINCT
     # documents, the keyword-only row still makes the cut -- it displaces the
     # weakest vector row rather than being the row that is displaced.
-    order_at_k = _fuse_through_the_seam(service, monkeypatch, keyword, semantic, top_k=10)
+    order_at_k = _fuse_through_the_seam(
+        service, monkeypatch, keyword, semantic, top_k=10
+    )
     assert fts_only_id in order_at_k, (
         "a keyword-only document must be able to enter hybrid's top-k when the "
         f"vector leg returns k distinct documents: {order_at_k}"

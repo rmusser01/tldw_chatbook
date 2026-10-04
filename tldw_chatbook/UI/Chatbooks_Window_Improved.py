@@ -576,9 +576,7 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
                         50,
                         marker="...",
                     )
-                    item = ListItem(
-                        Static(f"📚 {cb_data['name']} - {description}")
-                    )
+                    item = ListItem(Static(f"📚 {cb_data['name']} - {description}"))
                     list_view.mount(item)
 
     def _filter_chatbooks(self) -> List[Dict[str, Any]]:
@@ -651,12 +649,8 @@ class ChatbooksWindowImproved(RecomposeCaptureGuard, Screen):
                             manifest_data = json.loads(zf.read("manifest.json"))
                             cb_info.update(
                                 {
-                                    "name": manifest_data.get(
-                                        "name", cb_info["name"]
-                                    ),
-                                    "description": manifest_data.get(
-                                        "description", ""
-                                    ),
+                                    "name": manifest_data.get("name", cb_info["name"]),
+                                    "description": manifest_data.get("description", ""),
                                     "tags": manifest_data.get("tags", []),
                                     "statistics": manifest_data.get(
                                         "statistics",

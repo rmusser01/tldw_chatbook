@@ -95,6 +95,7 @@ def test_folder_files_reader_authority_scaffold_is_distinct() -> None:
         is not screen._notes_state.file_notes_reader_persistence_locks["items"]
     )
 
+
 @pytest.mark.asyncio
 async def test_database_notes_capability_inventory_and_modes(
     monkeypatch: pytest.MonkeyPatch,
@@ -554,8 +555,9 @@ async def test_discard_new_note_appearing_never_shifts_the_mode_row() -> None:
         await pilot.pause()
         await _wait_for_condition(
             pilot,
-            lambda: screen.query_one("#library-note-discard-new", Button).display
-            is False,
+            lambda: (
+                screen.query_one("#library-note-discard-new", Button).display is False
+            ),
             message="Discard new note never disappeared after typing.",
         )
         x_without_discard = mode_controls.region.x
@@ -911,13 +913,9 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
         row = await _wait_for_selector(screen, pilot, ".library-notes-row")
-        shell = screen.query_one(
-            ".library-notes-route", LibraryAdaptiveReaderShell
-        )
+        shell = screen.query_one(".library-notes-route", LibraryAdaptiveReaderShell)
 
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
         assert shell.effective_layout.library_open is True
         assert writes == []
 
@@ -970,8 +968,7 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         await _wait_for_condition(
             pilot,
             lambda: (
-                screen._notes_state.work_session_phase
-                is NotesWorkSessionPhase.INACTIVE
+                screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
             ),
             message="Database identity clear did not reset work session",
         )
@@ -1014,13 +1011,13 @@ async def test_database_notes_work_session_activates_once_and_resets_exactly(
         assert screen._notes_state.reader_preferences.library_open is True
 
         await screen._select_library_rail_row("browse-media")
-        assert (
-            screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
-        )
+        assert screen._notes_state.work_session_phase is NotesWorkSessionPhase.INACTIVE
 
 
 @pytest.mark.asyncio
-async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapsed() -> None:
+async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapsed() -> (
+    None
+):
     """At 120 columns the hidden Library region is skipped by the F6 cycle."""
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
@@ -1034,9 +1031,7 @@ async def test_notes_global_f6_cycles_only_visible_regions_when_library_collapse
         # tree's async reload (task-32126) and can race the row it presses
         # next.
         await _open_note_editor(screen, pilot)
-        shell = screen.query_one(
-            ".library-notes-route", LibraryAdaptiveReaderShell
-        )
+        shell = screen.query_one(".library-notes-route", LibraryAdaptiveReaderShell)
         assert shell.effective_layout.library_open is False
         screen.query_one("#library-note-title", Input).focus()
         await pilot.pause()
@@ -1064,9 +1059,7 @@ async def test_database_notes_mount_three_retained_roles_once() -> None:
         screen.query_one("#library-row-browse-notes", Button).press()
         await _wait_for_selector(screen, pilot, ".library-notes-route")
 
-        shell = screen.query_one(
-            ".library-notes-route", LibraryAdaptiveReaderShell
-        )
+        shell = screen.query_one(".library-notes-route", LibraryAdaptiveReaderShell)
         rail = shell.query_one("#library-rail")
         items = shell.query_one("#library-notes-canvas", LibraryNotesCanvas)
         work = shell.query_one("#library-note-work-pane", LibraryNoteWorkPane)
@@ -1126,9 +1119,7 @@ async def test_reader_route_parks_dirty_note_selection_and_preview_without_savin
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Reader-to-reader routing retains the Notes-owned working session."""
-    monkeypatch.setattr(
-        library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600
-    )
+    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600)
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -1192,9 +1183,11 @@ async def test_reader_route_parks_dirty_note_selection_and_preview_without_savin
 
         await _wait_for_condition(
             pilot,
-            lambda: len(app.notes_scope_service.save_calls) == 1
-            and screen._library_note_session.snapshot is not None
-            and not screen._library_note_session.snapshot.dirty,
+            lambda: (
+                len(app.notes_scope_service.save_calls) == 1
+                and screen._library_note_session.snapshot is not None
+                and not screen._library_note_session.snapshot.dirty
+            ),
             message="Revisited dirty Notes draft did not resume autosave.",
         )
 
@@ -1211,9 +1204,7 @@ async def test_reader_route_invalidates_autosave_queued_before_park(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A timer-fired autosave cannot begin persistence after Notes is hidden."""
-    monkeypatch.setattr(
-        library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600
-    )
+    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 3600)
     app = _build_test_app()
     _seed_conversations(app, _two_conversations(), notes=_two_notes())
     host = LibraryHarness(app)
@@ -1280,9 +1271,11 @@ async def test_reader_route_invalidates_autosave_queued_before_park(
 
         await _wait_for_condition(
             pilot,
-            lambda: len(app.notes_scope_service.save_calls) == 1
-            and screen._library_note_session.snapshot is not None
-            and not screen._library_note_session.snapshot.dirty,
+            lambda: (
+                len(app.notes_scope_service.save_calls) == 1
+                and screen._library_note_session.snapshot is not None
+                and not screen._library_note_session.snapshot.dirty
+            ),
             message="Rearmed autosave did not settle exactly once.",
         )
 
@@ -1461,9 +1454,7 @@ async def test_eighty_columns_protect_editor_and_keep_both_restore_grips() -> No
         # own) re-kicks the tree's async reload and strands the row press
         # that follows (task-32126, confirmed by reproduction).
         await _open_note_editor(screen, pilot)
-        shell = screen.query_one(
-            ".library-notes-route", LibraryAdaptiveReaderShell
-        )
+        shell = screen.query_one(".library-notes-route", LibraryAdaptiveReaderShell)
         await pilot.pause()
 
         assert shell.work.region.width >= 48

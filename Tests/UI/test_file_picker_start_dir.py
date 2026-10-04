@@ -105,14 +105,11 @@ def test_character_import_start_precedence(tmp_path):
     remembered.mkdir()
 
     assert (
-        efp.resolve_file_picker_start(
-            "character_import", remembered, home=home
-        )
+        efp.resolve_file_picker_start("character_import", remembered, home=home)
         == remembered
     )
     assert (
-        efp.resolve_file_picker_start("character_import", None, home=home)
-        == documents
+        efp.resolve_file_picker_start("character_import", None, home=home) == documents
     )
 
     documents.rmdir()
@@ -186,9 +183,7 @@ async def test_character_import_cancel_keeps_remembered_directory(
         picker.dismiss(None)
         await pilot.pause()
 
-    assert config_store[("filepicker", "last_dir_character_import")] == str(
-        remembered
-    )
+    assert config_store[("filepicker", "last_dir_character_import")] == str(remembered)
 
 
 @pytest.mark.asyncio
@@ -212,9 +207,7 @@ async def test_character_import_directory_result_keeps_remembered_directory(
         picker.dismiss(selected_directory)
         await pilot.pause()
 
-    assert config_store[("filepicker", "last_dir_character_import")] == str(
-        remembered
-    )
+    assert config_store[("filepicker", "last_dir_character_import")] == str(remembered)
 
 
 @pytest.mark.asyncio
@@ -237,6 +230,4 @@ async def test_character_import_invalid_result_keeps_remembered_directory(
         picker.dismiss(result)
         await pilot.pause()
 
-    assert config_store[("filepicker", "last_dir_character_import")] == str(
-        remembered
-    )
+    assert config_store[("filepicker", "last_dir_character_import")] == str(remembered)

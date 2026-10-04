@@ -81,9 +81,7 @@ def test_document_front_matter_precedes_the_body():
 
     document = briefing_markdown_document(briefing)
 
-    assert document.index("Morning AI Brief") < document.index(
-        "Acme shipped a thing."
-    )
+    assert document.index("Morning AI Brief") < document.index("Acme shipped a thing.")
 
 
 def test_null_body_raises_naming_the_briefing():

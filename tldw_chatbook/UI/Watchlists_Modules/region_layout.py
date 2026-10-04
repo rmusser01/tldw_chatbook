@@ -89,6 +89,7 @@ MANAGEMENT_COLLAPSE_PRIORITY: tuple[Region, ...] = (
     Region.LEFT_RAIL,
 )
 
+
 @dataclass(frozen=True)
 class RegionLayout:
     """A preferred or effective set of collapsed regions.
@@ -166,9 +167,7 @@ def resolve_effective_layout(
     preferred_collapsed = set(preferred.collapsed).intersection(mounted)
 
     if article_focus:
-        return RegionLayout(
-            collapsed=frozenset(preferred_collapsed.union(mounted))
-        )
+        return RegionLayout(collapsed=frozenset(preferred_collapsed.union(mounted)))
 
     required_width = (
         CENTRE_COMFORT_WIDTH
@@ -179,9 +178,7 @@ def resolve_effective_layout(
             if region not in preferred_collapsed
         )
     )
-    candidates = [
-        region for region in priority if region not in preferred_collapsed
-    ]
+    candidates = [region for region in priority if region not in preferred_collapsed]
     if priority_target in candidates:
         candidates.remove(priority_target)
         candidates.append(priority_target)
@@ -214,6 +211,4 @@ def resolve_effective_layout(
         accepted_open.add(region)
         accepted_width = reopened_width
 
-    return RegionLayout(
-        collapsed=frozenset(set(mounted).difference(accepted_open))
-    )
+    return RegionLayout(collapsed=frozenset(set(mounted).difference(accepted_open)))

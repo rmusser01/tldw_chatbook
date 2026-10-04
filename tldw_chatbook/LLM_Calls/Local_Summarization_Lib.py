@@ -277,9 +277,9 @@ def summarize_with_llama(
         # the default port regardless of where the run's model actually is.
         api_settings_llama = {}
         if isinstance(loaded_config_data, dict):
-            api_settings_llama = (
-                (loaded_config_data.get("api_settings") or {}).get("llama_cpp") or {}
-            )
+            api_settings_llama = (loaded_config_data.get("api_settings") or {}).get(
+                "llama_cpp"
+            ) or {}
         configured_url = (
             api_settings_llama.get("api_url")
             or api_settings_llama.get("api_ip")
@@ -655,7 +655,9 @@ def summarize_with_kobold(
                 try:
                     # TASK-32854: shared transport (session reuse, bounded Retry-After,
                     # per-attempt closure); the adapter's real retry set preserved.
-                    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+                    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                        _post_with_retry,
+                    )
 
                     retry_count = kobold_legacy["api_retries"]
                     retry_delay = kobold_legacy["api_retry_delay"]
@@ -723,7 +725,9 @@ def summarize_with_kobold(
             try:
                 # TASK-32854: shared transport (session reuse, bounded Retry-After,
                 # per-attempt closure); the adapter's real retry set preserved.
-                from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+                from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                    _post_with_retry,
+                )
 
                 retry_count = kobold_legacy["api_retries"]
                 retry_delay = kobold_legacy["api_retry_delay"]
@@ -911,7 +915,9 @@ def summarize_with_oobabooga(
             logging.debug("Oobabooga: Streaming mode enabled")
             # TASK-32854: shared transport (session reuse, bounded Retry-After,
             # per-attempt closure); the adapter's real retry set preserved.
-            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                _post_with_retry,
+            )
 
             retry_count = loaded_config_data["ooba_api"]["api_retries"]
             retry_delay = loaded_config_data["ooba_api"]["api_retry_delay"]
@@ -969,7 +975,9 @@ def summarize_with_oobabooga(
         else:
             # TASK-32854: shared transport (session reuse, bounded Retry-After,
             # per-attempt closure); the adapter's real retry set preserved.
-            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                _post_with_retry,
+            )
 
             logging.debug("Oobabooga: Posting request")
             retry_count = loaded_config_data["ooba_api"]["api_retries"]
@@ -1136,7 +1144,9 @@ def summarize_with_tabbyapi(
                 try:
                     # TASK-32854: shared transport (session reuse, bounded Retry-After,
                     # per-attempt closure); the adapter's real retry set preserved.
-                    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+                    from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                        _post_with_retry,
+                    )
 
                     retry_count = tabby_legacy["api_retries"]
                     retry_delay = tabby_legacy["api_retry_delay"]
@@ -1199,7 +1209,9 @@ def summarize_with_tabbyapi(
             try:
                 # TASK-32854: shared transport (session reuse, bounded Retry-After,
                 # per-attempt closure); the adapter's real retry set preserved.
-                from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+                from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                    _post_with_retry,
+                )
 
                 retry_count = tabby_legacy["api_retries"]
                 retry_delay = tabby_legacy["api_retry_delay"]
@@ -1395,7 +1407,9 @@ def summarize_with_vllm(
             # TASK-32854: shared transport (session reuse, bounded
             # Retry-After, per-attempt closure); the adapter's real retry
             # set preserved.
-            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                _post_with_retry,
+            )
 
             retry_count = loaded_config_data["vllm_api"]["api_retries"]
             retry_delay = loaded_config_data["vllm_api"]["api_retry_delay"]
@@ -1447,7 +1461,9 @@ def summarize_with_vllm(
             return stream_generator()
         # Handle non-streaming
         else:
-            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                _post_with_retry,
+            )
 
             retry_count = loaded_config_data["vllm_api"]["api_retries"]
             retry_delay = loaded_config_data["vllm_api"]["api_retry_delay"]
@@ -1655,7 +1671,9 @@ def summarize_with_ollama(
         try:
             # TASK-32854: shared transport (session reuse, bounded Retry-After,
             # per-attempt closure); the adapter's real retry set preserved.
-            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                _post_with_retry,
+            )
 
             logging.debug("Ollama Summarize request being sent")
             retry_count = loaded_config_data["ollama_api"]["api_retries"]
@@ -1898,7 +1916,9 @@ def summarize_with_custom_openai(
         if streaming:
             # TASK-32854: shared transport (session reuse, bounded Retry-After,
             # per-attempt closure); the adapter's real retry set preserved.
-            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                _post_with_retry,
+            )
 
             retry_count = loaded_config_data["custom_openai_api"]["api_retries"]
             retry_delay = loaded_config_data["custom_openai_api"]["api_retry_delay"]
@@ -1947,7 +1967,9 @@ def summarize_with_custom_openai(
         else:
             # TASK-32854: shared transport (session reuse, bounded Retry-After,
             # per-attempt closure); the adapter's real retry set preserved.
-            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                _post_with_retry,
+            )
 
             logging.debug("Custom OpenAI API: Posting request")
             retry_count = loaded_config_data["custom_openai_api"]["api_retries"]
@@ -2148,7 +2170,9 @@ def summarize_with_custom_openai_2(
         if streaming:
             # TASK-32854: shared transport (session reuse, bounded Retry-After,
             # per-attempt closure); the adapter's real retry set preserved.
-            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                _post_with_retry,
+            )
 
             retry_count = loaded_config_data["custom_openai_api_2"]["api_retries"]
             retry_delay = loaded_config_data["custom_openai_api_2"]["api_retry_delay"]
@@ -2197,7 +2221,9 @@ def summarize_with_custom_openai_2(
         else:
             # TASK-32854: shared transport (session reuse, bounded Retry-After,
             # per-attempt closure); the adapter's real retry set preserved.
-            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import _post_with_retry
+            from tldw_chatbook.LLM_Calls.Summarization_General_Lib import (
+                _post_with_retry,
+            )
 
             logging.debug("Custom OpenAI API-2: Posting request")
             retry_count = loaded_config_data["custom_openai_api_2"]["api_retries"]

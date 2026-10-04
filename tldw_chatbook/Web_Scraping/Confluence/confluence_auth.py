@@ -20,7 +20,12 @@ from loguru import logger
 #
 # Local imports
 from ..cookie_scraping.cookie_cloner import get_cookies
-from ...Utils.egress import MAX_FETCH_BYTES_PAGE, check_url_or_raise, guarded_fetch_requests, origin_set
+from ...Utils.egress import (
+    MAX_FETCH_BYTES_PAGE,
+    check_url_or_raise,
+    guarded_fetch_requests,
+    origin_set,
+)
 #
 #######################################################################################################################
 #

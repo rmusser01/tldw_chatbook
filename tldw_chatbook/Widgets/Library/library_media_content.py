@@ -481,14 +481,12 @@ class LibraryMediaContentSearchControls(Vertical):
         status = self.query_one("#library-media-content-search-status", Static)
         status.update(self._status_text())
         status.display = is_active
-        self.query_one("#library-media-content-search-nav", Horizontal).display = (
-            is_active
-        )
+        self.query_one(
+            "#library-media-content-search-nav", Horizontal
+        ).display = is_active
         self._sync_nav_controls()
 
-    def sync_match_index(
-        self, *, matches: tuple[int, ...], match_index: int
-    ) -> None:
+    def sync_match_index(self, *, matches: tuple[int, ...], match_index: int) -> None:
         """Synchronize match navigation without rebuilding controls.
 
         Args:

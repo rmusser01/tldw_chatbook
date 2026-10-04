@@ -57,10 +57,42 @@ _DROP_CONTENT: frozenset[str] = frozenset(
 #: handled on the start tag only; the rest break before and after.
 _BLOCK_TAGS: frozenset[str] = frozenset(
     {
-        "address", "article", "aside", "blockquote", "br", "dd", "div", "dl",
-        "dt", "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2",
-        "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav", "ol", "p",
-        "pre", "section", "table", "tbody", "td", "tfoot", "th", "thead", "tr",
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "br",
+        "dd",
+        "div",
+        "dl",
+        "dt",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hr",
+        "li",
+        "main",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "tr",
         "ul",
     }
 )
@@ -68,8 +100,26 @@ _BLOCK_TAGS: frozenset[str] = frozenset(
 #: Block tags that also want a BLANK line after them, because they separate
 #: units of thought rather than merely rows of one.
 _PARAGRAPH_TAGS: frozenset[str] = frozenset(
-    {"p", "div", "blockquote", "pre", "section", "article", "h1", "h2", "h3",
-     "h4", "h5", "h6", "table", "ul", "ol", "figure", "header", "footer"}
+    {
+        "p",
+        "div",
+        "blockquote",
+        "pre",
+        "section",
+        "article",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "table",
+        "ul",
+        "ol",
+        "figure",
+        "header",
+        "footer",
+    }
 )
 
 #: Control characters that must never reach the terminal. C0 minus tab and
@@ -243,9 +293,7 @@ class _DisplayTextExtractor(HTMLParser):
         if tag in _BLOCK_TAGS:
             self._parts.append("\n\n" if tag in _PARAGRAPH_TAGS else "\n")
 
-    def handle_startendtag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         # `<br/>` arrives here, not at `handle_starttag`. Void elements have no
         # end tag, so this must not touch `_drop_depth`.
         tag = tag.lower()

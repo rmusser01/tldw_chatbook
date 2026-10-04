@@ -521,9 +521,7 @@ async def test_escaped_chat_stash_keeps_segment_payload_and_restore_consistent()
 
     dispatched: list[tuple[str, ConsoleDraftStash | None]] = []
 
-    async def dispatch(
-        draft: str, *, stash: ConsoleDraftStash | None = None
-    ) -> bool:
+    async def dispatch(draft: str, *, stash: ConsoleDraftStash | None = None) -> bool:
         dispatched.append((draft, stash))
         return True
 
@@ -650,10 +648,17 @@ async def test_raw_cli_completed_prefix_survives_focus_detour() -> None:
 
 
 @pytest.mark.asyncio
-async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry() -> (
-    None
-):
+# TASK-27018: the raw-CLI danger foreground is $ds-status-error-readable,
+# which task-31264 (1a1b5c19e0) redefined from the dark-canvas-only literal
+# #ff8fa3 to Textual's theme-generated $text-error. The pin follows the
+# harness theme instead of the retired literal; the distinctness assertions
+# below still catch a CSS regression that drops the danger styling.
+@pytest.mark.parametrize("theme", ["textual-dark", "textual-light"])
+async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry(
+    theme: str,
+) -> None:
     host = _RawCliComposerHarness()
+    host.theme = theme
 
     async with host.run_test(size=(120, 20)) as pilot:
         composer = host.query_one("#console-native-composer", ConsoleComposerBar)
@@ -676,8 +681,9 @@ async def test_raw_cli_collapsed_state_retains_danger_label_and_one_row_geometry
         semantic_error_color = composer.query_one(
             "#console-raw-cli-status", Static
         ).styles.color
-        # Production $ds-status-error-readable resolves to this AA-safe foreground.
-        readable_error_color = Color.parse("#ff8fa3")
+        # Production $ds-status-error-readable resolves to the theme's
+        # polarity-aware readable error foreground ($text-error).
+        readable_error_color = Color.parse(host.get_css_variables()["text-error"])
         assert semantic_error_color == readable_error_color
         assert semantic_error_color != ordinary_presentation[0]
 
@@ -752,6 +758,28 @@ async def _spy_submit_draft(console) -> AsyncMock:
     spy = AsyncMock(wraps=controller.submit_draft)
     controller.submit_draft = spy
     return spy
+
+
+async def _wait_for_gateway_row(pilot, gateway, expected_content: str) -> None:
+    """Poll until the capturing gateway has received a row with this content.
+
+    TASK-27018: the transcript's "accepted" marker appears when the submit is
+    admitted; the provider dispatch happens asynchronously after that (about
+    a second under load), so reading ``sent_messages`` immediately after the
+    marker races. Bounded to ~5 s, matching the other poll helpers here.
+    """
+    for _ in range(100):
+        if any(
+            row.get("content") == expected_content
+            for message in gateway.sent_messages
+            for row in message
+        ):
+            return
+        await pilot.pause(0.05)
+    raise AssertionError(
+        f"gateway never received {expected_content!r}: "
+        f"{[message[-1].get('content') for message in gateway.sent_messages]}"
+    )
 
 
 @pytest.mark.asyncio
@@ -854,6 +882,16 @@ async def test_console_unknown_command_first_enter_renders_hint_and_does_not_sen
 
 
 @pytest.mark.asyncio
+# TASK-27018, two re-decisions against the current send contract:
+# (1) the mounted factory app reloads real config through the guarded
+#     loader, which under the per-test sandbox redirect fails closed with
+#     RecoveryRequired("raw_source_selection_changed") -- keep the
+#     collection-time profile (per-node marker, TASK-32873 pattern);
+# (2) since the Library-gated send seam (a26cdafd80, 2026-08-22) the
+#     runtime calls submit_draft with custody kwargs (origin,
+#     configuration, staged-evidence, custody hooks), so the exact
+#     signature pin now asserts the load-bearing call parts instead.
+@pytest.mark.bootstrap_profile
 async def test_console_unknown_command_second_unmodified_enter_sends_as_text():
     gateway = CapturingGateway()
     app = _build_console_send_test_app()
@@ -876,10 +914,14 @@ async def test_console_unknown_command_second_unmodified_enter_sends_as_text():
         send_button.press()
         await _wait_for_text(console, pilot, "accepted")
 
-        submit_spy.assert_awaited_once_with(
-            "/nope x",
-            session_id=console._ensure_console_chat_store().active_session_id,
+        assert submit_spy.await_count == 1
+        submit_call = submit_spy.await_args
+        assert submit_call.args == ("/nope x",)
+        assert (
+            submit_call.kwargs["session_id"]
+            == console._ensure_console_chat_store().active_session_id
         )
+        await _wait_for_gateway_row(pilot, gateway, "/nope x")
         assert gateway.sent_messages[-1][-1]["content"] == "/nope x"
         assert console._console_unknown_send_armed is None
 
@@ -984,6 +1026,12 @@ async def test_console_collapse_disarms_unknown_command_literal_send():
 
 
 @pytest.mark.asyncio
+# TASK-27018: same two re-decisions as the second-Enter test above -- the
+# mounted send app needs the collection-time profile past the guarded config
+# loader (per-node marker, TASK-32873 pattern), and the Library-gated send
+# seam (a26cdafd80) calls submit_draft with custody kwargs, so the pin
+# asserts the load-bearing call parts instead of the exact signature.
+@pytest.mark.bootstrap_profile
 async def test_console_collapsed_paste_starting_with_slash_sends_normally():
     gateway = CapturingGateway()
     app = _build_console_send_test_app()
@@ -1003,10 +1051,14 @@ async def test_console_collapsed_paste_starting_with_slash_sends_normally():
         console.query_one("#console-send-message", Button).press()
         await _wait_for_text(console, pilot, "accepted")
 
-        submit_spy.assert_awaited_once_with(
-            pasted_text,
-            session_id=console._ensure_console_chat_store().active_session_id,
+        assert submit_spy.await_count == 1
+        submit_call = submit_spy.await_args
+        assert submit_call.args == (pasted_text,)
+        assert (
+            submit_call.kwargs["session_id"]
+            == console._ensure_console_chat_store().active_session_id
         )
+        await _wait_for_gateway_row(pilot, gateway, pasted_text)
         assert gateway.sent_messages[-1][-1]["content"] == pasted_text
         assert console._console_unknown_send_armed is None
         assert composer.draft_text() == ""

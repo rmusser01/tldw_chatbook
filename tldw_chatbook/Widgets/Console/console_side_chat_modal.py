@@ -265,9 +265,7 @@ class ConsoleSideChatModal(SafeModalDismissMixin, ModalScreen[None]):
         # Resolution arrives with the outcome; until then the header keeps
         # the requested identity.
         if outcome.provider or outcome.model:
-            self._update_identity(
-                self._identity_text(outcome.provider, outcome.model)
-            )
+            self._update_identity(self._identity_text(outcome.provider, outcome.model))
         self._update_reply(cap_reply_buffer(outcome.text))
         if outcome.status == "complete":
             self._set_status("Complete.")

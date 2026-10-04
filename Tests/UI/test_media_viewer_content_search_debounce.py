@@ -63,7 +63,9 @@ async def _mounted_panel(
 
 
 @pytest.mark.asyncio
-async def test_content_search_burst_renders_only_final_query_after_debounce(monkeypatch):
+async def test_content_search_burst_renders_only_final_query_after_debounce(
+    monkeypatch,
+):
     app = _MediaViewerApp()
     async with app.run_test() as pilot:
         _, search_input, updates = await _mounted_panel(pilot, monkeypatch)
@@ -82,7 +84,9 @@ async def test_content_search_burst_renders_only_final_query_after_debounce(monk
 
 
 @pytest.mark.asyncio
-async def test_clearing_search_renders_unhighlighted_content_without_stale_callback(monkeypatch):
+async def test_clearing_search_renders_unhighlighted_content_without_stale_callback(
+    monkeypatch,
+):
     app = _MediaViewerApp()
     async with app.run_test() as pilot:
         _, search_input, updates = await _mounted_panel(pilot, monkeypatch)
@@ -98,7 +102,9 @@ async def test_clearing_search_renders_unhighlighted_content_without_stale_callb
 
 
 @pytest.mark.asyncio
-async def test_loading_replacement_prevents_pending_query_from_rendering_on_new_content(monkeypatch):
+async def test_loading_replacement_prevents_pending_query_from_rendering_on_new_content(
+    monkeypatch,
+):
     app = _MediaViewerApp()
     async with app.run_test() as pilot:
         panel, search_input, updates = await _mounted_panel(pilot, monkeypatch)

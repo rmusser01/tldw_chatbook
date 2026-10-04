@@ -180,8 +180,7 @@ def _assert_workspace_state_is_contained(
             (
                 sibling
                 for sibling in displayed
-                if sibling is not child
-                and (hit is sibling or sibling in hit.ancestors)
+                if sibling is not child and (hit is sibling or sibling in hit.ancestors)
             ),
             None,
         )

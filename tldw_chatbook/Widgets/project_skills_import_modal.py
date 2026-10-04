@@ -376,9 +376,7 @@ async def _project_skills_installed_names(app: Any) -> frozenset[str]:
         if inspect.isawaitable(payload):
             payload = await payload
     except Exception:
-        logger.opt(exception=True).debug(
-            "project-skills installed-name lookup failed"
-        )
+        logger.opt(exception=True).debug("project-skills installed-name lookup failed")
         return frozenset()
     if not isinstance(payload, dict):
         return frozenset()
@@ -719,6 +717,4 @@ def maybe_offer_project_skills_import(
     except Exception:
         coroutine.close()
         app._project_skills_offer_active = False
-        logger.opt(exception=True).debug(
-            "project-skills offer chain failed to start"
-        )
+        logger.opt(exception=True).debug("project-skills offer chain failed to start")

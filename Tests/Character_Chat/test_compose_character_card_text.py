@@ -116,10 +116,7 @@ def test_terminal_unsafe_character_text_remains_exact_in_prompt_composition():
         description=raw_description,
     )
 
-    assert out == (
-        f"You are {raw_name}.\n\n"
-        f"Description: {raw_description}"
-    )
+    assert out == (f"You are {raw_name}.\n\nDescription: {raw_description}")
 
 
 def test_leading_and_trailing_whitespace_around_a_real_value_still_trims():

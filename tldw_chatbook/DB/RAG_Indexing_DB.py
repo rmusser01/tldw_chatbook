@@ -31,8 +31,12 @@ from ..Metrics.metrics_logger import log_counter, log_histogram
 from .private_sqlite import connect_private_sqlite
 from tldw_chatbook.Utils.private_paths import lexical_path
 from tldw_chatbook.Backup_Recovery.participants import (
-    _core_access, _core_cached_connection, _core_closing, _core_getter,
-    _core_transaction, _register_core_connection,
+    _core_access,
+    _core_cached_connection,
+    _core_closing,
+    _core_getter,
+    _core_transaction,
+    _register_core_connection,
 )
 
 
@@ -180,8 +184,7 @@ class RAGIndexingDB:
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
                 last_used is None
-                or (time.monotonic() - last_used)
-                >= self._LIVENESS_PING_IDLE_SECONDS
+                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
             ):
                 try:
                     conn.execute("SELECT 1")

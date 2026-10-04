@@ -238,7 +238,9 @@ def scan_directory(directory: Path) -> list[Violation]:
     violations: list[Violation] = []
     for path in sorted(directory.rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        violations.extend(scan_tree(ast.parse(source), str(path.relative_to(directory))))
+        violations.extend(
+            scan_tree(ast.parse(source), str(path.relative_to(directory)))
+        )
     return violations
 
 

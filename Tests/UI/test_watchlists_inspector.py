@@ -83,9 +83,9 @@ def _assert_visible_in_viewport(
 
 def _app_with_watchlists(watch_items):
     app = _build_test_app()
-    app.watchlist_scope_service.list_watch_items = (
-        StaticWatchlistsScopeService(watch_items).list_watch_items
-    )
+    app.watchlist_scope_service.list_watch_items = StaticWatchlistsScopeService(
+        watch_items
+    ).list_watch_items
     return app
 
 
@@ -1139,7 +1139,9 @@ async def test_saving_selectors_does_not_recompose_the_screen():
             "same SourcesPane instance must still be mounted"
         )
         assert sources_pane.query_one("#sources-table", DataTable) is table
-        assert screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
+        assert (
+            screen.query_one("#watchlists-entity-inspector", InspectorPane) is inspector
+        )
         assert inspector.query_one("#inspector-noise-selectors", TextArea) is field, (
             "not even the Inspector may recompose: the entity dict is patched "
             "in place, so the field the user is typing in survives the save"

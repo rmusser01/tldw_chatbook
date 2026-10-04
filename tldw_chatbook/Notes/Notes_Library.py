@@ -64,10 +64,14 @@ _RESEARCH_RECEIPT_PROOF_PREFIX = "research-receipt-proof:"
 
 
 def _is_internal_research_keyword(row: Any) -> bool:
-    return isinstance(row, dict) and re.fullmatch(
-        rf"{re.escape(_RESEARCH_RECEIPT_PROOF_PREFIX)}[0-9a-f]{{64}}",
-        str(row.get("keyword") or ""),
-    ) is not None
+    return (
+        isinstance(row, dict)
+        and re.fullmatch(
+            rf"{re.escape(_RESEARCH_RECEIPT_PROOF_PREFIX)}[0-9a-f]{{64}}",
+            str(row.get("keyword") or ""),
+        )
+        is not None
+    )
 
 
 class NotesInteropService:
@@ -411,9 +415,7 @@ class NotesInteropService:
                 "receipt_requested_keywords": (
                     tuple(
                         item
-                        for item in json.loads(
-                            str(receipt["requested_keywords_json"])
-                        )
+                        for item in json.loads(str(receipt["requested_keywords_json"]))
                         if isinstance(item, str)
                     )
                     if receipt
@@ -829,7 +831,11 @@ class NotesInteropService:
             folder_sync_id = validate_resource_sync_id(folder_sync_id.strip())
         requested_keywords = self._normalize_ensured_keywords(ensure_keywords)
         organization_requested = bool(requested_keywords or folder or folder_sync_id)
-        if note_id is not None and organization_requested and not expected_organization_version:
+        if (
+            note_id is not None
+            and organization_requested
+            and not expected_organization_version
+        ):
             raise ValueError(
                 "expected_organization_version is required for organization-changing updates"
             )
@@ -861,9 +867,9 @@ class NotesInteropService:
                 )
                 if authority_note is not None:
                     authority_organization_version = str(
-                        db._library_organization_for_notes(cursor, [note_id])[
-                            note_id
-                        ]["organization_version"]
+                        db._library_organization_for_notes(cursor, [note_id])[note_id][
+                            "organization_version"
+                        ]
                     )
                 authority_receipt = cursor.execute(
                     "SELECT state, note_version, organization_version, "
@@ -899,8 +905,7 @@ class NotesInteropService:
                         type(_agent_lesson_context) is _AgentLessonMutationContext
                         and type(_agent_lesson_context.authority)
                         is _AgentLessonApprovalAuthority
-                        and type(_agent_lesson_context.issuer)
-                        is LibraryToolProvider
+                        and type(_agent_lesson_context.issuer) is LibraryToolProvider
                     )
                 except ImportError:
                     approved_attempt = False
@@ -978,16 +983,12 @@ class NotesInteropService:
                     (note_id,),
                 ).fetchone()
             if unresolved_receipt is not None:
-                stored_keywords = self._receipt_requested_keywords(
-                    unresolved_receipt
-                )
+                stored_keywords = self._receipt_requested_keywords(unresolved_receipt)
                 requested_keywords = tuple(
                     dict.fromkeys((*stored_keywords, *requested_keywords))
                 )
                 if folder is None and folder_sync_id is None:
-                    stored_folder_name = unresolved_receipt[
-                        "requested_folder_name"
-                    ]
+                    stored_folder_name = unresolved_receipt["requested_folder_name"]
                     stored_folder_sync_id = unresolved_receipt[
                         "requested_folder_sync_id"
                     ]
@@ -1062,7 +1063,10 @@ class NotesInteropService:
                 current_note = cursor.execute(
                     "SELECT * FROM notes WHERE id = ? AND deleted = 0", (note_id,)
                 ).fetchone()
-                if current_note is None or int(current_note["version"]) != expected_version:
+                if (
+                    current_note is None
+                    or int(current_note["version"]) != expected_version
+                ):
                     raise ConflictError(
                         "Note content changed before the organization save.",
                         entity="notes",
@@ -1215,7 +1219,10 @@ class NotesInteropService:
                         dataset=dataset,
                         domain="notes.folder",
                         object_id=str(folder_row["sync_id"]),
-                        payload={"name": str(folder_row["name"]), "parent_sync_id": None},
+                        payload={
+                            "name": str(folder_row["name"]),
+                            "parent_sync_id": None,
+                        },
                         source_version=int(folder_row["version"]),
                     )
                 for row in created_keyword_rows:
@@ -1335,7 +1342,9 @@ class NotesInteropService:
         dataset_id: Optional[str],
     ) -> tuple[Optional[str], Optional[str], bool]:
         if (server_profile_id is None) != (dataset_id is None):
-            raise ValueError("server_profile_id and dataset_id must be supplied together")
+            raise ValueError(
+                "server_profile_id and dataset_id must be supplied together"
+            )
         if server_profile_id is None:
             rows = cursor.execute(
                 "SELECT * FROM notes_organization_sync_checkpoints"
@@ -1344,7 +1353,8 @@ class NotesInteropService:
                 return None, None, True
             if len(rows) != 1:
                 raise NotesOrganizationRepositoryError(
-                    "ambiguous_profile", "multiple Notes organization profiles require routing"
+                    "ambiguous_profile",
+                    "multiple Notes organization profiles require routing",
                 )
             row = rows[0]
             profile = str(row["server_profile_id"])
@@ -1765,9 +1775,7 @@ class NotesInteropService:
         return stored_binding == dict(request_binding)
 
     @staticmethod
-    def _validate_receipt_target(
-        cursor: sqlite3.Cursor, receipt: sqlite3.Row
-    ) -> None:
+    def _validate_receipt_target(cursor: sqlite3.Cursor, receipt: sqlite3.Row) -> None:
         note = cursor.execute(
             "SELECT version FROM notes WHERE id = ? AND deleted = 0",
             (str(receipt["note_id"]),),
@@ -1925,9 +1933,7 @@ class NotesInteropService:
             )
             raise
 
-    def restore_note(
-        self, user_id: str, note_id: str, expected_version: int
-    ) -> bool:
+    def restore_note(self, user_id: str, note_id: str, expected_version: int) -> bool:
         """Restore a soft-deleted note through the per-user database seam.
 
         Args:
@@ -1947,9 +1953,7 @@ class NotesInteropService:
 
         try:
             db = self._get_db(user_id)
-            result = db.restore_note(
-                note_id=note_id, expected_version=expected_version
-            )
+            result = db.restore_note(note_id=note_id, expected_version=expected_version)
             duration = time.time() - start_time
             log_histogram(
                 "notes_library_restore_note_duration",

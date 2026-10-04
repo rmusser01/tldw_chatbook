@@ -88,7 +88,7 @@ async def test_stts_window_explains_missing_local_speech_dependencies(monkeypatc
 
         assert "OpenAI-compatible speech: available when configured" in rendered_status
         assert (
-            'Local transcription: missing - pip install '
+            "Local transcription: missing - pip install "
             '"tldw_chatbook[transcription_faster_whisper]"'
         ) in rendered_status
         assert (
@@ -104,9 +104,7 @@ async def test_stts_window_explains_missing_local_speech_dependencies(monkeypatc
 
 
 def test_speech_capability_detail_names_each_ready_local_capability():
-    detail = speech_capability_detail(
-        SpeechLocalDependencyAvailability.all_available()
-    )
+    detail = speech_capability_detail(SpeechLocalDependencyAvailability.all_available())
 
     assert "Local transcription: ready" in detail
     assert "Local Kokoro: ready" in detail

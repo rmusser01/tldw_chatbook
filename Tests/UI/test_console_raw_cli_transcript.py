@@ -37,7 +37,9 @@ from tldw_chatbook.UI.Console_Modules.raw_cli import ConsoleRawCliController
 from tldw_chatbook.UI.Console_Modules import wiring as wiring_module
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
-from tldw_chatbook.Widgets.Console import console_assistant_turn as assistant_turn_module
+from tldw_chatbook.Widgets.Console import (
+    console_assistant_turn as assistant_turn_module,
+)
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
 
@@ -114,10 +116,13 @@ def test_raw_cli_presentation_is_frozen_and_strictly_bounded() -> None:
         with pytest.raises(ValueError, match="UTF-8"):
             presentation_type(**(defaults | {field: "\ud800"}))
 
-    assert _presentation(
-        lifecycle_state="starting",
-        started_at_monotonic=None,
-    ).started_at_monotonic is None
+    assert (
+        _presentation(
+            lifecycle_state="starting",
+            started_at_monotonic=None,
+        ).started_at_monotonic
+        is None
+    )
     with pytest.raises(ValueError, match="started at monotonic"):
         _presentation(lifecycle_state="starting")
     with pytest.raises(ValueError, match="started at monotonic"):
@@ -203,9 +208,7 @@ def test_store_updates_one_display_only_raw_marker_without_trajectory() -> None:
         session.id,
         started.id,
         content="stdout:\n(first chunk)\n\nstderr:\n[red]literal[/red]",
-        tool_output_full=(
-            "stdout:\n(first chunk)\n\nstderr:\n[red]literal[/red]"
-        ),
+        tool_output_full=("stdout:\n(first chunk)\n\nstderr:\n[red]literal[/red]"),
         raw_cli_presentation=terminal,
     )
 
@@ -254,9 +257,7 @@ def _marker(presentation: RawCliPresentation) -> ConsoleChatMessage:
         content="Command:\ntrue\n\nstdout:\n(no output)\n\nstderr:\n(no output)",
         id="raw-marker-1",
         tool_output_full="stdout:\n(no output)\n\nstderr:\n(no output)",
-        activity_presentation=ConsoleActivityPresentation(
-            "tool", "Raw CLI", "done"
-        ),
+        activity_presentation=ConsoleActivityPresentation("tool", "Raw CLI", "done"),
         raw_cli_presentation=presentation,
     )
 
@@ -312,12 +313,14 @@ def test_raw_cli_actions_are_bounded_to_one_active_invocation() -> None:
             cleanup_proven=True,
         ),
     )
-    assert [
-        action.action_id for action in service.available_actions(terminal)
-    ] == ["tool-output"]
+    assert [action.action_id for action in service.available_actions(terminal)] == [
+        "tool-output"
+    ]
     assert service.dispatch("raw-cli-stop", terminal).status == "blocked"
     assert (
-        service.dispatch("raw-cli-stop", replace(running, raw_cli_presentation=None)).status
+        service.dispatch(
+            "raw-cli-stop", replace(running, raw_cli_presentation=None)
+        ).status
         == "blocked"
     )
 
@@ -385,7 +388,9 @@ def test_runtime_registration_callback_closes_stop_before_admission_race(
     result = runtime.execute(
         request,
         lambda _event: None,
-        on_registered=lambda: cancel_results.append(runtime.cancel(request.invocation_id)),
+        on_registered=lambda: cancel_results.append(
+            runtime.cancel(request.invocation_id)
+        ),
     )
 
     assert cancel_results == [True]
@@ -532,12 +537,10 @@ def test_controller_streams_one_stable_marker_and_never_loses_terminal_update(
         visible = False
 
     runtime = _StreamingRuntime(after_registered=navigate_away)
-    controller, store, session_id, workers, appended, updated = (
-        _controller_with_store(
-            tmp_path,
-            runtime,
-            schedule_projection=schedule_projection,
-        )
+    controller, store, session_id, workers, appended, updated = _controller_with_store(
+        tmp_path,
+        runtime,
+        schedule_projection=schedule_projection,
     )
 
     assert controller.start_user_command(
@@ -550,9 +553,11 @@ def test_controller_streams_one_stable_marker_and_never_loses_terminal_update(
     assert appended[0].raw_cli_presentation.lifecycle_state == "starting"
     assert marker.id == appended[0].id
     assert {snapshot.id for snapshot in updated} == {marker.id}
-    assert [
-        snapshot.raw_cli_presentation.lifecycle_state for snapshot in updated
-    ] == ["running", "running", "exited"]
+    assert [snapshot.raw_cli_presentation.lifecycle_state for snapshot in updated] == [
+        "running",
+        "running",
+        "exited",
+    ]
     assert "x" * 100 in updated[-2].tool_output_full
     assert "[red]literal[/red]" in updated[-2].tool_output_full
     assert projections == [session_id], "away screens must not be repainted"
@@ -773,7 +778,9 @@ def test_runtime_exception_preserves_stream_truncation_on_failed_marker(
 
 
 @pytest.mark.asyncio
-async def test_raw_cli_projection_coalesces_to_one_worker_with_trailing_refresh() -> None:
+async def test_raw_cli_projection_coalesces_to_one_worker_with_trailing_refresh() -> (
+    None
+):
     schedule = getattr(wiring_module, "_schedule_raw_cli_projection", None)
     assert schedule is not None, "bounded raw CLI projection scheduler is missing"
 
@@ -1058,17 +1065,12 @@ async def test_mounted_prelaunch_and_terminal_rows_hold_no_elapsed_timer() -> No
         await pilot.pause()
 
         header_selector = (
-            f"#console-message-header-{stopping.id} "
-            ".console-transcript-speaker-label"
+            f"#console-message-header-{stopping.id} .console-transcript-speaker-label"
         )
         before = _rendered_static_text(transcript, header_selector)
         assert "Stopping… · 0.0s" in before
-        message_header = transcript.query_one(
-            f"#console-message-header-{stopping.id}"
-        )
-        terminal_header = transcript.query_one(
-            f"#console-message-header-{terminal.id}"
-        )
+        message_header = transcript.query_one(f"#console-message-header-{stopping.id}")
+        terminal_header = transcript.query_one(f"#console-message-header-{terminal.id}")
         assert message_header._raw_cli_elapsed_timer is None
         assert terminal_header._raw_cli_elapsed_timer is None
 
@@ -1144,14 +1146,11 @@ async def test_mounted_raw_cli_row_is_literal_focusable_and_lifecycle_complete()
         await pilot.pause()
 
         header_selector = (
-            f"#console-message-header-{running.id} "
-            ".console-transcript-speaker-label"
+            f"#console-message-header-{running.id} .console-transcript-speaker-label"
         )
         before = _rendered_static_text(transcript, header_selector)
         assert "Running" in before
-        message_header = transcript.query_one(
-            f"#console-message-header-{running.id}"
-        )
+        message_header = transcript.query_one(f"#console-message-header-{running.id}")
         message_timer = message_header._raw_cli_elapsed_timer
         assert message_timer is not None
         stop = transcript.query_one(
@@ -1216,9 +1215,7 @@ async def test_mounted_raw_cli_row_is_literal_focusable_and_lifecycle_complete()
         await pilot.pause()
 
         assert not list(
-            transcript.query(
-                f"#console-message-action-raw-cli-stop-{running.id}"
-            )
+            transcript.query(f"#console-message-action-raw-cli-stop-{running.id}")
         )
         terminal_header = _rendered_static_text(transcript, header_selector)
         assert "Timed out" in terminal_header

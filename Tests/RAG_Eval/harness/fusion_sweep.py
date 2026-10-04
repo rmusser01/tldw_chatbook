@@ -92,13 +92,23 @@ changes which documents fusion SEES, never how fusion weighs them.
 
 Nothing here is imported by the application.
 """
+
 from __future__ import annotations
 
 import math
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Collection, Iterable, Iterator, Mapping, Optional, Sequence
+from typing import (
+    Any,
+    Callable,
+    Collection,
+    Iterable,
+    Iterator,
+    Mapping,
+    Optional,
+    Sequence,
+)
 
 from loguru import logger
 
@@ -430,18 +440,48 @@ WIDENING_FORMS = (FTS_MATCH_OR_FORM, FTS_MATCH_PREFIX_FORM)
 #: the row that matters if `and_or` STILL loses the vector-blind fixture
 #: under the fixed merge.
 CONSTRUCTION_STRATEGIES: tuple[Strategy, ...] = (
-    Strategy("and", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
-             fts_match_construction="and"),
-    Strategy("and_trim", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
-             fts_match_construction="and_stopword_trim"),
-    Strategy("or", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
-             fts_match_construction="or"),
-    Strategy("and_or", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
-             fts_match_construction="and_then_or"),
-    Strategy("prefix", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
-             fts_match_construction="prefix"),
-    Strategy("and_pfx", rrf_k=5, hybrid_pool_multiplier=2, hybrid_alpha=0.7,
-             fts_match_construction="and_then_prefix"),
+    Strategy(
+        "and",
+        rrf_k=5,
+        hybrid_pool_multiplier=2,
+        hybrid_alpha=0.7,
+        fts_match_construction="and",
+    ),
+    Strategy(
+        "and_trim",
+        rrf_k=5,
+        hybrid_pool_multiplier=2,
+        hybrid_alpha=0.7,
+        fts_match_construction="and_stopword_trim",
+    ),
+    Strategy(
+        "or",
+        rrf_k=5,
+        hybrid_pool_multiplier=2,
+        hybrid_alpha=0.7,
+        fts_match_construction="or",
+    ),
+    Strategy(
+        "and_or",
+        rrf_k=5,
+        hybrid_pool_multiplier=2,
+        hybrid_alpha=0.7,
+        fts_match_construction="and_then_or",
+    ),
+    Strategy(
+        "prefix",
+        rrf_k=5,
+        hybrid_pool_multiplier=2,
+        hybrid_alpha=0.7,
+        fts_match_construction="prefix",
+    ),
+    Strategy(
+        "and_pfx",
+        rrf_k=5,
+        hybrid_pool_multiplier=2,
+        hybrid_alpha=0.7,
+        fts_match_construction="and_then_prefix",
+    ),
 )
 
 #: The token distance the NEAR probe asks for. FTS5's default is also 10;
@@ -496,9 +536,7 @@ def lever_rank(levers: Collection[str]) -> int:
     keeps the ordering total).
     """
     ranks = [
-        LEVER_PRECEDENCE.index(lever)
-        for lever in levers
-        if lever in LEVER_PRECEDENCE
+        LEVER_PRECEDENCE.index(lever) for lever in levers if lever in LEVER_PRECEDENCE
     ]
     return min(ranks) if ranks else len(LEVER_PRECEDENCE)
 
@@ -689,12 +727,12 @@ class Qualification:
         reasons: list[str] = []
         if not self.weighting_changed:
             reasons.append(
-                "no weighting lever moved (pool widening alone can never "
-                "satisfy AC#4)"
+                "no weighting lever moved (pool widening alone can never satisfy AC#4)"
             )
         if not self.structural_ok:
             threshold = (
-                "never" if self.structural_threshold is None
+                "never"
+                if self.structural_threshold is None
                 else f">= {self.structural_threshold}"
             )
             reasons.append(
@@ -880,7 +918,9 @@ def _family_key(entry: StrategyReport, baseline: Strategy, k: int) -> tuple:
     threshold = fts_only_beats_vector_rank(
         entry.strategy.hybrid_alpha, entry.strategy.rrf_k
     )
-    structural_ok = threshold is not None and threshold <= entry.strategy.vector_window(k)
+    structural_ok = threshold is not None and threshold <= entry.strategy.vector_window(
+        k
+    )
     return (
         not structural_ok,
         not entry.rescue.present,
@@ -1124,7 +1164,8 @@ def keyword_leg_census(
         hit_queries=tuple(hits),
         zero_row_queries=tuple(zero_rows),
         per_category={
-            category: (cell[0], cell[1]) for category, cell in sorted(per_category.items())
+            category: (cell[0], cell[1])
+            for category, cell in sorted(per_category.items())
         },
     )
 
@@ -1155,9 +1196,7 @@ def negative_composition(
         A `NegativeComposition` over the negative queries.
     """
     scope = tuple(source_types)
-    negatives = [
-        query for query in golden if query.category == NEGATIVE_CATEGORY
-    ]
+    negatives = [query for query in golden if query.category == NEGATIVE_CATEGORY]
     fallback_rows = 0
     fts_only_rows = 0
     for query in negatives:
@@ -1309,7 +1348,9 @@ def run_near_prefix_probes(
             for query in probed:
                 sample = sample or builder(service, query.query)
                 results = runtime.run(
-                    service._keyword_search(query.query, top_k=k, include_citations=False)
+                    service._keyword_search(
+                        query.query, top_k=k, include_citations=False
+                    )
                 )
                 doc_ids = rows_to_doc_ids(_leg_rows(results), lookup)
                 if doc_ids:
@@ -1396,14 +1437,10 @@ def rescued_zero_row_queries(
     if entry.census is None:
         return ()
     found = set(entry.census.hit_queries)
-    return tuple(
-        query_id for query_id in control.zero_row_queries if query_id in found
-    )
+    return tuple(query_id for query_id in control.zero_row_queries if query_id in found)
 
 
-def lost_census_queries(
-    entry: StrategyReport, control: LegCensus
-) -> tuple[str, ...]:
+def lost_census_queries(entry: StrategyReport, control: LegCensus) -> tuple[str, ...]:
     """Which of the CONTROL's census hits this row's leg no longer answers.
 
     Control-relative, NOT shipped-relative: the baseline is the pre-arc
@@ -1448,14 +1485,10 @@ def lost_census_queries(
     if entry.census is None:
         return ()
     found = set(entry.census.hit_queries)
-    return tuple(
-        query_id for query_id in control.hit_queries if query_id not in found
-    )
+    return tuple(query_id for query_id in control.hit_queries if query_id not in found)
 
 
-def _check_control_census(
-    strategy: Strategy, census: LegCensus, expected: int
-) -> None:
+def _check_control_census(strategy: Strategy, census: LegCensus, expected: int) -> None:
     """Raise unless the control row reproduces its expected control census.
 
     A METHOD check, not a cache alarm: `_keyword_search` never reads
@@ -1791,11 +1824,7 @@ def format_matrix(report: SweepReport) -> str:
     )
 
     categories = sorted(
-        {
-            category
-            for entry in report.entries
-            for category in entry.hybrid.per_category
-        }
+        {category for entry in report.entries for category in entry.hybrid.per_category}
     )
     if categories:
         lines.append("")
@@ -1906,7 +1935,8 @@ def format_construction_matrix(report: SweepReport) -> str:
         f"{report.rescue_query_id} -> {report.target_slug}"
     )
     denominator = (
-        "" if control.census is None
+        ""
+        if control.census is None
         else f" out of {control.census.scoreable} non-negative queries"
     )
     lines.append(
@@ -2050,11 +2080,7 @@ def format_construction_matrix(report: SweepReport) -> str:
             lines.append(f"{category:<24}{cells}")
 
     categories = sorted(
-        {
-            category
-            for entry in report.entries
-            for category in entry.hybrid.per_category
-        }
+        {category for entry in report.entries for category in entry.hybrid.per_category}
     )
     if categories:
         lines.append("")

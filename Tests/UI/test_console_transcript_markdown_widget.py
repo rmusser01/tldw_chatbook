@@ -180,7 +180,7 @@ def test_roleplay_markdown_annotates_single_quoted_thought_with_contraction():
 @pytest.mark.parametrize(
     ("source", "speech"),
     [
-        ('Narration. "I said \'no\'."', '"I said \'no\'."'),
+        ("Narration. \"I said 'no'.\"", "\"I said 'no'.\""),
         ("Narration. “I said ‘no’.”", "“I said ‘no’.”"),
     ],
 )
@@ -310,9 +310,9 @@ async def test_immersive_markdown_flavor_is_distinct_and_accessibly_painted(them
         for role, style in styles.items():
             assert style.color is not None and style.bgcolor is not None
             ratio = _contrast(style.color, style.bgcolor)
-            assert (
-                ratio >= 4.5
-            ), f"{role} contrast is {ratio:.2f}:1 under {theme}; expected 4.5:1"
+            assert ratio >= 4.5, (
+                f"{role} contrast is {ratio:.2f}:1 under {theme}; expected 4.5:1"
+            )
 
         transcript.select_message("a1")
         await pilot.pause()
@@ -451,10 +451,14 @@ async def test_streaming_appends_without_reparse(monkeypatch):
         update_calls, append_calls = [], []
         original_update, original_append = md.update, md.append
         monkeypatch.setattr(
-            md, "update", lambda text: update_calls.append(text) or original_update(text)
+            md,
+            "update",
+            lambda text: update_calls.append(text) or original_update(text),
         )
         monkeypatch.setattr(
-            md, "append", lambda text: append_calls.append(text) or original_append(text)
+            md,
+            "append",
+            lambda text: append_calls.append(text) or original_append(text),
         )
 
         # Streaming growth: strict prefix -> append only, delta only.

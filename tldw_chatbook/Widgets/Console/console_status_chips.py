@@ -459,7 +459,9 @@ class ConsoleStatusChips(Horizontal):
                 compact=True,
             )
             collapse_button.tooltip = "Collapse status details."
-            collapse_button.remove_class(*(name for name in collapse_button.classes if name.startswith("w-")))
+            collapse_button.remove_class(
+                *(name for name in collapse_button.classes if name.startswith("w-"))
+            )
             collapse_button.set_styles(width=None)
             collapse_button.add_class("w-9")
             collapse_button.styles.min_width = 9
@@ -467,7 +469,9 @@ class ConsoleStatusChips(Horizontal):
             collapse_button.styles.line_pad = 0
             yield collapse_button
             chip_scroll = HorizontalScroll(id="console-status-chip-scroll")
-            chip_scroll.remove_class(*(name for name in chip_scroll.classes if name.startswith("h-")))
+            chip_scroll.remove_class(
+                *(name for name in chip_scroll.classes if name.startswith("h-"))
+            )
             chip_scroll.set_styles(height=None)
             chip_scroll.add_class("h-1")
             chip_scroll.styles.min_height = 1
@@ -551,7 +555,9 @@ class ConsoleStatusChips(Horizontal):
                 compact=True,
             )
             expand_button.tooltip = "Expand status details."
-            expand_button.remove_class(*(name for name in expand_button.classes if name.startswith("w-")))
+            expand_button.remove_class(
+                *(name for name in expand_button.classes if name.startswith("w-"))
+            )
             expand_button.set_styles(width=None)
             expand_button.add_class("w-9")
             expand_button.styles.min_width = 9

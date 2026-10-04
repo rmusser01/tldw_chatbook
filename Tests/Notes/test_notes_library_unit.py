@@ -559,9 +559,7 @@ def _insert_local_link_intent(
         "keyword_sync_id": keyword_sync_id,
     }
     payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    object_id = organization_link_id(
-        domain, ["note", note_id, keyword_sync_id]
-    )
+    object_id = organization_link_id(domain, ["note", note_id, keyword_sync_id])
     payload_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
     db.execute_query(
         "INSERT INTO notes_organization_sync_intents("
@@ -620,7 +618,9 @@ def test_library_notes_page_projection_and_keyword_cap():
     db = _make_library_notes_db()
     try:
         keywords = [f"kw{index:02d}" for index in range(25)]
-        _seed_library_note(db, title="Heavy", content="secret body " * 100, keywords=keywords)
+        _seed_library_note(
+            db, title="Heavy", content="secret body " * 100, keywords=keywords
+        )
 
         item = db.list_library_notes_page(limit=10, offset=0)["items"][0]
         assert "content" not in item
@@ -685,9 +685,7 @@ def test_library_notes_search_treats_wildcards_and_operators_literally():
 def test_library_notes_search_requires_a_selector_and_keyword_is_spelling_exact():
     db = _make_library_notes_db()
     try:
-        variant_id = _seed_library_note(
-            db, title="Variant", keywords=("Agent-Lesson",)
-        )
+        variant_id = _seed_library_note(db, title="Variant", keywords=("Agent-Lesson",))
         pending_id = _seed_library_note(db, title="Pending exact marker")
         db.execute_query(
             "INSERT INTO note_organization_receipts("
@@ -719,21 +717,27 @@ def test_library_notes_search_requires_a_selector_and_keyword_is_spelling_exact(
         assert result["items"][0]["keywords"] == []
         assert result["items"][0]["keyword_metadata"] == []
 
-        assert db.search_library_notes_page(
-            query="does-not-match",
-            keyword="agent-lesson",
-            limit=20,
-            offset=0,
-        )["total"] == 0
+        assert (
+            db.search_library_notes_page(
+                query="does-not-match",
+                keyword="agent-lesson",
+                limit=20,
+                offset=0,
+            )["total"]
+            == 0
+        )
         _, unrelated_folder_sync_id = _seed_portable_folder(
             db, variant_id, name="Unrelated", index=700
         )
-        assert db.search_library_notes_page(
-            keyword="agent-lesson",
-            folder_sync_id=unrelated_folder_sync_id,
-            limit=20,
-            offset=0,
-        )["total"] == 0
+        assert (
+            db.search_library_notes_page(
+                keyword="agent-lesson",
+                folder_sync_id=unrelated_folder_sync_id,
+                limit=20,
+                offset=0,
+            )["total"]
+            == 0
+        )
     finally:
         db.close_connection()
 
@@ -846,9 +850,7 @@ def test_organization_version_tracks_incoming_local_links_and_receipt_not_conten
         incoming_upsert = version()
         assert incoming_upsert != initial
 
-        assert db.update_note(
-            note_id, {"content": "v2"}, expected_version=1
-        ) is True
+        assert db.update_note(note_id, {"content": "v2"}, expected_version=1) is True
         assert version() == incoming_upsert
 
         _insert_local_link_intent(
@@ -1049,9 +1051,10 @@ def test_real_local_organization_apis_allocate_portable_ids_and_change_version(
 
         assert db.unlink_note_from_keyword(note_id, keyword_id)
         keyword_unlinked = detail()
-        assert keyword_unlinked["organization_version"] != keyword_linked[
-            "organization_version"
-        ]
+        assert (
+            keyword_unlinked["organization_version"]
+            != keyword_linked["organization_version"]
+        )
 
         folder = folders.create_folder(name="Agent_Lessons", parent_id=None)
         folder_row = db.execute_query(
@@ -1071,9 +1074,10 @@ def test_real_local_organization_apis_allocate_portable_ids_and_change_version(
                 "path": "Agent_Lessons",
             }
         ]
-        assert folder_linked["organization_version"] != keyword_unlinked[
-            "organization_version"
-        ]
+        assert (
+            folder_linked["organization_version"]
+            != keyword_unlinked["organization_version"]
+        )
         assert [
             item["id"]
             for item in service.search_library_notes(
@@ -1092,9 +1096,7 @@ def test_real_local_organization_apis_allocate_portable_ids_and_change_version(
             note_id=note_id,
             expected_version=membership.version,
         )
-        assert detail()["organization_version"] != folder_linked[
-            "organization_version"
-        ]
+        assert detail()["organization_version"] != folder_linked["organization_version"]
 
         collection_id = db.add_keyword_collection("Lessons")
         assert collection_id is not None
@@ -1217,9 +1219,7 @@ def test_detail_continuation_keeps_content_cursor_valid_when_organization_change
     db = _make_library_notes_db()
     try:
         note_id = _seed_library_note(db, title="Continue", content="abcdefghij")
-        _, folder_sync_id = _seed_portable_folder(
-            db, note_id, name="Folder", index=400
-        )
+        _, folder_sync_id = _seed_portable_folder(db, note_id, name="Folder", index=400)
         first = db.get_library_note_text(note_id, start=0, max_chars=4)
         _insert_link_head(
             db,
@@ -1238,7 +1238,9 @@ def test_detail_continuation_keeps_content_cursor_valid_when_organization_change
         db.close_connection()
 
 
-def test_service_folder_resolution_is_relative_casefold_only_and_rejects_bad_paths(tmp_path):
+def test_service_folder_resolution_is_relative_casefold_only_and_rejects_bad_paths(
+    tmp_path,
+):
     db = _make_library_notes_db()
     service = NotesInteropService(tmp_path, "test", global_db_to_use=db)
     service._db_instances["user"] = db
@@ -1252,9 +1254,7 @@ def test_service_folder_resolution_is_relative_casefold_only_and_rejects_bad_pat
             normalized_path="/a",
         )
 
-        result = service.search_library_notes(
-            "user", folder="Ａ", limit=20, offset=0
-        )
+        result = service.search_library_notes("user", folder="Ａ", limit=20, offset=0)
         assert [item["id"] for item in result["items"]] == [note_id]
         assert result["items"][0]["folders"][0]["id"] == fullwidth_sync_id
 
@@ -1264,9 +1264,7 @@ def test_service_folder_resolution_is_relative_casefold_only_and_rejects_bad_pat
 
         for invalid in ("/absolute", "a//b", ".", "..", "a\\b"):
             with pytest.raises(NotesOrganizationRepositoryError) as rejected:
-                service.search_library_notes(
-                    "user", folder=invalid, limit=20, offset=0
-                )
+                service.search_library_notes("user", folder=invalid, limit=20, offset=0)
             assert rejected.value.reason_code == "invalid_path"
     finally:
         service.close_all_user_connections()
@@ -1497,7 +1495,9 @@ class TestLibraryNotesInteropDelegates(TestNotesInteropService):
     def test_get_library_note_text_passes_through_missing(self):
         self.mock_db_instance.get_library_note_text.return_value = None
         self.assertIsNone(
-            self.service.get_library_note_text("user-1", "missing", start=0, max_chars=10)
+            self.service.get_library_note_text(
+                "user-1", "missing", start=0, max_chars=10
+            )
         )
 
 

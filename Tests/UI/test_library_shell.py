@@ -1219,8 +1219,17 @@ class _LibraryEvidenceGates:
                     get_library_user_content_evidence=self._async_call(owner)
                 ),
             )
+        # task-31249: the collections capture controller's entry load reads
+        # ``scope_service.active_authority`` (``adopt_active_authority``)
+        # before anything else, so the evidence-only SimpleNamespace starved
+        # it and the entry worker died with ``AttributeError`` -- the
+        # test-double drift this task's census suspected. ``None`` is the
+        # real contract's "no active authority" (the controller then takes
+        # its capture_authority_unavailable state and the entry load stops
+        # there), which is exactly what a fresh starter profile shows.
         app.collections_capture_scope_service = SimpleNamespace(
-            get_library_user_content_evidence=self._sync_call
+            get_library_user_content_evidence=self._sync_call,
+            active_authority=None,
         )
 
     def _async_call(self, owner):
@@ -2520,6 +2529,7 @@ async def test_library_persisted_graduated_restart_has_no_transition_announcemen
         gates.release_all()
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_starter_deep_link_opens_hidden_collection_or_note_route() -> (
     None
@@ -3842,6 +3852,23 @@ async def _wait_for_selector(screen, pilot, selector, *, attempts=120, timeout=3
         f"{selector} never mounted within {budget:.1f}s ({polls} polls). "
         f"Visible text: {_visible_text(screen)}"
     )
+
+
+async def _disclose_media_viewer_more_actions(screen, pilot) -> None:
+    """Open the media viewer's collapsed "More" actions row, if needed.
+
+    task-31249 (AC#2 root cause): since d3c4b44a9b ("organize media reader
+    modes and actions", guarded by task-31633) the "Edit metadata" button
+    (``#library-media-edit``) composes ONLY inside the viewer's "More"
+    disclosure, so it no longer mounts just because the viewer opened.
+    Callers that need the edit button (or its more-actions siblings) press
+    "More" first through this helper instead of waiting on the edit button
+    directly.
+    """
+    await _wait_for_selector(screen, pilot, "#library-media-viewer")
+    if not screen.query("#library-media-edit"):
+        screen.query_one("#library-media-reader-more", Button).press()
+        await _wait_for_selector(screen, pilot, "#library-media-edit")
 
 
 async def _wait_for_display(screen, pilot, selector, *, attempts=120):
@@ -11452,6 +11479,7 @@ async def test_library_shell_media_content_search_next_prev_advances_match_index
         assert status == "Match 2 of 2"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_inplace_search_preserves_identity_focus_and_parse_count(
     monkeypatch,
@@ -11474,12 +11502,24 @@ async def test_library_shell_media_viewer_inplace_search_preserves_identity_focu
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
 
+        # task-31249: the Find bar composes only while open (task-31237's
+        # collapsed-until-open bar), so OPENING it legitimately recomposes
+        # the viewer once to mount the search controls. The identity
+        # promise this test pins starts AFTER the bar is up: submitting a
+        # query and walking matches must not rebuild the viewer, the body,
+        # or the controls, and must not re-parse the Markdown.
+        await _open_media_find(screen, pilot)
         screen_before = screen
         viewer_before = screen.query_one("#library-media-viewer", LibraryMediaViewer)
         markdown_before = screen.query_one(
             "#library-media-viewer-content-markdown", Markdown
         )
-        await _submit_content_search_query(screen, pilot, "setup")
+        search_input = screen.query_one("#library-media-content-search", Input)
+        search_input.value = "setup"
+        search_input.focus()
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
         parse_count_before_navigation = len(markdown_updates)
         next_button = screen.query_one("#library-media-content-search-next", Button)
         previous_button = screen.query_one("#library-media-content-search-prev", Button)
@@ -12113,6 +12153,7 @@ async def test_library_shell_media_viewer_search_chrome_stays_in_flow_when_activ
         assert cleared.region.y == inactive_y
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_content(
     monkeypatch,
@@ -12136,10 +12177,15 @@ async def test_library_shell_media_viewer_inplace_search_chrome_paints_above_con
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         await _open_media_viewer(screen, pilot)
+
+        # task-31249: the Find bar composes only while open (task-31237), so
+        # the submit helper's Find press legitimately recomposes the viewer
+        # ONCE to mount the search controls. The identity promise starts
+        # AFTER that: the layout baseline and the post-navigation identity
+        # assertions below both capture from the bar-mounted state.
+        await _submit_content_search_query(screen, pilot, "budget")
         viewer = screen.query_one("#library-media-viewer", LibraryMediaViewer)
         markdown = screen.query_one("#library-media-viewer-content-markdown", Markdown)
-
-        await _submit_content_search_query(screen, pilot, "budget")
         controls = screen.query_one(
             "#library-media-content-search-controls",
             LibraryMediaContentSearchControls,
@@ -15036,12 +15082,17 @@ async def test_library_conversation_unmount_fence_rejects_late_completion():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_library_shell_rail_search_submit_runs_search_canvas_query():
     """Submitting the rail-top search box feeds the promoted Search canvas
     (single query truth = ``_rag_search_state.query``): it selects the Search
     row, runs the fast ``search`` mode query against the recording fake
     service, and returns focus to the rail box (which remains mounted --
     it is not torn down when leaving the conversations canvas).
+
+    TASK-15512: enrolled in bootstrap_profile -- the real-app mount reads
+    config through the guarded loader, which trips the config-participant
+    admission under the per-test sandbox (TASK-32873 per-node enrollment).
     """
     app = _build_test_app()
     _seed_conversations(
@@ -19997,6 +20048,62 @@ async def test_library_export_canvas_propagates_non_conflict_flush_veto(monkeypa
     await screen._open_library_export_canvas(ExportScope(kind="notes"))
 
     assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
+
+
+@pytest.mark.asyncio
+async def test_library_export_projection_skips_when_destination_moved_on():
+    """The deferred Export projection must not replace a later selection's canvas."""
+    apply_surface = AsyncMock()
+    start_counts = Mock()
+    screen = SimpleNamespace(
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
+        _apply_library_open_item_surface=apply_surface,
+        _start_library_export_counts_worker=start_counts,
+    )
+
+    await LibraryScreen._project_library_export_canvas(screen)
+
+    apply_surface.assert_not_awaited()
+    start_counts.assert_not_called()
+
+    screen._library_selected_row_id = LIBRARY_ROW_INGEST_EXPORT
+    await LibraryScreen._project_library_export_canvas(screen)
+
+    apply_surface.assert_awaited_once()
+    start_counts.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_library_export_repeat_press_keeps_the_first_origin():
+    """A second "Export…" press before the deferred projection lands must not
+    record Export as its own origin (Escape could then never leave it)."""
+    from tldw_chatbook.UI.Library_Modules.library_export_controller import (
+        LibraryExportController,
+    )
+
+    controller = SimpleNamespace(
+        _library_prompts_mutation_in_flight=False,
+        _library_export_is_server_mode=lambda: False,
+        _flush_library_note_save=AsyncMock(
+            return_value=NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
+        ),
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
+        _library_export_origin_row_id="",
+        _reset_library_export_transient_state=Mock(),
+        _project_library_export_canvas=Mock(),
+        call_after_refresh=Mock(),
+    )
+    controller._set_library_destination_with_conversation_fence = lambda row_id: (
+        setattr(controller, "_library_selected_row_id", row_id)
+    )
+
+    for _ in range(2):
+        await LibraryExportController._open_library_export_canvas(
+            controller, ExportScope(kind="media")
+        )
+
+    assert controller._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+    assert controller._library_export_origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
 
 
 def test_library_conflict_handlers_do_not_cancel_the_token_owner(monkeypatch):

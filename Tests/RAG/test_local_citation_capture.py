@@ -1390,9 +1390,10 @@ async def test_console_send_adapter_preserves_chunk_lineage_score_and_rank():
     candidates = captured.citation_builder.evidence_run_payloads[0].candidates
     assert len(candidates) == 2
     assert [candidate.rank for candidate in candidates] == [1, 2]
-    assert [
-        candidate.source_identity["source_id"] for candidate in candidates
-    ] == ["m1", "m2"]
+    assert [candidate.source_identity["source_id"] for candidate in candidates] == [
+        "m1",
+        "m2",
+    ]
     assert candidates[0].lineage["chunk_id"] == "chunk-1"
     assert candidates[0].score == 0.0
 
@@ -1433,8 +1434,7 @@ async def test_console_estimate_stays_pre_authority_while_send_rechecks() -> Non
     try:
         assert console_prompted_source_count(launch) == 2
         assert console_prompted_evidence_text(launch) == (
-            "[S1] MEDIA — Source 1\nBody 1\n---\n"
-            "[S2] MEDIA — Source 2\nBody 2"
+            "[S1] MEDIA — Source 1\nBody 1\n---\n[S2] MEDIA — Source 2\nBody 2"
         )
         assert media_db.query_count == 0
 

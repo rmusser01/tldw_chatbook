@@ -9,6 +9,7 @@ mapping target is either identity or one of the planner's recognized types.
 A vocabulary drift on either side fails here loudly instead of silently
 disabling tier-2 per-type plans.
 """
+
 from __future__ import annotations
 
 from tldw_chatbook.Chunking.auto_selection import (
@@ -27,8 +28,13 @@ PLANNER_RECOGNIZED_TYPES = frozenset(
 
 
 def test_every_ingest_media_type_is_mapped():
-    assert set(KNOWN_INGEST_MEDIA_TYPES) <= set(MEDIA_TYPE_MAP)  # total coverage, identity entries count
-    assert "web_document" not in MEDIA_TYPE_MAP.values() or MEDIA_TYPE_MAP["web_document"] == "web"  # normalization preserved
+    assert set(KNOWN_INGEST_MEDIA_TYPES) <= set(
+        MEDIA_TYPE_MAP
+    )  # total coverage, identity entries count
+    assert (
+        "web_document" not in MEDIA_TYPE_MAP.values()
+        or MEDIA_TYPE_MAP["web_document"] == "web"
+    )  # normalization preserved
 
 
 def test_known_ingest_media_types_is_a_frozen_tuple():
@@ -55,7 +61,14 @@ def test_web_aliases_normalize_to_web():
     # that the planner's own _normalize_media_type set does NOT cover.
     # Without these, every web_article/web_scraping item silently got the
     # generic sentence plan forever.
-    for alias in ("web_article", "web_scraping", "webpage", "web_document", "html", "article"):
+    for alias in (
+        "web_article",
+        "web_scraping",
+        "webpage",
+        "web_document",
+        "html",
+        "article",
+    ):
         assert MEDIA_TYPE_MAP.get(alias, alias) == "web"
 
 

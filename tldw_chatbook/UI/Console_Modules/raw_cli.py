@@ -210,9 +210,7 @@ class ConsoleRawCliController:
         self._selected_local_root = selected_local_root
         self._private_scratch_root = private_scratch_root
         self._banked_stashes_by_session = refusal_stash_bank
-        self._accepts_raw_cli_refusal_callbacks = (
-            accepts_raw_cli_refusal_callbacks
-        )
+        self._accepts_raw_cli_refusal_callbacks = accepts_raw_cli_refusal_callbacks
         self._restore_stash = restore_stash
         self._append_local_error = append_local_error
         # Task 7/8 consume these already-wired boundaries; Task 6 must not
@@ -508,9 +506,7 @@ class ConsoleRawCliController:
                         call_id=result.invocation_id,
                     )
                     if terminal_record is None or not writer.is_active:
-                        report_persistence_error(
-                            "Raw CLI persistence was incomplete."
-                        )
+                        report_persistence_error("Raw CLI persistence was incomplete.")
                 except Exception:  # noqa: BLE001 -- best-effort private log
                     report_persistence_error("Raw CLI persistence was incomplete.")
                 try:
@@ -624,9 +620,7 @@ class ConsoleRawCliController:
                 resolved_shell=request.shell,
                 initial_directory=request.initial_directory,
                 elapsed_seconds=(
-                    0.0
-                    if started_at is None
-                    else max(0.0, monotonic() - started_at)
+                    0.0 if started_at is None else max(0.0, monotonic() - started_at)
                 ),
                 stdout_preview=stdout,
                 stderr_preview=stderr,

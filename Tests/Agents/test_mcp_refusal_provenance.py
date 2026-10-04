@@ -2,6 +2,7 @@
 
 Two small honesty fixes from the PR #675 review backlog.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -34,8 +35,7 @@ def test_an_explicit_user_deny_is_not_blamed_on_permissions():
 
     src = inspect.getsource(mtp.MCPToolProvider._apply_verdict)
     assert "USER_DENY_REFUSAL" in src, (
-        "_apply_verdict's explicit-deny path no longer uses the "
-        "user-denial copy"
+        "_apply_verdict's explicit-deny path no longer uses the user-denial copy"
     )
 
 

@@ -120,7 +120,9 @@ def test_draft_renderable_renders_dimmed_ghost_after_caret():
     )
     assert rendered.plain == "hel▌lo world"
     ghost_spans = [
-        span for span in rendered.spans if span.style == ConsoleComposerBar.GHOST_TEXT_STYLE
+        span
+        for span in rendered.spans
+        if span.style == ConsoleComposerBar.GHOST_TEXT_STYLE
     ]
     assert len(ghost_spans) == 1
     assert (ghost_spans[0].start, ghost_spans[0].end) == (4, 12)
@@ -162,9 +164,12 @@ def test_draft_renderable_ghost_wraps_without_affecting_height_math():
     )
     assert rendered.plain.splitlines()[0].startswith("hel▌lo")
     # The composer's own height math only ever sees the draft, not the ghost.
-    assert ConsoleComposerBar._visible_draft_row_count(
-        draft, 40, reserve_trailing_cell=True
-    ) == 1
+    assert (
+        ConsoleComposerBar._visible_draft_row_count(
+            draft, 40, reserve_trailing_cell=True
+        )
+        == 1
+    )
 
 
 # ---------------------------------------------------------------------------

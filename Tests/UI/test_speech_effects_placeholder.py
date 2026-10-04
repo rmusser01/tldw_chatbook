@@ -28,7 +28,8 @@ async def test_the_rail_entry_is_reachable():
         await pilot.pause()
         await pilot.pause()
         row = next(
-            b for b in screen.query(Button)
+            b
+            for b in screen.query(Button)
             if getattr(b, "lab_view_key", None) == "effects"
         )
         assert not row.disabled, "Audio Effects cannot be opened"
@@ -44,7 +45,8 @@ async def test_opening_it_states_that_it_is_not_built_and_where_it_is_going():
         await app.push_screen(screen)
         await pilot.pause()
         row = next(
-            b for b in screen.query(Button)
+            b
+            for b in screen.query(Button)
             if getattr(b, "lab_view_key", None) == "effects"
         )
         row.press()

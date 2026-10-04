@@ -248,9 +248,7 @@ class TestGetMessageByIdWithoutBlobContract:
         for key in set(full) - {"image_data"}:
             assert narrow[key] == full[key], key
 
-    def test_has_image_zero_for_text_only_message(
-        self, db_instance: CharactersRAGDB
-    ):
+    def test_has_image_zero_for_text_only_message(self, db_instance: CharactersRAGDB):
         conversation_id = db_instance.add_conversation(
             {"title": "Narrow reader text", "character_id": None}
         )

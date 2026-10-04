@@ -131,6 +131,40 @@ class S:
     assert _w002(source) == []
 
 
+def test_a_lookup_inside_the_first_awaits_own_arguments_is_out_of_scope():
+    """It runs before the suspension however a formatter wraps the call.
+
+    The comparison used to be by line number, so wrapping the call turned a
+    pre-await lookup into a reported one (and unwrapping hid five others).
+    """
+    one_line = """
+class S:
+    async def run(self):
+        await self.save(self.query_one("#target").value)
+"""
+    wrapped = """
+class S:
+    async def run(self):
+        await self.save(
+            self.query_one("#target").value
+        )
+"""
+    assert _w002(one_line) == []
+    assert _w002(wrapped) == []
+
+
+def test_a_wrapped_lookup_after_the_first_await_is_still_reported():
+    source = """
+class S:
+    async def run(self):
+        await self.work()
+        await self.save(
+            self.query_one("#target").value
+        )
+"""
+    assert len(_w002(source)) == 1
+
+
 def _run_main(monkeypatch, tmp_path, source: str, census: str) -> int:
     package = tmp_path / "tldw_chatbook"
     module = package / "UI" / "sample.py"

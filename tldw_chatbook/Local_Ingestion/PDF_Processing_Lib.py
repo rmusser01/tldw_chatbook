@@ -469,13 +469,14 @@ def process_pdf(
         },
     }
     if unsupported_options:
-        warning_msg = (
-            "Ignored unsupported PDF ingestion option(s): "
-            + ", ".join(unsupported_options)
+        warning_msg = "Ignored unsupported PDF ingestion option(s): " + ", ".join(
+            unsupported_options
         )
         result["warnings"].append(warning_msg)
         logger.warning(warning_msg)
-    log_counter("pdf_processing_attempt", labels={"file_name": filename, "parser": parser})
+    log_counter(
+        "pdf_processing_attempt", labels={"file_name": filename, "parser": parser}
+    )
 
     temp_dir_for_pdf: Optional[str] = None
     path_for_processing: Optional[str] = None

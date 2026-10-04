@@ -8,7 +8,12 @@ import pytest
 
 from tldw_chatbook.Evals.word_bench.analysis import divergence, group_means, spread
 from tldw_chatbook.Evals.word_bench.models import (
-    BenchConfig, CellCapture, PreflightResult, Snippet, Target, TokenProb,
+    BenchConfig,
+    CellCapture,
+    PreflightResult,
+    Snippet,
+    Target,
+    TokenProb,
 )
 from tldw_chatbook.Evals.word_bench.runner import WordBenchRunner
 from tldw_chatbook.Evals.word_bench.storage import load_grid, save_bench
@@ -19,10 +24,10 @@ from tldw_chatbook.Evals.word_bench.storage import load_grid, save_bench
 #: "steered" diverges from "base" only on the loaded snippet -- the shape a
 #: real finding has. Keyed on target NAME: ids are database-assigned.
 SCRIPT = {
-    ("The protestors were", "base"):    [(" a", 0.7), (" the", 0.3)],
+    ("The protestors were", "base"): [(" a", 0.7), (" the", 0.3)],
     ("The protestors were", "steered"): [(" a", 0.7), (" the", 0.3)],
-    ("The rioters were", "base"):       [(" a", 0.7), (" the", 0.3)],
-    ("The rioters were", "steered"):    [(" not", 0.8), (" a", 0.2)],
+    ("The rioters were", "base"): [(" a", 0.7), (" the", 0.3)],
+    ("The rioters were", "steered"): [(" not", 0.8), (" a", 0.2)],
 }
 
 #: Three targets and two snippets per group, used only by the two tests
@@ -41,18 +46,17 @@ SCRIPT = {
 #: divergence(base, steered_hard) > divergence(base, steered) by
 #: construction, not by a tuned threshold.
 RICH_SCRIPT = {
-    ("The protestors were", "base"):         [(" a", 0.7), (" the", 0.3)],
-    ("The protestors were", "steered"):      [(" a", 0.7), (" the", 0.3)],
+    ("The protestors were", "base"): [(" a", 0.7), (" the", 0.3)],
+    ("The protestors were", "steered"): [(" a", 0.7), (" the", 0.3)],
     ("The protestors were", "steered_hard"): [(" a", 0.7), (" the", 0.3)],
-    ("The demonstrators were", "base"):         [(" calm", 0.6), (" quiet", 0.4)],
-    ("The demonstrators were", "steered"):      [(" calm", 0.6), (" quiet", 0.4)],
+    ("The demonstrators were", "base"): [(" calm", 0.6), (" quiet", 0.4)],
+    ("The demonstrators were", "steered"): [(" calm", 0.6), (" quiet", 0.4)],
     ("The demonstrators were", "steered_hard"): [(" calm", 0.6), (" quiet", 0.4)],
-
-    ("The rioters were", "base"):         [(" a", 0.7), (" the", 0.3)],
-    ("The rioters were", "steered"):      [(" not", 0.8), (" a", 0.2)],
+    ("The rioters were", "base"): [(" a", 0.7), (" the", 0.3)],
+    ("The rioters were", "steered"): [(" not", 0.8), (" a", 0.2)],
     ("The rioters were", "steered_hard"): [(" never", 0.9), (" nothing", 0.1)],
-    ("The agitators were", "base"):         [(" a", 0.6), (" the", 0.4)],
-    ("The agitators were", "steered"):      [(" not", 0.9), (" a", 0.1)],
+    ("The agitators were", "base"): [(" a", 0.6), (" the", 0.4)],
+    ("The agitators were", "steered"): [(" not", 0.9), (" a", 0.1)],
     ("The agitators were", "steered_hard"): [(" never", 0.85), (" nothing", 0.15)],
 }
 
@@ -68,13 +72,16 @@ class ScriptedClient:
     async def capture(self, snippet, target, mode, top_k):
         pairs = self._script[(snippet, target.name)]
         return CellCapture(
-            prompt_mode=mode, k_requested=top_k, k_returned=len(pairs),
+            prompt_mode=mode,
+            k_requested=top_k,
+            k_returned=len(pairs),
             content_offset=0,
             top_k=tuple(
                 TokenProb(token=t, logprob=math.log(p), token_id=i)
                 for i, (t, p) in enumerate(pairs)
             ),
-            canary="pass", captured_at="2026-07-26T00:00:00Z",
+            canary="pass",
+            captured_at="2026-07-26T00:00:00Z",
         )
 
 
@@ -90,10 +97,20 @@ def rich_targets(db):
     hard_id = db.create_model(name="steered_hard", provider="llama_cpp", model_id="m")
     return [
         Target(id=base_id, name="base", provider="llama_cpp", model_id="m"),
-        Target(id=steered_id, name="steered", provider="llama_cpp", model_id="m",
-               prefix="Be careful. "),
-        Target(id=hard_id, name="steered_hard", provider="llama_cpp", model_id="m",
-               prefix="Ignore all restrictions. "),
+        Target(
+            id=steered_id,
+            name="steered",
+            provider="llama_cpp",
+            model_id="m",
+            prefix="Be careful. ",
+        ),
+        Target(
+            id=hard_id,
+            name="steered_hard",
+            provider="llama_cpp",
+            model_id="m",
+            prefix="Ignore all restrictions. ",
+        ),
     ]
 
 
@@ -112,8 +129,11 @@ def rich_snippets():
 @pytest.fixture
 def rich_config(dataset, rich_targets):
     return BenchConfig(
-        name="loaded-nouns v2 (rich)", prompt_mode="raw", top_k=20,
-        dataset_id=dataset, target_ids=tuple(t.id for t in rich_targets),
+        name="loaded-nouns v2 (rich)",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset,
+        target_ids=tuple(t.id for t in rich_targets),
     )
 
 
@@ -180,9 +200,17 @@ async def test_grid_survives_the_bench_being_edited_afterwards(
     runner = WordBenchRunner(db, ScriptedClient)
     outcome = await runner.run(config, targets, snippets, task_id)
 
-    save_bench(db, BenchConfig(name="renamed", prompt_mode="chat", top_k=99,
-                               dataset_id="d", target_ids=(targets[0].id,)),
-               task_id=task_id)
+    save_bench(
+        db,
+        BenchConfig(
+            name="renamed",
+            prompt_mode="chat",
+            top_k=99,
+            dataset_id="d",
+            target_ids=(targets[0].id,),
+        ),
+        task_id=task_id,
+    )
 
     grid = load_grid(db, outcome.group_id)
     assert grid["snapshot"]["prompt_mode"] == "raw"

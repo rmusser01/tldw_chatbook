@@ -115,7 +115,10 @@ def test_max_tokens_zero_round_trips(db):
     would silently replace a deliberate 0 with the default on every load.
     """
     config = CharacterProbeConfig(
-        name="n", probe_set_id="p", character_ids=(1,), target_ids=("t",),
+        name="n",
+        probe_set_id="p",
+        character_ids=(1,),
+        target_ids=("t",),
         max_tokens=0,
     )
     task_id = save_character_bench(db, config)
@@ -124,7 +127,10 @@ def test_max_tokens_zero_round_trips(db):
 
 def test_concurrency_round_trips_at_minimum_legal_value(db):
     config = CharacterProbeConfig(
-        name="n", probe_set_id="p", character_ids=(1,), target_ids=("t",),
+        name="n",
+        probe_set_id="p",
+        character_ids=(1,),
+        target_ids=("t",),
         concurrency=1,
     )
     task_id = save_character_bench(db, config)
@@ -133,7 +139,10 @@ def test_concurrency_round_trips_at_minimum_legal_value(db):
 
 def test_samples_per_cell_round_trips_at_minimum_legal_value(db):
     config = CharacterProbeConfig(
-        name="n", probe_set_id="p", character_ids=(1,), target_ids=("t",),
+        name="n",
+        probe_set_id="p",
+        character_ids=(1,),
+        target_ids=("t",),
         samples_per_cell=1,
     )
     task_id = save_character_bench(db, config)

@@ -165,7 +165,9 @@ def test_double_start_refuses_and_leaves_the_first_server_serving(
     assert "Test Feed" in response.text
 
 
-def test_start_rejects_a_missing_directory(server: FeedDirectoryServer, tmp_path: Path) -> None:
+def test_start_rejects_a_missing_directory(
+    server: FeedDirectoryServer, tmp_path: Path
+) -> None:
     missing = tmp_path / "does-not-exist"
     with pytest.raises(FeedServerError):
         server.start(missing)
@@ -462,9 +464,7 @@ def test_configured_bind_and_port_falls_back_to_ephemeral_on_an_out_of_range_por
         loguru_logger.remove(sink_id)
 
     assert port == 0
-    assert any(
-        "outside the valid 0-65535" in message for message in messages
-    ), messages
+    assert any("outside the valid 0-65535" in message for message in messages), messages
 
 
 def test_configured_bind_and_port_falls_back_to_ephemeral_on_a_negative_port(
@@ -658,9 +658,7 @@ def test_dotdot_traversal_does_not_escape_the_served_directory(
     (secret_dir / "passwd").write_text("root:x:0:0", encoding="utf-8")
 
     url = server.start(served_dir)
-    response = httpx.get(
-        url + "../secret/passwd", timeout=5.0, follow_redirects=False
-    )
+    response = httpx.get(url + "../secret/passwd", timeout=5.0, follow_redirects=False)
     assert response.status_code in (404, 400)
     assert "root:x:0:0" not in response.text
 

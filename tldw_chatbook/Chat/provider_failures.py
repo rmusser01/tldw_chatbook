@@ -39,11 +39,7 @@ def _provider_error_body_detail(response: object) -> str:
             candidate = payload.get("error")
             if isinstance(candidate, dict):
                 candidate = candidate.get("message") or candidate.get("detail")
-            candidate = (
-                candidate
-                or payload.get("message")
-                or payload.get("detail")
-            )
+            candidate = candidate or payload.get("message") or payload.get("detail")
             if isinstance(candidate, str) and candidate.strip():
                 detail = candidate
     except (ValueError, TypeError):

@@ -167,8 +167,7 @@ async def _await_stream_calls(
     while gateway.stream_calls < expected:
         if asyncio.get_running_loop().time() > deadline:
             pytest.fail(
-                f"stream_calls never reached {expected}; "
-                f"last={gateway.stream_calls}"
+                f"stream_calls never reached {expected}; last={gateway.stream_calls}"
             )
         await asyncio.sleep(0.02)
 

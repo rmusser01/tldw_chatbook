@@ -734,9 +734,7 @@ class LocalResearchService:
             RuntimeError: If the database's schema version is newer than
                 this code knows about.
         """
-        current = int(
-            conn.execute("PRAGMA user_version").fetchone()[0] or 0
-        )
+        current = int(conn.execute("PRAGMA user_version").fetchone()[0] or 0)
         newest = MIGRATIONS[-1][0] if MIGRATIONS else current
         if current > newest:
             raise RuntimeError(
@@ -1304,7 +1302,9 @@ class LocalResearchService:
             # abandoned, just finished).
             return None
         previous = row["leased_until"] if "leased_until" in row.keys() else None
-        attempts = int(row["lease_attempts"] or 0) if "lease_attempts" in row.keys() else 0
+        attempts = (
+            int(row["lease_attempts"] or 0) if "lease_attempts" in row.keys() else 0
+        )
         now = self._now()
         reclaiming = previous is not None and str(previous) <= now
         if reclaiming and attempts >= int(max_attempts):
@@ -1379,9 +1379,7 @@ class LocalResearchService:
         }
         return lease_id
 
-    def renew_lease(
-        self, run_id: str, *, lease_id: str, lease_seconds: float
-    ) -> bool:
+    def renew_lease(self, run_id: str, *, lease_id: str, lease_seconds: float) -> bool:
         """Extend a lease the caller still holds.
 
         The lease id is a fencing token: a worker that stalled past its lease
@@ -1607,9 +1605,7 @@ class LocalResearchService:
         }
         if progress_message is not None:
             fields["progress_message"] = progress_message
-        return self._update_run_state(
-            run_id, "completed", lease_id=lease_id, **fields
-        )
+        return self._update_run_state(run_id, "completed", lease_id=lease_id, **fields)
 
     def fail_run(
         self,
@@ -1807,9 +1803,7 @@ class LocalResearchService:
                     f"patch references ids not in the proposed inventory: {sorted(unknown)}"
                 )
             if pinned & dropped:
-                raise ValueError(
-                    "pinned and dropped source ids must be disjoint"
-                )
+                raise ValueError("pinned and dropped source ids must be disjoint")
             recollect = patch.get("recollect")
             if recollect is not None and not isinstance(recollect, dict):
                 raise ValueError("recollect patch must be an object")
@@ -1847,12 +1841,12 @@ class LocalResearchService:
         data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Engine-facing non-terminal transition (task-16322): update phase/
-       progress (and optionally status/control when a draft is started)
-        while recording an event with the same data the UI will stream.
+        progress (and optionally status/control when a draft is started)
+         while recording an event with the same data the UI will stream.
 
-        Terminal and control transitions (pause/resume/cancel/complete/fail)
-        stay on their dedicated methods; this one never dispatches terminal
-        notifications because it never sets a terminal status.
+         Terminal and control transitions (pause/resume/cancel/complete/fail)
+         stay on their dedicated methods; this one never dispatches terminal
+         notifications because it never sets a terminal status.
         """
         if self._uses_external_db:
             # delete_run's precedent (task-16814): raw statement inside the

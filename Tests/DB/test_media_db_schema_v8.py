@@ -68,8 +68,14 @@ def _plan(conn: sqlite3.Connection, sql: str) -> str:
     )
 
 
-def _seed_chunks(conn: sqlite3.Connection, *, legacy_media: int, stamped_media: int,
-                 chunks_each: int = 3, deleted_media: int = 0) -> None:
+def _seed_chunks(
+    conn: sqlite3.Connection,
+    *,
+    legacy_media: int,
+    stamped_media: int,
+    chunks_each: int = 3,
+    deleted_media: int = 0,
+) -> None:
     """Insert Media + chunk rows directly (fast, and shape-exact).
 
     Goes around ``add_media_with_keywords`` deliberately: this file cares
@@ -100,8 +106,17 @@ def _seed_chunks(conn: sqlite3.Connection, *, legacy_media: int, stamped_media: 
         for index in range(chunks_each):
             n += 1
             rows.append(
-                (n, media_id, f"chunk {n}", index, "words", f"uuid-{n}", now,
-                 version, deleted)
+                (
+                    n,
+                    media_id,
+                    f"chunk {n}",
+                    index,
+                    "words",
+                    f"uuid-{n}",
+                    now,
+                    version,
+                    deleted,
+                )
             )
     conn.executemany(
         "INSERT INTO UnvectorizedMediaChunks (id, media_id, chunk_text, "
@@ -118,9 +133,11 @@ def _seed_chunks(conn: sqlite3.Connection, *, legacy_media: int, stamped_media: 
 
 
 def test_fresh_db_is_at_the_current_version(fresh_db):
-    version = fresh_db.get_connection().execute(
-        "SELECT version FROM schema_version LIMIT 1"
-    ).fetchone()["version"]
+    version = (
+        fresh_db.get_connection()
+        .execute("SELECT version FROM schema_version LIMIT 1")
+        .fetchone()["version"]
+    )
     assert version == MediaDatabase._CURRENT_SCHEMA_VERSION
 
 
@@ -137,23 +154,28 @@ def test_genuine_v7_db_upgrades_and_gains_the_index(tmp_path):
     path = tmp_path / "v7.db"
     with media_db_at_version(path, 7) as old:
         conn = old.get_connection()
-        assert conn.execute(
-            "SELECT version FROM schema_version"
-        ).fetchone()["version"] == 7
+        assert (
+            conn.execute("SELECT version FROM schema_version").fetchone()["version"]
+            == 7
+        )
         assert INDEX_NAME not in _indexes_on_chunks(conn)
         _seed_chunks(conn, legacy_media=2, stamped_media=3)
 
     upgraded = MediaDatabase(str(path), client_id="upgrade")
     try:
         conn = upgraded.get_connection()
-        assert conn.execute(
-            "SELECT version FROM schema_version"
-        ).fetchone()["version"] == MediaDatabase._CURRENT_SCHEMA_VERSION
+        assert (
+            conn.execute("SELECT version FROM schema_version").fetchone()["version"]
+            == MediaDatabase._CURRENT_SCHEMA_VERSION
+        )
         assert INDEX_NAME in _indexes_on_chunks(conn)
         # The rows the v7 DB already held are untouched by an index add.
-        assert conn.execute(
-            "SELECT COUNT(*) AS n FROM UnvectorizedMediaChunks"
-        ).fetchone()["n"] == 15
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) AS n FROM UnvectorizedMediaChunks"
+            ).fetchone()["n"]
+            == 15
+        )
         service = LocalRAGAdminService.__new__(LocalRAGAdminService)
         assert service.count_chunks_by_engine_version(upgraded) == {
             "legacy": 2,
@@ -224,9 +246,12 @@ def test_v7_to_v8_adds_nothing_but_the_index(tmp_path):
 def test_census_plan_uses_the_covering_index_without_analyze(fresh_db):
     conn = fresh_db.get_connection()
     _seed_chunks(conn, legacy_media=40, stamped_media=160, chunks_each=5)
-    assert conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'"
-    ).fetchone() is None, "the fixture must reproduce the no-stats production state"
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'"
+        ).fetchone()
+        is None
+    ), "the fixture must reproduce the no-stats production state"
 
     plan = _plan(conn, CENSUS_SQL)
     assert INDEX_NAME in plan, plan
@@ -239,8 +264,7 @@ def test_census_plan_uses_the_covering_index_without_analyze(fresh_db):
 def test_census_result_is_unchanged_by_the_index(fresh_db):
     """The index must not change a single number the panel can show."""
     conn = fresh_db.get_connection()
-    _seed_chunks(conn, legacy_media=4, stamped_media=6, chunks_each=3,
-                 deleted_media=5)
+    _seed_chunks(conn, legacy_media=4, stamped_media=6, chunks_each=3, deleted_media=5)
     service = LocalRAGAdminService.__new__(LocalRAGAdminService)
     with_index = service.count_chunks_by_engine_version(fresh_db)
 
@@ -262,8 +286,7 @@ def test_census_on_an_empty_library_is_empty_and_still_indexed(fresh_db):
 def test_soft_deleted_chunks_are_outside_the_partial_index(fresh_db):
     """A soft-deleted row must neither be counted nor occupy the index."""
     conn = fresh_db.get_connection()
-    _seed_chunks(conn, legacy_media=2, stamped_media=0, chunks_each=2,
-                 deleted_media=3)
+    _seed_chunks(conn, legacy_media=2, stamped_media=0, chunks_each=2, deleted_media=3)
     service = LocalRAGAdminService.__new__(LocalRAGAdminService)
     assert service.count_chunks_by_engine_version(fresh_db) == {"legacy": 2}
     # `deleted = 0` legs only: the partial index holds 2 media x 2 chunks.

@@ -1,5 +1,48 @@
 # Lessons: what counts as evidence a change works
 
+## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
+
+**TASK-14876 audit, 2026-09-30.** Checking whether the 2026-08-09 xdist
+INTERNALERROR recurred, `gh run view --log-failed | grep -icE
+"dumperror|execnet|internalerror|realtime"` returned **4230** on the
+2026-09-08 core run — which reads as a massive recurrence. Splitting the
+patterns apart showed `DumpError` 0, `can't serialize` 0, `INTERNALERROR`
+0, and `execnet` 4230: every hit was either pip's "Installing collected
+packages: … execnet …" line (one giant line, matched once per shard) or
+full-process asyncio tracebacks that include the worker's own bootstrap
+frames (execnet/remote.py) when pytest-asyncio prints an unretrieved task
+exception. The transport library's name is structurally over-represented
+in CI logs; the crash's specific signatures are not. The incident's
+original job log also gave the package set (websockets 16.1.1 /
+execnet 2.1.2 / pytest-xdist 3.8.0 / pytest-json-report 1.5.0), which let
+the repro run on the exact incident environment. And the fastest way to
+enumerate an old incident's failures turned out to be its own uploaded
+json-report artifact (still downloadable 7 weeks later via the check-run's
+details_url → run → artifact id), which named the 22 failures exactly —
+none of them the test the INTERNALERROR was attributed to.
+
+---
+## A shard killed by `timeout-minutes` uploads no test artifact — measure from its surviving siblings
+
+**TASK-19425, 2026-09-30.** Diagnosing core-shard ceiling overruns, the natural
+first move was to download the json-report of the cancelled shards — the runs the
+task is ABOUT. Those artifacts do not exist and cannot: `timeout-minutes` kills the
+job before any `if: always()` upload step runs, which is the same mechanism behind
+the task's "no test summary" complaint. Runs 34795954804 and 34859834173 each
+cancelled two shards at exactly ~120.3 min; the only measurable evidence was the
+four sibling shards that DID finish (3.7-4.5 MB reports) plus job timestamps
+proving the cancellations were per-job timeouts (each ended exactly 120.x min
+after its own start), not push cancellations.
+
+**What to do.** Treat "cancelled shard has no artifact" as the signature of the
+ceiling firing, and rank durations from completed sibling shards of the same run.
+Confirm the kill mode from each job's started/completed timestamps (timeout =
+exactly `timeout-minutes` after its own start) before calling a cancellation a
+concurrency cancel. And before assuming a measured CI hang still exists at HEAD,
+check whether the file was fixed between the artifact's run and your base — and
+remember that if no full run has completed since a suspect commit landed, CI has
+never exercised it: a "hang was fixed" verdict from an old artifact says nothing
+about regressions newer than the last completing run.
 ## A prompt that tells the model where things are must be tested by doing what it says
 
 **TASK-33940.1, 2026-10-02.** The workspace system-prompt note listed bound folders "relative
@@ -17753,3 +17796,27 @@ pytest temp dir (36); the Linux runner's shorter path gives 26. The 73 was the
 billed window, about one run in ten; the census now holds that probe still for
 the phase. Pin `os_opens` at the depth the gate actually runs at (the default
 temp dir, or CI's), and trace callers before calling an upward step "jitter".
+
+## A format-only change can turn dev red, and neither AST-equality nor the PR fast lane sees it
+
+**PR #2993 (TASK-26000 series), 2026-10-03.** 1,681 of the 1,727 changed Python files
+were AST-identical to `dev` and both fast lanes were green. Three checks still went
+green to red, none of them collected by the fast lane:
+
+- `test_egress_adoption_census` rewrote an import by literal string; the reflow split
+  that import one name per line, so the substitution stopped matching.
+- Two size-ratchet rows are pinned to `dev`'s exact line count, so reflow alone overran
+  them (`personas_screen.py` +128, `console_settings_modal.py` +60).
+- The post-await DOM census gained one row and lost five because its detector compared
+  line numbers; a lookup inside the first await's own arguments moved to a later line
+  when the call was wrapped. The detector now compares positions.
+
+The same PR's signature change added a fourth: 36 writers began calling
+`transaction(immediate=True)`, and a test's zero-argument `transaction` double raised
+`TypeError` before it measured anything.
+
+Before landing a reformat or a signature change: run `Tests/Architecture -p no:xdist` on
+a clean `origin/dev` worktree and on the branch and diff the failing ids (about ten
+ratchet rows are already red on `dev`, so only the difference means anything); search
+the test suite's string literals for text the reformat removed from a source line; and
+grep `Tests/` for doubles of the changed method, then run those files on both trees.

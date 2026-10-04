@@ -28,7 +28,9 @@ def _sandbox_only_roots(monkeypatch):
 
 
 def test_sandbox_root_is_real_dir_not_literal(monkeypatch, tmp_path):
-    monkeypatch.setattr(fot, "_resolve_sandbox_config", lambda: str(tmp_path / "tool_sandbox"))
+    monkeypatch.setattr(
+        fot, "_resolve_sandbox_config", lambda: str(tmp_path / "tool_sandbox")
+    )
     root = fot._tool_sandbox_root()
     assert root == (tmp_path / "tool_sandbox").resolve()
     assert root.is_dir()  # created
@@ -467,5 +469,3 @@ def test_is_git_metadata_write_predicate_is_exact_on_components():
 
 
 # -- task-32804.12: bound the recursive ListDirectory walk --------------------
-
-

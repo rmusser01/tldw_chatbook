@@ -353,9 +353,7 @@ def test_detected_server_adoption_keeps_configured_endpoint(monkeypatch):
         captured_sections.update(section_values)
         return True
 
-    monkeypatch.setattr(
-        chat_screen_module, "save_settings_to_cli_config", fake_save
-    )
+    monkeypatch.setattr(chat_screen_module, "save_settings_to_cli_config", fake_save)
     monkeypatch.setattr(console, "_sync_console_transcript_guidance", lambda: None)
     monkeypatch.setattr(console, "run_worker", _discard_worker)
     console._session._sync_chat_core_state_fn = lambda: None
@@ -406,9 +404,7 @@ def test_detected_server_adoption_treats_trailing_slash_as_same_endpoint(
         captured_sections.update(section_values)
         return True
 
-    monkeypatch.setattr(
-        chat_screen_module, "save_settings_to_cli_config", fake_save
-    )
+    monkeypatch.setattr(chat_screen_module, "save_settings_to_cli_config", fake_save)
     monkeypatch.setattr(console, "_sync_console_transcript_guidance", lambda: None)
     monkeypatch.setattr(console, "run_worker", _discard_worker)
     console._session._sync_chat_core_state_fn = lambda: None

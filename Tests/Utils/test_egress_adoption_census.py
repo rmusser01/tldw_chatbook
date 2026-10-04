@@ -273,9 +273,7 @@ def test_scan_resolves_aliased_and_attribute_style_imports() -> None:
     `egress.check_url_or_raise(...)`).
     """
     aliased_opener = (
-        "import urllib.request as req\n"
-        "def f(u):\n"
-        "    return req.urlopen(u)\n"
+        "import urllib.request as req\ndef f(u):\n    return req.urlopen(u)\n"
     )
     openers, egress = _analyze_source(aliased_opener)
     assert openers == frozenset({"urllib.request.urlopen"})
@@ -373,10 +371,11 @@ def test_census_rediscovers_the_original_two_seams_when_their_egress_calls_are_r
     video_processing = PACKAGE_ROOT / "Local_Ingestion" / "video_processing.py"
 
     ip_source = ingest_preflight.read_text(encoding="utf-8")
-    ip_mutated = ip_source.replace(
-        "from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise",
-        "from tldw_chatbook.Utils.egress import EgressBlockedError",
-    ).replace("check_url_or_raise(url)", "pass")
+    # The import is one-name-per-line since the formatter pass (TASK-26000
+    # series), so drop the name's own line rather than rewrite the statement.
+    ip_mutated = ip_source.replace("    check_url_or_raise,\n", "").replace(
+        "check_url_or_raise(url)", "pass"
+    )
     assert "check_url_or_raise" not in ip_mutated, (
         "the fixture substitution did not match current source -- "
         "Library/ingest_preflight.py's egress call shape moved; update the "
@@ -390,17 +389,41 @@ def test_census_rediscovers_the_original_two_seams_when_their_egress_calls_are_r
     )
 
     vp_source = video_processing.read_text(encoding="utf-8")
+    # (TASK-20973) The call site moved from the unconditional
+    # ``trusted_origins=origin_set(url)`` to the provenance-threaded
+    # ``trusted_origins=trusted_origins_for(url, url_provenance)``; the
+    # un-fix below still removes exactly the census-visible egress symbol
+    # (``check_url_or_raise``). ``UrlProvenance``/``trusted_origins_for``
+    # stay imported on purpose: neither is an ``_EGRESS_SYMBOLS`` entry, so
+    # their presence cannot launder the mutation -- which is itself part of
+    # what this re-proof demonstrates.
     vp_mutated = vp_source.replace(
-        "from ..Utils.egress import EgressBlockedError, check_url_or_raise, origin_set",
-        "from ..Utils.egress import EgressBlockedError, origin_set",
-    ).replace("check_url_or_raise(url, trusted_origins=origin_set(url))", "pass")
+        "from ..Utils.egress import (\n"
+        "    EgressBlockedError,\n"
+        "    UrlProvenance,\n"
+        "    check_url_or_raise,\n"
+        "    trusted_origins_for,\n"
+        ")",
+        "from ..Utils.egress import (\n"
+        "    EgressBlockedError,\n"
+        "    UrlProvenance,\n"
+        "    trusted_origins_for,\n"
+        ")",
+    ).replace(
+        "check_url_or_raise(\n"
+        "            url, trusted_origins=trusted_origins_for(url, url_provenance)\n"
+        "        )",
+        "pass",
+    )
     assert "check_url_or_raise" not in vp_mutated, (
         "the fixture substitution did not match current source -- "
         "Local_Ingestion/video_processing.py's egress call shape moved; "
         "update the literal strings above to match"
     )
     vp_openers, vp_egress = _analyze_source(vp_mutated)
-    assert vp_openers, "the un-fixed module must still be detected as opening a URL (yt_dlp.YoutubeDL)"
+    assert vp_openers, (
+        "the un-fixed module must still be detected as opening a URL (yt_dlp.YoutubeDL)"
+    )
     assert vp_egress == frozenset(), (
         "the un-fixed module must be rediscovered as NOT consulting the "
         f"policy, but the census still found: {sorted(vp_egress)}"

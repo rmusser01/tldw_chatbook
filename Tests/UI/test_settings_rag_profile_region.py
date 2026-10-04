@@ -104,9 +104,7 @@ async def test_library_rag_renders_future_console_policy_defaults_separately(
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
 
-        auto = screen.query_one(
-            "#settings-library-rag-auto-retrieve-default", Select
-        )
+        auto = screen.query_one("#settings-library-rag-auto-retrieve-default", Select)
         access = screen.query_one(
             "#settings-library-rag-assistant-access-default", Select
         )
@@ -136,7 +134,9 @@ def fake_app(monkeypatch):
     auto-reverted by pytest's monkeypatch) so un-mounted screens can exercise
     ``self.app.notify``/``self.app.push_screen`` call sites."""
     app = _FakeApp()
-    monkeypatch.setattr(SettingsScreen, "app", property(lambda self: app), raising=False)
+    monkeypatch.setattr(
+        SettingsScreen, "app", property(lambda self: app), raising=False
+    )
     return app
 
 
@@ -173,7 +173,9 @@ def _dirty_screen_with_switch_pushed(monkeypatch, tmp_path, fake_app):
     return screen, callback, other.id
 
 
-def test_set_active_with_dirty_draft_pushes_confirm_modal(monkeypatch, tmp_path, fake_app):
+def test_set_active_with_dirty_draft_pushes_confirm_modal(
+    monkeypatch, tmp_path, fake_app
+):
     screen, _callback, _other_id = _dirty_screen_with_switch_pushed(
         monkeypatch, tmp_path, fake_app
     )
@@ -307,7 +309,9 @@ def test_confirm_modal_save_from_a_preview_clears_preview_and_the_save_actually_
 # early return in the Save action's LIBRARY_RAG branch. ---
 
 
-def test_pending_activate_cleared_on_validation_failure(monkeypatch, tmp_path, fake_app):
+def test_pending_activate_cleared_on_validation_failure(
+    monkeypatch, tmp_path, fake_app
+):
     """Regression for Finding 2: Set-active(dirty) -> Save -> validation
     fails -> action_settings_save_category returns BEFORE the save worker
     (the only prior clearing site, _apply_library_rag_save_result) ever
@@ -328,7 +332,9 @@ def test_pending_activate_cleared_on_validation_failure(monkeypatch, tmp_path, f
     assert screen._rag_profile_pending_activate is None
 
 
-def test_pending_activate_cleared_when_no_unsaved_changes(monkeypatch, tmp_path, fake_app):
+def test_pending_activate_cleared_when_no_unsaved_changes(
+    monkeypatch, tmp_path, fake_app
+):
     """Same leak, via the OTHER early return in the LIBRARY_RAG save branch."""
     _wire_rag_profile_adapter(monkeypatch, tmp_path)
     app = _build_test_app()
@@ -393,9 +399,7 @@ def test_invalid_field_key_matches_embedding_batch_size_wording(monkeypatch, tmp
     screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
     draft = SettingsDraft(category=SettingsCategoryId.LIBRARY_RAG)
     # RAGConfig.validate() message: "embedding batch_size must be positive".
-    draft.set_value(
-        "embedding_batch_size", profile.rag_config.embedding.batch_size, 0
-    )
+    draft.set_value("embedding_batch_size", profile.rag_config.embedding.batch_size, 0)
     screen._settings_drafts[SettingsCategoryId.LIBRARY_RAG] = draft
 
     assert screen._library_rag_invalid_field_key() == "embedding_batch_size"
@@ -438,7 +442,9 @@ def test_invalid_field_key_matches_chunk_size_wording(monkeypatch, tmp_path):
 # --- Worker completion path: `_rag_after_set_active` ---
 
 
-def test_after_set_active_success_clears_draft_and_notifies(monkeypatch, tmp_path, fake_app):
+def test_after_set_active_success_clears_draft_and_notifies(
+    monkeypatch, tmp_path, fake_app
+):
     _wire_rag_profile_adapter(monkeypatch, tmp_path)
     app = _build_test_app()
     screen = _dirty_library_rag_screen(app)
@@ -491,8 +497,8 @@ def test_after_profile_action_clone_selects_the_clone_and_prompts_set_active(
     sync_widgets_calls: list[bool] = []
     sync_profile_calls: list[dict] = []
     screen._sync_library_rag_widgets = lambda: sync_widgets_calls.append(True)
-    screen._sync_library_rag_profile_widgets = lambda **kwargs: sync_profile_calls.append(
-        kwargs
+    screen._sync_library_rag_profile_widgets = lambda **kwargs: (
+        sync_profile_calls.append(kwargs)
     )
 
     # `result` is clone_profile_as's own return shape on success: the new
@@ -519,8 +525,8 @@ def test_after_profile_action_rename_and_delete_still_call_sync_with_no_override
     screen = SettingsScreen(app)
     screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
     sync_profile_calls: list[dict] = []
-    screen._sync_library_rag_profile_widgets = lambda **kwargs: sync_profile_calls.append(
-        kwargs
+    screen._sync_library_rag_profile_widgets = lambda **kwargs: (
+        sync_profile_calls.append(kwargs)
     )
 
     screen._rag_after_profile_action("rename", True, "")
@@ -733,8 +739,12 @@ async def test_library_rag_detail_renders_fields_disabled_for_readonly_active_pr
             "#settings-library-rag-include-citations", Checkbox
         ).disabled
         assert screen.query_one("#settings-library-rag-citation-style", Select).disabled
-        assert screen.query_one("#settings-library-rag-snippet-max-chars", Input).disabled
-        assert screen.query_one("#settings-library-rag-max-context-size", Input).disabled
+        assert screen.query_one(
+            "#settings-library-rag-snippet-max-chars", Input
+        ).disabled
+        assert screen.query_one(
+            "#settings-library-rag-max-context-size", Input
+        ).disabled
 
 
 @pytest.mark.asyncio
@@ -821,12 +831,8 @@ async def test_rerank_fields_dimmed_when_reranking_off_and_re_enable_on_toggle(
         top_k_input = screen.query_one("#settings-library-rag-reranker-top-k", Input)
         assert model_input.disabled is True
         assert top_k_input.disabled is True
-        assert (
-            "Reranker model (enable reranking to edit)" in _visible_text(screen)
-        )
-        assert (
-            "Rerank results (enable reranking to edit)" in _visible_text(screen)
-        )
+        assert "Reranker model (enable reranking to edit)" in _visible_text(screen)
+        assert "Rerank results (enable reranking to edit)" in _visible_text(screen)
 
         rerank_checkbox = screen.query_one(
             "#settings-library-rag-enable-reranking", Checkbox
@@ -879,9 +885,7 @@ async def test_rerank_fields_stay_dimmed_after_a_profile_switch_resync(
         await pilot.pause()
 
         assert model_input.disabled is True
-        assert (
-            "Reranker model (enable reranking to edit)" in _visible_text(screen)
-        )
+        assert "Reranker model (enable reranking to edit)" in _visible_text(screen)
 
 
 @pytest.mark.asyncio
@@ -906,9 +910,7 @@ async def test_toggling_include_citations_checkbox_stages_draft_value_aware(
 
         assert screen.query_one("#settings-save-category", Button).disabled is True
 
-        checkbox = screen.query_one(
-            "#settings-library-rag-include-citations", Checkbox
-        )
+        checkbox = screen.query_one("#settings-library-rag-include-citations", Checkbox)
         screen.handle_library_rag_include_citations_changed(
             Checkbox.Changed(checkbox, False)
         )
@@ -1044,13 +1046,9 @@ async def test_delete_button_has_error_variant_and_spacer_class(monkeypatch, tmp
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
 
-        delete_button = screen.query_one(
-            "#settings-library-rag-profile-delete", Button
-        )
+        delete_button = screen.query_one("#settings-library-rag-profile-delete", Button)
         assert delete_button.variant == "error"
-        assert delete_button.has_class(
-            "settings-library-rag-profile-delete-button"
-        )
+        assert delete_button.has_class("settings-library-rag-profile-delete-button")
 
 
 # --- Task 4 (SP3): index status readout + Backfill + honest re-index warnings ---
@@ -1075,8 +1073,7 @@ def test_index_status_line_nudges_for_hybrid_mode_when_absent(
     line = screen._library_rag_index_status_line({"state": "absent"})
 
     assert line == (
-        "Semantic index not built — Hybrid search is keyword-only until "
-        "you Backfill."
+        "Semantic index not built — Hybrid search is keyword-only until you Backfill."
     )
 
 
@@ -1093,8 +1090,7 @@ def test_index_status_line_nudges_for_semantic_mode_when_absent(
     line = screen._library_rag_index_status_line({"state": "absent"})
 
     assert line == (
-        "Semantic index not built — Semantic search is keyword-only until "
-        "you Backfill."
+        "Semantic index not built — Semantic search is keyword-only until you Backfill."
     )
 
 
@@ -1588,9 +1584,7 @@ def test_rag_backfill_worker_guards_against_none_pre_resolved_service(
     )
     # Simulates a build discarded by a concurrent reset (task-641) -- not a
     # deps/config problem, just a since-superseded construction attempt.
-    monkeypatch.setattr(
-        settings_screen_module, "get_shared_rag_service", lambda: None
-    )
+    monkeypatch.setattr(settings_screen_module, "get_shared_rag_service", lambda: None)
     backfill_calls: list = []
 
     async def _fake_backfill(**kwargs):
@@ -1658,8 +1652,12 @@ async def test_backfill_streams_progress_to_index_status(monkeypatch, tmp_path):
         progress_calls.append("started")
         # Real shape: one positional dict, keys item_type/indexed/skipped/
         # failed -- see ingestion_indexing.py:1589.
-        progress_callback({"item_type": "media", "indexed": 3, "skipped": 1, "failed": 0})
-        progress_callback({"item_type": "notes", "indexed": 5, "skipped": 0, "failed": 1})
+        progress_callback(
+            {"item_type": "media", "indexed": 3, "skipped": 1, "failed": 0}
+        )
+        progress_callback(
+            {"item_type": "notes", "indexed": 5, "skipped": 0, "failed": 1}
+        )
         return {"status": "ok", "indexed": 8, "skipped": 1, "failed": 1, "errors": []}
 
     monkeypatch.setattr(
@@ -2514,9 +2512,7 @@ async def test_expanding_chunking_collapsible_switches_context_without_focus(
         # entry is the same fallback tuple, so the rendered text is
         # unaffected either way.
         assert screen._active_rag_scope_group == "search"
-        chunking = screen.query_one(
-            "#settings-library-rag-chunking-group", Collapsible
-        )
+        chunking = screen.query_one("#settings-library-rag-chunking-group", Collapsible)
         assert chunking.collapsed is True
 
         chunking.collapsed = False
@@ -2562,17 +2558,12 @@ async def test_focusing_reranker_model_input_updates_inspector_end_to_end(
         await _open_settings_category(pilot, "#settings-category-library-rag")
         screen = _active_destination_screen(host)
 
-        reranker_input = screen.query_one(
-            "#settings-library-rag-reranker-model", Input
-        )
+        reranker_input = screen.query_one("#settings-library-rag-reranker-model", Input)
         assert reranker_input.disabled is False
         reranker_input.focus()
         await pilot.pause()
 
-        assert (
-            screen._active_settings_field_id
-            == "settings-library-rag-reranker-model"
-        )
+        assert screen._active_settings_field_id == "settings-library-rag-reranker-model"
         await _wait_for_settings_text(screen, pilot, "Focused group: Reranking")
 
 
@@ -2625,7 +2616,9 @@ async def test_browsing_to_a_non_active_profile_previews_it_read_only_without_st
             is True
         )
         assert (
-            screen.query_one("#settings-library-rag-enable-reranking", Checkbox).disabled
+            screen.query_one(
+                "#settings-library-rag-enable-reranking", Checkbox
+            ).disabled
             is True
         )
         # No draft was created by merely browsing.
@@ -2655,12 +2648,13 @@ async def test_field_changed_events_during_preview_never_stage_a_draft(
         top_k = screen.query_one("#settings-library-rag-default-top-k", Input)
         # Simulate a (disabled, but the handler must be robust regardless
         # of widget-level enforcement) edit attempt while previewing.
-        screen.handle_library_rag_default_top_k_changed(
-            Input.Changed(top_k, "999")
-        )
+        screen.handle_library_rag_default_top_k_changed(Input.Changed(top_k, "999"))
 
         assert SettingsCategoryId.LIBRARY_RAG not in screen._settings_drafts
-        assert screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG) is False
+        assert (
+            screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG)
+            is False
+        )
 
 
 @pytest.mark.asyncio
@@ -2682,7 +2676,9 @@ async def test_returning_to_active_profile_restores_a_staged_draft_after_preview
         screen.handle_library_rag_default_top_k_changed(
             Input.Changed(top_k, top_k.value)
         )
-        assert screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG) is True
+        assert (
+            screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG) is True
+        )
 
         select = screen.query_one("#settings-library-rag-profile-select", Select)
         select.value = other.id
@@ -2696,7 +2692,9 @@ async def test_returning_to_active_profile_restores_a_staged_draft_after_preview
         assert screen._rag_preview_profile_id is None
         assert top_k.value == "12"
         assert top_k.disabled is False
-        assert screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG) is True
+        assert (
+            screen._category_has_unsaved_changes(SettingsCategoryId.LIBRARY_RAG) is True
+        )
 
 
 @pytest.mark.asyncio
@@ -2817,8 +2815,8 @@ def test_cloning_while_previewing_uses_the_previewed_profile_as_the_source(
     assert len(fake_app.pushed_screens) == 1
     _modal, callback = fake_app.pushed_screens[0]
     dispatched: list[tuple] = []
-    screen._dispatch_rag_profile_action = lambda action, profile_id, arg: dispatched.append(
-        (action, profile_id, arg)
+    screen._dispatch_rag_profile_action = lambda action, profile_id, arg: (
+        dispatched.append((action, profile_id, arg))
     )
 
     callback("My Clone")
@@ -3093,9 +3091,7 @@ async def test_starter_panel_shown_when_builtin_active_no_users_and_index_absent
             ).collapsed
             is True
         )
-        clone_button = screen.query_one(
-            "#settings-library-rag-starter-clone", Button
-        )
+        clone_button = screen.query_one("#settings-library-rag-starter-clone", Button)
         backfill_button = screen.query_one(
             "#settings-library-rag-starter-backfill", Button
         )
@@ -3610,9 +3606,7 @@ async def test_typing_accelerator_letters_into_the_top_k_input_does_not_fire_the
         screen._trigger_library_rag_profile_clone = lambda: calls.append("clone")
         screen._trigger_library_rag_index_backfill = lambda: calls.append("backfill")
 
-        top_k_input = screen.query_one(
-            "#settings-library-rag-default-top-k", Input
-        )
+        top_k_input = screen.query_one("#settings-library-rag-default-top-k", Input)
         original_value = top_k_input.value
         top_k_input.focus()
         await pilot.pause()
@@ -3700,9 +3694,7 @@ def test_blank_select_row_exits_preview_instead_of_becoming_a_bogus_id(
     screen.active_category = SettingsCategoryId.LIBRARY_RAG.value
     screen._rag_preview_profile_id = other.id
     synced: list[bool] = []
-    monkeypatch.setattr(
-        screen, "_sync_rag_editor_display", lambda: synced.append(True)
-    )
+    monkeypatch.setattr(screen, "_sync_rag_editor_display", lambda: synced.append(True))
 
     event = SimpleNamespace(value=Select.NULL, stop=lambda: None)
     screen.handle_library_rag_profile_select_changed(event)
@@ -3833,9 +3825,7 @@ async def test_stale_active_profile_pointer_composes_blank_instead_of_crashing(
         return grouped
 
     monkeypatch.setattr(settings_screen_module, "active_profile_info", ghost_info)
-    monkeypatch.setattr(
-        settings_screen_module, "list_profiles_grouped", ghost_grouped
-    )
+    monkeypatch.setattr(settings_screen_module, "list_profiles_grouped", ghost_grouped)
 
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
@@ -4137,9 +4127,7 @@ async def test_reranker_cost_disclosure_is_visible_without_enabling_reranking(
         screen = _active_destination_screen(host)
 
         assert (
-            screen.query_one(
-                "#settings-library-rag-enable-reranking", Checkbox
-            ).value
+            screen.query_one("#settings-library-rag-enable-reranking", Checkbox).value
             is False
         )
         disclosure = screen.query_one(

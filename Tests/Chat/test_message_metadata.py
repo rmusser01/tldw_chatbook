@@ -303,8 +303,13 @@ def test_character_emote_metadata_round_trips_as_bounded_scalars() -> None:
 @pytest.mark.parametrize(
     "events",
     [
-        tuple(CharacterEmoteEventMetadata(f"state-{index}", index) for index in range(6)),
-        (CharacterEmoteEventMetadata("sad", 9), CharacterEmoteEventMetadata("happy", 8)),
+        tuple(
+            CharacterEmoteEventMetadata(f"state-{index}", index) for index in range(6)
+        ),
+        (
+            CharacterEmoteEventMetadata("sad", 9),
+            CharacterEmoteEventMetadata("happy", 8),
+        ),
         (CharacterEmoteEventMetadata("sad", 13),),
     ],
 )
@@ -346,11 +351,14 @@ def test_character_emote_fallback_vocabulary_is_closed() -> None:
         )
 
     for reason in CHARACTER_EMOTE_FALLBACK_REASONS:
-        assert CharacterEmoteMetadata(
-            mood_label="neutral",
-            sanitized_utf16_length=0,
-            fallback_reason=reason,
-        ).fallback_reason == reason
+        assert (
+            CharacterEmoteMetadata(
+                mood_label="neutral",
+                sanitized_utf16_length=0,
+                fallback_reason=reason,
+            ).fallback_reason
+            == reason
+        )
 
 
 @pytest.mark.parametrize(
@@ -385,7 +393,9 @@ def test_malformed_character_emote_load_drops_only_nested_record(bad_emote) -> N
 
 
 def test_character_emote_payload_has_no_content_or_path_fields() -> None:
-    payload = json.dumps(json.loads(MessageMetadata(character_emote=_emote_metadata()).to_json()))
+    payload = json.dumps(
+        json.loads(MessageMetadata(character_emote=_emote_metadata()).to_json())
+    )
 
     for forbidden in (
         "assistant_text",

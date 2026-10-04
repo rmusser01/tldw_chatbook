@@ -12,7 +12,10 @@ from tldw_chatbook.Tools.workspace_root_pin import (
     WorkspaceRootPinError,
     pin_workspace_root,
 )
-from tldw_chatbook.Utils.filesystem_identity import DirectoryChain, capture_directory_chain
+from tldw_chatbook.Utils.filesystem_identity import (
+    DirectoryChain,
+    capture_directory_chain,
+)
 
 
 def _pre_pin_child(
@@ -66,9 +69,7 @@ def _post_pin_write_child(
             ready.set()
             if not resume.wait(5):
                 raise RuntimeError("test barrier timed out")
-            pinned.relative_path("written.txt").write_text(
-                "A_WRITE", encoding="utf-8"
-            )
+            pinned.relative_path("written.txt").write_text("A_WRITE", encoding="utf-8")
             output.put(("written", "A_WRITE"))
     except BaseException as error:
         output.put(("error", type(error).__name__))

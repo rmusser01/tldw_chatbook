@@ -206,9 +206,12 @@ def test_hard_deleting_a_conversation_cascades_the_purge_to_its_messages(
     with db.transaction() as conn:
         conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
 
-    assert db.execute_query(
-        "SELECT COUNT(*) FROM messages WHERE id = ?", (message_id,)
-    ).fetchone()[0] == 0
+    assert (
+        db.execute_query(
+            "SELECT COUNT(*) FROM messages WHERE id = ?", (message_id,)
+        ).fetchone()[0]
+        == 0
+    )
     assert _sync_log_hits(db, needle) == []
 
 
@@ -707,7 +710,11 @@ def test_latest_only_retention_is_independent_of_trigger_firing_order(
                     (dictionary_id,),
                 )
             return [
-                (row["operation"], row["version"], "secret-body" in (row["payload"] or ""))
+                (
+                    row["operation"],
+                    row["version"],
+                    "secret-body" in (row["payload"] or ""),
+                )
                 for row in database.execute_query(
                     "SELECT operation, version, payload FROM sync_log "
                     "WHERE entity = 'chat_dictionaries' ORDER BY change_id"

@@ -35,7 +35,9 @@ from tldw_chatbook.STT.routing import (
     build_builtin_registry,
     default_routing_policy,
 )
-from tldw_chatbook.STT.routing import VALIDATED_V3_LANGUAGES as CANONICAL_VALIDATED_V3_LANGUAGES
+from tldw_chatbook.STT.routing import (
+    VALIDATED_V3_LANGUAGES as CANONICAL_VALIDATED_V3_LANGUAGES,
+)
 
 
 VALIDATED_V3_LANGUAGES = frozenset({"es", "fr"})

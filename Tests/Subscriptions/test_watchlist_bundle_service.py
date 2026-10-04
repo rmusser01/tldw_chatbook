@@ -195,15 +195,17 @@ def test_create_with_sources_accepts_100_memberships_and_rejects_101(service, db
 
 def test_update_sources_is_atomic_and_rejects_missing_sources(service, db):
     watchlist = service.create("Security")
-    keep = db.add_subscription(name="Keep", type="rss", source="https://feeds.example/keep")
-    remove = db.add_subscription(name="Remove", type="rss", source="https://feeds.example/remove")
+    keep = db.add_subscription(
+        name="Keep", type="rss", source="https://feeds.example/keep"
+    )
+    remove = db.add_subscription(
+        name="Remove", type="rss", source="https://feeds.example/remove"
+    )
     service.add_source(watchlist["id"], keep)
     service.add_source(watchlist["id"], remove)
 
     with pytest.raises(KeyError, match="source"):
-        service.update_sources(
-            watchlist["id"], add_ids=[999_999], remove_ids=[remove]
-        )
+        service.update_sources(watchlist["id"], add_ids=[999_999], remove_ids=[remove])
 
     assert service.list_sources(watchlist["id"]) == [keep, remove]
 
@@ -229,9 +231,7 @@ def test_update_sources_rolls_back_add_when_later_remove_fails(service, db):
     )
 
     with pytest.raises(sqlite3.IntegrityError, match="blocked removal"):
-        service.update_sources(
-            watchlist["id"], add_ids=[add], remove_ids=[remove]
-        )
+        service.update_sources(watchlist["id"], add_ids=[add], remove_ids=[remove])
 
     assert service.list_sources(watchlist["id"]) == [remove]
 
@@ -245,7 +245,9 @@ def test_rename_also_avoids_collision(service):
 
 def test_membership_add_remove_and_idempotent_add(service, db):
     watchlist = service.create("Morning")
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
 
     service.add_source(watchlist["id"], source_id)
     service.add_source(watchlist["id"], source_id)  # idempotent
@@ -269,7 +271,9 @@ def test_source_can_belong_to_multiple_watchlists(service, db):
 
 def test_delete_removes_membership_but_not_sources(service, db):
     watchlist = service.create("Morning")
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     service.add_source(watchlist["id"], source_id)
 
     service.delete(watchlist["id"])
@@ -278,10 +282,13 @@ def test_delete_removes_membership_but_not_sources(service, db):
     assert db.conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
     # Verify cascade delete: membership row should be gone
     assert service.list_sources(watchlist["id"]) == []
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM watchlist_sources WHERE watchlist_id = ?",
-        (watchlist["id"],)
-    ).fetchone()[0] == 0
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM watchlist_sources WHERE watchlist_id = ?",
+            (watchlist["id"],),
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_list_watchlists_limit_actually_limits(service):
@@ -295,7 +302,9 @@ def test_list_watchlists_limit_actually_limits(service):
     assert len(all_of_them) == 5
 
     offset_page = service.list_watchlists(limit=2, offset=2)
-    assert [row["name"] for row in offset_page] == [row["name"] for row in all_of_them[2:4]]
+    assert [row["name"] for row in offset_page] == [
+        row["name"] for row in all_of_them[2:4]
+    ]
 
 
 def test_create_rejects_blank_name(service):
@@ -330,7 +339,9 @@ def test_rename_to_own_case_variant_has_no_suffix(service):
 def test_list_source_rows_returns_names_and_types(service, db):
     watchlist = service.create("Morning")
     a = db.add_subscription(name="ArXiv: AI", type="rss", source="https://a.example/f")
-    b = db.add_subscription(name="anthropic.com", type="url", source="https://b.example/")
+    b = db.add_subscription(
+        name="anthropic.com", type="url", source="https://b.example/"
+    )
     service.add_source(watchlist["id"], a)
     service.add_source(watchlist["id"], b)
 
@@ -350,7 +361,9 @@ def test_list_source_rows_uses_a_single_query(service, db, monkeypatch):
     for index in range(6):
         service.add_source(
             watchlist["id"],
-            db.add_subscription(name=f"S{index}", type="rss", source=f"https://s{index}.example/f"),
+            db.add_subscription(
+                name=f"S{index}", type="rss", source=f"https://s{index}.example/f"
+            ),
         )
 
     class _Counting:
@@ -404,7 +417,9 @@ def test_list_all_source_rows_is_empty_with_no_sources(service):
 
 def test_list_all_source_rows_uses_a_single_query(service, db, monkeypatch):
     for index in range(6):
-        db.add_subscription(name=f"S{index}", type="rss", source=f"https://s{index}.example/f")
+        db.add_subscription(
+            name=f"S{index}", type="rss", source=f"https://s{index}.example/f"
+        )
 
     counting = _CountingConnection(db.conn)
     monkeypatch.setattr(type(db), "conn", property(lambda self: counting))
@@ -414,8 +429,12 @@ def test_list_all_source_rows_uses_a_single_query(service, db, monkeypatch):
 
 def test_list_unassigned_source_rows_excludes_sources_in_any_watchlist(service, db):
     watchlist = service.create("Morning")
-    assigned = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
-    unassigned = db.add_subscription(name="Krebs", type="rss", source="https://b.example/f")
+    assigned = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
+    unassigned = db.add_subscription(
+        name="Krebs", type="rss", source="https://b.example/f"
+    )
     service.add_source(watchlist["id"], assigned)
 
     rows = service.list_unassigned_source_rows()
@@ -425,7 +444,9 @@ def test_list_unassigned_source_rows_excludes_sources_in_any_watchlist(service, 
 
 def test_list_unassigned_source_rows_is_empty_when_everything_is_assigned(service, db):
     watchlist = service.create("Morning")
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     service.add_source(watchlist["id"], source_id)
 
     assert service.list_unassigned_source_rows() == []
@@ -461,9 +482,7 @@ def test_list_watchlists_for_source_is_the_mirror_of_list_sources(service, db):
     source_id = db.add_subscription(
         name="ArXiv", type="rss", source="https://a.example/f"
     )
-    other_id = db.add_subscription(
-        name="HN", type="rss", source="https://b.example/f"
-    )
+    other_id = db.add_subscription(name="HN", type="rss", source="https://b.example/f")
 
     service.add_source(left["id"], source_id)
     service.add_source(right["id"], source_id)

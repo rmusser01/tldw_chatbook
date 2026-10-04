@@ -91,8 +91,7 @@ async def test_standard_width_keeps_context_and_preserves_its_preference():
             pane = console.query_one(f"#{pane_id}")
             assert pane.display, f"{pane_id} is not displayed at 120 columns"
             assert grid.region.contains_region(pane.region), (
-                f"{pane_id} escaped the workspace grid: {pane.region} "
-                f"vs {grid.region}"
+                f"{pane_id} escaped the workspace grid: {pane.region} vs {grid.region}"
             )
         assert stored["left_open"] is True
         assert "right_open" not in stored

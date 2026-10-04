@@ -77,7 +77,9 @@ def test_briefing_cadence_seconds_defaults_to_null_on_a_fresh_watchlist():
 
 
 @pytest.mark.parametrize("bad_value", [0, -1, -3600])
-def test_briefing_cadence_seconds_rejects_non_positive_values_naming_the_value(bad_value):
+def test_briefing_cadence_seconds_rejects_non_positive_values_naming_the_value(
+    bad_value,
+):
     db = SubscriptionsDB(":memory:", "test")
     watchlist_id = _make_watchlist(db)
 

@@ -447,9 +447,7 @@ async def test_server_duplicate_reconciles_selection_before_success_and_retry_re
 
     service.fail_update = False
     reloaded_store = ResearchSourceOperationStore(
-        WorkspaceDB(
-            tmp_path / "workspaces.sqlite", client_id="association-restart"
-        )
+        WorkspaceDB(tmp_path / "workspaces.sqlite", client_id="association-restart")
     )
     retried = await ResearchSourceAssociationCoordinator(
         operation_store=reloaded_store,
@@ -1051,9 +1049,9 @@ async def test_local_scope_reconciliation_is_off_loop_and_uses_registry_owner(
     await asyncio.gather(resume(), pulse())
 
     assert order == ["pulse", "resume"]
-    assert [(workspace, media, selected) for workspace, media, selected, _ in calls] == [
-        ("ws-a", "41", True)
-    ]
+    assert [
+        (workspace, media, selected) for workspace, media, selected, _ in calls
+    ] == [("ws-a", "41", True)]
     assert calls[0][3] != main_thread
 
 

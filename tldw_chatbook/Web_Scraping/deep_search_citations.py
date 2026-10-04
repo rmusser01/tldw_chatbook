@@ -196,9 +196,7 @@ def verify_citations(
     # annotated form rewrites unknown markers to "[n?]", which the numeric
     # marker regex cannot see -- those sentences ATTEMPTED citations and
     # must not be miscounted as uncited.
-    original_sentences = [
-        s for s in _SENTENCE_SPLIT_RE.split(answer_text) if s.strip()
-    ]
+    original_sentences = [s for s in _SENTENCE_SPLIT_RE.split(answer_text) if s.strip()]
     uncited_sentences = sum(
         1 for s in original_sentences if not CITATION_MARKER_RE.search(s)
     )
@@ -234,8 +232,7 @@ def verify_citations(
             if match_quote_in_sources(span, source_texts)["matched"]:
                 sentence_quotes_verified += 1
         supported = (
-            not sentence_unknown
-            and sentence_quotes_verified == sentence_quotes_checked
+            not sentence_unknown and sentence_quotes_verified == sentence_quotes_checked
         )
         claims.append(
             {

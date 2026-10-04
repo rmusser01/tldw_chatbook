@@ -18,7 +18,9 @@ class BlingFireSentenceSplitter(SentenceSplitter):
             raise RuntimeError("BlingFire not available") from e
         self._b2s = text_to_sentences  # type: ignore
 
-    def split_to_spans(self, text: str, language: str | None = None) -> list[tuple[int, int]]:
+    def split_to_spans(
+        self, text: str, language: str | None = None
+    ) -> list[tuple[int, int]]:
         if not text:
             return []
         sents_str = self._b2s(text)
@@ -30,7 +32,9 @@ class BlingFireSentenceSplitter(SentenceSplitter):
             idx = text.find(s, cursor)
             if idx == -1:
                 # If we can't locate, fail to let the caller fallback
-                raise RuntimeError("Failed to map BlingFire sentence to original text span")
+                raise RuntimeError(
+                    "Failed to map BlingFire sentence to original text span"
+                )
             start = idx
             end = idx + len(s)
             spans.append((start, end))

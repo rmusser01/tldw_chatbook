@@ -45,7 +45,9 @@ def _document(lines: int = 400) -> str:
     Copied from ``Tests/UI/test_library_media_reader_match_nav_t22209.py``
     (module-level helper, no shared fixture to import instead).
     """
-    return "\n".join(f"line {index}: ordinary reading material" for index in range(lines))
+    return "\n".join(
+        f"line {index}: ordinary reading material" for index in range(lines)
+    )
 
 
 def _wrapping_document(
@@ -91,7 +93,9 @@ async def _load_row_with_document(screen, pilot, service, index: int, content: s
 
     Copied from ``test_library_media_reader_match_nav_t22209.py``.
     """
-    canonical_id, backing_id, title = _seed_row_document(screen, service, index, content)
+    canonical_id, backing_id, title = _seed_row_document(
+        screen, service, index, content
+    )
     screen.query_one(f"#library-media-row-{index}", Button).press()
     await _wait_for_detail_call(service, backing_id)
     service.release(backing_id)
@@ -192,7 +196,9 @@ async def test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip()
         # room to spare; the precondition below fails loudly if it ever
         # stops overflowing again.
         canonical_id, backing_id, _title = _seed_row_document(
-            screen, service, 0,
+            screen,
+            service,
+            0,
             _markdown_wrapping_document(target_line, trailing_lines=200),
         )
         # task-32234 removed the media-type allowlist (the content sniff
@@ -228,7 +234,9 @@ async def test_match_scroll_moves_the_visible_scroller_after_a_mode_round_trip()
         await screen._set_library_media_content_mode("rendered")
         await pilot.pause()
         assert body.active_mode == "rendered"
-        assert body.raw_view is raw_view, "raw_view must stay mounted after leaving Raw."
+        assert body.raw_view is raw_view, (
+            "raw_view must stay mounted after leaving Raw."
+        )
 
         markdown_scroll = body.scroller
         assert markdown_scroll is not raw_view
@@ -280,7 +288,9 @@ async def test_capture_progress_resolves_the_real_scroller_and_snapshots_its_off
 
         body.scroller.scroll_to(y=37, animate=False, immediate=True)
         await pilot.pause()
-        assert body.scroller.scroll_y > 0, "Fixture scroll did not move -- test setup is broken."
+        assert body.scroller.scroll_y > 0, (
+            "Fixture scroll did not move -- test setup is broken."
+        )
 
         screen._media_state.read_scroll_by_id.clear()
         screen._capture_library_media_loaded_progress()
@@ -390,9 +400,7 @@ async def _open_rendered_body_ready(screen, pilot) -> LibraryMediaContentBody:
         ),
         message="Rendered Markdown body never laid out (max_scroll_y stayed 0).",
     )
-    return screen.query_one(
-        "#library-media-viewer-content", LibraryMediaContentBody
-    )
+    return screen.query_one("#library-media-viewer-content", LibraryMediaContentBody)
 
 
 @pytest.mark.asyncio
@@ -459,12 +467,14 @@ async def test_read_analysis_read_round_trip_restores_the_rendered_scroll_offset
         # read from the real (re-queried) scroll container.
         await _wait_for_condition(
             pilot,
-            lambda: int(
-                screen.query_one(
-                    "#library-media-viewer-content", LibraryMediaContentBody
-                ).scroller.scroll_y
-            )
-            == target,
+            lambda: (
+                int(
+                    screen.query_one(
+                        "#library-media-viewer-content", LibraryMediaContentBody
+                    ).scroller.scroll_y
+                )
+                == target
+            ),
             message=(
                 "Rendered scroll offset was not restored after the "
                 "Read -> Analysis -> Read round-trip."

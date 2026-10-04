@@ -1035,7 +1035,11 @@ class StaticHomeActiveWorkAdapter:
 
 class DestinationHarness(ConsolidatedCSSApp):
     def __init__(
-        self, app_instance, route, seen_routes=None, restored_state=None,
+        self,
+        app_instance,
+        route,
+        seen_routes=None,
+        restored_state=None,
         seen_contexts=None,
     ):
         # Workflows moved its reviewed DEFAULT_CSS into the app token bundle.
@@ -1634,7 +1638,9 @@ async def test_watchlists_collections_preserves_safe_comparison_titles_and_rejec
     assert "Model A < Model B > Baseline" in payload.metadata["watchlist_titles"]
     assert "javascript:alert(1)" not in payload.body
     assert "alert(1)" not in payload.body
-    assert not any("alert(1)" in title for title in payload.metadata["watchlist_titles"])
+    assert not any(
+        "alert(1)" in title for title in payload.metadata["watchlist_titles"]
+    )
 
 
 # The legacy thin-shell Personas tests that lived here were retired with the
@@ -3415,7 +3421,9 @@ async def test_mcp_destination_footer_shortcuts_follow_mode(request):
 
         screen.action_mcp_mode("permissions")
         await pilot.pause()
-        assert footer.shortcut_text == f"{common} | space cycle permission{globals_suffix}"
+        assert (
+            footer.shortcut_text == f"{common} | space cycle permission{globals_suffix}"
+        )
 
         screen.action_mcp_mode("audit")
         await pilot.pause()
@@ -4386,9 +4394,7 @@ async def test_workspace_import_sources_mounts_the_ingest_canvas_in_place():
 
         from types import SimpleNamespace
 
-        await screen.open_workspace_import_sources(
-            SimpleNamespace(stop=lambda: None)
-        )
+        await screen.open_workspace_import_sources(SimpleNamespace(stop=lambda: None))
         await _wait_for_selector(screen, pilot, "#library-ingest-canvas")
 
         assert getattr(screen, "_library_selected_row_id") == "ingest-import-media"

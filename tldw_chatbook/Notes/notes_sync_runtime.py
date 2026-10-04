@@ -688,9 +688,7 @@ class _ObservationReuse:
         return "_ObservationReuse(<private>)"
 
 
-def _file_snapshot_current(
-    snapshot: NotesSyncFileSnapshot, identity: object
-) -> bool:
+def _file_snapshot_current(snapshot: NotesSyncFileSnapshot, identity: object) -> bool:
     """Whether ``snapshot``'s open-time stat equals the current discovery stat."""
 
     if type(snapshot) is not NotesSyncFileSnapshot:
@@ -1464,8 +1462,11 @@ class _ProductionRuntimeAdapter:
         return tuple(labels)
 
     async def build_receipt_labels(
-        self, root: NotesSyncRootRecord, binding_ids: tuple[str, ...],
-        *, offload: Callable[..., Awaitable[Iterable[NotesSyncBindingRecord]]],
+        self,
+        root: NotesSyncRootRecord,
+        binding_ids: tuple[str, ...],
+        *,
+        offload: Callable[..., Awaitable[Iterable[NotesSyncBindingRecord]]],
     ) -> tuple[RuntimeReceiptLabel, ...]:
         """Label bindings for completed writes, from the store and the notes.
 
@@ -1478,9 +1479,7 @@ class _ProductionRuntimeAdapter:
 
         bindings = {
             binding.binding_id: binding
-            for binding in await offload(
-                self._store.list_bindings, root.root_id
-            )
+            for binding in await offload(self._store.list_bindings, root.root_id)
         }
         notes = self._notes(root)
         labels: list[RuntimeReceiptLabel] = []
@@ -2018,7 +2017,9 @@ class NotesSyncRuntimeOwner:
                 return
         try:
             await self._maintenance_offload(self._store.initialize)
-            marker = await self._maintenance_offload(self._store.get_setting, "cutover_marker")
+            marker = await self._maintenance_offload(
+                self._store.get_setting, "cutover_marker"
+            )
         except Exception as error:
             _log_bounded_failure("store initialization", error)
             self._status = "failed"
@@ -2465,7 +2466,9 @@ class NotesSyncRuntimeOwner:
                 raise RuntimeError("sync_root_not_active")
             if not await self._ensure_lease(root):
                 raise self._refuse_lease(root_id)
-            incomplete = await self._maintenance_offload(self._store.list_incomplete_operations)
+            incomplete = await self._maintenance_offload(
+                self._store.list_incomplete_operations
+            )
             root_operations = tuple(
                 operation for operation in incomplete if operation.root_id == root_id
             )
@@ -3418,7 +3421,9 @@ class NotesSyncRuntimeOwner:
         task = self._admit_task(root_id)
         try:
             root = await self._maintenance_offload(self._store.get_root, root_id)
-            operation = await self._maintenance_offload(self._store.get_operation, operation_id)
+            operation = await self._maintenance_offload(
+                self._store.get_operation, operation_id
+            )
             if operation.root_id != root_id:
                 raise ValueError("operation_root_mismatch")
             if root.state is not NotesSyncRootState.ACTIVE:
@@ -3776,7 +3781,9 @@ class NotesSyncRuntimeOwner:
         persist: bool = True,
     ) -> None:
         if persist:
-            await self._maintenance_offload(self._store.update_root_status, root_id, status)
+            await self._maintenance_offload(
+                self._store.update_root_status, root_id, status
+            )
         self._root_status[root_id] = NotesSyncRootRuntimeSnapshot(
             root_id, status, next_action, action_id
         )
@@ -3823,7 +3830,9 @@ class NotesSyncRuntimeOwner:
         # Cancelling an awaiting command does not end its shielded native read.
         # Retire those workers before closing adapter resources or store caches.
         while self._maintenance_pending:
-            await asyncio.gather(*tuple(self._maintenance_pending), return_exceptions=True)
+            await asyncio.gather(
+                *tuple(self._maintenance_pending), return_exceptions=True
+            )
         close_adapter = getattr(self._adapter, "close", None)
         if callable(close_adapter):
             try:
@@ -3884,9 +3893,9 @@ def _receipt_ledger_reader(
             NoteImportReceiptRepository,
         )
 
-        return NoteImportReceiptRepository(
-            ledger_path
-        ).prior_imported_notes_read_only(sources)
+        return NoteImportReceiptRepository(ledger_path).prior_imported_notes_read_only(
+            sources
+        )
 
     return _read
 
@@ -3946,9 +3955,7 @@ def build_notes_sync_runtime_owner(
     if watcher_interval_seconds is not None:
         watcher_intervals["interval_seconds"] = float(watcher_interval_seconds)
     if watcher_max_interval_seconds is not None:
-        watcher_intervals["max_interval_seconds"] = float(
-            watcher_max_interval_seconds
-        )
+        watcher_intervals["max_interval_seconds"] = float(watcher_max_interval_seconds)
     selected_watcher_factory = watcher_factory or (
         lambda schedule: PollingNotesSyncWatcher(
             lambda: owner_holder["owner"]._changed_root_ids(),

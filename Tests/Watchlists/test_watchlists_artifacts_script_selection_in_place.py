@@ -85,9 +85,7 @@ def _script_rows(app, briefing_id: int) -> list[dict]:
     """Every seeded script, in the same newest-first order the pane itself
     reads them in (`list_briefing_scripts`) -- the authoritative row order
     for a test to key off, rather than assuming insertion order."""
-    return app.watchlist_bundle_service.db.list_briefing_scripts(
-        briefing_id, limit=200
-    )
+    return app.watchlist_bundle_service.db.list_briefing_scripts(briefing_id, limit=200)
 
 
 async def _select_briefing_and_settle(pane, pilot, host, briefing_id) -> None:
@@ -286,8 +284,7 @@ async def test_the_script_detail_updates_while_the_scripts_table_content_stands_
         detail = pane.query_one("#artifacts-script-detail", Static)
         plain, _ = _render_to_console(detail.renderable, width=160)
         assert rows[1]["preset_name"] in plain, (
-            "the script detail must render the newly selected script's own "
-            "preset name"
+            "the script detail must render the newly selected script's own preset name"
         )
 
 

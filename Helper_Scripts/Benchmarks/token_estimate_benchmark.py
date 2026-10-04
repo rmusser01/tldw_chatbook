@@ -121,9 +121,7 @@ def _bench_send_path() -> None:
             finally:
                 token_counter._chars_estimate = real
         label = f"{turns} turns / {kilobytes:.0f} KB"
-        print(
-            f"  {label:<24}{timings[0] * 1000:>9.1f} ms{timings[1] * 1000:>9.1f} ms"
-        )
+        print(f"  {label:<24}{timings[0] * 1000:>9.1f} ms{timings[1] * 1000:>9.1f} ms")
 
 
 def main() -> None:

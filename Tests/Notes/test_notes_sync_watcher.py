@@ -288,9 +288,10 @@ def test_watcher_interval_config_defaults_validation_and_overrides() -> None:
         1.0,
         10.0,
     )
-    assert config_module.get_notes_sync_watcher_intervals(
-        {"notes": "invalid"}
-    ) == (1.0, 10.0)
+    assert config_module.get_notes_sync_watcher_intervals({"notes": "invalid"}) == (
+        1.0,
+        10.0,
+    )
     assert config_module.get_notes_sync_watcher_intervals(
         {
             "notes": {

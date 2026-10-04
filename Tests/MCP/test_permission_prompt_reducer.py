@@ -73,9 +73,9 @@ def test_recommends_repeated_agent_approved_ask_gated_tool():
 
     report = build_permission_prompt_report(records, [tool], states)
 
-    assert [(r.server_key, r.tool_name, r.approved_count) for r in report.recommendations] == [
-        ("local:docs", "search", 2)
-    ]
+    assert [
+        (r.server_key, r.tool_name, r.approved_count) for r in report.recommendations
+    ] == [("local:docs", "search", 2)]
     assert report.recommendations[0].last_seen == "2026-08-01T20:03:00+00:00"
     assert report.total_records == 2
 

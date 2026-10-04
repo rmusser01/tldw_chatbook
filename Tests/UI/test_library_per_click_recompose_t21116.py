@@ -38,6 +38,7 @@ from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
     _active_library_screen,
+    _disclose_media_viewer_more_actions,
     _seed_conversations,
     _two_conversations,
     _two_media_items,
@@ -51,6 +52,14 @@ from tldw_chatbook.Library.library_shell_state import (
 from tldw_chatbook.UI.Navigation.base_app_screen import BaseAppScreen
 from tldw_chatbook.Widgets.Library import LibraryMediaCanvas
 from tldw_chatbook.Widgets.Library.library_media_viewer import LibraryMediaViewer
+
+# task-31249: every test in this module mounts the real Library app through
+# LibraryHarness, whose service/config reads go through the config-participant
+# admission. Under the per-test sandbox redirect that admission fails closed
+# with ``RecoveryRequired("raw_source_selection_changed")`` (the TASK-32628
+# class; whole-module enrollment follows the TASK-32873 precedent -- the
+# suite is all real-app mounts, not a mostly-sandbox suite with a few).
+pytestmark = pytest.mark.bootstrap_profile
 
 
 async def _wait_for_selector_gone(screen, pilot, selector, *, attempts=80):
@@ -76,9 +85,7 @@ async def _boot_media_library(host, pilot):
 
 def _media_app_host():
     app = _build_test_app()
-    _seed_conversations(
-        app, _two_conversations(), notes=None, media=_two_media_items()
-    )
+    _seed_conversations(app, _two_conversations(), notes=None, media=_two_media_items())
     return LibraryHarness(app)
 
 
@@ -107,7 +114,7 @@ async def test_media_row_open_and_detail_arrival_are_canvas_scoped() -> None:
 
 @pytest.mark.asyncio
 async def test_media_viewer_back_is_canvas_scoped_and_restores_list_focus() -> None:
-    """"‹ Back to list" swaps only the canvas child and re-arms row focus."""
+    """ "‹ Back to list" swaps only the canvas child and re-arms row focus."""
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
@@ -133,6 +140,7 @@ async def test_media_viewer_back_is_canvas_scoped_and_restores_list_focus() -> N
         assert focused_id.startswith("library-media-row"), focused_id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_media_viewer_substate_escape_is_viewer_scoped() -> None:
     """Escape out of metadata-edit rebuilds only the mounted viewer."""
@@ -140,7 +148,9 @@ async def test_media_viewer_substate_escape_is_viewer_scoped() -> None:
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-edit")
+        # task-31249: "Edit metadata" composes only inside the viewer's
+        # collapsed "More" disclosure (d3c4b44a9b), so disclose it first.
+        await _disclose_media_viewer_more_actions(screen, pilot)
         # Entering edit mode is out of this conversion's scope and may
         # rebuild the screen -- do it OUTSIDE the spy window.
         screen.query_one("#library-media-edit", Button).press()
@@ -163,9 +173,28 @@ async def test_media_viewer_substate_escape_is_viewer_scoped() -> None:
         assert screen._media_state.view == "viewer"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_open_item_by_id_media_is_canvas_scoped() -> None:
-    """The Search/RAG-style direct media open never rebuilds the screen."""
+    """A cross-canvas direct media open uses only the sanctioned seams.
+
+    task-21116 pinned "never rebuilds the screen" for this open when every
+    canvas lived under one ordinary canvas host, so the open could be a
+    canvas-child swap. Since the adaptive reader shells (d99fb4a9ca) the
+    content shells live IN the shell grid: a conversations -> media move
+    swaps the shell-grid child and takes the same structural
+    ``Screen.recompose()`` a rail-row press takes (measured at this base:
+    a plain rail conversations -> media press also rebuilds the rail
+    widget). What is still pinned here (task-31249):
+
+    - zero ``refresh(recompose=True)`` calls. The retired whole-screen
+      recompose STORM -- five racing refreshes at the 2026-09 filing
+      (pre-mount browse/facet requests plus the media detail worker
+      racing its own mount) -- must not come back;
+    - the open lands on the media viewer with the rail selection moved
+      and the rail mounted, without the mount race (the DuplicateIds
+      shape canvas_sync.py records).
+    """
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = _active_library_screen(host)
@@ -174,17 +203,19 @@ async def test_open_item_by_id_media_is_canvas_scoped() -> None:
             screen.query_one("#library-rail-explore-all", Button).press()
         await _wait_for_selector(screen, pilot, "#library-row-browse-notes")
         # Start from a NON-media canvas so the open crosses canvas kinds
-        # (the RAG "Open" shape): rail selection + canvas child must both
-        # move without a whole-screen rebuild.
+        # (the RAG "Open" shape).
         screen.query_one("#library-row-browse-conversations", Button).press()
         await _wait_for_selector(screen, pilot, "#library-conversations-canvas")
-        rail_before = screen.query_one("#library-rail")
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
             await screen._open_library_item_by_id("media", "media-1")
             await _wait_for_selector(screen, pilot, "#library-media-viewer-content")
+            # The storm was worker-driven, not mount-driven: settle the
+            # detail + browse/facet workers inside the spy window too.
+            for _ in range(20):
+                await pilot.pause(0.05)
         assert calls == []
-        assert screen.query_one("#library-rail") is rail_before
+        screen.query_one("#library-rail")  # raises NoMatches if the rail is gone
         assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_MEDIA
         assert screen._media_state.view == "viewer"
 
@@ -230,19 +261,39 @@ async def test_open_item_by_id_notes_keeps_route_owned_source_strip() -> None:
         assert screen._notes_state.view == "editor"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_export_open_from_media_is_canvas_scoped() -> None:
-    """The media section "Export…" action swaps to the export canvas only."""
+    """The media section "Export…" action opens Export without the retired seam.
+
+    task-21116 pinned a canvas-child swap with rail widget identity. Since
+    the adaptive reader shells (d99fb4a9ca) the media list lives inside an
+    adaptive shell whose library pane owns the rail, and the export canvas
+    is an ordinary route: the move crosses shells and takes the projection's
+    structural ``Screen.recompose()``, which rebuilds the rail -- the same
+    census-era "rail was recomposed" symptom, now by the sanctioned seam.
+    What is still pinned here (task-31249):
+
+    - zero ``refresh(recompose=True)`` calls (no retired whole-screen
+      recompose storm);
+    - the press DEADLOCKS no longer: the projection used to be awaited
+      inline from this canvas's own press handler, and the structural
+      recompose tearing down that very canvas hung the press forever
+      (fixed in ``_open_library_export_canvas``);
+    - Export opens pre-scoped from the media section with the rail row
+      selection moved.
+    """
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
-        rail_before = screen.query_one("#library-rail")
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
             screen.query_one("#library-media-export", Button).press()
             await _wait_for_selector(screen, pilot, "#library-export-canvas")
+            for _ in range(10):
+                await pilot.pause(0.05)
         assert calls == []
-        assert screen.query_one("#library-rail") is rail_before
+        screen.query_one("#library-rail")  # raises NoMatches if the rail is gone
         assert screen._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
 
 
@@ -280,9 +331,7 @@ async def test_prompts_import_open_and_cancel_are_canvas_scoped(tmp_path) -> Non
             await pilot.pause()
             assert screen.focused is path_input
             screen.query_one("#library-prompts-import-cancel", Button).press()
-            await _wait_for_selector_gone(
-                screen, pilot, "#library-prompts-import-path"
-            )
+            await _wait_for_selector_gone(screen, pilot, "#library-prompts-import-path")
             await pilot.pause()
         assert calls == []
         assert screen.query_one("#library-prompts-canvas") is canvas_before
@@ -322,9 +371,7 @@ async def test_skills_import_open_and_cancel_are_canvas_scoped(tmp_path) -> None
             await pilot.pause()
             assert screen.focused is path_input
             screen.query_one("#library-skills-import-cancel", Button).press()
-            await _wait_for_selector_gone(
-                screen, pilot, "#library-skills-import-path"
-            )
+            await _wait_for_selector_gone(screen, pilot, "#library-skills-import-path")
             await pilot.pause()
         assert calls == []
         assert screen.query_one("#library-skills-canvas") is canvas_before

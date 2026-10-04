@@ -223,8 +223,8 @@ def _instrument_first_chat_presentation(
 
     owner.consume_pending_console_first_chat_intent = consume
     owner._first_chat_presentation_snapshot_fn = presentation_snapshot
-    owner._apply_first_chat_control_selection_fn = (
-        lambda _provider, _model: presentation_events.append("control-selection")
+    owner._apply_first_chat_control_selection_fn = lambda _provider, _model: (
+        presentation_events.append("control-selection")
     )
     owner._sync_chat_core_state_fn = lambda: presentation_events.append("core-sync")
     owner._sync_settings_summary_fn = lambda: presentation_events.append(
@@ -238,7 +238,9 @@ def _instrument_first_chat_presentation(
 
 
 @pytest.mark.asyncio
-async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors() -> None:
+async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors() -> (
+    None
+):
     app = _build_test_app()
     _configure_ready_console(app)
     events: list[str] = []
@@ -449,9 +451,11 @@ async def test_mounted_missing_resume_falls_back_to_registry_active_workspace() 
     async with host.run_test(size=(160, 48)) as pilot:
         await _wait_until(
             pilot,
-            lambda: bool(load_attempts)
-            and host.chat_screen is not None
-            and not host.chat_screen._resume_navigation_startup_in_progress,
+            lambda: (
+                bool(load_attempts)
+                and host.chat_screen is not None
+                and not host.chat_screen._resume_navigation_startup_in_progress
+            ),
         )
 
         assert load_attempts == ["missing-resume"]
@@ -519,14 +523,11 @@ async def test_mounted_resume_settles_first_chat_once_without_intermediate_prese
         screen._restore_console_workbench_focus = lambda: lifecycle_events.append(
             "intermediate-focus"
         )
-        screen._consume_pending_console_identity_refresh = (
-            lambda: lifecycle_events.append("intermediate-identity-refresh") or False
+        screen._consume_pending_console_identity_refresh = lambda: (
+            lifecycle_events.append("intermediate-identity-refresh") or False
         )
-        screen._dispatch_active_console_roleplay_refresh = (
-            lambda **_kwargs: lifecycle_events.append(
-                "intermediate-roleplay-refresh"
-            )
-            or False
+        screen._dispatch_active_console_roleplay_refresh = lambda **_kwargs: (
+            lifecycle_events.append("intermediate-roleplay-refresh") or False
         )
 
     host = _MountedNavigationConsoleHarness(
@@ -616,14 +617,11 @@ async def test_mounted_resume_releases_transient_first_chat_without_rollback_foc
         screen._restore_console_workbench_focus = lambda: lifecycle_events.append(
             "intermediate-focus"
         )
-        screen._consume_pending_console_identity_refresh = (
-            lambda: lifecycle_events.append("intermediate-identity-refresh") or False
+        screen._consume_pending_console_identity_refresh = lambda: (
+            lifecycle_events.append("intermediate-identity-refresh") or False
         )
-        screen._dispatch_active_console_roleplay_refresh = (
-            lambda **_kwargs: lifecycle_events.append(
-                "intermediate-roleplay-refresh"
-            )
-            or False
+        screen._dispatch_active_console_roleplay_refresh = lambda **_kwargs: (
+            lifecycle_events.append("intermediate-roleplay-refresh") or False
         )
         screen.run_worker = recording_run_worker
 
@@ -834,8 +832,7 @@ async def test_resume_navigation_propagates_logged_chat_handoff_acquisition_fail
     assert screen._resume_navigation_startup_in_progress is False
     assert warnings == [
         (
-            "Chat handoff acquisition failed "
-            "(channel={}, exception_category={})",
+            "Chat handoff acquisition failed (channel={}, exception_category={})",
             ("chat", "RuntimeError"),
         )
     ]
@@ -953,9 +950,7 @@ async def test_mounted_no_resume_keeps_ordinary_startup_sync_timers_and_focus() 
     first_chat_observations: list[tuple[bool, bool]] = []
 
     def configure(screen: ChatScreen) -> None:
-        original_first_chat = (
-            screen._session.consume_pending_console_first_chat_intent
-        )
+        original_first_chat = screen._session.consume_pending_console_first_chat_intent
 
         def first_chat(*, defer_presentation: bool = False) -> bool:
             first_chat_observations.append(
