@@ -145,3 +145,17 @@ below, per the task-level exception the brief allows.
 **Validation.** New tests 26/26 green. The six touched existing suites: 156 passed on this tree and 156 passed on a clean `ef831d9f38` baseline worktree; the single failure (`test_chachanotes_citation_provenance_migration.py::test_schema_has_every_unique_and_partial_index`) is identical on the baseline — pre-existing on dev, out of scope. All `Tests/Packaging/test_installed_distribution.py` parametrizations ERROR identically on both trees at the `built_distributions` fixture (`python -m build` backend unavailable in local venvs — environmental); the only count delta, `test_release_checker_rejects_missing_database_migration` 82 -> 110, is the intended parametrization growth from the conversion (file-backed migrations 41 -> 55, x2 archive formats), not breakage.
 
 ADR required: yes — ADR-208 (storage/migrations source-of-truth decision per AGENTS.md).
+
+## Implementation Notes (landing rebase, 2026-10-03)
+
+Rebased onto `dev` after #2975/#2993; the text above is left as written, so read every "v73 -> v74" there as **v75 -> v76**. `dev` took v74 (auxiliary failure reason) and v75 (hook continuation receipts) while this branch was unmerged, so the `notes_au` guard ships as `chachanotes_v75_to_v76_notes_fts_undelete_guard.sql` with `_migrate_from_v75_to_v76` and `_CURRENT_SCHEMA_VERSION = 76`.
+
+Found while rebasing, all fixed here:
+
+- `test_every_shipped_migration_script_splits_cleanly` required more than 20 embedded scripts and this task leaves 14. It was red on the original branch. It now also checks every `chachanotes_*.sql` file, since those are what a file-backed step executes through the same splitter.
+- `test_db_initialization_repairs_legacy_notes_fts_update_trigger` tampered a current-version database and expected the every-open repair this task removes. Removed as superseded: `test_notes_fts_undelete_guard_migration.py` pins the real path, a genuine v75 database carrying the legacy body.
+- Three `index_plan_pin_census.tsv` rows (`idx_notes_file_path_on_disk`, `idx_notes_is_externally_synced`, `idx_notes_sync_root_folder`) named indexes only the never-executed `add_sync_fields_to_notes.sql` declared. A fresh database has `idx_notes_file_path`, `idx_notes_is_synced` and `idx_notes_sync_root` instead, so the rows are deleted.
+- `expected_table_columns.py` gains `dev`'s v74 column and v75 table; the two tests that pin the current version move from 75 to 76.
+
+Two other open branches also claim ChaChaNotes v76 at the time of writing. This step does not depend on theirs; whichever lands second renumbers.
+

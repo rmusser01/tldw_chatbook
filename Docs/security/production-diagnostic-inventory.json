@@ -645,8 +645,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 19,
-      "diagnostic_digest": "38ba6bf89fcfe4cd6f35",
+      "call_count": 15,
+      "diagnostic_digest": "02562aa9d2f04283456f",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Chunking/chunking_interop_library.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -827,22 +827,22 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 366,
-      "diagnostic_digest": "4e8302cac06f77421463",
+      "call_count": 364,
+      "diagnostic_digest": "37183c276a23d38bebcd",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/ChaChaNotes_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 345,
-      "diagnostic_digest": "55c2be1780d77269d9cd",
+      "call_count": 342,
+      "diagnostic_digest": "b1056b42a2829e50dc59",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Client_Media_DB_v2.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 16,
-      "diagnostic_digest": "a1f9e93d62d4e30e8724",
+      "call_count": 17,
+      "diagnostic_digest": "94982be9a67c49554c8d",
       "owner": "TASK-494",
       "path": "tldw_chatbook/DB/Evals_DB.py",
       "reason": "remaining Chatbook production diagnostic owner"
@@ -5858,24 +5858,6 @@
             "db_instance.db_path_str"
           ],
           "scope": "get_unprocessed_media",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "c332cc553e2c062b",
-          "method": "debug",
-          "path_expressions": [
-            "db_instance.db_path_str"
-          ],
-          "scope": "mark_media_as_processed",
-          "status": "legacy_unreviewed"
-        },
-        {
-          "call_digest": "20b6c1da9cad08e4",
-          "method": "error",
-          "path_expressions": [
-            "db_instance.db_path_str"
-          ],
-          "scope": "mark_media_as_processed",
           "status": "legacy_unreviewed"
         }
       ],

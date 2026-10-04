@@ -11,7 +11,6 @@ Handles the import and validation of chatbooks into the application.
 from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call, own_database
 
 import codecs
-from datetime import datetime, timezone
 import hashlib
 import heapq
 import json
@@ -1451,7 +1450,7 @@ class ChatbookImporter:
                                             int(msg["is_selected_variant"]),
                                             msg["total_variants"],
                                             int(msg["deleted"]),
-                                            datetime.now(timezone.utc).isoformat(),
+                                            utc_now_iso(),
                                             db.client_id,
                                             new_message_id,
                                         ),
@@ -1470,7 +1469,7 @@ class ChatbookImporter:
                                 "WHERE id = ?",
                                 (
                                     message_id_map.get(active_leaf),
-                                    datetime.now(timezone.utc).isoformat(),
+                                    utc_now_iso(),
                                     db.client_id,
                                     new_conv_id,
                                 ),

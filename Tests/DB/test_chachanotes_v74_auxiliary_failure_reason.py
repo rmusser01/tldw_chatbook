@@ -59,7 +59,7 @@ def test_fresh_database_has_the_failure_reason_column(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "fresh.db", client_id="fresh")
     try:
         connection = db.get_connection()
-        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 75
+        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 76
         assert "failure_reason" in _columns(connection)
     finally:
         db.close_connection()

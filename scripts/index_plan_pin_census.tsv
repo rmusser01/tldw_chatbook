@@ -209,14 +209,11 @@ idx_notes_organization_heads_note_subject	plan-pinned	Tests/DB/test_chachanotes_
 idx_notes_organization_intents_note_subject_latest	plan-pinned	Tests/DB/test_chachanotes_note_organization_receipts_migration.py
 idx_notes_organization_intents_pending	plan-pinned	Tests/DB/test_chachanotes_notes_organization_migration.py
 idx_notes_file_path	pre-convention	plan never captured without stats
-idx_notes_file_path_on_disk	pre-convention	plan never captured without stats
 idx_notes_file_path_unique	pre-convention	plan never captured without stats
-idx_notes_is_externally_synced	pre-convention	plan never captured without stats
 idx_notes_is_synced	pre-convention	plan never captured without stats
 idx_notes_last_modified	pre-convention	plan never captured without stats
 idx_notes_sync_excluded	pre-convention	plan never captured without stats
 idx_notes_sync_root	pre-convention	plan never captured without stats
-idx_notes_sync_root_folder	pre-convention	plan never captured without stats
 idx_persona_visual_assets_version_key	pre-convention	plan never captured without stats
 idx_persona_visual_bindings_persona_active	pre-convention	plan never captured without stats
 idx_probe_annotations_group	pre-convention	plan never captured without stats
