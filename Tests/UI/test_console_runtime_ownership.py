@@ -35,7 +35,10 @@ import pytest
 from textual.events import Key
 
 from Tests.app_module_patches import set_app_global
-from Tests.UI.app_factory import _build_test_app, persist_seeded_config
+from Tests.UI.app_factory import (
+    _build_test_app as _build_startup_test_app,
+    persist_seeded_config,
+)
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _wait_for_selector
@@ -1988,6 +1991,109 @@ async def test_active_runtime_custody_does_not_retain_the_detached_chat_screen()
     assert result.accepted is True
 
 
+def _build_manually_mounted_console_app(**kwargs):
+    """Build the app for a test that supplies its own initial content screen."""
+    # This fixture supplies the content screen itself. Claim startup before
+    # run_test schedules the deferred initial-screen task, not after push_screen.
+    app = _build_startup_test_app(**kwargs)
+    app._initial_screen_pushed = True
+    return app
+
+
+@pytest.mark.asyncio
+async def test_manual_console_fixture_owns_startup_before_any_mount(tmp_path):
+    """A deferred startup callback cannot add a competing retained Console."""
+    app = _build_manually_mounted_console_app()
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    async with app.run_test(size=(160, 48)) as pilot:
+        # Force startup to settle before the harness supplies its screen.
+        # Without early ownership this installs the competing retained Console.
+        await app._initial_screen_setup_task
+        chat = ChatScreen(app)
+        await app.push_screen(chat)
+        app.current_tab = "chat"
+        await _wait_for_selector(chat, pilot, "#console-native-composer")
+        generation = chat._console_runtime_attachment_generation
+        # Pin a late startup invocation explicitly, rather than relying on speed.
+        await app._push_initial_screen()
+        await pilot.pause()
+        assert app.screen_stack == [app.screen_stack[0], chat]
+        assert app.screen is chat
+        assert app.console_runtime.view is chat
+        assert app.console_runtime._attached_generation == generation
+        assert "chat" not in getattr(app, "_reusable_screen_instances", {})
+
+
+@pytest.mark.asyncio
+async def test_public_startup_console_keeps_its_claim_across_navigation(tmp_path):
+    """The shipping single retained Console reconciles and resumes delivery."""
+    app = _build_startup_test_app(
+        config_overrides={"splash_screen": {"enabled": False}}
+    )
+    persist_seeded_config(app, "splash_screen")
+    _attach_real_dbs(app, tmp_path)
+    _configure_native_ready_console(app)
+    async with app.run_test(size=(160, 48)) as pilot:
+        await app._initial_screen_setup_task
+        chat = app.screen
+        assert isinstance(chat, ChatScreen)
+        await _wait_for_selector(chat, pilot, "#console-native-composer")
+        for _ in range(50):
+            if chat._console_attach_reconciled:
+                break
+            await pilot.pause(0.1)
+        assert chat._console_attach_reconciled
+        assert app.screen_stack == [app.screen_stack[0], chat]
+        runtime = app.console_runtime
+        controller = chat._ensure_console_chat_controller()
+        store, bridge = runtime.chat_store, runtime.agent_bridge
+        generation = chat._console_runtime_attachment_generation
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        await pilot.pause()
+        assert chat not in app.screen_stack
+        assert chat.is_mounted  # Installed startup screens suspend under current dev.
+        await app.handle_screen_navigation(NavigateToScreen("chat"))
+        await _wait_for_selector(chat, pilot, "#console-native-composer")
+        for _ in range(50):
+            if chat._console_attach_reconciled:
+                break
+            await pilot.pause(0.1)
+        assert app.screen is chat
+        assert chat._console_attach_reconciled
+        assert app.console_runtime is runtime
+        assert (runtime.chat_controller, runtime.chat_store, runtime.agent_bridge) == (
+            controller,
+            store,
+            bridge,
+        )
+        assert runtime.view is chat
+        assert runtime._attached_generation == generation
+        assert controller.notify_run_outcome.__self__ is chat
+        assert chat._console_transcript_sync_timer is None
+
+        from tldw_chatbook.Chat.console_fleet_wake import _WakeDelivery
+
+        session_id = store.active_session_id
+        conversation_id = controller._agent_conversation_id(session_id)
+        await app.handle_screen_navigation(NavigateToScreen("library"))
+        await pilot.pause()
+        controller.fleet_wake._active[conversation_id] = _WakeDelivery(session_id)
+        try:
+            await app.handle_screen_navigation(NavigateToScreen("chat"))
+            await _wait_for_selector(chat, pilot, "#console-native-composer")
+            for _ in range(50):
+                if chat._console_attach_reconciled:
+                    break
+                await pilot.pause(0.1)
+            assert app.screen is chat and chat._console_attach_reconciled
+            assert runtime.view is chat
+            assert runtime._attached_generation == generation
+            assert chat._console_transcript_sync_timer is not None
+        finally:
+            controller.fleet_wake._active.pop(conversation_id, None)
+
+
 @pytest.mark.asyncio
 async def test_second_console_visit_reuses_the_runtime(tmp_path):
     """The runtime SURVIVES leaving Console -- this landing's central change.
@@ -1996,7 +2102,7 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
     pinned the opposite (dispose-at-unmount) and said in its own docstring
     that it must be rewritten here.
     """
-    app = _build_test_app()
+    app = _build_manually_mounted_console_app()
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
     terminal_manager = app.terminal_session_manager
@@ -2004,7 +2110,6 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
         await _wait_for_selector(chat, pilot, "#console-native-composer")
@@ -2099,14 +2204,13 @@ async def test_second_console_visit_reuses_the_runtime(tmp_path):
 
 @pytest.mark.asyncio
 async def test_post_unmount_raw_refusal_restores_on_second_console_visit(tmp_path):
-    app = _build_test_app()
+    app = _build_manually_mounted_console_app()
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
 
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
         await _wait_for_selector(chat, pilot, "#console-native-composer")
@@ -2164,14 +2268,13 @@ async def test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen
     Without `detach_view` the slot is still bound to that screen and it
     does.
     """
-    app = _build_test_app()
+    app = _build_manually_mounted_console_app()
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
 
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
         await _wait_for_selector(chat, pilot, "#console-native-composer")
@@ -2226,14 +2329,13 @@ async def test_a_superseded_screen_never_detaches_the_successors_runtime(tmp_pat
     detaches SECOND. The successor's claim must win: its hooks stay bound
     and its visit Event stays unset.
     """
-    app = _build_test_app()
+    app = _build_manually_mounted_console_app()
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
 
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
         await _wait_for_selector(chat, pilot, "#console-native-composer")
@@ -2280,14 +2382,13 @@ async def test_opening_console_during_a_headless_delivery_arms_the_poll(tmp_path
     (return with nothing delivering -> no poll) so the assertion cannot
     pass for the wrong reason.
     """
-    app = _build_test_app()
+    app = _build_manually_mounted_console_app()
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
 
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await pilot.pause()
         await _wait_for_selector(chat, pilot, "#console-native-composer")
@@ -2381,7 +2482,7 @@ def test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle(
     set_app_global(monkeypatch, "get_cli_setting", no_splash)
     # Shipping CLI construction happens before Textual creates its loop.
     # Home keeps Canvas unwarmed; Console mount itself creates its controller.
-    app = _build_test_app(configured_default="home")
+    app = _build_startup_test_app(configured_default="home")
     runtime = app.console_runtime
     assert isinstance(runtime, ConsoleRuntime)
     assert runtime._canvas_policy_watch_task is None
@@ -2433,7 +2534,9 @@ def test_raw_cli_runtime_is_app_owned_unarmed_and_reads_config_replacements():
     next_owner = initializer.index("self.library_new_profile_admission")
     assert config_load < raw_runtime < next_owner, initializer
 
-    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
+    app = _build_startup_test_app(
+        config_overrides={"console": {"raw_cli_permitted": True}}
+    )
     runtime = app.raw_cli_runtime
     assert runtime.permitted is True
     assert runtime.armed is False
@@ -2459,7 +2562,9 @@ def test_terminal_manager_is_app_owned_unarmed_and_reads_config_replacements():
     console_runtime = initializer.index("self.console_runtime")
     assert config_load < terminal_manager < console_runtime, initializer
 
-    app = _build_test_app(config_overrides={"console": {"raw_cli_permitted": True}})
+    app = _build_startup_test_app(
+        config_overrides={"console": {"raw_cli_permitted": True}}
+    )
     assert app._terminal_session_manager is None
 
     from tldw_chatbook.Terminal.session_manager import TerminalSessionManager
@@ -2940,7 +3045,9 @@ async def test_clearing_agent_handoff_in_mounted_composer_persists_before_exit(
     import json
     from Tests.Chat.test_console_chat_start import _create_handoff, _restore_handoff
 
-    app = _build_test_app(config_overrides={"splash_screen": {"enabled": False}})
+    app = _build_manually_mounted_console_app(
+        config_overrides={"splash_screen": {"enabled": False}}
+    )
     persist_seeded_config(app, "splash_screen")
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
@@ -2950,7 +3057,6 @@ async def test_clearing_agent_handoff_in_mounted_composer_persists_before_exit(
     async with app.run_test(size=(160, 48)) as pilot:
         chat = ChatScreen(app)
         await app.push_screen(chat)
-        app._initial_screen_pushed = True
         app.current_tab = "chat"
         await _wait_for_selector(chat, pilot, "#console-native-composer")
         for _ in range(50):
@@ -2996,7 +3102,9 @@ async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(tmp_
         return original_reply(*args, **kwargs)
 
     controller._agent_bridge.run_reply = paused_reply
-    app = _build_test_app(config_overrides={"splash_screen": {"enabled": False}})
+    app = _build_manually_mounted_console_app(
+        config_overrides={"splash_screen": {"enabled": False}}
+    )
     persist_seeded_config(app, "splash_screen")
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
@@ -3007,7 +3115,6 @@ async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(tmp_
         async with app.run_test(size=(160, 48)) as pilot:
             chat = ChatScreen(app)
             await app.push_screen(chat)
-            app._initial_screen_pushed = True
             app.current_tab = "chat"
             await _wait_for_selector(chat, pilot, "#console-native-composer")
             for _ in range(50):
@@ -3101,7 +3208,9 @@ async def test_prepared_native_start_allows_mounted_manual_send(tmp_path):
         return await original(selection)
 
     controller._resolve_for_send_bounded = held
-    app = _build_test_app(config_overrides={"splash_screen": {"enabled": False}})
+    app = _build_manually_mounted_console_app(
+        config_overrides={"splash_screen": {"enabled": False}}
+    )
     persist_seeded_config(app, "splash_screen")
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
@@ -3112,7 +3221,6 @@ async def test_prepared_native_start_allows_mounted_manual_send(tmp_path):
         async with app.run_test(size=(160, 48)) as pilot:
             chat = ChatScreen(app)
             await app.push_screen(chat)
-            app._initial_screen_pushed = True
             app.current_tab = "chat"
             await _wait_for_selector(chat, pilot, "#console-native-composer")
             for _ in range(50):
@@ -3215,7 +3323,9 @@ async def test_native_acceptance_consumes_only_open_target_revision(
         return await resolve(selection)
 
     controller._resolve_for_send_bounded = held_readiness
-    app = _build_test_app(config_overrides={"splash_screen": {"enabled": False}})
+    app = _build_manually_mounted_console_app(
+        config_overrides={"splash_screen": {"enabled": False}}
+    )
     persist_seeded_config(app, "splash_screen")
     _attach_real_dbs(app, tmp_path)
     _configure_native_ready_console(app)
@@ -3226,7 +3336,6 @@ async def test_native_acceptance_consumes_only_open_target_revision(
         async with app.run_test(size=(160, 48)) as pilot:
             chat = ChatScreen(app)
             await app.push_screen(chat)
-            app._initial_screen_pushed = True
             app.current_tab = "chat"
             await _wait_for_selector(chat, pilot, "#console-native-composer")
             for _ in range(50):
@@ -3269,7 +3378,34 @@ async def test_native_acceptance_consumes_only_open_target_revision(
             controller.submit_draft = observe_submit
             start = asyncio.create_task(controller._chat_start.start(request))
             try:
-                await asyncio.wait_for(entered.wait(), 5)
+                readiness = asyncio.create_task(entered.wait())
+                try:
+                    done, _ = await asyncio.wait(
+                        {readiness, start},
+                        timeout=5,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    assert start not in done, start.result()
+                    assert readiness in done and readiness.result(), {
+                        "start_done": start.done(),
+                        "start_stack": [
+                            (frame.f_code.co_name, frame.f_lineno)
+                            for frame in start.get_stack()
+                        ],
+                        "preparation_tasks": [
+                            (
+                                task.done(),
+                                [
+                                    (frame.f_code.co_name, frame.f_lineno)
+                                    for frame in task.get_stack()
+                                ],
+                            )
+                            for task in controller._chat_start._tasks
+                        ],
+                    }
+                finally:
+                    readiness.cancel()
+                    await asyncio.gather(readiness, return_exceptions=True)
                 # Reattach through the actual mounted lifecycle while the
                 # app-owned native preparation is live. The original view
                 # reconciled before this rig installed its controller.
