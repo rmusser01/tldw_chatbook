@@ -43,7 +43,8 @@ required context (`isRequired=true`), that a `GITHUB_TOKEN` rebase keeps auto-me
 that a token rebase produces `action_required` runs with no check runs, and that
 `auto_merge_enabled` fires a `pull_request` event. Task 1 (throwaway spike PR #2991, run
 37154004733) verified V1 (delete a stuck run) and V2 (cancel a stuck run) live with
-`GITHUB_TOKEN` — both kept, no omissions in the cleanup/cancel paths.
+`GITHUB_TOKEN` — V2 on attempt 1; attempt 2's 409 was the already-cancelled target, not a
+refusal. Both kept, no omissions in the cleanup/cancel paths.
 
 **Fixes found in review:**
 - The read layer now also treats a *live* `derived-artifacts.yml` run on the head as an
@@ -72,7 +73,21 @@ PRs 2026-09-21..28): `merged PRs: 80  required runs: 531`; re-sync runs per PR
 ADR-218 (new, in-repo merge queue) added; ADR-103 (fast-lane + required-gate aggregation)
 cross-referenced; `backlog/docs/branch-protection-baseline.md` gained a merge-queue section.
 
-**Verification:** `pytest Tests/CI` — 421 passed, rc=0. `./scripts/preflight.sh` — rc=0, all
+**Final whole-branch review fixes** (each pinned by a test that fails when the fix is reverted):
+- After `updatePullRequestBranch` (which returns the *pre*-rebase head), the queue polls the PR up to
+  10 x 3 s for the new head and dispatches only then; no move = no dispatch, a later tick recovers it.
+- A rebase that fails while the PR stays BEHIND posts a `rebase-failed` comment once, then evicts.
+- `queue-tick` no longer gates on the payload's `auto_merge` (a trigger-time snapshot the
+  disarm-push-rearm flow leaves null); it wakes on every same-repo PR run.
+- BLOCKED + green evicts only with unresolved review threads; otherwise the 15-minute stuck-green window.
+- Eviction markers name the cause (`evict-conflict`, `evict-failed-twice`, `evict-blocked`,
+  `evict-stuck`, `evict-rebase`); the disarm is best-effort (racing evictions).
+- A required-workflow run that failed without reporting the required check (startup failure) counts
+  as a failed check: one retries, two evict.
+- `UNKNOWN` re-reads raised to 12 x 10 s; the measure script ignores the token rebase's bot-triggered
+  pull_request runs; docs: unset-variable wording, lessons-file supersession line.
+
+**Verification:** `pytest Tests/CI` — 430 passed after the final review fixes (421 before), rc=0. `./scripts/preflight.sh` — rc=0, all
 derived-artifact checks (CSS bundle, profile-owned-path census, production diagnostic
 inventory, backlog task-id census, index plan pins, etc.) clean, no drift.
 

@@ -14,7 +14,8 @@ GitHub's native merge queue needs an organization-owned repository, and this one
 - A queue workflow in this repository, `merge-queue.yml` plus the `queue-tick` job in `derived-artifacts.yml`, runs
   `scripts/merge_queue.py` on the built-in token.
 - It rebases only the front armed PR, dispatches its CI, and lets auto-merge land it.
-- It evicts PRs that conflict, fail twice, stay blocked, or get stuck green.
+- It evicts PRs that conflict, fail twice, stay blocked by unresolved conversations, get stuck green, or keep failing to
+  rebase.
 - It never arms, merges or pushes.
 - The mode is set by the `MERGE_QUEUE` variable (off, dry or on).
 

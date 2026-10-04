@@ -171,7 +171,8 @@ These apply to admins too.
 
 The merge queue (`.github/workflows/merge-queue.yml`, spec
 `Docs/superpowers/specs/2026-10-03-merge-queue-design.md`) runs in GitHub Actions. It works the same from any machine,
-session or tool. Check its mode with `gh variable get MERGE_QUEUE`.
+session or tool. Check its mode with `gh variable get MERGE_QUEUE`; if that prints an error (variable not found), the
+variable is unset, which means off.
 
 **Queue `on`:**
 - Arm auto-merge (`gh pr merge <n> --auto --merge`) only when both of these hold:

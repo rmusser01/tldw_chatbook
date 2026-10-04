@@ -1016,6 +1016,7 @@ update-branches in 70 minutes — dev moved every 20-40 minutes that evening, ag
 #2401 landing first.
 
 **What to do.**
+- Superseded when the merge queue is on (`gh variable get MERGE_QUEUE` = on): arm and let the queue sync; see CLAUDE.md 'Merging into dev'.
 - A BEHIND PR has exactly one path: `gh api -X PUT repos/<owner>/<repo>/pulls/<n>/update-branch`
   the moment dev moves, then merge within the minute Derived reports success. The old
   "never update-branch every round" note means *do not update while checks or Qodo are

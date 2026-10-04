@@ -69,7 +69,7 @@ Facts verified in implementation task 1 (each has a fallback):
 | # | Question | Result | Fallback if it fails |
 |---|----------|--------|----------------------|
 | V1 | Can `GITHUB_TOKEN` delete a workflow run (the empty `action_required` runs)? | Verified (run 37154004733) | Leave them. CLAUDE.md says never click "Approve and run" on a queue-rebased PR, because that starts duplicate runs |
-| V2 | Can `GITHUB_TOKEN` cancel a workflow run (runs on a superseded head)? | Verified (run 37154004733) | Leave superseded runs to finish |
+| V2 | Can `GITHUB_TOKEN` cancel a workflow run (runs on a superseded head)? | Verified (run 37154004733, attempt 1; attempt 2's 409 was the already-cancelled target) | Leave superseded runs to finish |
 
 Retrying a failed run never uses the undocumented re-run API. It dispatches a fresh run (F1).
 
@@ -108,7 +108,8 @@ Everything lives on `dev` and runs on the built-in token.
      - `needs: derived-artifacts`, with `if: '!cancelled()'` (not `always()`, so a run the queue itself cancelled is
        skipped, while a failed aggregate still lets the queue evict);
      - it runs only when the queue mode is `dry` or `on`, and the event is a dispatch, or a `pull_request` from a same-repo
-       PR with auto-merge armed;
+       PR (armed or not: the payload's `auto_merge` is a trigger-time snapshot that the disarm-push-rearm flow leaves
+       null, and the script itself acts only on the armed line);
      - job-level write permissions, so the top-level `contents: read` stays for every other job;
      - it checks out `dev` and runs the same script.
    - It is not a required check and not part of the aggregate's `needs`, so a queue failure can never turn the required
@@ -133,8 +134,8 @@ Everything lives on `dev` and runs on the built-in token.
 ordered by `autoMergeRequest.enabledAt`, oldest first.
 - An armed fork PR gets one comment saying fork PRs are not queued and must be merged by hand. It is never part of the line.
 
-**Front PR.** Fresh state is read first. If `mergeStateStatus` is `UNKNOWN`, the queue re-reads it up to 3 times, 5 seconds
-apart; if it is still unknown, it does nothing.
+**Front PR.** Fresh state is read first. If `mergeStateStatus` is `UNKNOWN`, the queue re-reads it up to 12 times, 10
+seconds apart (after each merge the next front is routinely `UNKNOWN` for a while); if it is still unknown, it does nothing.
 
 | Front PR state | Action |
 |---|---|
@@ -145,9 +146,13 @@ apart; if it is still unknown, it does nothing.
 | Up to date, required check queued or in progress | Wait (in flight) |
 | Up to date, required check failed, first failure on this head | **Dispatch** a fresh run (retry), and comment noting the retry and linking the failed run |
 | Up to date, required check failed, second failure on this head | **Evict:** CI failed twice, linking both runs |
-| `CLEAN` or `UNSTABLE`, required check green, completed 15 minutes ago or less | Wait (auto-merge is about to fire) |
-| `CLEAN` or `UNSTABLE`, required check green, completed more than 15 minutes ago | **Evict:** auto-merge did not fire, re-arm to retry |
-| `BLOCKED`, required check green | **Evict:** blocked by unresolved conversations or reviews |
+| `CLEAN` or `UNSTABLE` (or `BLOCKED` with no unresolved review threads, usually the state lagging the check), required check green, completed 15 minutes ago or less | Wait (auto-merge is about to fire) |
+| `CLEAN` or `UNSTABLE` (or `BLOCKED` with no unresolved review threads), required check green, completed more than 15 minutes ago | **Evict:** auto-merge did not fire, re-arm to retry |
+| `BLOCKED`, required check green, one or more unresolved review threads | **Evict:** blocked by unresolved conversations |
+
+A completed `derived-artifacts.yml` run on the head that failed (`failure`, `startup_failure` or `timed_out`) without
+reporting the required check in its check suite counts as a failed required check. A startup failure (for example a broken
+workflow file on the branch) is therefore retried once and then evicted, instead of re-dispatched forever.
 
 After an eviction the queue re-evaluates the new front PR in the same run, at most 10 times. PRs behind the front are
 never rebased, dispatched or commented on.
@@ -163,14 +168,22 @@ never rebased, dispatched or commented on.
   queue re-reads the PR:
   - head moved: do nothing (someone else acted);
   - now `DIRTY`: evict;
-  - anything else: do nothing and log it.
-- After a successful rebase the queue dispatches the required check first, then cancels the old head's live runs except its
-  own run and any merge-queue.yml run.
+  - anything else (same head, still not `DIRTY`): the first time, post a `rebase-failed` comment quoting the error (first
+    200 characters) and saying the queue will retry once; if that comment already exists for this head, evict ("rebase
+    onto dev keeps failing"). A rebase that keeps failing while the PR stays `BEHIND` would otherwise stall the line.
+- The mutation returns the pre-rebase head, and the branch moves about a second later. After a successful rebase the queue
+  re-reads the PR up to 10 times, 3 seconds apart, until the head moves, and uses that new head for the comment. If it never
+  moves, the queue logs it and dispatches nothing; the young-head and no-run rules recover it on a later tick.
+- Once the new head appears, the queue dispatches the required check first, then cancels the old head's live runs except
+  its own run and any merge-queue.yml run.
 - **Dispatch** of the PR's workflows happens only after this run's own rebase succeeded, or under the dispatch rows of the
   table above.
-- **Evict** means `disablePullRequestAutoMerge` plus one comment. Re-arming puts the PR at the back of the line.
+- **Evict** means `disablePullRequestAutoMerge` plus one comment. The disarm is best-effort: two racing runs (a merge fires
+  both `push` to `dev` and `closed`) can evict the same PR, and the second disarm hits an already-disarmed PR. Re-arming
+  puts the PR at the back of the line.
 - **Comments** carry a hidden marker `<!-- merge-queue:<kind>:<head-sha> -->`. The queue never posts a kind twice for the same
-  head.
+  head. An eviction's kind names its cause (`evict-conflict`, `evict-failed-twice`, `evict-blocked`, `evict-stuck`,
+  `evict-rebase`), so a re-armed PR evicted again on the same head for a different reason is still told why.
 - **Forbidden**, and enforced by a guard test:
   - enabling auto-merge;
   - merging a PR (GraphQL `mergePullRequest`, REST `PUT .../merge`, or `gh pr merge` without `--disable-auto`);
@@ -187,7 +200,7 @@ never rebased, dispatched or commented on.
 - **Lost dispatch:** the next queue run sees an up-to-date head with no run and dispatches again.
 - **A queue run interrupted between rebase and dispatch:** the same rule recovers it.
 - **Runner starvation:** the front PR simply waits in flight, as it does today.
-- **Liveness:** the queue wakes on arm, disarm and close events, pushes to `dev`, and finished CI runs for armed PRs.
+- **Liveness:** the queue wakes on arm, disarm and close events, pushes to `dev`, and finished CI runs for same-repo PRs.
   - Manual kick: `gh workflow run derived-artifacts.yml --ref dev`, with no `pr` input. It works because that file already
     exists on `main` (F1).
   - Known gap: a stall during a stretch with no activity waits for the next event or a manual kick. There is no periodic

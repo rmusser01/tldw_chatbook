@@ -28,7 +28,8 @@
 - **Required check name** (string constant, never renamed): `Derived artifacts reproduce from their sources`.
 - **Mode variable:** `MERGE_QUEUE`. Unset or any value other than `dry`/`on` means off.
 - **Timing constants:** young-head window 3 minutes; stuck-green window 15 minutes; at most 10 front PRs evaluated per run;
-  `UNKNOWN` merge state re-read 3 times, 5 seconds apart.
+  `UNKNOWN` merge state re-read 12 times, 10 seconds apart (raised from 3 x 5 s in the final review); after a rebase,
+  the PR re-read up to 10 times, 3 seconds apart, until the head moves.
 - **Rebase rule:** rebase onto `dev`, never merge `dev` in. Push with `--force-with-lease` only.
 - **Python for local runs:** `PY=/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python`. Never run the app.
   `git stash` is forbidden (it is shared across worktrees).
