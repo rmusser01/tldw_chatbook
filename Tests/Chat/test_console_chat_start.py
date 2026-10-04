@@ -3235,3 +3235,477 @@ def test_prepared_close_preserves_only_successfully_saved_draft(
     assert not db.get_messages_for_conversation(saves[0])
     assert not controller.execute_agent_chat_create(prepared)["ok"]
     assert len(saves) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registration_failure", [False, True])
+@pytest.mark.parametrize("another_restriction", [False, True])
+async def test_failed_preparation_with_no_attempt_clears_only_its_restriction(
+    tmp_path, monkeypatch, registration_failure, another_restriction
+):
+    """A rolled-back reservation must not leave every unrelated root blocked."""
+    import asyncio
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    ledger = runs.automatic_work
+    owner = controller.fleet_wake.runtime_owner_id
+    ledger.recover(current_owner_id=owner)
+    unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+    peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+    with runs.transaction() as conn:
+        conn.execute(
+            "CREATE TRIGGER deny_start BEFORE INSERT ON automatic_chat_start_attempts BEGIN SELECT RAISE(ABORT, 'private rollback'); END"
+        )
+    register = ledger._restrict_chat_start
+
+    def register_with_peer(*args, **kwargs):
+        if another_restriction:
+            register("another", owner_id=owner, chain_id=chain)
+        if registration_failure:
+            raise OSError("private identity failure")
+        return register(*args, **kwargs)
+
+    monkeypatch.setattr(ledger, "_restrict_chat_start", register_with_peer)
+    start = asyncio.create_task(controller._chat_start.start(request))
+    try:
+        await asyncio.sleep(0)
+        item = controller._chat_start._active[target.id]
+        results = await asyncio.gather(item.task, return_exceptions=True)
+        assert results == [None]
+        assert item.outcome.done()
+        outcome = await start
+        assert (outcome.launch_status, outcome.reason) == (
+            "not_started",
+            "start_failed",
+        )
+        with runs.connection() as conn:
+            assert (
+                conn.execute(
+                    "SELECT count(*) FROM automatic_chat_start_attempts"
+                ).fetchone()[0]
+                == 0
+            )
+            assert (
+                conn.execute(
+                    "SELECT count(*) FROM automatic_work_reservations"
+                ).fetchone()[0]
+                == 0
+            )
+        assert target.draft == "original"
+        assert not store.persistence.db.get_messages_for_conversation(
+            request.conversation_id
+        )
+        peer.automatic_work.check_active(unrelated, owner_id=owner)
+        if another_restriction:
+            with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                peer.automatic_work.check_active(chain, owner_id=owner)
+        else:
+            peer.automatic_work.check_active(chain, owner_id=owner)
+        assert target.id not in controller.fleet_wake._automatic_primary_claims
+        assert target.id not in controller._chat_start._active
+    finally:
+        start.cancel()
+        await asyncio.gather(start, return_exceptions=True)
+        monkeypatch.setattr(ledger, "_restrict_chat_start", register)
+        ledger._clear_chat_start_restriction("another", owner_id=owner)
+        ledger._clear_chat_start_restriction(request.attempt_id, owner_id=owner)
+        peer.close()
+        await controller.shutdown()
+        runs.close()
+        store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case",
+    ["prepared", "accepted", "observation_failure", "missing_runtime", "stale_runtime"],
+)
+async def test_preparation_exception_reconciles_persisted_authority_conservatively(
+    tmp_path, monkeypatch, case
+):
+    """A lost preparation return is not evidence that committed authority vanished."""
+    import asyncio
+    import sqlite3
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    ledger = runs.automatic_work
+    owner = controller.fleet_wake.runtime_owner_id
+    ledger.recover(current_owner_id=owner)
+    unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+    peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+    prepare = ledger.prepare_chat_start
+
+    def commit_then_raise(**kwargs):
+        if case in {"prepared", "accepted"}:
+            prepare(**kwargs)
+            if case == "accepted":
+                assert ledger.accept_chat_start(request.attempt_id, owner_id=owner)
+        else:
+            with ledger.transaction() as conn:
+                if case == "missing_runtime":
+                    conn.execute("DELETE FROM automatic_work_runtime_owner")
+                elif case == "stale_runtime":
+                    conn.execute(
+                        "UPDATE automatic_work_runtime_owner SET owner_id='replacement'"
+                    )
+        raise OSError("private lost preparation return")
+
+    monkeypatch.setattr(ledger, "prepare_chat_start", commit_then_raise)
+    if case == "observation_failure":
+
+        def fail_observation(*args, **kwargs):
+            raise sqlite3.OperationalError("private observation failure")
+
+        monkeypatch.setattr(
+            ledger, "_confirm_chat_start_absent", fail_observation, raising=False
+        )
+    try:
+        outcome = await controller._chat_start.start(request)
+        await asyncio.gather(*controller._chat_start.tasks())
+        expected_reason = {
+            "prepared": "preparation_unconfirmed",
+            "accepted": "receipt_unconfirmed",
+        }.get(case, "settlement_unconfirmed")
+        assert (outcome.launch_status, outcome.reason) == (
+            "review_required",
+            expected_reason,
+        )
+        assert ledger.snapshot(chain).used["generation"] == int(case == "accepted")
+        assert ledger.snapshot(chain).reserved["generation"] == 0
+        if case in {"prepared", "accepted"}:
+            assert ledger.read_chat_start_attempt(
+                request.attempt_id, owner_id=owner
+            ).state == ("aborted" if case == "prepared" else "review_required")
+            peer.automatic_work.check_active(unrelated, owner_id=owner)
+            if case == "accepted":
+                with pytest.raises(AutomaticWorkRefused, match="interrupted_work"):
+                    peer.automatic_work.check_active(chain, owner_id=owner)
+        elif case != "stale_runtime":
+            with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                peer.automatic_work.check_active(unrelated, owner_id=owner)
+        else:
+            with pytest.raises(AutomaticWorkRefused, match="runtime_owner_replaced"):
+                peer.automatic_work.check_active(unrelated, owner_id=owner)
+        assert target.draft == "original"
+        assert not store.persistence.db.get_messages_for_conversation(
+            request.conversation_id
+        )
+        assert target.id not in controller.fleet_wake._automatic_primary_claims
+    finally:
+        ledger._clear_chat_start_restriction(request.attempt_id, owner_id=owner)
+        peer.close()
+        await controller.shutdown()
+        runs.close()
+        store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registration_site", ["first", "second", "first_uncertain"])
+@pytest.mark.parametrize("worker", ["commit", "provider"])
+async def test_restriction_registration_failure_still_drains_exact_native_owners(
+    tmp_path, monkeypatch, registration_site, worker
+):
+    """Registration failure must not strand native physical custody or its result."""
+    import asyncio
+    from threading import Event
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    ledger = runs.automatic_work
+    owner = controller.fleet_wake.runtime_owner_id
+    ledger.recover(current_owner_id=owner)
+    peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+    entered, release, exited = Event(), Event(), Event()
+    original = (
+        store.commit_durable_turn
+        if worker == "commit"
+        else controller._agent_bridge.run_reply
+    )
+
+    def held(*args, **kwargs):
+        entered.set()
+        try:
+            assert release.wait(10)
+            return original(*args, **kwargs)
+        finally:
+            exited.set()
+
+    monkeypatch.setattr(
+        store if worker == "commit" else controller._agent_bridge,
+        "commit_durable_turn" if worker == "commit" else "run_reply",
+        held,
+    )
+    register = ledger._restrict_chat_start
+    registrations = []
+
+    def broken_registration(*args, **kwargs):
+        registrations.append(kwargs["chain_id"])
+        if len(registrations) == (2 if registration_site == "second" else 1):
+            raise OSError("private registration failure")
+        return register(*args, **kwargs)
+
+    monkeypatch.setattr(ledger, "_restrict_chat_start", broken_registration)
+    if registration_site != "first":
+
+        def fail_settlement(*args, **kwargs):
+            raise OSError("private settlement failure")
+
+        monkeypatch.setattr(ledger, "mark_chat_start_review_required", fail_settlement)
+    start = asyncio.create_task(controller._chat_start.start(request))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        item = controller._chat_start._active[target.id]
+        captured_owner, captured_token = item.capacity_owner, item.token
+        # The real provider has passed the two commits; simulate a lost local receipt
+        # flag while retaining its already-published outcome and physical worker.
+        if worker == "provider":
+            assert (await start).launch_status == "started"
+            item.receipted = False
+        item.task.cancel()
+        await asyncio.sleep(0.05)
+        item.task.cancel()
+        await asyncio.sleep(0.05)
+        assert captured_owner._automatic_primary_claims[target.id] is captured_token
+        assert not exited.is_set()
+        assert not item.task.done()
+        if worker == "commit":
+            assert not item.outcome.done()
+        if registration_site == "second":
+            with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                peer.automatic_work.check_active(chain, owner_id=owner)
+        release.set()
+        assert await asyncio.gather(item.task, return_exceptions=True) == [None]
+        assert exited.is_set()
+        assert item.outcome.done()
+        assert target.id not in captured_owner._automatic_primary_claims
+        assert target.id not in controller._chat_start._active
+        assert ledger.snapshot(chain).used["generation"] == 1
+        if registration_site == "first":
+            assert ledger.snapshot(chain).status == "review_required"
+        else:
+            with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                peer.automatic_work.check_active(chain, owner_id=owner)
+    finally:
+        release.set()
+        start.cancel()
+        await asyncio.gather(start, return_exceptions=True)
+        await asyncio.gather(*controller._chat_start.tasks(), return_exceptions=True)
+        ledger._clear_chat_start_restriction(request.attempt_id, owner_id=owner)
+        peer.close()
+        await controller.shutdown()
+        runs.close()
+        store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_contended_preparation_confirms_absence_after_writer_exits(
+    tmp_path, monkeypatch
+):
+    """A real failed BEGIN and drained writer leave no automatic charge or denial."""
+    import asyncio
+    import sqlite3
+    from threading import Event
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    ledger = runs.automatic_work
+    owner = controller.fleet_wake.runtime_owner_id
+    ledger.recover(current_owner_id=owner)
+    unrelated = ledger.create_chain("unrelated", root_submission_id="unrelated")
+    peer = AgentRunsDB(runs.db_path, client_id="peer", reconcile_on_init=False)
+    blocker = sqlite3.connect(runs.db_path)
+    failed, released = Event(), Event()
+    prepare = ledger.prepare_chat_start
+
+    def contended(**kwargs):
+        with runs.connection() as conn:
+            timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+            conn.execute("PRAGMA busy_timeout=0")
+            try:
+                return prepare(**kwargs)
+            except sqlite3.OperationalError:
+                failed.set()
+                assert released.wait(10)
+                raise
+            finally:
+                conn.execute(f"PRAGMA busy_timeout={timeout}")
+
+    monkeypatch.setattr(ledger, "prepare_chat_start", contended)
+    blocker.execute("BEGIN IMMEDIATE")
+    start = asyncio.create_task(controller._chat_start.start(request))
+    try:
+        assert await asyncio.to_thread(failed.wait, 5)
+        item = controller._chat_start._active[target.id]
+        assert not item.outcome.done()
+        assert target.id in controller.fleet_wake._automatic_primary_claims
+        blocker.rollback()
+        released.set()
+        outcome = await start
+        await asyncio.gather(*controller._chat_start.tasks())
+        assert (outcome.launch_status, outcome.reason) == (
+            "not_started",
+            "start_failed",
+        )
+        with runs.connection() as conn:
+            assert (
+                conn.execute(
+                    "SELECT count(*) FROM automatic_chat_start_attempts"
+                ).fetchone()[0]
+                == 0
+            )
+            assert (
+                conn.execute(
+                    "SELECT count(*) FROM automatic_work_reservations"
+                ).fetchone()[0]
+                == 0
+            )
+        peer.automatic_work.check_active(chain, owner_id=owner)
+        peer.automatic_work.check_active(unrelated, owner_id=owner)
+        assert target.draft == "original"
+        assert not store.persistence.db.get_messages_for_conversation(
+            request.conversation_id
+        )
+        assert target.id not in controller.fleet_wake._automatic_primary_claims
+    finally:
+        blocker.rollback()
+        blocker.close()
+        released.set()
+        await asyncio.gather(start, return_exceptions=True)
+        ledger._clear_chat_start_restriction(request.attempt_id, owner_id=owner)
+        peer.close()
+        await controller.shutdown()
+        runs.close()
+        store.persistence.db.close_connection()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fault", ["publication", "abandonment", "run_state", "replacement"]
+)
+async def test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release(
+    tmp_path, monkeypatch, fault
+):
+    """Fallible UI cleanup cannot retain a drained slot or steal a replacement."""
+    import asyncio
+    from copy import copy
+    from dataclasses import replace
+    from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
+
+    controller, store, runs, source, target, chain, request = await _native_start_rig(
+        tmp_path
+    )
+    coordinator = controller._chat_start
+    ledger = runs.automatic_work
+    abort = ledger.abort_chat_start
+    abandon = controller._abandon_preparation
+    set_state = controller._set_run_state
+    saved = {}
+
+    def fail(*args, **kwargs):
+        raise OSError("private cleanup failure")
+
+    async def refuse_accept(item):
+        saved["item"] = item
+        saved["preparation"] = store.preparation_for_session(target.id)
+        assert saved["preparation"] is not None
+        if fault == "abandonment":
+            monkeypatch.setattr(controller, "_abandon_preparation", fail)
+        raise OSError("private preaccept refusal")
+
+    monkeypatch.setattr(coordinator, "accept", refuse_accept)
+
+    def refunded(*args, **kwargs):
+        result = abort(*args, **kwargs)
+        assert result
+        item = saved["item"]
+        if fault == "run_state":
+            # Re-establish the exact validation state to exercise its cleanup fence.
+            set_state(item.validating_state, session_id=target.id)
+            monkeypatch.setattr(controller, "_set_run_state", fail)
+        return result
+
+    monkeypatch.setattr(ledger, "abort_chat_start", refunded)
+    publish = coordinator._publish_outcome
+
+    async def publication(*args, **kwargs):
+        item = saved["item"]
+        if fault == "publication":
+            raise OSError("private publication failure")
+        if fault == "replacement":
+            replacement = copy(item)
+            replacement.token = object()
+            replacement.preparation_id = "replacement-preparation"
+            coordinator._active[target.id] = replacement
+            item.capacity_owner._automatic_primary_claims[target.id] = replacement.token
+            saved["replacement"] = replacement
+            controller._rollback_committing_preparation(
+                saved["preparation"].preparation_id
+            )
+            assert store.preparation_for_session(target.id) is None
+            replacement_preparation = replace(
+                saved["preparation"], preparation_id="replacement-preparation"
+            )
+            assert (
+                store.begin_preparation(replacement_preparation)
+                is replacement_preparation
+            )
+            saved["replacement_preparation"] = replacement_preparation
+            saved["state"] = ConsoleRunState(ConsoleRunStatus.VALIDATING, "replacement")
+            set_state(saved["state"], session_id=target.id)
+        return await publish(*args, **kwargs)
+
+    monkeypatch.setattr(coordinator, "_publish_outcome", publication)
+    start = asyncio.create_task(coordinator.start(request))
+    try:
+        await asyncio.sleep(0)
+        item = coordinator._active[target.id]
+        results = await asyncio.gather(item.task, return_exceptions=True)
+        assert item.outcome.done()
+        assert results == [None]
+        outcome = await start
+        assert outcome.launch_status == (
+            "review_required" if fault == "publication" else "not_started"
+        )
+        assert ledger.snapshot(chain).reserved["generation"] == 0
+        if fault == "replacement":
+            replacement = saved["replacement"]
+            assert coordinator._active[target.id] is replacement
+            assert (
+                item.capacity_owner._automatic_primary_claims[target.id]
+                is replacement.token
+            )
+            assert controller.run_state_for(target.id) is saved["state"]
+            assert (
+                store.preparation_for_session(target.id)
+                is saved["replacement_preparation"]
+            )
+        else:
+            assert target.id not in coordinator._active
+            assert target.id not in item.capacity_owner._automatic_primary_claims
+    finally:
+        monkeypatch.setattr(controller, "_abandon_preparation", abandon)
+        monkeypatch.setattr(controller, "_set_run_state", set_state)
+        coordinator._active.pop(target.id, None)
+        controller.fleet_wake._automatic_primary_claims.pop(target.id, None)
+        start.cancel()
+        await asyncio.gather(start, return_exceptions=True)
+        if "preparation" in saved:
+            abandon(saved["preparation"].preparation_id)
+        if "replacement_preparation" in saved:
+            abandon(saved["replacement_preparation"].preparation_id)
+        await controller.shutdown()
+        runs.close()
+        store.persistence.db.close_connection()

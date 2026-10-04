@@ -1154,7 +1154,20 @@ def console_fork_message_state_is_eligible(role: object, status: object) -> bool
 def console_fork_visible_selection(
     message: ConsoleChatMessage,
 ) -> tuple[str, str | None]:
-    """Read the canonical visible text and selected variant identity."""
+    """Read the canonical visible text and selected variant identity.
+
+    Args:
+        message: Console message whose visible content and variant are selected.
+
+    Returns:
+        The visible text and selected variant ID, or None for the ID when the
+        message has no variants.
+
+    Raises:
+        ValueError: Content is not a string, the current variant is unavailable,
+            or the variant has an empty or non-string ID, non-string content,
+            or content that differs from the visible message.
+    """
 
     if type(message.content) is not str:
         raise ValueError("Console fork message content is unavailable.")

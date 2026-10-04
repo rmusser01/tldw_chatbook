@@ -361,6 +361,21 @@ class ConsoleChatStartCoordinator:
         )
         return self.authorizes(item, request.session_id) and self._source_live(request)
 
+    @staticmethod
+    def _restrict_cleanup(item: AgentChatStartAuthorization) -> None:
+        """Retain uncertain admission without letting registration skip custody."""
+        try:
+            item.ledger._restrict_chat_start(
+                item.request.attempt_id,
+                owner_id=item.runtime_owner_id,
+                chain_id=item.context.chain_id if item.context is not None else None,
+            )
+        except BaseException as exc:
+            logger.warning(
+                "Chat start failed (phase=restriction, exception_type={})",
+                type(exc).__name__,
+            )
+
     async def _run(self, item: AgentChatStartAuthorization) -> None:
         from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
         from .console_chat_models import (
@@ -427,13 +442,7 @@ class ConsoleChatStartCoordinator:
             if settlement_needed and not item.receipted:
                 # Deny siblings before draining any accepted uncertainty; durable
                 # settlement itself still waits for every physical owner.
-                ledger._restrict_chat_start(
-                    request.attempt_id,
-                    owner_id=item.runtime_owner_id,
-                    chain_id=item.context.chain_id
-                    if item.context is not None
-                    else None,
-                )
+                self._restrict_cleanup(item)
             # The physical conversation transaction remains a distinct owner.
             if item.commit_worker is not None:
                 try:
@@ -530,13 +539,6 @@ class ConsoleChatStartCoordinator:
                         if not settled:
                             raise RuntimeError("settlement refused")
             except BaseException as exc:
-                ledger._restrict_chat_start(
-                    request.attempt_id,
-                    owner_id=item.runtime_owner_id,
-                    chain_id=item.context.chain_id
-                    if item.context is not None
-                    else None,
-                )
                 logger.warning(
                     "Chat start failed (phase=settlement, exception_type={})",
                     type(exc).__name__,
@@ -545,6 +547,33 @@ class ConsoleChatStartCoordinator:
                     HANDOFF_LAUNCH_REVIEW_REQUIRED,
                     "settlement_unconfirmed",
                 )
+                absent = False
+                if not item.accepted and not item.receipted and item.context is None:
+                    try:
+                        absent = await self._drain_owned(
+                            asyncio.create_task(
+                                run_owned_db_call(
+                                    item.database,
+                                    ledger._confirm_chat_start_absent,
+                                    request.attempt_id,
+                                    owner_id=item.runtime_owner_id,
+                                )
+                            )
+                        )
+                        if absent:
+                            ledger._clear_chat_start_restriction(
+                                request.attempt_id, owner_id=item.runtime_owner_id
+                            )
+                    except BaseException as absence_error:
+                        absent = False
+                        logger.warning(
+                            "Chat start failed (phase=absence, exception_type={})",
+                            type(absence_error).__name__,
+                        )
+                if absent:
+                    status, reason = HANDOFF_LAUNCH_NOT_STARTED, "start_failed"
+                else:
+                    self._restrict_cleanup(item)
             try:
                 await self._drain_owned(
                     asyncio.create_task(
@@ -569,32 +598,53 @@ class ConsoleChatStartCoordinator:
                             HANDOFF_LAUNCH_REVIEW_REQUIRED, "outcome_unconfirmed"
                         )
                     )
-            # Release only this preparation. A manual winner may already own a new one.
-            preparation = controller.store.preparation_for_session(request.session_id)
-            if (
-                not item.accepted
-                and controller.store is item.store
-                and preparation is not None
-                and preparation.preparation_id == item.preparation_id
-            ):
-                controller._abandon_preparation(preparation.preparation_id)
-            if (
-                not item.accepted
-                and controller.store is item.store
-                and item.validating_state is not None
-                and controller.run_state_for(request.session_id)
-                is item.validating_state
-            ):
-                controller._set_run_state(
-                    ConsoleRunState(ConsoleRunStatus.IDLE),
-                    session_id=request.session_id,
-                )
-            controller._agent_wake_turn_sessions.discard(request.session_id)
-            if self._active.get(request.session_id) is item:
-                self._active.pop(request.session_id, None)
-            item.capacity_owner.release_automatic_primary(
-                request.session_id, item.token
-            )
+            finally:
+                try:
+                    # A manual winner may already own a different preparation.
+                    preparation = controller.store.preparation_for_session(
+                        request.session_id
+                    )
+                    if (
+                        not item.accepted
+                        and controller.store is item.store
+                        and preparation is not None
+                        and preparation.preparation_id == item.preparation_id
+                    ):
+                        controller._abandon_preparation(preparation.preparation_id)
+                except BaseException as exc:
+                    logger.warning(
+                        "Chat start failed (phase=abandonment, exception_type={})",
+                        type(exc).__name__,
+                    )
+                finally:
+                    try:
+                        if (
+                            not item.accepted
+                            and controller.store is item.store
+                            and item.validating_state is not None
+                            and controller.run_state_for(request.session_id)
+                            is item.validating_state
+                        ):
+                            controller._set_run_state(
+                                ConsoleRunState(ConsoleRunStatus.IDLE),
+                                session_id=request.session_id,
+                            )
+                    except BaseException as exc:
+                        logger.warning(
+                            "Chat start failed (phase=run_state, exception_type={})",
+                            type(exc).__name__,
+                        )
+                    finally:
+                        try:
+                            controller._agent_wake_turn_sessions.discard(
+                                request.session_id
+                            )
+                            if self._active.get(request.session_id) is item:
+                                self._active.pop(request.session_id, None)
+                        finally:
+                            item.capacity_owner.release_automatic_primary(
+                                request.session_id, item.token
+                            )
 
     async def accept(self, authorization: AgentChatStartAuthorization) -> bool:
         """Serialize the ledger ownership cutoff with manual/source withdrawal."""

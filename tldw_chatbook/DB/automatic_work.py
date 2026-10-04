@@ -933,6 +933,24 @@ class AutomaticWorkLedger:
             )
         return True
 
+    def _confirm_chat_start_absent(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Confirm exact absence only after a successful current-owner transaction."""
+        absent = False
+        with self.transaction() as conn:
+            owner = conn.execute(
+                "SELECT owner_id FROM automatic_work_runtime_owner WHERE singleton=1"
+            ).fetchone()
+            if owner is not None and owner["owner_id"] == owner_id:
+                absent = (
+                    conn.execute(
+                        "SELECT 1 FROM automatic_chat_start_attempts WHERE id=?",
+                        (attempt_id,),
+                    ).fetchone()
+                    is None
+                )
+        # Commit and connection-policy restoration must both have succeeded.
+        return absent
+
     def mark_chat_start_review_required(
         self, attempt_id: str, *, owner_id: str
     ) -> bool:

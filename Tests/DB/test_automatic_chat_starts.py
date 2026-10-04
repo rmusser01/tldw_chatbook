@@ -622,3 +622,127 @@ def test_late_recovery_cleanup_preserves_new_owner_uncertainty(
                     retired.id, owner_id="owner"
                 )
                 peer.close()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "absent",
+        "present",
+        "foreign_attempt",
+        "stale_runtime",
+        "missing_runtime",
+        "exit_failure",
+        "begin_failure",
+        "read_failure",
+        "commit_failure",
+        "restore_failure",
+    ],
+)
+def test_missing_start_confirmation_requires_successful_owned_transaction(
+    db, monkeypatch, case
+):
+    """Only a successful exact-owner transaction may establish missing authority."""
+    ledger = db.automatic_work
+    ledger.recover(current_owner_id="owner")
+    root, source = source_run(db)
+    if case == "present":
+        prepare(db, source, "target", "attempt")
+    if case == "foreign_attempt":
+        with db.transaction() as conn:
+            conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='foreign'")
+        prepare(db, source, "target", "attempt", owner_id="foreign")
+        with db.transaction() as conn:
+            conn.execute("UPDATE automatic_work_runtime_owner SET owner_id='owner'")
+    if case in {"stale_runtime", "missing_runtime"}:
+        with db.transaction() as conn:
+            if case == "stale_runtime":
+                conn.execute(
+                    "UPDATE automatic_work_runtime_owner SET owner_id='replacement'"
+                )
+            else:
+                conn.execute("DELETE FROM automatic_work_runtime_owner")
+    with db.connection() as conn:
+        before = tuple(
+            tuple(row)
+            for row in conn.execute("SELECT * FROM automatic_chat_start_attempts")
+        )
+        reservations = tuple(
+            tuple(row)
+            for row in conn.execute("SELECT * FROM automatic_work_reservations")
+        )
+    transaction = ledger.transaction
+    if case in {"begin_failure", "read_failure", "commit_failure", "restore_failure"}:
+        connection = db.connection
+
+        class FailingConnection:
+            def __init__(self, conn):
+                self.conn = conn
+
+            def __getattr__(self, name):
+                return getattr(self.conn, name)
+
+            def execute(self, sql, *args):
+                if (
+                    (case == "begin_failure" and sql == "BEGIN IMMEDIATE")
+                    or (
+                        case == "read_failure"
+                        and "FROM automatic_chat_start_attempts" in sql
+                    )
+                    or (
+                        case == "restore_failure"
+                        and sql.startswith("PRAGMA synchronous=")
+                        and sql != "PRAGMA synchronous=FULL"
+                    )
+                ):
+                    raise sqlite3.OperationalError("injected transaction failure")
+                return self.conn.execute(sql, *args)
+
+            def commit(self):
+                if case == "commit_failure":
+                    raise sqlite3.OperationalError("injected commit failure")
+                return self.conn.commit()
+
+        @contextmanager
+        def failing_connection():
+            with connection() as conn:
+                yield FailingConnection(conn)
+
+        monkeypatch.setattr(db, "connection", failing_connection)
+        with pytest.raises(sqlite3.OperationalError):
+            ledger._confirm_chat_start_absent("attempt", owner_id="owner")
+        monkeypatch.setattr(db, "connection", connection)
+    elif case == "exit_failure":
+
+        @contextmanager
+        def fail_exit():
+            with transaction() as conn:
+                yield conn
+            raise sqlite3.OperationalError("policy restoration unavailable")
+
+        monkeypatch.setattr(ledger, "transaction", fail_exit)
+        with pytest.raises(sqlite3.OperationalError):
+            ledger._confirm_chat_start_absent("attempt", owner_id="owner")
+        monkeypatch.setattr(ledger, "transaction", transaction)
+    else:
+        assert ledger._confirm_chat_start_absent("attempt", owner_id="owner") is (
+            case == "absent"
+        )
+    with pytest.raises(ValueError, match="unknown chat start attempt"):
+        ledger.abort_chat_start("unknown", owner_id="owner")
+    with db.connection() as conn:
+        assert (
+            tuple(
+                tuple(row)
+                for row in conn.execute("SELECT * FROM automatic_chat_start_attempts")
+            )
+            == before
+        )
+        assert (
+            tuple(
+                tuple(row)
+                for row in conn.execute("SELECT * FROM automatic_work_reservations")
+            )
+            == reservations
+        )
+    assert ledger.snapshot(root).used["generation"] == 0
