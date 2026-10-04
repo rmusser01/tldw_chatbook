@@ -141,7 +141,7 @@ def test_a_long_wait_for_the_first_token_shows_elapsed_and_a_cold_load_hint() ->
     assert early.startswith("Generating…") and "5s" in early
     assert late.startswith(_WAITING)
     assert "42s" in late
-    assert "may still be loading" in late
+    assert "may be loading" in late
 
 
 def test_a_first_send_with_no_published_usage_still_times_the_wait() -> None:
@@ -395,8 +395,11 @@ def test_the_cold_load_hint_is_for_self_hosted_models_only() -> None:
 @pytest.mark.parametrize("self_hosted", [True, False])
 def test_the_whole_wait_line_fits_the_reply_header_at_120_columns(self_hosted) -> None:
     """B-F3 (live, 120x40): the line rides the assistant row's one-line
-    header, which has 64 cells with the rail open; it was cut at 'a large',
-    hiding the hint. Every elapsed value up to an hour fits."""
+    header after 'Assistant  ', and a word that does not fit is dropped.
+    Measured with the rail open: 58 cells of activity fit (g5-v-slow1 t125,
+    '... · a large' shown, ' local' dropped) and 61 did not (g5-r1-slow
+    t110, '... · the model may still be' shown, ' loading' dropped). So the
+    whole line stays within 56 cells for every elapsed value under an hour."""
     from rich.cells import cell_len
 
     from tldw_chatbook.UI.Console_Modules.agent import console_turn_activity_text
@@ -407,7 +410,7 @@ def test_the_whole_wait_line_fits_the_reply_header_at_120_columns(self_hosted) -
     for now in (16.0, 99.0, 599.0, 3599.0):
         line = console_turn_activity_text(snapshot, now=now, self_hosted=self_hosted)
         assert line.startswith(_WAITING)
-        assert cell_len(line) <= 62, (cell_len(line), line)
+        assert cell_len(line) <= 56, (cell_len(line), line)
 
 
 class _WaitingController:
@@ -470,7 +473,7 @@ def test_the_view_times_an_unpublished_first_send_from_when_it_saw_it_run(
 
     assert line.startswith(_WAITING), line
     assert "20s" in line
-    assert ("may still be loading" in line) is hinted
+    assert ("may be loading" in line) is hinted
 
 
 @pytest.mark.parametrize(

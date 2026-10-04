@@ -669,7 +669,8 @@ _FIRST_TOKEN_HINT_AFTER_SECONDS = 15.0
 #: during prompt processing read "~1-2 local output tok" for 3+ minutes.
 _FIRST_TOKEN_MIN_OUTPUT = 8
 CONSOLE_TURN_ACTIVITY_FIRST_TOKEN = "Waiting for a reply"
-_FIRST_TOKEN_HINT = "the model may still be loading"
+#: Live at 120x40 the header fits ~58 cells of activity (review round 1).
+_FIRST_TOKEN_HINT = "model may be loading"
 
 
 def _live_usage_label(usage: Any) -> str:

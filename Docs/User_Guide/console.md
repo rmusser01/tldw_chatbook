@@ -1108,20 +1108,21 @@ run, use **Stop**, **Ctrl+G**, or `/stop` instead.
   why). It only matters if a send is refused, and then the refusal names the
   fix — see [When a message doesn't fit the model](console/chat-basics.md#when-a-message-doesnt-fit-the-model).
 - **A small local model gets a plain request.** The assistant's tool list
-  is sized against the context window the send itself uses. When that window
-  is only a guess (no catalog entry, and the server didn't report one), it is
-  planned as 4,096 tokens; when the tools don't fit, the request carries just
-  your system prompt and conversation. A llama.cpp server started with
-  `-c 4096` therefore still answers a first "hi". A model with a known, large
-  window keeps its tools.
+  is sized against the context window the send itself uses. When a
+  self-hosted server's window is only a guess (no catalog entry, and the
+  server didn't report one), it is planned as 4,096 tokens; when the tools
+  don't fit, the request carries just your system prompt and conversation. A
+  llama.cpp server started with `-c 4096` therefore still answers a first
+  "hi". A model with a known, large window keeps its tools, and so does a
+  cloud model the catalog doesn't list yet (its provider's window is used).
 - **The first reply from a large local model takes minutes.** Loading a
   model and reading the prompt can take a while on CPU. A self-hosted
   provider gets 300 seconds for the *first* token
   (`[chat_defaults] first_token_timeout_seconds`, or
   `TLDW_FIRST_TOKEN_TIMEOUT_SECONDS`); gaps between later tokens keep the
   90-second stall window (`stream_stall_timeout_seconds`). After 15 seconds
-  with no answer the reply line reads "Waiting for a reply · 42s · the model
-  may still be loading" (a cloud model's line has no loading hint). The
+  with no answer the reply line reads "Waiting for a reply · 42s · model may
+  be loading" (a cloud model's line has no loading hint). The
   composer's **Stop** (Ctrl+G) ends the wait. If the wait runs out, the
   failure says the model may still be loading and names that setting, or
   suggests a smaller model.
