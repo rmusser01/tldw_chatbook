@@ -143,7 +143,7 @@ in a closure cell that `__closure__`, `inspect.getclosurevars` or a
 generator's locals read without loading the name; and a task's
 `get_stack()` or `sys._current_frames()` reaches the pusher's frame through
 APIs the list did not name. Eight more shapes that were rows on origin/dev
-and 5918cfd1df went silent, census byte-identical.
+and 5918cfd1df were silent at f606e0c3ef, census byte-identical.
 
 **The outcome (round 6, 2026-10-04): the rule was removed.** Every callback
 push counts by shape again, exactly as 5918cfd1df counted it, and the
@@ -151,9 +151,9 @@ thread's precision gap -- a callback that settles only a different future
 still makes a wait row -- is kept on purpose: every former precision
 control for it (25 cases) is now an expected row in one test of accepted
 false positives. No version of the rule ever dropped a real-tree push, so
-all it bought was the chance to lose recall, and each of its five versions
-lost some. A false row costs one census line a reviewer can annotate; a
-missed wait is a frozen UI.
+it bought no precision here, and each of its five versions lost some
+recall. A false row costs one census line a reviewer can annotate; a missed
+wait is a frozen UI.
 
 **For a precision fix:** run the old and new checker over the shapes the
 fix drops, write down what dropping a match actually requires (here: the
@@ -164,9 +164,24 @@ else", and neither does "its calls only settle" -- nor "its effect is
 visible in the expression" when the expression reads an attribute, nor
 "nothing loads the name" when a closure or a frame can reach it. **And
 before the second review round, count what the rule drops on the real
-tree:** a precision rule that drops nothing there pays only in recall,
-and every premise it needs is one more place to lose some. Remove it
+tree:** a precision rule that drops nothing there buys no precision yet,
+while every premise it needs is one more place to lose recall. Remove it
 rather than patch it again.
+
+**The same PR's history claims needed the same treatment (round 7,
+2026-10-04).** Round 6 wrote test comments such as "silent at a106783a85
+and f606e0c3ef", "at every head of the PR #2987 review" and "Strict-xfail
+known misses at a106783a85". Three were false: a lambda-closure shape was
+already a row at f606e0c3ef (that round's own red run showed it), another
+shape was silent at the round-2 and round-3 heads, and the xfails existed
+only at f606e0c3ef. A checkpoint review caught them by running each head's
+checker. Re-checking every such claim the same way -- each W003 test's
+source sets recorded once by a pytest plugin that wraps the collectors,
+then run through a git-archive copy of the checker at every head -- found
+four more comments that were false for some of the cases below them
+("each shape below", "any premise below"). **What to do:** a "row at X,
+silent at Y" claim is evidence like any other. Generate it from that
+per-head table, and name the table or the case it covers.
 
 ## A provider preset's own tests never touched the surfaces users set it up with
 
