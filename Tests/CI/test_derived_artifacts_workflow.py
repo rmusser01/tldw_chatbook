@@ -100,7 +100,7 @@ def test_required_aggregator_fails_when_either_lane_fails():
         assert "exit 1" in verdict["run"]
 
 
-def test_ui_fast_lane_runs_the_census_serially_on_the_minimal_dep_set():
+def test_ui_fast_lane_runs_the_census_in_contiguous_serial_shards():
     """TASK-32908: the run CI performs must be the run the census was verified
     against.
 
@@ -109,11 +109,18 @@ def test_ui_fast_lane_runs_the_census_serially_on_the_minimal_dep_set():
     different order would all be untested configurations for a gate whose
     entire value is that it is green -- and a gate that lands red trains
     people to ignore it.
+
+    TASK-34353: the serial census outgrew the job's 20-minute cap, so it runs
+    as parallel CONTIGUOUS shards -- each one an unbroken, in-order run of
+    census lines -- never an interleaved or xdist split.
     """
     job = _workflow()["jobs"]["ui-fast-lane"]
 
     assert job["if"] == "github.event_name == 'pull_request'"
-    assert "strategy" not in job, "sharding would change the verified order"
+    strategy = job["strategy"]
+    assert strategy["fail-fast"] is False  # one red shard must not hide another
+    assert list(strategy["matrix"]) == ["shard"]
+    assert len(strategy["matrix"]["shard"]) >= 2
 
     install = next(
         step
@@ -130,6 +137,11 @@ def test_ui_fast_lane_runs_the_census_serially_on_the_minimal_dep_set():
         if step.get("name") == "Run the gated Tests/UI slice"
     )["run"]
     assert "scripts/ui_pr_gate_census.txt" in run
+    # Contiguous slice [start, end) of the census, sized by the matrix.
+    assert "start=$(( index * ${#UI_FILES[@]} / total ))" in run
+    assert "end=$(( (index + 1) * ${#UI_FILES[@]} / total ))" in run
+    assert 'SHARD=("${UI_FILES[@]:start:end-start}")' in run
+    assert 'pytest "${SHARD[@]}"' in run
     assert "-n auto" not in run and "--dist" not in run
     assert "-p no:randomly" not in run  # not installed; order is collection order
 
