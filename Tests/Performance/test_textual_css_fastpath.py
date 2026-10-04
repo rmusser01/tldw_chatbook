@@ -378,7 +378,8 @@ async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
             while not app._ui_ready:
                 await pilot.pause(0.05)
         recovery_buttons = list(app.screen.query("#console-trace-actions Button"))
-        assert len(recovery_buttons) == 4 and all(
+        # TASK-34350 added the context-limit hold's two actions to this card.
+        assert len(recovery_buttons) == 6 and all(
             button.is_mounted for button in recovery_buttons
         ), "CSS census requires fully mounted Console recovery controls"
         rules_map = app.stylesheet.rules_map

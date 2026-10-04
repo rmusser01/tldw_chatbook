@@ -512,6 +512,48 @@ def _real_retrieval_controller_for_launch(state: dict[str, object]):
     return controller
 
 
+def _retrieval_evidence_owner(retrieval, *, staged_evidence_provider=None):
+    """Controller kwargs making ``retrieval`` the staged-evidence owner.
+
+    TASK-34352: the chat controller used to find these hooks by private name
+    on ``rag_capture_provider.__self__``; they are explicit dependencies now.
+
+    Args:
+        retrieval: A real ``ConsoleRetrievalController``.
+        staged_evidence_provider: Overrides the owner's own staged check.
+
+    Returns:
+        Keyword arguments for ``ConsoleChatController``.
+    """
+    return {
+        "rag_capture_provider": retrieval._capture_console_staged_rag,
+        "staged_evidence_provider": (
+            staged_evidence_provider
+            if staged_evidence_provider is not None
+            else lambda _session_id: retrieval._has_staged_evidence()
+        ),
+        "staged_evidence_snapshot": lambda: (
+            retrieval._snapshot_console_staged_evidence(),
+            retrieval._release_frozen_console_staged_rag,
+        ),
+        "frozen_rag_capture": retrieval._capture_frozen_console_staged_rag,
+    }
+
+
+def _wire_retrieval_evidence_owner(controller, retrieval) -> None:
+    """Rebind an existing controller's staged-evidence owner to ``retrieval``.
+
+    Args:
+        controller: The ``ConsoleChatController`` under test.
+        retrieval: A real ``ConsoleRetrievalController``.
+    """
+    owner = _retrieval_evidence_owner(retrieval)
+    controller._rag_capture_provider = owner["rag_capture_provider"]
+    controller._staged_evidence_provider = owner["staged_evidence_provider"]
+    controller._staged_evidence_snapshot = owner["staged_evidence_snapshot"]
+    controller._frozen_rag_capture = owner["frozen_rag_capture"]
+
+
 async def _paused_queued_send(*, persistence=None, gateway=None):
     store = ConsoleChatStore(persistence=persistence)
     policy = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
@@ -821,7 +863,7 @@ def test_controller_cancel_removes_exact_owner_and_sidecars_without_touching_sta
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_StreamingFence(),
-        rag_capture_provider=retrieval._capture_console_staged_rag,
+        **_retrieval_evidence_owner(retrieval),
     )
     controller._preparation_outcomes[preparation.preparation_id] = (
         ConsolePreparationOutcome(
@@ -1842,9 +1884,11 @@ async def test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged(
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
-        rag_capture_provider=retrieval._capture_console_staged_rag,
-        staged_evidence_provider=lambda _session_id: (
-            evidence_state["launch"] is not None
+        **_retrieval_evidence_owner(
+            retrieval,
+            staged_evidence_provider=lambda _session_id: (
+                evidence_state["launch"] is not None
+            ),
         ),
         model="vision-model",
     )
@@ -2390,7 +2434,7 @@ async def test_explicit_evidence_lease_survives_preaccept_failure(monkeypatch):
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_StreamingFence(),
-        rag_capture_provider=retrieval._capture_console_staged_rag,
+        **_retrieval_evidence_owner(retrieval),
     )
     monkeypatch.setattr(
         retrieval_module,
@@ -2425,7 +2469,7 @@ async def test_explicit_evidence_lease_releases_exact_launch_only_after_acceptan
     controller = ConsoleChatController(
         store=store,
         provider_gateway=gateway,
-        rag_capture_provider=retrieval._capture_console_staged_rag,
+        **_retrieval_evidence_owner(retrieval),
     )
     monkeypatch.setattr(
         retrieval_module,
@@ -2458,7 +2502,7 @@ async def test_explicit_evidence_lease_never_releases_newer_launch(monkeypatch):
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_StreamingFence(),
-        rag_capture_provider=retrieval._capture_console_staged_rag,
+        **_retrieval_evidence_owner(retrieval),
     )
     held = _CancellationResistantBoundary()
 
@@ -2498,7 +2542,7 @@ async def test_explicit_evidence_lease_cancel_keeps_original_staged(monkeypatch)
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_StreamingFence(),
-        rag_capture_provider=retrieval._capture_console_staged_rag,
+        **_retrieval_evidence_owner(retrieval),
     )
     held = _CancellationResistantBoundary()
 
@@ -3104,7 +3148,7 @@ async def test_ready_close_removes_echo_idempotently_and_preserves_evidence_laun
     controller = ConsoleChatController(
         store=store,
         provider_gateway=_StreamingFence(),
-        rag_capture_provider=retrieval._capture_console_staged_rag,
+        **_retrieval_evidence_owner(retrieval),
     )
     held = _CancellationBoundary()
 

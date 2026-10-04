@@ -11,6 +11,7 @@ from Tests.Chat.test_console_automatic_library_preparation import (
     _PolicyCoordinator,
     _capture_staged_evidence,
     _real_retrieval_controller_for_launch,
+    _wire_retrieval_evidence_owner,
     _staged_evidence_launch,
 )
 from Tests.Chat.test_console_dispatch_recovery_fix_round2 import (
@@ -86,7 +87,7 @@ async def test_app_disposal_releases_only_its_frozen_evidence_lease(
     evidence_state: dict[str, object] = {"launch": original, "released": []}
     retrieval = _real_retrieval_controller_for_launch(evidence_state)
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
-    controller._rag_capture_provider = retrieval._capture_console_staged_rag
+    _wire_retrieval_evidence_owner(controller, retrieval)
     monkeypatch.setattr(
         retrieval_module,
         "capture_console_staged_evidence_for_chat",
@@ -142,7 +143,7 @@ async def test_app_disposal_scrubs_content_when_evidence_release_raises(
         fail_release,
     )
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
-    controller._rag_capture_provider = retrieval._capture_console_staged_rag
+    _wire_retrieval_evidence_owner(controller, retrieval)
     monkeypatch.setattr(
         retrieval_module,
         "capture_console_staged_evidence_for_chat",
@@ -317,7 +318,7 @@ async def test_discard_releases_only_exact_frozen_evidence_once(
     evidence_state: dict[str, object] = {"launch": original, "released": []}
     retrieval = _real_retrieval_controller_for_launch(evidence_state)
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.NEVER)
-    controller._rag_capture_provider = retrieval._capture_console_staged_rag
+    _wire_retrieval_evidence_owner(controller, retrieval)
     monkeypatch.setattr(
         retrieval_module,
         "capture_console_staged_evidence_for_chat",
