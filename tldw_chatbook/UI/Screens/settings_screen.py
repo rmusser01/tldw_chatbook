@@ -1228,6 +1228,12 @@ NO_FOCUSED_SETTING_COPY = "None — Tab to a setting"
 #: TASK-33007.4: the focused-field guide row naming the config key; the
 #: Inspector shows it only inside its closed "config key" disclosure.
 CONFIG_KEY_ROW_LABEL = "Saved as"
+#: TASK-33007.7: the legacy streaming key, said only inside Console
+#: Behavior's "config key" disclosure.
+STREAMING_CONFIG_KEY_FACT = (
+    "chat_defaults.streaming is canonical; enable_streaming is read only "
+    "when streaming is absent"
+)
 #: TASK-33002.12: Providers & Models status for a saved default naming an
 #: ADR-146 registry entry that no longer exists.
 ENDPOINT_NOT_FOUND_SETTINGS_COPY = (
@@ -9477,6 +9483,14 @@ class SettingsScreen(BaseAppScreen):
                 # Dirty/readiness copy above the disclosure can grow while
                 # typing and push the active field past the compact fold.
                 self._reveal_settings_focus_after_refresh()
+        if category is SettingsCategoryId.CONSOLE_BEHAVIOR:
+            # TASK-33007.7: the global fallbacks' Source words follow the
+            # draft ("edited *") and a save or revert ("Console Behavior").
+            from ..Settings_Modules.settings_field_rows import (
+                refresh_console_fallbacks,
+            )
+
+            refresh_console_fallbacks(self)
         if category is SettingsCategoryId.IMAGE_GENERATION:
             # Image Gen's Save/Revert live INSIDE the panel (not the generic
             # top guided-action bar, excluded above like THEME/INTERNAL_
@@ -19031,164 +19045,19 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-default-user-display-name-help",
                 classes="settings-detail-row",
             )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["streaming"], classes="settings-input-label"
-                )
-                yield Checkbox(
-                    value=coerce_bool_setting(
-                        self._console_behavior_value("streaming"), True
-                    ),
-                    id="settings-console-default-streaming",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["temperature"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("temperature")
-                    ),
-                    id="settings-console-default-temperature",
-                    classes="settings-compact-input",
-                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_temperature"],
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["top_p"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("top_p")
-                    ),
-                    id="settings-console-default-top-p",
-                    classes="settings-compact-input",
-                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_top_p"],
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["min_p"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("min_p")
-                    ),
-                    id="settings-console-default-min-p",
-                    classes="settings-compact-input",
-                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_min_p"],
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["top_k"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("top_k")
-                    ),
-                    id="settings-console-default-top-k",
-                    classes="settings-compact-input",
-                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_top_k"],
-                    restrict=r"^[0-9]*$",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["max_tokens"], classes="settings-input-label"
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("max_tokens")
-                    ),
-                    id="settings-console-default-max-tokens",
-                    classes="settings-compact-input",
-                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_max_tokens"],
-                    restrict=r"^[0-9]*$",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(MODEL_FIELD_LABELS["seed"], classes="settings-input-label")
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("seed")
-                    ),
-                    id="settings-console-default-seed",
-                    classes="settings-compact-input",
-                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_seed"],
-                    restrict=r"^[0-9]*$",
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["presence_penalty"],
-                    classes="settings-input-label",
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("presence_penalty")
-                    ),
-                    id="settings-console-default-presence-penalty",
-                    classes="settings-compact-input",
-                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_presence_penalty"],
-                )
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["frequency_penalty"],
-                    classes="settings-input-label",
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("frequency_penalty")
-                    ),
-                    id="settings-console-default-frequency-penalty",
-                    classes="settings-compact-input",
-                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_frequency_penalty"],
-                )
             yield Static(
                 "Reasoning and thinking controls are sent only to providers that support them.",
                 id="settings-console-reasoning-help",
                 classes="settings-detail-row",
             )
-            with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["reasoning_effort"],
-                    classes="settings-input-label",
-                )
-                yield self._console_default_enum_select("reasoning_effort")
-            with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["reasoning_summary"],
-                    classes="settings-input-label",
-                )
-                yield self._console_default_enum_select("reasoning_summary")
-            with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["verbosity"], classes="settings-input-label"
-                )
-                yield self._console_default_enum_select("verbosity")
-            with Horizontal(classes="settings-input-row settings-select-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["thinking_effort"],
-                    classes="settings-input-label",
-                )
-                yield self._console_default_enum_select("thinking_effort")
-            with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    MODEL_FIELD_LABELS["thinking_budget_tokens"],
-                    classes="settings-input-label",
-                )
-                yield Input(
-                    value=self._console_input_value(
-                        self._console_behavior_value("thinking_budget_tokens")
-                    ),
-                    id="settings-console-default-thinking-budget-tokens",
-                    classes="settings-compact-input",
-                    placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS[
-                        "model_profile_thinking_budget_tokens"
-                    ],
-                    restrict=r"^[0-9]*$",
-                )
-            yield Static(
-                "chat_defaults.streaming is canonical; enable_streaming is read as fallback only.",
-                id="settings-console-streaming-compatibility",
-                classes="settings-status-row",
+            # TASK-33007.7: the same rows, orders and streaming Select family
+            # as Model defaults; imported here so the Settings route's
+            # pre-import payload does not grow (ADR-097).
+            from ..Settings_Modules.settings_field_rows import (
+                compose_console_fallbacks,
             )
+
+            yield from compose_console_fallbacks(self)
             yield Static("Background effects", classes="destination-section")
             yield Checkbox(
                 "Enable background effects",
@@ -21937,10 +21806,6 @@ class SettingsScreen(BaseAppScreen):
                     "[chat_defaults].streaming, temperature, top_p, max_tokens",
                 )
                 yield self._detail_row(
-                    "Compatibility",
-                    "streaming is canonical; enable_streaming is read only when streaming is absent",
-                )
-                yield self._detail_row(
                     "Override order",
                     "active Console session, then provider+model profile, then global fallback",
                 )
@@ -22843,6 +22708,16 @@ class SettingsScreen(BaseAppScreen):
                     value,
                     identifier=f"settings-console-behavior-field-guide-{index}",
                 )
+            # TASK-33007.7: the streaming key fact left the card's copy for
+            # the same closed "config key" disclosure Providers & Models has.
+            yield self._config_key_disclosure(
+                self._detail_row(
+                    MODEL_FIELD_LABELS["streaming"],
+                    STREAMING_CONFIG_KEY_FACT,
+                    identifier="settings-console-streaming-compatibility",
+                ),
+                identifier="settings-console-behavior-config-key",
+            )
             yield Static("Override rules", classes="destination-section")
             yield self._detail_row(
                 "Priority",
@@ -28000,12 +27875,19 @@ class SettingsScreen(BaseAppScreen):
         self._stage_console_default_value("user_display_name", event.value)
         self._mark_console_behavior_settings_staged()
 
-    @on(Checkbox.Changed, "#settings-console-default-streaming")
-    def handle_console_default_streaming_changed(self, event: Checkbox.Changed) -> None:
+    @on(Select.Changed, "#settings-console-default-streaming")
+    def handle_console_default_streaming_changed(self, event: Select.Changed) -> None:
+        """Stage the global streaming fallback as the bool the Checkbox staged.
+
+        Args:
+            event: The On/Off Select's change (TASK-33007.7).
+        """
         event.stop()
         if self._syncing_console_defaults:
             return
-        self._stage_console_default_value("streaming", bool(event.value))
+        self._stage_console_default_value(
+            "streaming", self._streaming_select_text(event.value) is True
+        )
         self._mark_console_behavior_settings_staged()
 
     @on(Input.Changed, "#settings-console-default-temperature")
@@ -33381,10 +33263,12 @@ class SettingsScreen(BaseAppScreen):
         self._syncing_console_defaults = True
         try:
             try:
-                self.query_one(
-                    "#settings-console-default-streaming", Checkbox
-                ).value = coerce_bool_setting(
-                    self._console_behavior_value("streaming"), True
+                self.query_one("#settings-console-default-streaming", Select).value = (
+                    "true"
+                    if coerce_bool_setting(
+                        self._console_behavior_value("streaming"), True
+                    )
+                    else "false"
                 )
             except QueryError:
                 pass

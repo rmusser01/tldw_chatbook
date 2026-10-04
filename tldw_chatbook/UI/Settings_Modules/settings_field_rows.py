@@ -12,6 +12,10 @@ Model defaults uses the rows first: it edits the default model's
 says what it inherits instead ("inherits 1.0 · Console Behavior"); a
 placeholder only states a range or unit.
 
+Console Behavior's global fallbacks (``chat_defaults``) use the same rows and
+orders (TASK-33007.7): a saved one says "Console Behavior", and streaming is
+an On/Off Select from the model default's Inherit/On/Off family.
+
 The card module imports this one, and ``settings_screen`` imports both inside
 the functions that use them, so the Settings route's pre-import payload does
 not grow (ADR-097).
@@ -22,7 +26,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.css.query import QueryError
 from textual.widget import Widget
@@ -35,6 +39,7 @@ from ...Chat.console_session_settings import (
     build_default_console_session_settings,
     resolve_console_value_layers,
 )
+from ...config import coerce_bool_setting
 from ...Widgets.Console.console_settings_field_row import (
     BLANK_FIELD_HELP,
     CORE_FIELDS,
@@ -42,6 +47,7 @@ from ...Widgets.Console.console_settings_field_row import (
     hidden_fields_line,
     hidden_fields_list,
 )
+from ..Screens.settings_config_models import SettingsCategoryId
 from ..Screens.settings_screen import (
     MODEL_PROFILE_INPUT_PLACEHOLDERS,
     MODEL_PROFILE_SELECT_FIELD_KEYS,
@@ -74,6 +80,11 @@ _INTEGER_FIELDS = frozenset({"top_k", "max_tokens", "seed", "thinking_budget_tok
 _EDITED = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.EDITED_DRAFT]
 _MODEL_DEFAULT = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.MODEL_DEFAULT]
 _PROVIDER = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
+_CONSOLE_BEHAVIOR = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.CHAT_DEFAULTS]
+#: Console Behavior's global fallbacks (TASK-33007.7): their rows' container
+#: and their closed Sampling disclosure.
+CONSOLE_FALLBACKS_ID = "settings-console-fallbacks"
+CONSOLE_SAMPLING_ID = "settings-console-sampling"
 
 
 def draft_key(name: str) -> str:
@@ -177,7 +188,12 @@ def inherited_values(
 
 
 def row_copy(
-    name: str, shown: str, edited: bool, inherited: tuple[object, str]
+    name: str,
+    shown: str,
+    edited: bool,
+    inherited: tuple[object, str],
+    *,
+    saved_word: str = _MODEL_DEFAULT,
 ) -> tuple[str, str]:
     """Return one row's Source word and help line.
 
@@ -186,14 +202,16 @@ def row_copy(
         shown: The control's value as text; blank when it holds none.
         edited: Whether the draft changed this field.
         inherited: ``(value, Source word)`` from ``inherited_values``.
+        saved_word: The layer a set field comes from: "model default" on
+            Model defaults, "Console Behavior" on the global fallbacks.
 
     Returns:
-        A set field: "model default" (or "edited *") and the field's help.
+        A set field: ``saved_word`` (or "edited *") and the field's help.
         A blank one: the layer it inherits from (or "edited *") and
         "inherits <value> · <layer>", or "blank = provider default".
     """
     if shown:
-        return (_EDITED if edited else _MODEL_DEFAULT), MODEL_CONFIG_FIELDS[name].help
+        return (_EDITED if edited else saved_word), MODEL_CONFIG_FIELDS[name].help
     value, word = inherited
     help_line = (
         BLANK_FIELD_HELP
@@ -487,3 +505,128 @@ def refresh_model_defaults(screen: SettingsScreen, provider: str, model: str) ->
     )
     hidden_list.update(hidden_fields_list(display, hidden))
     hidden_list.set_class(not hidden, "settings-gated-profile-hidden")
+
+
+def console_fallback_id(name: str) -> str:
+    """Return the widget id of a Console Behavior global fallback control.
+
+    Args:
+        name: A field-table name, e.g. ``"top_p"``.
+
+    Returns:
+        E.g. ``"settings-console-default-top-p"``.
+    """
+    return "settings-console-default-" + name.replace("_", "-")
+
+
+def _console_fallback_control(screen: SettingsScreen, name: str) -> Widget:
+    """Build one global fallback control from its saved-or-draft value.
+
+    Args:
+        screen: The Settings screen that owns the Console Behavior draft.
+        name: The field-table name.
+
+    Returns:
+        Streaming's On/Off Select (the model default's family less Inherit:
+        a global fallback has nothing to inherit from), a closed-enum Select,
+        or a one-row Input.
+    """
+    value = screen._console_behavior_value(name)
+    if name == "streaming":
+        return Select(
+            list(MODEL_PROFILE_STREAMING_SELECT_OPTIONS),
+            value="true" if coerce_bool_setting(value, True) else "false",
+            id=console_fallback_id(name),
+            classes="settings-compact-select",
+            allow_blank=False,
+            compact=True,
+        )
+    if draft_key(name) in MODEL_PROFILE_SELECT_FIELD_KEYS:
+        return screen._console_default_enum_select(name)
+    return Input(
+        value=screen._console_input_value(value),
+        id=console_fallback_id(name),
+        classes="settings-compact-input",
+        placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key(name)],
+        restrict=r"^[0-9]*$" if name in _INTEGER_FIELDS else None,
+    )
+
+
+class ConsoleFallbacks(Vertical):
+    """Console Behavior's global fallback rows; they say their sources once mounted."""
+
+    def on_mount(self) -> None:
+        """Fill the Source words, help lines and the Sampling title."""
+        refresh_console_fallbacks(self.screen)
+
+
+def compose_console_fallbacks(screen: SettingsScreen) -> ComposeResult:
+    """Compose the global fallbacks with Model defaults' rows (TASK-33007.7).
+
+    Core rows first, then the six samplers in one closed one-row Sampling
+    disclosure. The fallbacks apply to every provider, so no row is hidden.
+
+    Args:
+        screen: The Settings screen that owns the Console Behavior draft.
+
+    Yields:
+        The fallback rows' container.
+    """
+
+    def row(name: str) -> Horizontal:
+        control = _console_fallback_control(screen, name)
+        classes = "settings-input-row"
+        if isinstance(control, Select):
+            classes += " settings-select-row"
+        return field_row(
+            MODEL_FIELD_LABELS[name],
+            control,
+            row_id=f"{control.id}-row",
+            classes=classes,
+        )
+
+    with ConsoleFallbacks(id=CONSOLE_FALLBACKS_ID):
+        for name in CORE_FIELDS:
+            yield row(name)
+        with Collapsible(
+            title=Content(hidden_fields_line("", ())),
+            collapsed=True,
+            id=CONSOLE_SAMPLING_ID,
+        ):
+            for name in SAMPLING_FIELDS:
+                yield row(name)
+
+
+def refresh_console_fallbacks(screen: SettingsScreen) -> None:
+    """Re-say the global fallbacks' Source words, help lines and Sampling title.
+
+    Runs once mounted and after every Console Behavior draft change, save or
+    revert. A saved value reads "Console Behavior", an edited one "edited *",
+    and a blank one leaves the choice to the provider.
+
+    Args:
+        screen: The Settings screen that owns the card.
+    """
+    try:
+        fallbacks = screen.query_one(f"#{CONSOLE_FALLBACKS_ID}")
+        sampling = fallbacks.query_one(f"#{CONSOLE_SAMPLING_ID}", Collapsible)
+    except QueryError:
+        return
+    draft = screen._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+    dirty = draft.dirty_keys if draft is not None else frozenset()
+    names = {console_fallback_id(name): name for name in MODEL_DEFAULT_FIELDS}
+    shown_sampling: dict[str, str] = {}
+    for row in fallbacks.query(".settings-input-row"):
+        _label, control, source, help_line = row.children
+        name = names[str(control.id)]
+        text = control_text(control)
+        if name in SAMPLING_FIELDS:
+            shown_sampling[name] = text
+        word, help_text = row_copy(
+            name, text, name in dirty, (None, _PROVIDER), saved_word=_CONSOLE_BEHAVIOR
+        )
+        source.update(word)
+        help_line.update(help_text)
+    sampling.title = Content(
+        hidden_fields_line("", (), state=sampling_state(shown_sampling))
+    )

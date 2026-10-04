@@ -5812,7 +5812,9 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
         screen = _active_destination_screen(host)
         pane = screen.query_one("#settings-impact-pane-body", VerticalScroll)
         field = screen.query_one("#settings-console-max-parallel-runs", Input)
-        other_field = screen.query_one("#settings-console-default-streaming", Checkbox)
+        # TASK-33007.7, rewritten on purpose: global streaming is an On/Off
+        # Select now, not a Checkbox; any other fallback field serves here.
+        other_field = screen.query_one("#settings-console-default-streaming", Select)
         guide_ids = [f"#settings-console-behavior-field-guide-{i}" for i in range(4)]
 
         # Measure the REAL (focused) guide's total span first, so the pane
@@ -6877,9 +6879,10 @@ async def test_settings_console_behavior_renders_global_default_controls():
             screen.query_one("#settings-console-default-user-display-name", Input).value
             == "Rowan"
         )
+        # TASK-33007.7, rewritten on purpose: the On/Off Select shows "false".
         assert (
-            screen.query_one("#settings-console-default-streaming", Checkbox).value
-            is False
+            screen.query_one("#settings-console-default-streaming", Select).value
+            == "false"
         )
         assert (
             screen.query_one("#settings-console-default-temperature", Input).value
@@ -6943,9 +6946,20 @@ async def test_settings_console_behavior_renders_global_default_controls():
             "Used when no provider+model profile or active Console session overrides them."
             in text
         )
-        assert (
-            "chat_defaults.streaming is canonical; enable_streaming is read as fallback only."
-            in text
+        # TASK-33007.7, rewritten on purpose: the raw streaming-key line left
+        # the card; the Inspector's closed "config key" disclosure holds it.
+        assert "enable_streaming" not in " ".join(
+            str(static.renderable)
+            for static in screen.query_one("#settings-detail-pane-body").query(Static)
+        )
+        disclosure = screen.query_one(
+            "#settings-console-behavior-config-key", Collapsible
+        )
+        assert disclosure.collapsed is True
+        assert "enable_streaming is read only when streaming is absent" in str(
+            disclosure.query_one(
+                "#settings-console-streaming-compatibility", Static
+            ).renderable
         )
 
 
@@ -7329,7 +7343,8 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-console-behavior")
         screen = _active_destination_screen(host)
-        streaming = screen.query_one("#settings-console-default-streaming", Checkbox)
+        # TASK-33007.7, rewritten on purpose: an On/Off Select, not a Checkbox.
+        streaming = screen.query_one("#settings-console-default-streaming", Select)
         temperature = screen.query_one("#settings-console-default-temperature", Input)
         top_p = screen.query_one("#settings-console-default-top-p", Input)
         min_p = screen.query_one("#settings-console-default-min-p", Input)
@@ -7356,9 +7371,9 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
             "#settings-console-default-thinking-budget-tokens", Input
         )
 
-        streaming.value = False
+        streaming.value = "false"
         screen.handle_console_default_streaming_changed(
-            Checkbox.Changed(streaming, False)
+            Select.Changed(streaming, "false")
         )
         temperature.value = "0.33"
         screen.handle_console_default_temperature_changed(
@@ -7601,15 +7616,16 @@ async def test_settings_console_behavior_uses_batched_save_adapter(monkeypatch):
         threshold = screen.query_one(
             "#settings-console-paste-collapse-threshold", Input
         )
-        streaming = screen.query_one("#settings-console-default-streaming", Checkbox)
+        # TASK-33007.7, rewritten on purpose: an On/Off Select, not a Checkbox.
+        streaming = screen.query_one("#settings-console-default-streaming", Select)
 
         threshold.value = "120"
         screen.handle_console_paste_threshold_changed(
             Input.Changed(threshold, threshold.value)
         )
-        streaming.value = False
+        streaming.value = "false"
         screen.handle_console_default_streaming_changed(
-            Checkbox.Changed(streaming, False)
+            Select.Changed(streaming, "false")
         )
 
         await pilot.click("#settings-save-category")
@@ -9886,9 +9902,15 @@ async def test_settings_provider_streaming_and_enums_prevent_invalid_input(
 
         # Console-side booleans/enums use the same constrained widgets.
         await _open_settings_category(pilot, "#settings-category-console-behavior")
-        assert isinstance(
-            screen.query_one("#settings-console-default-streaming"), Checkbox
+        # TASK-33007.7, rewritten on purpose: global streaming is the model
+        # default's Select family -- On/Off only, with nothing to inherit.
+        console_streaming = screen.query_one(
+            "#settings-console-default-streaming", Select
         )
+        assert [value for _label, value in console_streaming._options] == [
+            "true",
+            "false",
+        ]
         console_enums = {
             "#settings-console-default-reasoning-effort": set(
                 settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS

@@ -19,7 +19,7 @@ body's visible region.
 import pytest
 from textual.containers import VerticalScroll
 from textual.css.query import QueryError
-from textual.widgets import Input, Static
+from textual.widgets import Collapsible, Input, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _active_destination_screen, _build_test_app
@@ -161,6 +161,11 @@ async def test_console_behavior_fallback_guide_stays_in_the_inspector_view(
         await _settle(pilot)
         screen = _active_destination_screen(host)
         route = f"console {size[0]}x{size[1]}"
+        # TASK-33007.7, rewritten on purpose: the six samplers sit in a closed
+        # Sampling disclosure (opened here so every fallback is clickable),
+        # and the rows now start at Temperature, not Streaming.
+        screen.query_one("#settings-console-sampling", Collapsible).collapsed = False
+        await _settle(pilot)
 
         assert await _click_each(
             pilot, screen, "console-behavior", CONSOLE_FALLBACKS, route
@@ -171,7 +176,7 @@ async def test_console_behavior_fallback_guide_stays_in_the_inspector_view(
             "console-behavior",
             CONSOLE_FALLBACKS,
             route,
-            "settings-console-default-streaming",
+            "settings-console-default-temperature",
         )
         assert seen == set(CONSOLE_FALLBACKS), set(CONSOLE_FALLBACKS) - seen
         # Every generation label is also a Providers & Models field, and that

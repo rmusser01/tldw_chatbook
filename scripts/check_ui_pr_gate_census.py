@@ -192,7 +192,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # serial) gates the Advanced fold -- order, one-row titles that say their
 # state, state words on every discovered and catalog row, one frame level,
 # and '/' opening the closed disclosure it lands in.
-MINIMUM_FILES = 165
+# TASK-33007.7 raised it to 138: test_settings_console_fallback_rows.py (~45 s
+# serial) gates Console Behavior's global fallbacks -- Model defaults' rows,
+# the On/Off streaming Select, the config-key disclosure and a real save that
+# a new chat and an inheriting model default both follow.
+MINIMUM_FILES = 166
 
 
 def read_census(path: Path) -> list[str]:
