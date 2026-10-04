@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 14:18'
+updated_date: '2026-10-04 14:38'
 labels:
   - agents
   - console
@@ -399,6 +399,14 @@ Reason: preserve landed migration-source/encryption/settings/wizard/Console cont
 Limits: targeted selections are never summed. No full suite/live providers/user keys/physical keyboard/relaunch/real voice installation/service/provision/download/playback/nativeLinuxWindows/aggregate-resource/package/index/installedrelease/wideraudit/admin bypass/weakened gates/sharedstash/foreigncleanup. The human exception applies to current465 ABSENT/conflict deadlock, not queued/running future head jobs.
 
 Compatibility scope for the colliding version number: landed incoming Notes-FTS schema76 and genuine released predecessor chains are the supported predecessors for77. Earlier unmerged orchestration-only76 private profiles are not a released/catalog-compatible schema and are not newly qualified for automatic conversion or recovery. Preserve transactional failure/refusal on a pre-existing or mismatched progress catalog; do not add IF NOT EXISTS, drop data, or auto-repair/mask this shape. Retain this unqualified compatibility limit and a bounded refusal/control where necessary; existing current-only recovery remains fail-closed.
+
+## Partial close-fence qualification refinement — October 4
+
+ADR required: no new ADR
+ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; existing Console close/retirement ADR097 and199 apply.
+Reason: preserving latest-dev failed-close semantics with two native/causal fleet fences requires the same rollback boundary to cover partial acquisition, without a new ownership or authority policy.
+
+Independent preliminary review requires explicit real-controller checks for reverse rollback of both fences when one abort returns false or raises; attempt every acquired fence, retain the failed-generation latch and refuse replacement generations. Add a RED control for second-fence acquisition raising after the first succeeds, then move acquisition under the existing rollback handler without changing cleanup, authority or timeout rules. Verify preferred begin_close_progress exactly once before committed generation, and that a progress failure leaves wake/scratch/queue/child teardown untouched. Preserve original assertions and current/frozen schema controls. Correct ADR199's current numbering to incoming NotesFTS75→76 plus progress76→77/current gates77, leaving its historical decision and AgentRuns histories unchanged.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
