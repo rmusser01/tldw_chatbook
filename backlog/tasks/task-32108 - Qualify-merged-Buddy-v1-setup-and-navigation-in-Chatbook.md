@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:32'
-updated_date: '2026-10-04 20:33'
+updated_date: '2026-10-04 20:39'
 labels: []
 dependencies: []
 priority: high
@@ -98,6 +98,8 @@ PR3011 review follow-up: two new navigation races are verified in source: starte
 PR3011 remaining review defects are resolved in TASK32108.1. Fresh49-case qualification and no-introduced static findings cover suspension, rollback, character supersession, cold ordered presentation and deferred Buddy close. Original human voice/native acceptance remains accepted and unrepeated; prior334 checks keep source attribution. Report and source-bound review receipt are updated; existing ADR094/139/147 apply. TASK31585 AC9 remains separate.
 
 Final documentation-only strict-base refresh: dev a7d9bca5da7f0d6be95cb9c3b7ab81602987051c adds15 unrelated Backlog follow-up records and merged cleanly at0cf557ff3757569bc259be98212e002fdd7c68d4 after the plan commit. Entire production, Tests, scripts, .github and pyproject.toml trees are byte-identical to published25c9e8d4e0fe79a38b226a72ddd7833491e76768, whose hosted UI lanes passed465 and1070 tests. Existing evidence retains that tested source; no unchanged product tests or accepted human/native/voice UAT repeated. Fresh guards pass:4993 unique/readable Backlog files; profile path census54 occurrences/22 files/51 exceptions; diagnostic census649 owners/1431 TASK492/56 TASK31551/7614 TASK494 calls/16 sinks. Whitespace and independent read-only integration review pass with no actionable finding. Private deterministic tree receipt:/private/tmp/chatbook-buddy-backlog-dev-20261004.json. Existing ADR094/139/147 apply; no new behavior, static-applicable code or ADR. Fresh hosted gates will qualify the updated head; protected auto-merge remains the intended integration.
+
+Current provider-base integration completed: merged dev49206beea90d35ea9e6842ffa44e4b274db29d8a cleanly at ebe2b201bf3259e597d39133493824af71b6b2a9. All8 Buddy product modules and15 owned test files remain unchanged from published50321d66da; incoming provider files match dev and only Together ProviderRecord changed. Both controlled real-Console Buddy send/durable-draft cases pass in72.83s using mock replies. Backlog4995 unique/readable, profile path and diagnostic artifact guards pass; independent integration review found no actionable compatibility/lifecycle issue. Report and separate pr3011-provider-dev-20261004.json receipt record the exact tested source and hashes. These2 repeated checks do not increase historical49/334 unique totals; both1535-pass hosted UI runs keep original head attribution, and accepted native/human voice UAT remains accepted. No new Buddy code, boundary or ADR; existing ADR094/139/147 apply.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

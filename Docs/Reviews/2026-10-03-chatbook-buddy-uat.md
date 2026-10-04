@@ -118,6 +118,12 @@ The earlier334 passes and22 integration repeats remain historical, source-attrib
 
 Final strict-dev integration merged `8f83422dde2a5b95da648882b8f7e09da5b41f08` cleanly at `6c2e08116e32a351d5e9017ac36092e8d3162664`. All nine repaired Screen methods are AST-identical across the merge. The incoming blocked-send changes are qualified by **nine targeted integration checks passing in 192.36 seconds**, including both controlled Buddy send/draft cases, cold/reused saved identity, shutdown and ordered Resume. Compile and zero-introduced diagnostic comparisons pass again. The [separate final-dev receipt](artifacts/buddy-uat-20261003/pr3011-final-dev-20261004.json) retains exact source and log hashes; these repeated cases are not added to the49-case total.
 
+## Provider integration — 2026-10-04
+
+Merged current dev `49206beea90d35ea9e6842ffa44e4b274db29d8a` cleanly at `ebe2b201bf3259e597d39133493824af71b6b2a9` after its Together discovery and streaming correction. All eight Buddy product modules and fifteen owned test files remain unchanged from `50321d66da58f967de277945c6f2ec7cf29b1d9e`. Incoming provider sources match dev, and only Together's provider record changed.
+
+Both controlled Buddy send and durable-draft cases passed: **2 tests in 72.83 seconds**, using mock replies. Backlog guards pass for4995 records; profile path and diagnostic inventories remain consistent. Independent integration review found no actionable compatibility or lifecycle issue. [Separate provider integration receipt](artifacts/buddy-uat-20261003/pr3011-provider-dev-20261004.json) retains exact tested source and log hashes. These two repeated cases do not increase the earlier49 or334 unique totals. Both1535-pass hosted UI runs retain their original head attribution, and accepted native and human voice evidence remains accepted. Existing ADR094/139/147 apply; this integration creates no new Buddy contract.
+
 ## Coverage limits and retained attempts
 
 - TASK-32108 is closed against its four recorded qualification outcomes. TASK-31585 AC9 retains the separate exact-native-revision and full application-configured OpenAI human realtime coverage limits. Earlier Chatbook native and local human voice acceptance is preserved; server React evidence remains separate.
