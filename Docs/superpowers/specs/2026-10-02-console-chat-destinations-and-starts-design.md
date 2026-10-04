@@ -3,11 +3,11 @@
 Date: 2026-10-02
 Status: Approved after written-spec review on 2026-10-02
 Task: [TASK-34213](../../../backlog/tasks/task-34213%20-%20Design-Console-chat-destinations-and-bounded-agent-starts.md)
-Decision: [ADR-211](../../../backlog/decisions/211-console-chat-destinations-and-bounded-starts.md)
+Decision: [ADR-219](../../../backlog/decisions/219-console-chat-destinations-and-bounded-starts.md)
 
 ```text
 ADR required: yes
-ADR path: backlog/decisions/211-console-chat-destinations-and-bounded-starts.md
+ADR path: backlog/decisions/219-console-chat-destinations-and-bounded-starts.md
 Reason: Extends the agent-facing creation contract and adds shared automatic budgets, durable machine-origin launch authority, and draft recovery semantics.
 ```
 

@@ -1317,7 +1317,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
     )
 
 
-# ADR-211: exact constructor-captured v22 object deltas; all v18/v21 variants remain.
+# ADR-219: exact constructor-captured v22 object deltas; all v18/v21 variants remain.
 _AGENT_RUNS_V22_REMOVED = (
     "CREATE TABLE automatic_work_chains (\n    id TEXT PRIMARY KEY,\n    conversation_id TEXT NOT NULL,\n    root_submission_id TEXT NOT NULL UNIQUE,\n    limits_json TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'active'\n        CHECK (status IN ('active', 'paused', 'review_required')),\n    pause_reason TEXT,\n    created_at REAL NOT NULL,\n    started_at REAL,\n    deadline_at REAL,\n    clock_owner_id TEXT,\n    started_monotonic REAL,\n    last_observed_at REAL NOT NULL\n)",
     "CREATE TRIGGER automatic_chain_identity_immutable\nBEFORE UPDATE OF conversation_id, root_submission_id, limits_json ON automatic_work_chains\nWHEN OLD.conversation_id IS NOT NEW.conversation_id\n  OR OLD.root_submission_id IS NOT NEW.root_submission_id\n  OR OLD.limits_json IS NOT NEW.limits_json\nBEGIN SELECT RAISE(ABORT, 'automatic chain identity is immutable'); END",
@@ -1378,7 +1378,7 @@ _AGENT_RUNS_SCHEMA += (
 )
 
 
-# ADR-211: fixed installed v21→v22 SQL; only disposable candidates migrate.
+# ADR-219: fixed installed v21→v22 SQL; only disposable candidates migrate.
 _AGENT_RUNS_MIGRATION_21_22 = (
     "ALTER TABLE automatic_work_chains ADD COLUMN allowance_root_chain_id TEXT REFERENCES automatic_work_chains(id)",
     "DROP TRIGGER IF EXISTS automatic_chain_identity_immutable",

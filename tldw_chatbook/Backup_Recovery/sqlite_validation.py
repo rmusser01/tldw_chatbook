@@ -248,7 +248,7 @@ class _Restrictions:
                     or action == sqlite3.SQLITE_INSERT
                     and first in {"sqlite_master", "schema_version"}
                 )
-                # Fixed ADR-211 migration objects; unrelated DDL and domain
+                # Fixed ADR-219 migration objects; unrelated DDL and domain
                 # row writes remain refused under this temporary owner gate.
                 allowed |= (
                     action == sqlite3.SQLITE_ALTER_TABLE

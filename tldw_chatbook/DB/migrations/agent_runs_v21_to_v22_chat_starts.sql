@@ -1,4 +1,4 @@
--- ADR-211: local conversation chains share an immutable direct allowance root.
+-- ADR-219: local conversation chains share an immutable direct allowance root.
 PRAGMA foreign_keys=ON;
 BEGIN IMMEDIATE;
 ALTER TABLE automatic_work_chains ADD COLUMN allowance_root_chain_id TEXT REFERENCES automatic_work_chains(id);

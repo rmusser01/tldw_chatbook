@@ -774,7 +774,7 @@ CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = tuple(
 )
 
 
-# ADR-211: exact constructor-captured v76 deltas; retain both qualified v75 catalogs.
+# ADR-219: exact constructor-captured v76 deltas; retain both qualified v75 catalogs.
 CHACHANOTES_V75_SCHEMA = next(
     row[2] for row in CORE_SCHEMAS if row[0] == "db.chachanotes.primary"
 )

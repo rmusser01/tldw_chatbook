@@ -1,4 +1,4 @@
-# ADR-211: Console chat destinations and bounded agent starts
+# ADR-219: Console chat destinations and bounded agent starts
 
 Date: 2026-10-02
 Status: Accepted after written-spec review on 2026-10-02

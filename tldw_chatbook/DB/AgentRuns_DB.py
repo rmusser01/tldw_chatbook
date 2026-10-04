@@ -792,7 +792,7 @@ class AgentRunsDB(BaseDB):
                     "ALTER TABLE agent_runs ADD COLUMN work_chain_id TEXT "
                     "REFERENCES automatic_work_chains(id)"
                 )
-            # ADR-211: historical roots keep NULL membership and their limits.
+            # ADR-219: historical roots keep NULL membership and their limits.
             chain_columns = {
                 row[1]
                 for row in conn.execute("PRAGMA table_info(automatic_work_chains)")
