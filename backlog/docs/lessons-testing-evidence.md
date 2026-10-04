@@ -197,6 +197,20 @@ edit would have shipped a second wrong number.
 base, measure its value on both trees with a probe that reuses the test's helpers. Pin the
 measured value, and say in the comment where it was measured.
 
+## During App.exit a recorder on push_screen misses the screen that matters (TASK-33622.17, 2026-10-04)
+
+**Incident.** A test meant to prove that Ctrl+Q's **Discard and quit** over the video
+Save-to-disk picker does not re-open the storage choice recorded `app.push_screen` calls
+after the quit was approved. A mutant that made the shutdown read as a picker cancel still
+passed. A debug print showed why: the resolver did loop back and built a new choice, but
+it waits for screens through `run_worker(push_screen_wait(...))`, and a worker started
+after `App.exit()` never runs, so `push_screen` was never called. Recording the
+resolver's own screen-wait call (its request for the screen) turned the same mutant red.
+
+**What to do.** To pin "X is not re-opened during shutdown", record the code's request
+for X (the call that asks for the screen), not the push. Then run a mutant that forces
+the re-open, and check that the test goes red.
+
 ## A provider preset's own tests never touched the surfaces users set it up with
 
 **TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889
