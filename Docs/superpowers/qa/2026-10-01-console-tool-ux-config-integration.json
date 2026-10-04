@@ -29015,5 +29015,77 @@
       "All owned Console runtime/native bytes remain exact. Incoming non-composed paths exactdev, component catalog restores exactupstream after reversing only existing Console paragraph;3metadata patches rawexact.",
       "All3 tasks remain In Progress pending fresh exact-head clean/resolved Qodo and all5 relevant hosted checks, then fresh final Done-metadata qualification before normal protected merge; auto-merge off."
     ]
+  },
+  "oct04_following_setup_docs_dev_rebase": {
+    "anchor_head": "65c7b1f2bea6f8ebf696e25b65a201680baf764b",
+    "base": "67fc5310471823262eb6ce344a539e699784bed8",
+    "previous_published_head": "fd26f5378287630d59c3c8275235ec7685340fe2",
+    "rebase_proof": {
+      "old_head": "fd26f5378287630d59c3c8275235ec7685340fe2",
+      "old_base": "83c264f28663d76b712e8a1baa6b6193bf2a0fa8",
+      "new_head": "65c7b1f2bea6f8ebf696e25b65a201680baf764b",
+      "new_base": "67fc5310471823262eb6ce344a539e699784bed8",
+      "incoming_paths": [
+        "Docs/superpowers/specs/2026-10-03-first-run-setup-shape-design.md",
+        "backlog/decisions/012-provider-credential-settings-boundary.md",
+        "backlog/decisions/029-local-private-data-boundary.md",
+        "backlog/decisions/033-application-session-state-ownership.md",
+        "backlog/decisions/076-library-lifecycle-progressive-disclosure.md",
+        "backlog/decisions/126-complete-local-backup-and-recovery.md",
+        "backlog/decisions/217-first-run-setup-shape-and-surfaces.md",
+        "backlog/decisions/README.md",
+        "backlog/tasks/task-21148 - Wizard-layout-and-density-pass.md",
+        "backlog/tasks/task-28019 - First-run-wizard-offer-a-media-first-path.md",
+        "backlog/tasks/task-34100 - First-run-setup-wizard-burn-down-of-the-2026-10-02-UX-review.md",
+        "backlog/tasks/task-34100.10 - Setup-session-re-runs-resume-exits-and-entry-points-respect-existing-state.md",
+        "backlog/tasks/task-34100.13 - Full-track-steps-earn-their-place-RAG-Tools-Notes-Speech-and-Appearance-do-what-they-say.md",
+        "backlog/tasks/task-34100.15 - One-setup-registry-consistent-names-real-change-it-later-homes-and-a-User-Guide-that-matches.md",
+        "backlog/tasks/task-34100.16 - Portable-setup-a-documented-second-machine-path-restore-that-understands-config-files-and-launch-flags.md",
+        "backlog/tasks/task-34100.17 - Owner-approved-design-spec-for-the-setup-flow-Quick-track-tldw-server-re-run-dashboard-Say-hello.md",
+        "backlog/tasks/task-34100.18 - Settings-Overview-shows-a-tldw-server-row-instead-of-the-hidden-Switch-Source-Server-button.md",
+        "backlog/tasks/task-34100.19 - One-runtime-source-coordinator-with-on-disk-rollback-and-a-tldw-server-probe-that-says-what-failed.md",
+        "backlog/tasks/task-34100.20 - Setup-core-outside-the-UI-package-a-step-host-protocol-an-exit-route-registry-and-a-setup-palette-provider.md",
+        "backlog/tasks/task-34100.21 - The-setup-Summary-always-shows-a-tldw-server-row-from-the-runtime-source-owner.md",
+        "backlog/tasks/task-34100.22 - The-setup-Summary-offers-Connect-a-tldw-server-through-the-shared-coordinator.md",
+        "backlog/tasks/task-34100.23 - Ready-screen-with-an-honest-verdict-three-exits-on-one-row-What-is-next-and-an-Esc-that-never-finishes-setup.md",
+        "backlog/tasks/task-34100.24 - Quick-setup-becomes-four-steps-Welcome-Connect-Model-Ready-with-a-total-that-never-changes-mid-run.md",
+        "backlog/tasks/task-34100.25 - A-documents-first-Welcome-choice-opens-Library-Import-and-defers-AI-setup.md",
+        "backlog/tasks/task-34100.26 - Review-your-setup-a-re-run-dashboard-with-single-step-changes-and-per-area-palette-commands.md",
+        "backlog/tasks/task-34100.27 - Full-setup-eleven-steps-in-dependency-order-with-a-tldw-server-step-and-Finish-with-defaults.md",
+        "backlog/tasks/task-34100.28 - Console-probe-turn-seams-for-the-setup-test-message-built-as-a-spike-first.md",
+        "backlog/tasks/task-34100.29 - Say-hello-on-Ready-and-the-dashboard-an-optional-real-test-message-with-an-honest-cost-line.md",
+        "backlog/tasks/task-34100.30 - Console-arrival-line-after-setup-and-Speak-and-Dictate-setup-sheets-at-the-moment-of-use.md",
+        "backlog/tasks/task-34100.31 - Optional-system-keychain-storage-for-provider-keys-with-config-toml-staying-the-default.md",
+        "backlog/tasks/task-34100.32 - Move-provider-keys-to-or-from-the-system-keychain-on-request-with-orphaned-items-and-long-Windows-values-handled.md",
+        "backlog/tasks/task-34100.33 - Plain-text-setup-with-tldw-cli-setup-plain-for-screen-readers-and-SSH-v1.md",
+        "backlog/tasks/task-34100.34 - Plain-text-setup-for-the-tldw-server-and-the-remaining-Full-track-areas.md",
+        "backlog/tasks/task-34100.6 - Provider-step-a-real-skip-sticky-local-detection-endpoint-fields-search-and-honest-key-checks.md"
+      ],
+      "all_five_raw_patches_exact": true,
+      "whole_tree_difference_only_incoming_docs": true,
+      "all334_source_pins_exact": true,
+      "runtime_anchor": "b4bda22edc0e25666a107840a00b5dcde36dce19",
+      "runtime_base": "83c264f28663d76b712e8a1baa6b6193bf2a0fa8",
+      "actual_runtime_receipts_retained_without_relabel": true,
+      "ADR217_and_dated012_029_033_amendments_read": "future setup-shape delivery; no implementation or selected Console acceptance changes introduced"
+    },
+    "source_pin_count": 334,
+    "source_map_reconstruction": {
+      "base_key": "oct04_shared_pane_latest_dev_integration",
+      "delta": "none; all334 hashes exact"
+    },
+    "preflight": {
+      "head": "65c7b1f2bea6f8ebf696e25b65a201680baf764b",
+      "base": "67fc5310471823262eb6ce344a539e699784bed8",
+      "exit_code": 0,
+      "elapsed_seconds": 136.99,
+      "log": "/tmp/console-tool-ux-docs217-preflight.log",
+      "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-docs217-preflight-isx6d02h",
+      "sources_stable": true,
+      "success_line": true
+    },
+    "runtime_evidence": "Reuse actual918-pass/1 inherited baseline-confirmed MRO-red receipts on b4bda22edc0e25666a107840a00b5dcde36dce19, base83c264f286. No runtime source changes, no relabelled test/native/lint replay. All5 Console patches replay raw-exact; whole-tree difference is incoming setup documentation/task metadata only.",
+    "ADR_required": "no new ADR or implementation; incoming ADR217 and amendments read; existing selected Console ADRs apply",
+    "limits": "No new native Auth/sign-in, credential, full Library, live-server or full-suite verification. Earlier runtime/native/failure receipts retain actual anchors; inherited broader MRO guard remains red and unchanged. Final exact-head clean/resolved Qodo and all5 relevant checks including BOTH UI shards, then fresh Done-metadata-head gates/review and normal protected merge remain required; auto off."
   }
 }
