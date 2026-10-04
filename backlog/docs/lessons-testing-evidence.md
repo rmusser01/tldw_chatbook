@@ -116,18 +116,36 @@ none of those is a call. Ten more shapes 5918cfd1df reported went silent;
 census byte-identical, suite green. In none of those rounds did the
 settling rule drop a real-tree push (per-function push counts stayed
 identical to 5918cfd1df's, and the real tree has no direct-form callback
-at all). **The decision (round 4): stop proving.** Only a callback whose whole effect is visible in the push
-expression -- `callback=other.set_result`, a `partial` of it, a one-call
-lambda with plain arguments -- is left out; every def or method callback
-counts by shape, and the four precision controls that needed the proof are
-now expected rows, named as accepted false positives.
+at all). **The decision (round 4): stop proving.** Only a direct settle
+-- `callback=other.set_result`, a `partial` of it, a one-call lambda with
+plain arguments -- is left out; every def or method callback counts by
+shape, and the four precision controls that needed the proof are now
+expected rows, named as accepted false positives. **And a fifth time, on
+that decision's own words.** Round 4 wrote that those forms' "whole effect
+is visible in the push expression". It is not when the receiver is
+`self.X`: reading it can run a property getter, a reactive or
+`__getattribute__`, and the `self.X = loop.create_future()` before it a
+setter, a watcher, a validator or `__setattr__` -- none of which is an `.X`
+node the package-wide use count saw. Nine shapes (`@property`,
+`property(...)`, a base class's property in another module, a reactive's
+watcher and validator, `__setattr__`, a class-level `X` behind a
+conditional store) were rows on origin/dev and 5918cfd1df and silent at
+a106783a85. So was a relay branching on `other.cancel()`'s answer: "a
+settle call's receiver hands nothing on" ignored that `cancel()` reports
+whether the callback ran, and that `set_result` raises when it did. Round 5
+accepts only a bare LOCAL future (reading a local runs no code), drops
+`partial` (only its name made it `functools.partial`), and exempts a settle
+elsewhere only as a `cancel()`/`set()` statement. The real tree still has
+no direct-form callback, so none of it moved a row.
 
 **For a precision fix:** run the old and new checker over the shapes the
 fix drops, write down what dropping a match actually requires (here: the
 awaited future cannot depend on the callback running at all), and check
 that the rule establishes THAT -- not a weaker neighbour of it. A name
 match in another scope proves nothing, neither does "it settles something
-else", and neither does "its calls only settle". **And when each review
+else", and neither does "its calls only settle" -- nor "its effect is
+visible in the expression" when the expression reads an attribute. **And
+when each review
 round needs another premise, count what the rule buys on the real tree:**
 a precision rule that drops nothing there pays for itself with recall
 only, and every premise is one more place to lose it.
