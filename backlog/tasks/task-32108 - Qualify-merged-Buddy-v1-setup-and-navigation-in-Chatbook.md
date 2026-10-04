@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:32'
-updated_date: '2026-10-04 19:19'
+updated_date: '2026-10-04 20:33'
 labels: []
 dependencies: []
 priority: high
@@ -39,6 +39,8 @@ Current-dev Chatbook continuation (2026-10-03): verify source 01a2020981c6197e5c
 2026-10-04 scope reconciliation: reuse the recorded native geometry and post-fix local human voice acceptance instead of repeating already accepted UAT. Close TASK-32108 against its fresh/upgraded profile, exact ownership, presentation, navigation, draft/running-work, inbox and evidence outcomes, all recorded in the October qualification report. Retain TASK-31585 AC9's separate full OpenAI human realtime and exact native revision coverage limits. ADR required: no. ADR path: backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md. Reason: correct acceptance accounting for existing behavior; no product contract or runtime change.
 
 2026-10-04 strict-base follow-up before integration: dev advanced to a7d9bca5da7f0d6be95cb9c3b7ab81602987051c with fifteen Backlog follow-up records only. Merge current dev into the existing PR3011 branch, prove all production, test, script and workflow trees byte-identical to published25c9e8d4e0fe79a38b226a72ddd7833491e76768, run Backlog readability/ID and owned artifact guards, and publish normally for strict branch protection. Retain the current-head1535 hosted UI passes at their tested source; no unchanged product tests, human/native/voice UAT or provider/audio calls need repetition. ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md, backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md and backlog/decisions/147-conversation-archive-and-exact-resume.md (existing). Reason: documentation-only base integration preserves all repaired product boundaries.
+
+2026-10-04 second strict-base follow-up before integration: dev advanced to49206beea90d35ea9e6842ffa44e4b274db29d8a through the Together provider discovery/streaming correction in PR3014. Merge that base into existing PR3011, prove all eight Buddy-owned product modules and their test files are unchanged from published50321d66da58f967de277945c6f2ec7cf29b1d9e, and verify incoming provider files match dev. Run only the two controlled real-Console Buddy send/durable-draft cases to qualify provider wiring, then Backlog and artifact consistency guards and independent integration review. Preserve both1535-pass hosted UI runs at their tested heads; accepted native/human voice UAT and paid provider/audio actions are not repeated. ADR required:no. ADR paths:backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md, backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md, backlog/decisions/147-conversation-archive-and-exact-resume.md. Reason:integrate an already reviewed provider correction while preserving the existing Buddy lifecycle, ownership and persistence contracts.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
