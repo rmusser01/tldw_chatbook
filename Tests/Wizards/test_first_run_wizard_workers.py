@@ -399,10 +399,21 @@ async def test_a_recovery_failure_after_its_save_reprompts_instead_of_raising(
         TldwCli._apply_first_run_recovery_result, fake
     )
     fake.run_worker = MagicMock()
+    from loguru import logger
 
-    TldwCli._handle_first_run_recovery_result(fake, "start_over")
-    await fake.run_worker.call_args.args[0]  # the worker's body, run here
+    errors: list[str] = []
+    sink = logger.add(errors.append, level="ERROR", format="{message}")
+    try:
+        TldwCli._handle_first_run_recovery_result(fake, "start_over")
+        await fake.run_worker.call_args.args[0]  # the worker's body, run here
+    finally:
+        logger.remove(sink)
 
     fake.push_screen.assert_not_called()
     assert fake.notify.call_args.kwargs.get("severity") == "error"
     fake._schedule_first_run_recovery_retry.assert_called_once()
+    # Qodo (PR #3001): the log names the choice that failed, and only the
+    # exception's type, never its message.
+    assert [line.strip() for line in errors] == [
+        "First-run recovery failed (choice=start_over, error_type=RuntimeError)"
+    ]

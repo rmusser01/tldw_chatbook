@@ -3835,8 +3835,11 @@ class TldwCli(
             try:
                 await self._apply_first_run_recovery_result(result)
             except Exception as exc:  # noqa: BLE001 - the prompt is the recovery
+                # ``result`` is one of the three fixed choices checked above.
                 logger.error(
-                    "First-run recovery failed (error_type={})", type(exc).__name__
+                    "First-run recovery failed (choice={}, error_type={})",
+                    result,
+                    type(exc).__name__,
                 )
                 self.notify("Setup could not open. Try again.", severity="error")
                 self._schedule_first_run_recovery_retry()
