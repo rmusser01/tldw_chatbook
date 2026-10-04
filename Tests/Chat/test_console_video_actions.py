@@ -183,6 +183,7 @@ def test_video_action_dispatch_returns_screen_targets():
         assert result.target_message_id == message.id
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_handle_console_message_action_routes_video_play_with_persisted_storage_id(
     tmp_path, monkeypatch
@@ -214,6 +215,7 @@ async def test_handle_console_message_action_routes_video_play_with_persisted_st
     assert pushed[0].path == str(stored_path)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_handle_console_message_action_routes_video_save_with_persisted_storage_id(
     tmp_path, monkeypatch
@@ -241,6 +243,7 @@ async def test_handle_console_message_action_routes_video_save_with_persisted_st
     assert (export_root / "dusk-over-neon-tokyo.mp4").read_bytes() == b"video"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_video_play_resolves_webm_from_metadata(tmp_path, monkeypatch):
     screen, message, stored_path, resolve_calls, pushed, _pending = (
@@ -272,6 +275,7 @@ async def test_video_play_resolves_webm_from_metadata(tmp_path, monkeypatch):
     assert pushed[0].path == str(stored_path)
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_video_save_copy_preserves_webm_extension_and_collision_names(
     tmp_path, monkeypatch

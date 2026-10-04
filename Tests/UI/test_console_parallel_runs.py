@@ -6,6 +6,8 @@ import asyncio
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+
 from textual.content import Content
 from textual.widgets import Button, Select, Static
 
@@ -435,8 +437,9 @@ async def test_transcript_sync_timer_keeps_ticking_for_background_run_while_view
         assert console._console_transcript_sync_timer is None
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_background_approval_parks_with_badge_and_single_toast() -> None:
+async def test_background_approval_parks_with_badge_and_single_toast(request) -> None:
     """Task 9 (parked background approvals, parallel-agents spec): a run in
     a NON-viewed session that needs approval must not steal the mounted
     approval card out from under whatever the user is currently looking
@@ -470,6 +473,10 @@ async def test_background_approval_parks_with_badge_and_single_toast() -> None:
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         controller = console._ensure_console_chat_controller()
         store = controller.store
         viewed = store.active_session_id
@@ -530,8 +537,9 @@ async def test_background_approval_parks_with_badge_and_single_toast() -> None:
         assert len([n for n in notifications if "needs approval" in n]) == 1
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_needs_approval_tab_marker_click_routes_to_review_action() -> None:
+async def test_needs_approval_tab_marker_click_routes_to_review_action(request) -> None:
     """task-32277: clicking a session tab wearing the ◆ marker reaches the
     same approval-review seam as Alt+A / the inspector's Review button.
 
@@ -548,6 +556,10 @@ async def test_needs_approval_tab_marker_click_routes_to_review_action() -> None
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         controller = console._ensure_console_chat_controller()
         store = controller.store
         viewed = store.active_session_id
@@ -592,8 +604,11 @@ async def test_needs_approval_tab_marker_click_routes_to_review_action() -> None
         assert "approval-row-decision" in host.focused.classes
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_park_toast_survives_a_viewed_run_completion_re_invocation() -> None:
+async def test_park_toast_survives_a_viewed_run_completion_re_invocation(
+    request,
+) -> None:
     """TASK-1141 (UAT F2): a parked round's toast must not re-fire when a
     DIFFERENT, VIEWED session's own run completes.
 
@@ -623,6 +638,10 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation() -> No
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         controller = console._ensure_console_chat_controller()
         controller.app = host
         store = controller.store
@@ -698,8 +717,11 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation() -> No
         assert decisions == {"mcp__srv__tool": "deny"}
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_park_toast_fires_again_for_a_genuinely_new_round_same_session() -> None:
+async def test_park_toast_fires_again_for_a_genuinely_new_round_same_session(
+    request,
+) -> None:
     """TASK-1141: the round-identity guard must not over-suppress -- a
     SECOND, genuinely different round for the SAME session (e.g. the
     first round having resolved/timed out and a fresh one starting) must
@@ -711,6 +733,10 @@ async def test_park_toast_fires_again_for_a_genuinely_new_round_same_session() -
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         controller = console._ensure_console_chat_controller()
         store = controller.store
         viewed = store.active_session_id
@@ -749,10 +775,11 @@ async def test_park_toast_fires_again_for_a_genuinely_new_round_same_session() -
         assert len(toasts) == 2, f"expected the new round to toast again, got {toasts}"
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_round() -> (
-    None
-):
+async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_round(
+    request,
+) -> None:
     """TASK-1141 review round 1 (reviewer-reproduced live on HEAD before
     this fix): `_current_park_round_ids` alone only inspects the three
     LIVE `_parked_*_payloads` maps -- every owning bridge's own `finally`
@@ -775,6 +802,10 @@ async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_ro
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         controller = console._ensure_console_chat_controller()
         store = controller.store
         viewed = store.active_session_id
@@ -812,8 +843,11 @@ async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_ro
         assert len(toasts) == 1, f"expected NO second toast post-teardown, got {toasts}"
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_park_toast_fires_once_for_a_new_round_arriving_after_teardown() -> None:
+async def test_park_toast_fires_once_for_a_new_round_arriving_after_teardown(
+    request,
+) -> None:
     """TASK-1141 review round 1: the post-teardown fallback guard added
     above (see the sibling test) must not over-suppress a genuinely NEW
     round for the same session that parks only after the previous one
@@ -828,6 +862,10 @@ async def test_park_toast_fires_once_for_a_new_round_arriving_after_teardown() -
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         controller = console._ensure_console_chat_controller()
         store = controller.store
         viewed = store.active_session_id
@@ -1547,8 +1585,9 @@ def _single_pending_call() -> MCPPendingCall:
     )
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_mounted_round_survives_switch_away_and_switch_back() -> None:
+async def test_mounted_round_survives_switch_away_and_switch_back(request) -> None:
     """Final review CRITICAL 1: a round that MOUNTS immediately (its
     session was the active/viewed one when `request_mcp_approvals`
     started -- i.e. NEVER parked) must still be recoverable after the
@@ -1567,6 +1606,10 @@ async def test_mounted_round_survives_switch_away_and_switch_back() -> None:
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         controller = console._ensure_console_chat_controller()
         # `_ensure_console_chat_controller` wires `controller.app =
         # self.app_instance` -- the wrapped `TldwCli` instance, which
@@ -1625,8 +1668,11 @@ async def test_mounted_round_survives_switch_away_and_switch_back() -> None:
         assert decisions == {"mcp__srv__tool": "approve_once"}
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_new_session_clears_a_mounted_card_from_the_session_being_left() -> None:
+async def test_new_session_clears_a_mounted_card_from_the_session_being_left(
+    request,
+) -> None:
     """Final review IMPORTANT 2: `new_session` activates the created
     session but, pre-fix, never re-derived the approval card the way
     `switch_session`/`close_session` do -- a round mounted on the session
@@ -1639,6 +1685,10 @@ async def test_new_session_clears_a_mounted_card_from_the_session_being_left() -
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         controller = console._ensure_console_chat_controller()
         # See the sibling test above for why this must be `host` (the
         # actually-running App), not `app_instance`.
@@ -1681,10 +1731,11 @@ async def test_new_session_clears_a_mounted_card_from_the_session_being_left() -
         assert new_session.id != session_a
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_on_visit() -> (
-    None
-):
+async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_on_visit(
+    request,
+) -> None:
     """TASK-910: `request_skill_install_confirm` now gets the SAME park/
     badge/toast/re-mount treatment as `request_mcp_approvals` -- see
     `test_background_approval_parks_with_badge_and_single_toast` above,
@@ -1699,6 +1750,10 @@ async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_o
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         controller = console._ensure_console_chat_controller()
         # See `test_mounted_round_survives_switch_away_and_switch_back` for
         # why this must be `host` (the actually-running App), not
@@ -1755,10 +1810,11 @@ async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_o
         assert background not in controller._pending_approvals
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on_visit() -> (
-    None
-):
+async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on_visit(
+    request,
+) -> None:
     """TASK-910: `request_skill_script_confirm` gets the identical
     treatment -- see the sibling skill-install test above."""
     app = _build_test_app()
@@ -1767,6 +1823,10 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         controller = console._ensure_console_chat_controller()
         controller.app = host
         controller.skill_script_confirm_timeout_seconds = lambda: 30.0
@@ -1817,10 +1877,11 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
         assert background not in controller._pending_approvals
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_round() -> (
-    None
-):
+async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_round(
+    request,
+) -> None:
     """TASK-1141 sweep: `_park_console_approval` is the SAME shared seam
     for all three bridges (see its own docstring) -- this pins that the
     round-identity guard covers the skill-install park path too, not just
@@ -1832,6 +1893,10 @@ async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_ro
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         controller = console._ensure_console_chat_controller()
         controller.app = host
         controller.skill_install_confirm_timeout_seconds = lambda: 30.0
@@ -1867,10 +1932,11 @@ async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_ro
         assert allowed is True
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_round() -> (
-    None
-):
+async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_round(
+    request,
+) -> None:
     """TASK-1141 sweep: same guard, skill-script park path."""
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -1878,6 +1944,10 @@ async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_rou
     async with host.run_test(size=(160, 44)) as pilot:
         await pilot.pause(0.2)
         console = host.screen_stack[-1]
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         controller = console._ensure_console_chat_controller()
         controller.app = host
         controller.skill_script_confirm_timeout_seconds = lambda: 30.0

@@ -3,7 +3,10 @@
 import builtins
 
 import threading
+import time
 from types import SimpleNamespace
+
+import pytest
 
 from tldw_chatbook.Chat import console_chat_controller as ccc
 from tldw_chatbook.Chat import permission_summary_service as summary_service
@@ -24,6 +27,20 @@ def _bare_controller():
     # through the host; a real one over this bare double stays inert
     # (no app, no setters) while the approval path under test is untouched.
     ctrl._interrupt_host = InterruptRoundHost(ctrl)
+    host = ctrl._interrupt_host
+    ctrl.set_pending_decision = None
+    ctrl.set_pending_chat_create = None
+    ctrl.set_task_panel = None
+    ctrl._console_answerable_decision_by_session = {}
+    ctrl._answerable_decision_by_session = {}
+    ctrl.decision_monotonic_clock = time.monotonic
+    ctrl._pending_skill_install_rounds = host.registries["skill_install"]
+    ctrl._pending_skill_script_rounds = host.registries["skill_script"]
+    ctrl._parked_approval_payloads = host.payloads["approval"]
+    ctrl._parked_skill_install_payloads = host.payloads["skill_install"]
+    ctrl._parked_skill_script_payloads = host.payloads["skill_script"]
+    ctrl._parked_question_payloads = host.payloads["question"]
+    ctrl._parked_worktree_merge_payloads = host.payloads["worktree_merge"]
     ctrl.app = None
     ctrl.update_pending_approval_summary = None
     return ctrl
@@ -106,6 +123,7 @@ def test_fallback_fires_only_when_a_rationale_is_missing(monkeypatch):
     assert _ThreadStub.started == []
 
 
+@pytest.mark.bootstrap_profile
 def test_fallback_fires_when_missing_and_always_fires(monkeypatch):
     for mode, rationales in (("fallback", ("",)), ("always", ("why",))):
         _armed(monkeypatch, mode)
@@ -147,13 +165,15 @@ def _parked_controller(monkeypatch, mode, round_id="r1"):
     }
     payload = _payload()
     payload["round_id"] = round_id
-    ctrl._parked_approval_payloads = {round_id: payload}
+    ctrl._parked_approval_payloads.update({round_id: payload})
     mounted = []
     ctrl.set_pending_approval = mounted.append
     ctrl.store = SimpleNamespace(active_session_id="s1")
+    ctrl.store.sessions = lambda: ()
     return ctrl, payload, mounted
 
 
+@pytest.mark.bootstrap_profile
 def test_parked_round_fires_once_on_attach_remount(monkeypatch):
     ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
     assert ctrl.remount_pending_approval_for_active_session() is True
@@ -175,10 +195,16 @@ def test_consumed_flag_prevents_refire_on_attach_remount(monkeypatch):
     assert _ThreadStub.started == []
 
 
+@pytest.mark.bootstrap_profile
 def test_switch_session_promotes_parked_round_and_fires_once(monkeypatch):
     ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
     ctrl.store.active_session_id = "s0"  # switching away from s0 onto s1
-    ctrl.store.switch_session = lambda session_id: SimpleNamespace(id=session_id)
+
+    def switch_session(session_id):
+        ctrl.store.active_session_id = session_id
+        return SimpleNamespace(id=session_id)
+
+    ctrl.store.switch_session = switch_session
     ctrl.mark_session_visited = lambda session_id: None
     ctrl._clear_terminal_run_state = lambda **_: None
     ctrl._remount_parked_skill_install = lambda session_id: None
@@ -192,6 +218,7 @@ def test_switch_session_promotes_parked_round_and_fires_once(monkeypatch):
     assert _ThreadStub.started == [True]
 
 
+@pytest.mark.bootstrap_profile
 def test_remount_head_helper_fires_promoted_sibling_once(monkeypatch):
     # Teardown/revocation promotion: the resolved head was unparked and its
     # round popped; `_remount_head` promotes the queued sibling r2.

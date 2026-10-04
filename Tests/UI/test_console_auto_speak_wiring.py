@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from Tests.private_profile import private_profile_test
+
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
@@ -935,8 +937,9 @@ async def test_modal_callback_scheduler_rejection_unwinds_modal() -> None:
     assert len(harness.opened) == 1
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_consent_survives_the_modal_push_suspend(monkeypatch):
+async def test_consent_survives_the_modal_push_suspend(monkeypatch, request):
     """TASK-32509 (UAT-found): enabling Speak replies pushes the consent
     modal over the Console, and the coordinator behind the switch was
     being unmounted while its own modal was open -- Enable arrived dead,
@@ -971,6 +974,10 @@ async def test_consent_survives_the_modal_push_suspend(monkeypatch):
 
     async with app.run_test(size=(160, 48)) as pilot:
         console = await _mount_chat(app, pilot)
+        assert (
+            await console._ensure_console_chat_controller().hook_admission_reason()
+            is None
+        )
         store = console._ensure_console_chat_store()
         session_id = store.active_session_id
         # Shared polling cadence for the modal-open, screen-return, and
@@ -1045,9 +1052,11 @@ class TestSuspendGuardUnit:
         coordinator._modal_callback_consumed = True
         assert coordinator.modal_result_pending is False
 
+    @private_profile_test
     @pytest.mark.asyncio
     async def test_suspend_preserves_coordinator_only_while_result_pending(
         self,
+        request,
     ) -> None:
         from Tests.UI.app_factory import _build_test_app
         from Tests.UI.test_console_fleet_wake_hidden_screen import _mount_chat
@@ -1063,6 +1072,10 @@ class TestSuspendGuardUnit:
 
         async with app.run_test(size=(160, 48)) as pilot:
             console = await _mount_chat(app, pilot)
+            assert (
+                await console._ensure_console_chat_controller().hook_admission_reason()
+                is None
+            )
             real = console._console_auto_speak
             stub = _StubCoordinator()
             console._console_auto_speak = stub
