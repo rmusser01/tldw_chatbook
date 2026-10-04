@@ -180,10 +180,11 @@ _BUDGETS: dict[str, int] = {
     # first_run_model_discovery.drop_unreusable_handoff.
     "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2458,
     "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1708,
-    # TASK-34100.8: Voice 1,070 -> 1,053 -- its OmniVoice half moved to
-    # first_run_voice_omnivoice.py while the step gained the SF3 fixes, whose
-    # logic lives in first_run_voice_{prefill,status,pickers}.py.
-    "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1053,
+    # TASK-34100.8: Voice 1,070 -> 1,014 -- its OmniVoice half moved to
+    # first_run_voice_omnivoice.py and its Advanced fields to
+    # first_run_voice_pickers.compose_voice_advanced while the step gained
+    # the SF3 fixes, whose logic lives in first_run_voice_{prefill,status}.py.
+    "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1014,
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,

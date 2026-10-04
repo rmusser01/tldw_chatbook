@@ -127,17 +127,23 @@ change **Use this voice when Chatbook reads replies aloud**.
 
 A line under the service choice says whether it will work: "PocketTTS — not
 running at 127.0.0.1:8000" (one quick connection check), "OpenAI — uses your
-OpenAI key (key found)", and so on. **Test and Hear** plays a short sample;
-Enter in **Sample text** runs it too (the hint line says so). A failed test
-starts "Test failed —" and names the cause: the server isn't running at that
-address, the key was rejected, there is no speech endpoint at that host, it
-timed out, or the reply wasn't audio. A successful test ticks **Use this voice
-when Chatbook reads replies aloud**; untick it to save the service without
-making it the voice replies use. The endpoint, authentication, model, voice
-and format sit under "Advanced"; Voice and Format are pickers with an
-"Other…" choice, and editing one of these away from the selected service's
-own values switches the service to **Custom** (your edits are kept if you
-switch away and back).
+OpenAI key (key found)", and so on. That check only shows that something is
+listening at the address, so when it is, the line says "a server is listening"
+and leaves it to **Test and Hear** to confirm the server is PocketTTS (port
+8000 is a common default for other local servers). **Test and Hear** plays a
+short sample; Enter in **Sample text** runs it too (the hint line says so). A
+failed test starts "Test failed —" and names the cause: the server isn't
+running at that address, the key was rejected, there is no speech endpoint at
+that host, it timed out, or the reply wasn't audio. A PocketTTS address on
+another port counts as Custom, but its failures still name PocketTTS. A
+successful test ticks **Use this voice when Chatbook reads replies aloud**;
+untick it to save the service without making it your default voice. The
+endpoint, authentication, model, voice and format sit under "Advanced" (the
+**API key** option uses your OpenAI key, from the Provider step, this step,
+Settings or `OPENAI_API_KEY`); Voice and Format are pickers with an "Other…"
+choice, and editing one of these away from the selected service's own values
+switches the service to **Custom** (your edits are kept if you switch away and
+back).
 
 **PocketTTS** is a separate local server, not part of Chatbook: install
 `pocket-tts` (from PyPI) and start it with `pocket-tts serve`. Chatbook talks

@@ -28,10 +28,7 @@ from typing import (
 from loguru import logger
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import (
-    Horizontal,
-    Vertical,
-)
+from textual.containers import Vertical
 from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
@@ -56,7 +53,10 @@ from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
 )
 from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker, wizard_work
 from tldw_chatbook.UI.Wizards.first_run_voice_omnivoice import OmniVoiceStepBase
-from tldw_chatbook.UI.Wizards.first_run_voice_pickers import VoiceOptionPicker
+from tldw_chatbook.UI.Wizards.first_run_voice_pickers import (
+    VoiceOptionPicker,
+    compose_voice_advanced,
+)
 from tldw_chatbook.UI.Wizards.first_run_voice_status import probe_endpoint_reachable
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
@@ -195,48 +195,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
                     advanced.display = (
                         self._preset != voice_state.VOICE_PRESET_OMNIVOICE
                     )
-                    yield from self._compose_advanced(draft)
-
-    def _compose_advanced(self, draft: voice_state.VoiceSetupDraft) -> ComposeResult:
-        yield Label("Endpoint", classes="setup-field-label")
-        yield Input(
-            value=draft.endpoint,
-            id="setup-voice-endpoint",
-            placeholder=voice_state.POCKET_TTS_ENDPOINT,
-        )
-        yield Label("Authentication", classes="setup-field-label")
-        with SetupRadioSet(id="setup-voice-auth", classes="setup-voice-segmented"):
-            yield SetupRadioButton(
-                "None",
-                id="setup-voice-auth-none",
-                value=draft.authentication_mode == "none",
-            )
-            yield SetupRadioButton(
-                "API key (your OpenAI key from the Provider step or OPENAI_API_KEY)",
-                id="setup-voice-auth-key",
-                value=draft.authentication_mode == "api_key",
-            )
-        yield Label("Model", classes="setup-field-label")
-        yield Input(value=draft.model_id, id="setup-voice-model")
-        yield Label("Voice", classes="setup-field-label")
-        yield VoiceOptionPicker(
-            input_id="setup-voice-voice",
-            value=draft.voice_id,
-            options=prefill.voices_for(self._preset),
-            label="Voice",
-        )
-        with Horizontal(classes="setup-voice-output-row"):
-            with Vertical():
-                yield Label("Format", classes="setup-field-label")
-                yield VoiceOptionPicker(
-                    input_id="setup-voice-format",
-                    value=draft.response_format,
-                    options=prefill.formats_for(self._preset),
-                    label="Format",
-                )
-            with Vertical():
-                yield Label("Speed", classes="setup-field-label")
-                yield Input(value=str(draft.speed), id="setup-voice-speed")
+                    yield from compose_voice_advanced(draft, self._preset)
 
     def _selected_authentication(self) -> str:
         pressed = self.query_one("#setup-voice-auth", RadioSet).pressed_button
@@ -779,7 +738,9 @@ class VoiceSetupStep(OmniVoiceStepBase):
         except Exception as error:
             if generation == self._test_generation:
                 self.query_one("#setup-voice-status", Static).update(
-                    voice_status.voice_test_failure_copy(error, preset=self._preset)
+                    voice_status.voice_test_failure_copy(
+                        error, preset=self._preset, endpoint=draft.endpoint
+                    )
                 )
             return
         else:

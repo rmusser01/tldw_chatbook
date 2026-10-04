@@ -384,6 +384,30 @@ async def test_a_closed_local_port_is_classified_as_not_running() -> None:
     assert "PocketTTS" in copy
 
 
+def test_a_pocket_tts_address_on_another_port_keeps_the_pocket_tts_advice() -> None:
+    """pocket-tts started with --port is "Custom" (its endpoint is not the
+    preset's), but a /tts address is still pocket-tts's own API, so a refused
+    connection still gets the start-it advice."""
+    error = vs.VoiceSampleError("not_running", host="127.0.0.1:19399")
+
+    custom_pocket = status.voice_test_failure_copy(
+        error, preset=vs.VOICE_PRESET_CUSTOM, endpoint="http://127.0.0.1:19399/tts"
+    )
+    custom_openai = status.voice_test_failure_copy(
+        error,
+        preset=vs.VOICE_PRESET_CUSTOM,
+        endpoint="http://127.0.0.1:19399/v1/audio/speech",
+    )
+
+    assert custom_pocket.startswith(
+        "Test failed — PocketTTS isn't running at 127.0.0.1:19399."
+    )
+    assert "pocket-tts serve" in custom_pocket
+    assert custom_openai.startswith(
+        "Test failed — the speech server isn't running at 127.0.0.1:19399."
+    )
+
+
 @pytest.mark.parametrize(
     ("status_code", "body", "content_type", "kind", "words"),
     (
@@ -456,8 +480,14 @@ def test_service_status_lines_say_whether_a_service_will_work() -> None:
         "PocketTTS — not running at 127.0.0.1:8000. It is a separate local "
         "server: start it with pocket-tts serve, or pick another service."
     )
-    assert "running at 127.0.0.1:8000" in status.service_status_copy(
+    # Live finding (g8): the probe is one TCP connect, and 127.0.0.1:8000 was
+    # a tldw_server, not pocket-tts. A connect proves only that something
+    # listens there, so the line must not claim "running".
+    assert status.service_status_copy(
         vs.VOICE_PRESET_POCKET_TTS, endpoint=vs.POCKET_TTS_ENDPOINT, reachable=True
+    ) == (
+        "PocketTTS — a server is listening at 127.0.0.1:8000. Test and Hear "
+        "checks that it is PocketTTS."
     )
     assert "key found" in status.service_status_copy(
         vs.VOICE_PRESET_OFFICIAL_OPENAI, endpoint=_OFFICIAL, key_found=True

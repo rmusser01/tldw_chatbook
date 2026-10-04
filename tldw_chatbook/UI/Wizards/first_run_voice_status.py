@@ -13,6 +13,7 @@ from __future__ import annotations
 import socket
 from urllib.parse import urlsplit
 
+from tldw_chatbook.TTS.pocket_tts_native import is_pocket_tts_native_url
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as vs
 
 #: One connect, well under a second (solution review: "a single connect with
@@ -36,6 +37,12 @@ KEY_NEEDED_COPY = (
     'service, or choose "No voice for now".'
 )
 DEFAULT_HELP_COPY = "Turn on Speak replies in Console to hear answers automatically."
+#: The auth option names the key; this line says where it comes from (the
+#: long label was cut to "…from the Provider st…" even at 160 columns).
+AUTH_HELP_COPY = (
+    "API key uses your OpenAI key: the one from the Provider step or pasted "
+    "here, the one saved in Settings, or OPENAI_API_KEY."
+)
 LEAVE_TITLE = "Leave setup?"
 LEAVE_MESSAGE = (
     "Settings ▸ Speech & TTS opens so you can add the OpenAI key. Your progress "
@@ -101,7 +108,12 @@ def service_status_copy(
         if reachable is None:
             return f"PocketTTS — checking {host}…"
         if reachable:
-            return f"PocketTTS — running at {host}."
+            # One TCP connect proves only that something listens there (live,
+            # 127.0.0.1:8000 was a tldw_server), so never claim "running".
+            return (
+                f"PocketTTS — a server is listening at {host}. Test and Hear "
+                "checks that it is PocketTTS."
+            )
         return (
             f"PocketTTS — not running at {host}. It is a separate local server: "
             "start it with pocket-tts serve, or pick another service."
@@ -114,12 +126,16 @@ def service_status_copy(
     )
 
 
-def voice_test_failure_copy(error: BaseException, *, preset: str) -> str:
+def voice_test_failure_copy(
+    error: BaseException, *, preset: str, endpoint: str = ""
+) -> str:
     """'Test failed — <cause>' for a failed sample.
 
     Args:
         error: What ``run_voice_sample`` raised.
         preset: The selected Service radio (PocketTTS gets its own advice).
+        endpoint: The tested endpoint. A pocket-tts ``/tts`` address on
+            another port is "Custom", but still gets the PocketTTS advice.
 
     Returns:
         The status line.
@@ -132,7 +148,7 @@ def voice_test_failure_copy(error: BaseException, *, preset: str) -> str:
     host = error.host
     code = f" (HTTP {error.status_code})" if error.status_code else ""
     if error.kind == "not_running":
-        if preset == vs.VOICE_PRESET_POCKET_TTS:
+        if preset == vs.VOICE_PRESET_POCKET_TTS or is_pocket_tts_native_url(endpoint):
             return (
                 f"Test failed — PocketTTS isn't running at {host}. It is a "
                 "separate local server: start it with pocket-tts serve, or pick "
@@ -165,6 +181,7 @@ def voice_test_failure_copy(error: BaseException, *, preset: str) -> str:
 
 
 __all__ = [
+    "AUTH_HELP_COPY",
     "CANCELLED_COPY",
     "DEFAULT_HELP_COPY",
     "DEFAULT_STATUS_COPY",

@@ -6,6 +6,7 @@ says ``alba``. Each is now a Select of the selected service's own values plus
 "Other…", which reveals a free-text field. That text field keeps the old id
 (``#setup-voice-voice`` / ``#setup-voice-format``) and stays the single source
 of the value, so everything that reads or resumes the field is unchanged.
+``compose_voice_advanced`` builds the whole Advanced section around them.
 """
 
 from __future__ import annotations
@@ -14,8 +15,16 @@ from collections.abc import Sequence
 
 from textual import on
 from textual.app import ComposeResult
-from textual.containers import Vertical
-from textual.widgets import Input, Select
+from textual.containers import Horizontal, Vertical
+from textual.widgets import Input, Label, Select, Static
+
+from tldw_chatbook.UI.Wizards import first_run_voice_prefill as prefill
+from tldw_chatbook.UI.Wizards import first_run_voice_status as voice_status
+from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
+from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
+    SetupRadioButton,
+    SetupRadioSet,
+)
 
 OTHER_VALUE = "__other__"
 OTHER_LABEL = "Other…"
@@ -96,4 +105,67 @@ class VoiceOptionPicker(Vertical):
             field.value = event.value
 
 
-__all__ = ["OTHER_LABEL", "OTHER_VALUE", "VoiceOptionPicker"]
+def compose_voice_advanced(
+    draft: voice_state.VoiceSetupDraft, preset: str
+) -> ComposeResult:
+    """The Voice step's Advanced fields: endpoint, auth, model, voice, output.
+
+    Moved out of ``first_run_voice_step.py`` (TASK-34100.8) to keep that
+    module under its size budget; the step yields it inside its Collapsible.
+
+    Args:
+        draft: The values the fields start from.
+        preset: The selected service, which picks the Voice/Format lists.
+    """
+    yield Label("Endpoint", classes="setup-field-label")
+    yield Input(
+        value=draft.endpoint,
+        id="setup-voice-endpoint",
+        placeholder=voice_state.POCKET_TTS_ENDPOINT,
+    )
+    yield Label("Authentication", classes="setup-field-label")
+    with SetupRadioSet(id="setup-voice-auth", classes="setup-voice-segmented"):
+        yield SetupRadioButton(
+            "None",
+            id="setup-voice-auth-none",
+            value=draft.authentication_mode == "none",
+        )
+        yield SetupRadioButton(
+            "API key (your OpenAI key)",
+            id="setup-voice-auth-key",
+            value=draft.authentication_mode == "api_key",
+        )
+    yield Static(
+        voice_status.AUTH_HELP_COPY,
+        id="setup-voice-auth-help",
+        classes="setup-field-help",
+    )
+    yield Label("Model", classes="setup-field-label")
+    yield Input(value=draft.model_id, id="setup-voice-model")
+    yield Label("Voice", classes="setup-field-label")
+    yield VoiceOptionPicker(
+        input_id="setup-voice-voice",
+        value=draft.voice_id,
+        options=prefill.voices_for(preset),
+        label="Voice",
+    )
+    with Horizontal(classes="setup-voice-output-row"):
+        with Vertical():
+            yield Label("Format", classes="setup-field-label")
+            yield VoiceOptionPicker(
+                input_id="setup-voice-format",
+                value=draft.response_format,
+                options=prefill.formats_for(preset),
+                label="Format",
+            )
+        with Vertical():
+            yield Label("Speed", classes="setup-field-label")
+            yield Input(value=str(draft.speed), id="setup-voice-speed")
+
+
+__all__ = [
+    "OTHER_LABEL",
+    "OTHER_VALUE",
+    "VoiceOptionPicker",
+    "compose_voice_advanced",
+]

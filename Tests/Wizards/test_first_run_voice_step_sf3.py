@@ -346,7 +346,7 @@ async def test_service_line_reports_the_probe_and_the_probe_is_one_worker_connec
         )
         step._start_probe()
         await pilot.pause(0.2)
-        assert "PocketTTS — running at 127.0.0.1:8000." in str(
+        assert "PocketTTS — a server is listening at 127.0.0.1:8000." in str(
             step.query_one("#setup-voice-service-status", Static).render()
         )
 
@@ -375,6 +375,10 @@ async def test_a_failed_test_names_the_cause() -> None:
 
         assert status.startswith("Test failed — ")
         assert f"isn't running at 127.0.0.1:{port}" in status
+        # The edit made the service Custom; a /tts address is still
+        # pocket-tts's own API, so the advice names it.
+        assert step._preset == voice_state.VOICE_PRESET_CUSTOM
+        assert status.startswith(f"Test failed — PocketTTS isn't running at 127.0.0.1:{port}.")
         assert "Not tested yet" not in status
 
 
@@ -556,6 +560,35 @@ async def test_an_advanced_edit_switches_to_custom_and_survives_a_round_trip() -
 
 
 @pytest.mark.asyncio
+async def test_typing_an_endpoint_keeps_focus_through_the_switch_to_custom() -> None:
+    """Typing an endpoint from the keyboard: the keystroke that makes the
+    service Custom re-points the Voice picker at "Other…", and that must not
+    pull focus out of Endpoint, so the rest of the URL still lands there."""
+    step = _step()
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause()
+        step.query_one("#setup-voice-advanced").collapsed = False
+        await pilot.pause()
+        endpoint = step.query_one("#setup-voice-endpoint", Input)
+        endpoint.focus()
+        await pilot.pause()
+
+        await pilot.press("end", "ctrl+u")
+        await pilot.pause()
+        await pilot.press(*"http://127.0.0.1:8766/tts")
+        await pilot.pause()
+
+        assert step._preset == voice_state.VOICE_PRESET_CUSTOM
+        assert step.app.focused is endpoint
+        assert endpoint.value == "http://127.0.0.1:8766/tts"
+        assert step.query_one("#setup-voice-voice", Input).value == (
+            voice_state.POCKET_TTS_VOICE
+        )
+
+
+@pytest.mark.asyncio
 async def test_picking_one_of_the_services_own_voices_keeps_the_service() -> None:
     step = _step()
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
@@ -624,9 +657,15 @@ async def test_voice_copy_controls_and_auto_tick(monkeypatch) -> None:
         assert "Speak replies" in str(
             step.query_one("#setup-voice-default-help", Static).render()
         )
-        assert "OPENAI_API_KEY" in str(
-            step.query_one("#setup-voice-auth-key", RadioButton).label
+        # Live finding (g8): the long label was cut to "…from the Provider
+        # st…" even at 160 columns. The option names the key; a help line
+        # says where it comes from.
+        assert str(step.query_one("#setup-voice-auth-key", RadioButton).label) == (
+            "API key (your OpenAI key)"
         )
+        auth_help = str(step.query_one("#setup-voice-auth-help", Static).render())
+        assert "Provider step" in auth_help
+        assert "OPENAI_API_KEY" in auth_help
         voice_select = step.query_one("#setup-voice-voice-select", Select)
         format_select = step.query_one("#setup-voice-format-select", Select)
         assert ("Other…", "__other__") in [
