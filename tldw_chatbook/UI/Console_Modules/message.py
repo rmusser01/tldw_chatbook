@@ -1021,7 +1021,10 @@ class ConsoleMessageController:
         that session's id explicitly instead -- re-resolving "active" at
         append time would let a session switch during the awaited work
         misattribute the row to whatever the user is looking at NOW rather
-        than the session that actually produced it. The resync below is
+        than the session that actually produced it. Slash commands run in a
+        worker (TASK-33622.16), so one that awaits before answering posts
+        through ``command_handoff.append_command_output``, which passes the
+        chat the command was sent from. The resync below is
         unconditional either way and stays harmless: it only ever renders
         the store's CURRENTLY active session, so a background session's
         just-appended row simply doesn't show until the user visits it

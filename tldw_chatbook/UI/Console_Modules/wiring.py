@@ -917,7 +917,9 @@ def build_console_controllers(
     screen._skill = ConsoleSkillController(
         app_instance=screen.app_instance,
         append_native_console_system_message=(
-            lambda message: screen._append_native_console_system_message(message)
+            lambda message, **kwargs: screen._append_native_console_system_message(
+                message, **kwargs
+            )
         ),
         sync_console_command_popup=lambda: screen._sync_console_command_popup(),
         task_resume_state=lambda: screen._task_resume_state,

@@ -1501,19 +1501,26 @@ class ConsoleVideoController:
             resolve_stream_url,
         )
 
+        # Lazy: keeps command_handoff off the boot path (ADR-097). Resolution
+        # is network I/O; a failure answers in the chat the command came
+        # from, not whichever chat shows by then (TASK-33622.16).
+        from .command_handoff import append_command_output
+
         try:
             resolution = await asyncio.to_thread(resolve_stream_url, url)
         except StreamResolutionError as exc:
-            await self._append_native_console_system_message(
-                f"Cannot stream that URL: {exc}"
+            await append_command_output(
+                self._append_native_console_system_message,
+                f"Cannot stream that URL: {exc}",
             )
             return
         except Exception as exc:  # egress refusal or unexpected resolution failure
             logger.warning(
                 "stream resolution failed (error_type={})", type(exc).__name__
             )
-            await self._append_native_console_system_message(
-                f"Cannot stream that URL: {exc}"
+            await append_command_output(
+                self._append_native_console_system_message,
+                f"Cannot stream that URL: {exc}",
             )
             return
         from tldw_chatbook.UI.Screens.video_player_screen import VideoPlayerScreen
