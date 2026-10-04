@@ -931,8 +931,9 @@ def _aiohttp_session_level_credential(session) -> str | None:
 
     Returns:
         A short human-facing description of the offending credential
-        (``"auth"`` or ``"default header 'X-...'"``), or ``None`` when the
-        session carries nothing that could not be forwarded safely.
+        (``"auth"``, ``"default header 'X-...'"`` or ``"cookie 'name'"``),
+        or ``None`` when the session carries nothing that could not be
+        forwarded safely.
     """
     if getattr(session, "auth", None) is not None:
         return "auth"
@@ -941,6 +942,12 @@ def _aiohttp_session_level_credential(session) -> str | None:
         for name in default_headers.keys():
             if not _may_cross_origin(str(name), has_body=False):
                 return f"default header {str(name)!r}"
+    # ``ClientSession(cookies=...)`` stores cookies with no domain, and
+    # aiohttp sends a domainless cookie to every host. A cookie a response
+    # set carries that origin's domain and is filtered per request.
+    for cookie in getattr(session, "cookie_jar", None) or ():
+        if not cookie["domain"]:
+            return f"cookie {cookie.key!r}"
     return None
 
 
