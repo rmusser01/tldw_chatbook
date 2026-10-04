@@ -10,7 +10,8 @@ Cause of each derived-artifacts.yml run on the PR branch, between PR creation an
   sync    - its head is a merge commit that brought dev in
   rebase  - its head came from a force-push (a manual or queue rebase)
   content - anything else
-Runs that concluded action_required never ran and are excluded.
+Runs that concluded action_required never ran and are excluded, as are pull_request runs
+triggered by github-actions[bot] (the orphans of the queue's token rebase).
 
 Read-only. Needs `gh` authenticated for the repository.
 """
@@ -33,6 +34,8 @@ TIMELINE = """query($n: Int!) { repository(owner: "rmusser01", name: "tldw_chatb
 def classify(run: dict, sync_oids: set[str], rebase_oids: set[str]) -> str | None:
     """Return the cause of one required-workflow run, or None if it never ran."""
     if run.get("conclusion") == "action_required":
+        return None
+    if run.get("event") == "pull_request" and (run.get("triggering_actor") or {}).get("login") == "github-actions[bot]":
         return None
     if run.get("event") == "workflow_dispatch":
         return "queue"

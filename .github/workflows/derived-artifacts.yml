@@ -362,10 +362,13 @@ jobs:
           python scripts/check_ui_pr_gate_census.py
 
   queue-tick:
-    # Wakes the merge queue after CI finishes, for the queue's own dispatched runs and for
-    # armed same-repo PRs. NOT a required check and NOT in the aggregate's needs: a queue
-    # failure can never turn `Derived artifacts reproduce from their sources` red. Pushes to
-    # dev are merge-queue.yml's job. Spec: Docs/superpowers/specs/2026-10-03-merge-queue-design.md
+    # Wakes the merge queue after CI finishes, for the queue's own dispatched runs and for any
+    # same-repo PR run. Deliberately no auto_merge check: the event payload is a trigger-time
+    # snapshot, and the documented disarm-push-rearm flow leaves it null, so a red author run
+    # would never wake the queue. The script itself only acts on the armed line. NOT a required
+    # check and NOT in the aggregate's needs: a queue failure can never turn `Derived artifacts
+    # reproduce from their sources` red. Pushes to dev are merge-queue.yml's job.
+    # Spec: Docs/superpowers/specs/2026-10-03-merge-queue-design.md
     name: Merge queue tick
     needs: [derived-artifacts]
     if: >-
@@ -373,7 +376,6 @@ jobs:
       (vars.MERGE_QUEUE == 'dry' || vars.MERGE_QUEUE == 'on') &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event_name == 'pull_request' &&
-        github.event.pull_request.auto_merge != null &&
         github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     timeout-minutes: 10

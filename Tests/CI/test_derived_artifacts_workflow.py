@@ -304,7 +304,10 @@ def test_queue_tick_runs_after_ci_and_is_never_required():
     assert tick["if"].startswith("!cancelled() &&")
     assert "vars.MERGE_QUEUE == 'dry' || vars.MERGE_QUEUE == 'on'" in tick["if"]
     assert "github.event_name == 'workflow_dispatch'" in tick["if"]
-    assert "github.event.pull_request.auto_merge != null" in tick["if"]
+    assert "auto_merge" not in tick["if"], (
+        "the payload's auto_merge is a trigger-time snapshot; disarm-push-rearm leaves it null, "
+        "so gating on it means red author runs never wake the queue"
+    )
     assert "github.event.pull_request.head.repo.full_name == github.repository" in tick["if"]
     assert "push" not in tick["if"], "pushes to dev are merge-queue.yml's job"
     assert tick["permissions"] == {"contents": "write", "pull-requests": "write", "actions": "write"}

@@ -22,6 +22,15 @@ def test_classify_orders_causes():
     assert m.classify({"event": "pull_request", "conclusion": "success", "head_sha": "c1"}, sync, rebase) == "content"
 
 
+def test_classify_ignores_token_rebase_runs():
+    """The queue's GITHUB_TOKEN rebase leaves orphaned pull_request runs; they are not rebase churn."""
+    bot = {"event": "pull_request", "conclusion": "success", "head_sha": "r1",
+           "triggering_actor": {"login": "github-actions[bot]"}}
+    assert m.classify(bot, set(), {"r1"}) is None
+    assert m.classify(dict(bot, triggering_actor={"login": "someone"}), set(), {"r1"}) == "rebase"
+    assert m.classify(dict(bot, event="workflow_dispatch"), set(), {"r1"}) == "queue"
+
+
 def test_summarize_counts_resync_beyond_one():
     per_pr = [{"content": 2, "sync": 3}, {"content": 1, "queue": 1}, {"content": 1}]
     s = m.summarize(per_pr)
