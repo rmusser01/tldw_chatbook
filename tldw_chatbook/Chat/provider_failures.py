@@ -89,9 +89,21 @@ def describe_stream_failure(exc: BaseException) -> str:
     stall_seconds = getattr(exc, "timeout_seconds", None)
     if exc_name == "StreamStallError" and isinstance(stall_seconds, (int, float)):
         # TASK-34100.5 AC#4/#5: a stall is its own category with its own
-        # fixes, never "unexpected provider error"; a first-token stall is a
-        # model still loading, so it names the cold-load setting.
+        # fixes, never "unexpected provider error". A self-hosted first-token
+        # stall is a model still loading, so it names the cold-load setting;
+        # a hosted model loads nothing here (review round 2, R2-F1).
         if getattr(exc, "first_token", False):
+            from tldw_chatbook.Chat.provider_readiness import (
+                is_self_hosted_provider,
+            )
+
+            if not is_self_hosted_provider(getattr(exc, "provider", None)):
+                return (
+                    f"no first token after {stall_seconds:g} s — the provider "
+                    "hasn't started answering. Retry, or wait longer by "
+                    "raising chat_defaults.first_token_timeout_seconds in "
+                    "config.toml."
+                )
             return (
                 f"no first token after {stall_seconds:g} s — the model may still "
                 "be loading. Wait longer by raising "

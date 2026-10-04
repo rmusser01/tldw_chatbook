@@ -1125,7 +1125,10 @@ run, use **Stop**, **Ctrl+G**, or `/stop` instead.
   be loading" (a cloud model's line has no loading hint). The
   composer's **Stop** (Ctrl+G) ends the wait. If the wait runs out, the
   failure says the model may still be loading and names that setting, or
-  suggests a smaller model.
+  suggests a smaller model. A cloud model's first token gets the 90-second
+  window unless you set `first_token_timeout_seconds`; if it runs out, the
+  failure says the provider hasn't started answering and suggests Retry or
+  that same setting.
 - **There's no Tools chip before the first send.** Tools are counted lazily,
   so the chip stays hidden until your first send in the session; it then
   reads e.g. "Tools: 10 ready".

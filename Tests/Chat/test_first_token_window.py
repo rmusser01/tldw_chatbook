@@ -119,6 +119,23 @@ def test_a_first_token_timeout_names_the_setting_and_a_smaller_model() -> None:
     assert "Wait longer" in copy
 
 
+@pytest.mark.parametrize("provider", ["anthropic", "openai", None])
+def test_a_cloud_first_token_timeout_never_blames_a_loading_model(provider) -> None:
+    """Review round 2 (R2-F1): a hosted model loads nothing on the user's
+    machine -- a reasoning model can think past the window -- so its timeout
+    neither says 'may still be loading' nor suggests a smaller model. It still
+    names the setting that waits longer."""
+    copy = describe_stream_failure(
+        StreamStallError(90, provider=provider, first_token=True)
+    )
+
+    assert "no first token after 90 s" in copy
+    assert "loading" not in copy
+    assert "smaller model" not in copy
+    assert "Retry" in copy
+    assert "chat_defaults.first_token_timeout_seconds" in copy
+
+
 def test_a_long_wait_for_the_first_token_shows_elapsed_and_a_cold_load_hint() -> None:
     from tldw_chatbook.UI.Console_Modules.agent import console_turn_activity_text
 
