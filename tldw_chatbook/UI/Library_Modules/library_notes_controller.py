@@ -2875,22 +2875,8 @@ class LibraryNotesController:
         identity = self._remember_library_notes_responsive_focus(identity)
         self._transition_library_notes_presentation(compact, identity)
     def _mark_library_notes_user_interaction(self) -> None:
-        """End resize suppression only when a real input event can own changes."""
-        self._library_notes_resize_settling = False
-        # TASK-32171: the restore-interval guard is one-shot by design
-        # ("the queued callback clears it before yielding through paint, so
-        # a real Tab in the request interval still supersedes this semantic
-        # intent") -- but a dropped or superseded callback leaks it True
-        # forever, and a stuck flag makes EVERY later ``on_descendant_focus``
-        # classify as programmatic, which suppresses Media row selection
-        # entirely (arrow-keying the Items list then selects nothing). A
-        # real input event owns authority here exactly as it already does
-        # for resize suppression. The programmatic TARGET is deliberately
-        # NOT cleared: the system's own single restore focus still matches
-        # it, so ``target_restore`` keeps excluding that one event from
-        # selection semantics.
-        self._library_notes_restoring_focus = False
-
+        """Real input ends resize suppression and a leaked restore guard (TASK-32171)."""
+        self._library_notes_resize_settling = self._library_notes_restoring_focus = False
     def _apply_library_notes_footer_context(self) -> None:
         """Persist region help and hide only compact Notes ancillary indicators."""
         shortcuts = self._library_notes_footer_shortcuts()

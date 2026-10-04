@@ -75,7 +75,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app.py": 5712,
     # TASK-33011: the Library ingest queue moved verbatim out of app.py. At
     # 4,999 lines it is larger than two rows below, so it is born governed.
-    "tldw_chatbook/app_ingest_queue.py": 4999,
+    # 2026-10-03 (PR #2993): TASK-20973's provenance block added 16 lines;
+    # the signature probe moved to Utils/call_signatures.py: 5,015 -> 4,985.
+    "tldw_chatbook/app_ingest_queue.py": 4985,
     # TASK-33011: TldwCli's service composition moved verbatim out of app.py.
     # It was governed there; without its own row, wiring code could regrow in
     # the mixin unchecked.
