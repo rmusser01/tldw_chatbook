@@ -154,6 +154,7 @@ def test_factory_builds_per_server_dispatchers(monkeypatch, tmp_path):
     assert factory("a").sampling_budget is da.sampling_budget, "budget survives reconnect"
 
 
+@pytest.mark.bootstrap_profile
 def test_get_client_sets_the_factory(tmp_path):
     from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
     svc = LocalMCPControlService.__new__(LocalMCPControlService)
@@ -261,6 +262,7 @@ def test_factory_dispatcher_denies_sampling_for_unlisted_server(tmp_path, monkey
     assert result.code == -32001  # request refused (policy deny)
 
 
+@pytest.mark.bootstrap_profile
 def test_factory_dispatcher_fulfills_elicitation_end_to_end(tmp_path):
     """AC#2: an elicitation request routes through the live approval surface
     (this store) and the out-of-band approval is returned to the server."""

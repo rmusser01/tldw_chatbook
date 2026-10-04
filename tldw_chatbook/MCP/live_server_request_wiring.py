@@ -210,7 +210,8 @@ def build_live_elicit_fn(
         store: The hub's local MCP store holding approval requests.
         poll_seconds: How often the pending request is re-read.
         timeout_seconds: Override for the approval timeout; ``None`` reads
-            ``[mcp] approval_timeout_seconds`` (default 120s).
+            ``[mcp] approval_timeout_seconds`` (default 0: no deadline).
+            Nonpositive values wait until the user answers or the request is cancelled.
 
     Returns:
         An async callable ``(message, schema) -> dict | None``: approve ->
@@ -228,9 +229,9 @@ def build_live_elicit_fn(
         if timeout_seconds is not None:
             return timeout_seconds
         try:
-            return float(get_cli_setting("mcp", "approval_timeout_seconds", 120.0))
+            return float(get_cli_setting("mcp", "approval_timeout_seconds", 0.0))
         except (TypeError, ValueError):
-            return 120.0
+            return 0.0
 
     async def elicit(message: str, schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not _schema_is_confirmation_only(schema):
@@ -260,7 +261,8 @@ def build_live_elicit_fn(
                 payload_fingerprint=fingerprint,
             )
         )
-        deadline = asyncio.get_event_loop().time() + _timeout()
+        timeout = _timeout()
+        deadline = asyncio.get_running_loop().time() + timeout if timeout > 0 else None
         try:
             while True:
                 current = next(
@@ -277,7 +279,7 @@ def build_live_elicit_fn(
                     return {"action": "accept", "content": {}}
                 if current.status not in ("pending",):
                     return None  # denied or any other terminal state
-                if asyncio.get_event_loop().time() >= deadline:
+                if deadline is not None and asyncio.get_running_loop().time() >= deadline:
                     raise TimeoutError("elicitation approval timed out")
                 await asyncio.sleep(poll_seconds)
         finally:

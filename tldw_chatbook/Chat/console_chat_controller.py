@@ -791,7 +791,7 @@ _CONSOLE_SETTINGS_FIELD_ORDER = (
 
 #: Fallback used when no `mcp_approval_timeout_seconds` seam is injected --
 #: mirrors `UnifiedMCPControlPlaneService.approval_timeout_seconds`'s own
-#: default (task-201/T2), read directly here since the controller has no
+#: default (ADR-067), read directly here since the controller has no
 #: dependency on that service (T6 wires the service into `MCPToolProvider`,
 #: not into this controller).
 #:

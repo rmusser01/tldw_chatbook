@@ -65,9 +65,12 @@ deadline in the past, i.e. an immediate auto-deny). The card's countdown copy
 - Per-call wall-clock is now "execution time, excluding human-decision waits".
   A tool that arms a human wait and then hangs *after* the decision still dies
   at the full ceiling (the deadline re-arms while paused, it does not vanish).
-- `UnifiedMCPControlPlaneService.approval_timeout_seconds` (no product callers;
-  the controller reads the config key directly) still returns 120.0 as its own
-  default; if a consumer ever appears it must adopt the same `<= 0` semantics.
+- TASK-32564 aligns `UnifiedMCPControlPlaneService.approval_timeout_seconds`
+  and live MCP confirmation elicitation with the Console: the same key defaults
+  to `0`, and nonpositive values have no deadline. A positive ceiling expires
+  unanswered confirmations; cancellation still expires abandoned store requests
+  so a late approval cannot revive them. MCP confirmation waits do not run inside
+  the agent tool-call wrapper and retain their existing async cancellation path.
 - Tests that rely on auto-deny inject positive seam values (e.g. 0.05) and are
   unaffected by the default flip.
 

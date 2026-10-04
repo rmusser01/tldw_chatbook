@@ -343,6 +343,16 @@ control (`.approval-row-decision` widened to full width) failed it. Before you
 call a guard "environmental", check whether any runner runs it, and make it
 reach its assertions once.
 
+**TASK-33003.20 follow-up, 2026-10-04.** The guard now lives in
+`Tests/UI/test_approval_batch_geometry.py`, on the UI PR census. The supported
+`private_profile_test` wrapper selects the profile before imports, and the test
+persists splash-off before building the app: an in-memory override disappeared
+when the provider setup invalidated the config cache. An ordinary file run now
+reaches the unchanged geometry assertions; restoring the actual retired bare
+`Select { width: 100%; margin-bottom: 1; }` rule and rebuilding the bundle makes
+the compact-height assertion fail. A plugin-assisted pass is useful diagnosis,
+not the final qualification of a guard intended to run in CI.
+
 ## Compare against the branch's merge base, not whatever `origin/dev` is now
 
 **TASK-33005 final fix wave, 2026-10-02.** The branch was rebased onto
