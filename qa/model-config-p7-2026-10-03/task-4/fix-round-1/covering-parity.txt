@@ -1,0 +1,128 @@
+# Covering-run parity, 2026-10-04 02:50-04:15 (finding 1)
+
+This is a covering run, not the full suite (the plan's Global Constraints ask for covering tests + preflight).
+The report's earlier run (81 files, 304 failed both sides) predates the commit: its head side finished at
+02:24, and the commit (02:35) still changed _tab_to after it. So both sides were re-run here, at the commit.
+
+## Files
+134 test files: the report's 81 (files naming the card, the Inspector, the D1 path or the search index) plus 53 found
+by an independent grep of Tests/ for providers_models_card, follows_saved_defaults,
+_maybe_refresh_stale_default_console_settings, the five moved ids, settings-model-applies, config-key,
+settings_search_index, scope-inspector, settings-impact, _render_impact_pane_body, 'Providers & Models',
+pristine_chat, new_chat_default_generation, handle_descendant_focus and 'Affects Console'.
+Base has 133 of them (test_settings_save_reach.py is new).
+
+## Run
+Both sides at once, each: pytest -p p7t4fix1_admit -p no:randomly -n 6 --dist loadfile --timeout=600
+-o tmp_path_retention_policy=none --junitxml ..., env -i scratch profile, PYTHONPATH=<that tree>:<scratch admission plugin>
+(the lessons-testing-evidence RecoveryRequired recipe). Machine load average was 24-28 on 18 cores throughout.
+
+## pytest last lines
+base: 465 failed, 8310 passed, 1 skipped, 180 warnings, 40 errors in 4795.02s (1:19:55)
+head: 460 failed, 8321 passed, 1 skipped, 180 warnings, 39 errors in 4781.16s (1:19:41)
+
+## Failure + error names, compared by name (from the junit files)
+base junit: {'passed': 8309, 'failed': 465, 'errors': 40, 'skipped': 1}  failure+error names: 505
+head junit: {'passed': 8321, 'failed': 460, 'errors': 39, 'skipped': 1}  failure+error names: 499
+names in both: 490
+head-only names (9):
+  + Tests.UI.test_console_native_chat_flow::test_console_tab_switch_focuses_composer_for_immediate_typing
+  + Tests.UI.test_latest_dev_core_app_usability_smoke::test_home_console_model_setup_routes_to_settings_provider_defaults
+  + Tests.UI.test_library_shell::test_library_media_durable_mutation_gates_and_refreshes_applied_scope[False]
+  + Tests.UI.test_library_shell::test_library_note_pilot_conflict_can_originate_from_every_region[preview]
+  + Tests.UI.test_library_shell::test_library_shell_blank_title_save_round_trip_agrees_with_the_row
+  + Tests.UI.test_product_maturity_phase1_empty_setup_states::test_library_rag_mode_dependency_missing_state_names_install_hint
+  + Tests.UI.test_product_maturity_phase1_empty_setup_states::test_service_unavailable_states_disable_false_console_handoffs[library]
+  + Tests.UI.test_screen_navigation::test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected
+  + Tests.Wizards.test_first_run_setup_wizard::test_provider_reentry_with_visible_discovery_button_focuses_list
+base-only names (15):
+  - Tests.ProductionApp.test_chat_root_state_removal::test_native_console_owns_rails_sessions_and_snapshot_without_root_mirrors
+  - Tests.UI.test_console_internals_decomposition::test_console_composer_hides_cursor_when_blurred
+  - Tests.UI.test_console_native_chat_flow::test_console_retry_accepted_fires_success_toast
+  - Tests.UI.test_console_native_chat_flow::test_console_workspace_conversation_search_selection_keeps_query_active
+  - Tests.UI.test_console_session_settings::test_provider_switch_syncs_generation_test_action_bidirectionally[legacy_select]
+  - Tests.UI.test_destination_shells::test_schedules_pending_run_uses_shared_approval_status_taxonomy
+  - Tests.UI.test_library_shell::test_library_shell_ingest_canvas_submit_clears_path_and_title_keeps_metadata
+  - Tests.UI.test_product_maturity_gate16_library_search_rag::test_library_use_in_console_warns_before_navigating_when_locked_task_2852
+  - Tests.UI.test_screen_navigation::test_generic_library_entry_lands_hub_on_first_visit
+  - Tests.UI.test_screen_navigation::test_prompts_route_lands_on_library_with_prompts_row_selected
+  - Tests.UI.test_screen_navigation::test_rapid_tab_switch_storm_leaves_no_zombie_widgets
+  - Tests.UI.test_screen_navigation::test_search_all_palette_command_lands_on_library_with_honest_toast
+  - Tests.UI.test_settings_footer_hints::test_advertised_capabilities_match_real_action_branches
+  - Tests.UI.test_settings_generation_default_journeys::test_generation_resize_and_explicit_collapse_keep_state[textual-dark]
+  - Tests.UI.test_settings_generation_default_journeys::test_generation_resize_and_explicit_collapse_keep_state[textual-light]
+
+## Each head-only name, re-run alone twice per side (serial, same profile recipe)
+### base
+1 Tests/UI/test_console_native_chat_flow.py::test_console_tab_switch_focuses_composer_for_immediate_typing :: 1 passed in 5.96s
+2 Tests/UI/test_console_native_chat_flow.py::test_console_tab_switch_focuses_composer_for_immediate_typing :: 1 passed in 5.54s
+1 Tests/UI/test_latest_dev_core_app_usability_smoke.py::test_home_console_model_setup_routes_to_settings_provider_defaults :: 1 passed in 4.54s
+2 Tests/UI/test_latest_dev_core_app_usability_smoke.py::test_home_console_model_setup_routes_to_settings_provider_defaults :: 1 passed in 4.23s
+1 Tests/UI/test_library_shell.py::test_library_media_durable_mutation_gates_and_refreshes_applied_scope[False] :: 1 passed in 4.04s
+2 Tests/UI/test_library_shell.py::test_library_media_durable_mutation_gates_and_refreshes_applied_scope[False] :: 1 passed in 3.94s
+1 Tests/UI/test_library_shell.py::test_library_note_pilot_conflict_can_originate_from_every_region[preview] :: 1 passed in 3.92s
+2 Tests/UI/test_library_shell.py::test_library_note_pilot_conflict_can_originate_from_every_region[preview] :: 1 passed in 4.02s
+1 Tests/UI/test_library_shell.py::test_library_shell_blank_title_save_round_trip_agrees_with_the_row :: 1 passed in 5.20s
+2 Tests/UI/test_library_shell.py::test_library_shell_blank_title_save_round_trip_agrees_with_the_row :: 1 passed in 5.38s
+1 Tests/UI/test_product_maturity_phase1_empty_setup_states.py::test_library_rag_mode_dependency_missing_state_names_install_hint :: 1 passed in 3.73s
+2 Tests/UI/test_product_maturity_phase1_empty_setup_states.py::test_library_rag_mode_dependency_missing_state_names_install_hint :: 1 passed in 3.82s
+1 Tests/UI/test_product_maturity_phase1_empty_setup_states.py::test_service_unavailable_states_disable_false_console_handoffs[library] :: 1 passed in 2.60s
+2 Tests/UI/test_product_maturity_phase1_empty_setup_states.py::test_service_unavailable_states_disable_false_console_handoffs[library] :: 1 passed in 2.73s
+1 Tests/UI/test_screen_navigation.py::test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected :: 1 failed in 5.47s
+2 Tests/UI/test_screen_navigation.py::test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected :: 1 failed in 5.65s
+1 Tests/Wizards/test_first_run_setup_wizard.py::test_provider_reentry_with_visible_discovery_button_focuses_list :: 1 passed in 2.70s
+2 Tests/Wizards/test_first_run_setup_wizard.py::test_provider_reentry_with_visible_discovery_button_focuses_list :: 1 passed in 2.70s
+### head
+1 Tests/UI/test_console_native_chat_flow.py::test_console_tab_switch_focuses_composer_for_immediate_typing :: 1 passed in 5.92s
+2 Tests/UI/test_console_native_chat_flow.py::test_console_tab_switch_focuses_composer_for_immediate_typing :: 1 failed in 5.62s
+1 Tests/UI/test_latest_dev_core_app_usability_smoke.py::test_home_console_model_setup_routes_to_settings_provider_defaults :: 1 passed in 4.52s
+2 Tests/UI/test_latest_dev_core_app_usability_smoke.py::test_home_console_model_setup_routes_to_settings_provider_defaults :: 1 passed in 4.25s
+1 Tests/UI/test_library_shell.py::test_library_media_durable_mutation_gates_and_refreshes_applied_scope[False] :: 1 passed in 4.01s
+2 Tests/UI/test_library_shell.py::test_library_media_durable_mutation_gates_and_refreshes_applied_scope[False] :: 1 passed in 3.92s
+1 Tests/UI/test_library_shell.py::test_library_note_pilot_conflict_can_originate_from_every_region[preview] :: 1 passed in 3.92s
+2 Tests/UI/test_library_shell.py::test_library_note_pilot_conflict_can_originate_from_every_region[preview] :: 1 passed in 4.03s
+1 Tests/UI/test_library_shell.py::test_library_shell_blank_title_save_round_trip_agrees_with_the_row :: 1 passed in 5.33s
+2 Tests/UI/test_library_shell.py::test_library_shell_blank_title_save_round_trip_agrees_with_the_row :: 1 passed in 5.60s
+1 Tests/UI/test_product_maturity_phase1_empty_setup_states.py::test_library_rag_mode_dependency_missing_state_names_install_hint :: 1 passed in 3.75s
+2 Tests/UI/test_product_maturity_phase1_empty_setup_states.py::test_library_rag_mode_dependency_missing_state_names_install_hint :: 1 passed in 3.83s
+1 Tests/UI/test_product_maturity_phase1_empty_setup_states.py::test_service_unavailable_states_disable_false_console_handoffs[library] :: 1 passed in 2.64s
+2 Tests/UI/test_product_maturity_phase1_empty_setup_states.py::test_service_unavailable_states_disable_false_console_handoffs[library] :: 1 passed in 2.65s
+1 Tests/UI/test_screen_navigation.py::test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected :: 1 failed in 5.45s
+2 Tests/UI/test_screen_navigation.py::test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected :: 1 failed in 5.31s
+1 Tests/Wizards/test_first_run_setup_wizard.py::test_provider_reentry_with_visible_discovery_button_focuses_list :: 1 passed in 2.69s
+2 Tests/Wizards/test_first_run_setup_wizard.py::test_provider_reentry_with_visible_discovery_button_focuses_list :: 1 passed in 2.69s
+
+### test_console_tab_switch_focuses_composer_for_immediate_typing, 8 more runs per side, alternating
+1 base :: 1 passed in 5.59s
+1 head :: 1 passed in 5.90s
+2 base :: 1 passed in 5.46s
+2 head :: 1 passed in 5.40s
+3 base :: 1 passed in 5.48s
+3 head :: 1 passed in 5.46s
+4 base :: 1 failed in 5.69s
+4 head :: 1 passed in 5.65s
+5 base :: 1 failed in 5.42s
+5 head :: 1 passed in 5.57s
+6 base :: 1 passed in 5.60s
+6 head :: 1 failed in 5.45s
+7 base :: 1 passed in 5.58s
+7 head :: 1 passed in 5.41s
+8 base :: 1 passed in 5.50s
+8 head :: 1 passed in 5.33s
+
+## Reading
+- 7 of the 9 head-only names pass alone 2 of 2 on both sides: load flakes of the parallel run.
+- test_boot_with_prompts_default_tab_lands_on_library_with_prompts_row_selected fails alone on BOTH sides 2 of 2:
+  pre-existing (a Library route; the commit touches no Library code).
+- test_console_tab_switch_focuses_composer_for_immediate_typing flakes on both sides: base 2 of 10 red alone,
+  head 2 of 10 red alone.
+- The 15 base-only names failed at base and passed at head; they were not re-run (they cannot be head regressions).
+- No head-only name is in a file the commit touched. The files it touched: test_settings_configuration_hub.py
+  428 passed / 24 failed on both sides with the same 24 names; test_settings_provider_keyboard_journeys.py and
+  test_settings_model_discovery_journeys.py 30 of 30 on both sides (so the _tab_to 100 -> 150 guard holds at the
+  commit); test_console_provider_apply_defaults_flow.py 37 run / 1 failed on both sides with the same name;
+  test_settings_save_reach.py 6 of 6 (head).
+
+## Warnings
+Both sides end '180 warnings'. The warnings-summary messages are identical once each xdist worker's
+fd-growth count is normalised (19 distinct messages each side); none names a file the commit touched.
