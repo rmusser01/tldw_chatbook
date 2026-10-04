@@ -644,6 +644,9 @@ def _viewed_reply_is_streaming(controller: Any, session_id: Any) -> bool:
     has no output count: the newest assistant row must be streaming and
     hold the published path's floor (``_FIRST_TOKEN_MIN_OUTPUT`` tokens,
     ~4 characters each, whitespace ignored -- a stray delta is not one).
+    Thinking counts as the answer under way (review round 2, R2-F2): it
+    streams into the row's thinking envelope while the row stays
+    ``pending`` with no content, and the published path counts it too.
     """
     store = getattr(controller, "store", None)
     read = getattr(store, "read_only_messages_for_session", None)
@@ -655,9 +658,16 @@ def _viewed_reply_is_streaming(controller: Any, session_id: Any) -> bool:
         return False
     for message in reversed(messages):
         if getattr(message, "role", None) is ConsoleMessageRole.ASSISTANT:
+            status = getattr(message, "status", "")
             text = "".join(str(getattr(message, "content", "") or "").split())
-            return getattr(message, "status", "") == "streaming" and (
-                len(text) >= _FIRST_TOKEN_MIN_OUTPUT * 4
+            blocks = getattr(getattr(message, "thinking", None), "blocks", ()) or ()
+            thought = "".join(
+                "".join(str(getattr(block, "text", "") or "").split())
+                for block in blocks
+            )
+            floor = _FIRST_TOKEN_MIN_OUTPUT * 4
+            return (status == "streaming" and len(text) >= floor) or (
+                status in ("pending", "streaming") and len(thought) >= floor
             )
     return False
 

@@ -530,3 +530,67 @@ def test_an_unpublished_send_already_streaming_text_is_not_waiting(
 
     assert line.startswith(_WAITING) is waiting, line
     assert "20s" in line
+
+
+def _thinking(text: str):
+    from tldw_chatbook.Chat.thinking_blocks import (
+        DisplayableThinkingBlock,
+        ThinkingEnvelope,
+    )
+
+    return ThinkingEnvelope(
+        blocks=(
+            DisplayableThinkingBlock(
+                block_id="think-0",
+                round_ordinal=0,
+                provider="llama_cpp",
+                model="qwen3-8b",
+                protocol="chat_completions",
+                source_format="reasoning_content",
+                status="complete",
+                text=text,
+            ),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("thinking", "waiting"),
+    [
+        ("Okay, the user wants a greeting. I should answer briefly and kindly.", False),
+        ("Hmm", True),  # a stray delta is not an answer under way
+    ],
+)
+def test_an_unpublished_send_that_is_thinking_is_not_waiting(
+    monkeypatch, thinking, waiting
+) -> None:
+    """Review round 2 (R2-F2): a local reasoning model's thinking streams into
+    the assistant row's thinking envelope while the row stays 'pending' with
+    no content, so on a first send (nothing published) it read 'Waiting for
+    a reply · 40s · model may be loading' while it was generating. The
+    published path already counts thinking as live text."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.UI.Console_Modules import agent as agent_module
+
+    clock = [1000.0]
+    monkeypatch.setattr(
+        agent_module, "time", SimpleNamespace(monotonic=lambda: clock[0])
+    )
+    view = _waiting_view("llama_cpp")
+    rows = [
+        SimpleNamespace(role=ConsoleMessageRole.USER, status="complete", content="hi"),
+        SimpleNamespace(
+            role=ConsoleMessageRole.ASSISTANT,
+            status="pending",
+            content="",
+            thinking=_thinking(thinking),
+        ),
+    ]
+    view._controller.store.read_only_messages_for_session = lambda _sid: list(rows)
+
+    view.console_turn_activity()
+    clock[0] += 40.0
+    line = view.console_turn_activity()
+
+    assert line.startswith(_WAITING) is waiting, line
+    assert "40s" in line
