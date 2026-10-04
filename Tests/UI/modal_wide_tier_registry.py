@@ -62,6 +62,7 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "VoiceBlendDialog": "inventory #74: fixed 15-column slider grid, extra width is dead space",
     "ConfirmationDialog": "inventory #76: tiny-by-design confirm",
     "UnsavedChangesDialog": "tiny-by-design confirm (ConfirmationDialog family)",
+    "GeneratedVideoConfirmation": "tiny-by-design confirm (ConfirmationDialog family)",
     "CancelConfirmationDialog": "inventory #77: tiny-by-design confirm",
     "RecoveryPassphraseDialog": "inventory #78: tiny passphrase entry",
     "RagProfileNameModal": "inventory #79: tiny single-input (settings sheet geometry)",

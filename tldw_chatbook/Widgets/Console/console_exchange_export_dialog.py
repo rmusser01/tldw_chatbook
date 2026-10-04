@@ -31,6 +31,7 @@ from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Widgets.Console.trace_export_profile_ui import (
+    EXPORT_STILL_WRITING,
     TRACE_EXPORT_PROFILE_COPY,
     TRACE_EXPORT_PROFILE_LABELS,
     full_trace_confirmation,
@@ -362,3 +363,15 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
             self._set_status("Export is finishing; the destination remains protected.")
             return
         self.dismiss_safe_once(None)
+
+    async def confirm_quit(self) -> bool:
+        """Stay while the export runs, as Escape does (TASK-33622.15).
+
+        Returns:
+            refuse_quit_while_working's answer mid-export; else True.
+        """
+        if not self._exporting:
+            return True
+        from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
+
+        return await refuse_quit_while_working(self, EXPORT_STILL_WRITING)

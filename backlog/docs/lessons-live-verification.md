@@ -41,6 +41,41 @@ app by its own pid and confirm it is gone before relaunching. Then read the
 log's last `console_send_stage` phase: it says which recovery state the
 relaunch will show, before you go looking for it.
 
+## A live race control needs proof the race happened, not a fixed sleep (TASK-33622.15, 2026-10-04)
+
+**Incident.** The fix under test: a fork that finishes while Ctrl+Q's "Quit while still working?"
+covers the fork dialog must still close the dialog after Wait. The live recipe held the fork
+commit behind `BEGIN EXCLUSIVE` in `sqlite3`, raised the question, ran `COMMIT`, slept 3 s and
+pressed Wait. The fixed build closed the dialog. The pre-fix control, same script, closed it too,
+which read as "the bug does not reproduce live". The capture taken before Wait showed why: the
+Console beneath was still on the source chat, so on that run the fork opened only after Wait,
+when nothing covered the dialog. Rerun with a longer wait, and with the fork's own toast ("Fork
+created and opened.") captured under the question before Wait, the control left the dialog stuck
+on "Forking..." as the tests predicted.
+
+**What to do.** For a cover-then-finish race, gate each step on on-screen proof that the previous
+one happened, and keep the capture taken just before the deciding key. A control that "passes"
+is only evidence once that capture shows the race was actually entered. (Also: `tmux send-keys`
+treats a `;` argument as its own command separator; send SQL as `-l 'COMMIT\;'`.)
+
+## A dead modal after a send can be the app pump, not tmux (TASK-33622.15, 2026-10-03)
+
+**Incident.** Live-verifying the generated video's Save-to-disk picker, three runs looked like
+the detached-tmux trap below: the `/generate-video` cost confirm (then the capacity choice) ignored
+Tab, Escape and clicks, the process sat idle, and a SIGUSR2 dump showed the main loop in
+`_run_once` and the input thread in `select`. Attaching a client changed nothing, and the MiniMax
+request kept polling in a worker thread. The fault was in the app, not tmux: priority
+**Ctrl+Q** never logged `Application quit initiated`, F1 did nothing, and the same freeze
+reproduced on clean dev. A **mouse** click on Send took a path that left input alive, and the
+choice, the picker and their quit prompts then all worked. The likely mechanism -- the Enter-key
+send awaiting the whole `/generate-video` command, so input queues behind it -- is inferred from
+those symptoms and was **not** confirmed with a stack of the send path.
+
+**What to do.** When a modal goes dead right after a send, press Ctrl+Q and grep the app log
+for `Application quit initiated`. If it is missing, input is probably queued behind the send:
+check `console_send_stage ... status=entered` with no outcome line, and retry with a different
+send path before blaming the harness. Before filing it as yours, reproduce it on the merge base.
+
 ## CSS overflow alone does not provide keyboard scrolling
 
 **TASK-32879, 2026-09-20.** The restored MCP review made a plain Container

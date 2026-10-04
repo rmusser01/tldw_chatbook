@@ -16,6 +16,7 @@ Tests/UI/test_chat_search_enhanced.py
 Tests/UI/test_chatbook_wizard_open_folder.py
 Tests/UI/test_checkbox_height_render.py
 Tests/UI/test_console_approval_compact_layout.py
+Tests/UI/test_close_under_quit_question.py
 Tests/UI/test_console_archive_publication.py
 Tests/UI/test_console_archive_resume_errors.py
 Tests/UI/test_console_archive_switcher_controls.py
@@ -92,6 +93,7 @@ Tests/UI/test_llm_screen_ollama_probe_nonblocking.py
 Tests/UI/test_markdown_hygiene_1995.py
 Tests/UI/test_media_runtime_state.py
 Tests/UI/test_media_viewer_prompt_search_15477.py
+Tests/UI/test_modal_quit_in_flight_hooks.py
 Tests/UI/test_notes_scope_models.py
 Tests/UI/test_personas_avatar_render.py
 Tests/UI/test_personas_character_editor_sync.py

@@ -453,6 +453,20 @@ class BuddyCharacterReviewDialog(
                 else None
             )
 
+    async def confirm_quit(self) -> bool:
+        """Stay while the character is published, as Escape does (TASK-33622.15).
+
+        Returns:
+            refuse_quit_while_working's answer mid-publication; else True.
+        """
+        if not self._publishing:
+            return True
+        from ..quit_while_working import refuse_quit_while_working
+
+        return await refuse_quit_while_working(
+            self, "The character is still being created."
+        )
+
     def on_unmount(self) -> None:
         super().on_unmount()
         self._review_closed = True

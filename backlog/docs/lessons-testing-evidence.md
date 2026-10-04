@@ -43,6 +43,21 @@ check whether the file was fixed between the artifact's run and your base — an
 remember that if no full run has completed since a suspect commit landed, CI has
 never exercised it: a "hang was fixed" verdict from an old artifact says nothing
 about regressions newer than the last completing run.
+
+## A screen leaving the stack is not its result arriving (TASK-33622.15, 2026-10-04)
+
+**Incident.** A new test waited for a review dialog's kept close with
+`_until(lambda: modal not in app.screen_stack)` and then asserted
+`app.results == [ReviewCommitUnknownResult()]`. It failed with `[]` on its first run.
+The close had worked: Textual's `Screen.dismiss` pops the screen at once but hands the
+result to the opener's callback through `requester.call_next`, a later turn, so the
+assertion ran in between. Seven older tests in the same file used the same wait and
+had passed by timing alone. Review of PR #2998 had already traced two Media player
+quit-prompt tests that flake under load to the same pattern.
+
+**What to do.** When a test checks what a dismissed screen returned, wait for the
+result itself (the callback's list is non-empty, or the opener's state changed), not
+for the screen to leave `screen_stack`.
 ## A prompt that tells the model where things are must be tested by doing what it says
 
 **TASK-33940.1, 2026-10-02.** The workspace system-prompt note listed bound folders "relative
@@ -183,6 +198,34 @@ four more comments that were false for some of the cases below them
 silent at Y" claim is evidence like any other. Generate it from that
 per-head table, and name the table or the case it covers.
 
+## A pin below an already-red assertion goes stale unseen; measure it, never edit it by delta (TASK-33622.15, 2026-10-03)
+
+**Incident.** Adding two modal classes to the Console launch graph, the first attempt bumped
+`test_console_modal_inventory_matches_runtime_ast_and_transitive_launches`' pin
+`len(reachable_modal_types) == 49` to `51`. That edit added this change's +2 to the old number.
+The test fails on dev at an earlier inventory assertion (18 unrelated modals), so the pin is
+never reached. A throwaway probe under `Tests/` that called the test's own walk measured
+**51 on dev** and **53 on the branch**. The pin had been stale on dev all along, and the delta
+edit would have shipped a second wrong number.
+
+**What to do.** When you edit an assertion that sits below a line already failing at the merge
+base, measure its value on both trees with a probe that reuses the test's helpers. Pin the
+measured value, and say in the comment where it was measured.
+
+## During App.exit a recorder on push_screen misses the screen that matters (TASK-33622.17, 2026-10-04)
+
+**Incident.** A test meant to prove that Ctrl+Q's **Discard and quit** over the video
+Save-to-disk picker does not re-open the storage choice recorded `app.push_screen` calls
+after the quit was approved. A mutant that made the shutdown read as a picker cancel still
+passed. A debug print showed why: the resolver did loop back and built a new choice, but
+it waits for screens through `run_worker(push_screen_wait(...))`, and a worker started
+after `App.exit()` never runs, so `push_screen` was never called. Recording the
+resolver's own screen-wait call (its request for the screen) turned the same mutant red.
+
+**What to do.** To pin "X is not re-opened during shutdown", record the code's request
+for X (the call that asks for the screen), not the push. Then run a mutant that forces
+the re-open, and check that the test goes red.
+
 ## A provider preset's own tests never touched the surfaces users set it up with
 
 **TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889
@@ -313,6 +356,23 @@ changes. pytest then stopped on "file or directory not found" with "no tests
 ran". Worktrees share remote refs, so extract the baseline with
 `git archive $(git merge-base HEAD origin/dev)`, and build file lists with
 `git diff --name-only $(git merge-base HEAD origin/dev)..HEAD`.
+
+**An archived baseline has no `.git`, so git-history tests take another path there
+(TASK-33622.17, 2026-10-03).** Comparing 19 head failures against a `git archive`
+tree, two looked branch-only. Both were artifacts of the missing `.git`:
+- `test_task_15743_exception_types_survive_loguru_forwarding` uses its pinned
+  archaeology commits when `git` can reach them. The worktree reaches them through
+  the shared object store and fails. The archive cannot, so it takes the
+  current-source fallback and passes.
+- `test_task_15743_reviewed_delta_is_complete` skips in the archive for the same
+  reason.
+
+Six other git-history tests failed on both sides, but for different reasons: a
+`CalledProcessError` from `git show` in the archive, an assertion or a 300 s
+timeout in the worktree. So for any test that shells out to `git`, an archive
+baseline is not a baseline. Read what the head failure names. Here every message
+named a file the change did not touch. For a real comparison, run the test in a
+git checkout of the base.
 
 ## A call counter on a function's home module misses every `from`-import
 
@@ -1953,6 +2013,14 @@ helper that asserts `await pilot.click(...)`, but the sweep missed this one call
 inside a `try/finally`. When a harness wraps a flaky call, grep for every raw
 call site, not just the obvious ones. Always assert a pilot click's return value,
 so a miss fails at the click.
+
+**Same trap, just-pushed variant (TASK-33622.15, 2026-10-04).** A test clicked
+**Quit anyway** as soon as the "Quit while still working?" dialog was the top
+screen. A pushed screen is on the stack before its widgets are placed, and an
+unplaced widget's `region` is empty, so Pilot aimed at (0, 0). Once, under load,
+the click answered nothing and the test timed out five seconds later at "Quit
+anyway to answer". Before clicking a widget on a screen that was just pushed, wait
+until its `region.area > 0`.
 
 ---
 

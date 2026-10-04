@@ -667,6 +667,20 @@ class PromptCollectionManagerModal(
         self._request_token += 1
         self._dismiss_manager(None)
 
+    async def confirm_quit(self) -> bool:
+        """Stay while a collection change is saved, as close does (TASK-33622.15).
+
+        Returns:
+            refuse_quit_while_working's answer mid-change; else True.
+        """
+        if not self._mutation_in_flight:
+            return True
+        from ...Widgets.quit_while_working import refuse_quit_while_working
+
+        return await refuse_quit_while_working(
+            self, "A prompt collection change is still being saved."
+        )
+
     def _dismiss_manager(self, result: PromptCollectionManagerResult | None) -> None:
         if not self.dismiss_safe_once(result):
             return

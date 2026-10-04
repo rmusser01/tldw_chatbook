@@ -2376,7 +2376,9 @@ class ConsoleSessionSwitcherModal(
             self._sync_candidate_labels()
             self._request_generation += 1
             self._cancel_query_debounce()
-            self.dismiss_safe_once(None)
+            # Covered (Ctrl+Q's quit-anyway question), the close is kept for
+            # when this modal is on top again (TASK-33622.15).
+            self.dismiss_safe_once_when_on_top(None)
             return
         if result.kind is ConsoleActivationResultKind.CANCELLED_PRECOMMIT:
             self._activation_phase = ConsoleActivationPhase.IDLE
@@ -2530,7 +2532,7 @@ class ConsoleSessionSwitcherModal(
         if not visit_is_current():
             return
         if accepted:
-            self.dismiss_safe_once(None)
+            self.dismiss_safe_once_when_on_top(None)  # kept while covered
             return
         self.query_one("#console-switcher-recovery", Button).disabled = False
         self._show_activation_failure(ConsoleActivationResultKind.CHARACTER_UNAVAILABLE)
@@ -2548,6 +2550,20 @@ class ConsoleSessionSwitcherModal(
         self._request_generation += 1
         self._cancel_query_debounce()
         self.dismiss_safe_once(None)
+
+    async def confirm_quit(self) -> bool:
+        """Stay while a chat opening commits, as Escape does (TASK-33622.15).
+
+        Before the commit, quitting is fine: Escape cancels that opening too.
+
+        Returns:
+            refuse_quit_while_working's answer while committing; else True.
+        """
+        if self._activation_phase is not ConsoleActivationPhase.COMMITTING:
+            return True
+        from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
+
+        return await refuse_quit_while_working(self, "The chat is still being opened.")
 
     @on(Button.Pressed, "#console-switcher-cancel")
     async def _cancel(self, event: Button.Pressed) -> None:

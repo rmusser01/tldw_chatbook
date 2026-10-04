@@ -85,7 +85,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # gate the redesigned modal, now inside TASK-34353 sharded lane.
 # Retain the existing Console pending-kind/compact approval floor increment
 # (+3 over dev), alongside every incoming settings and existing UI census entry.
-MINIMUM_FILES = 133
+# TASK-33622.15 raised it to 135: test_close_under_quit_question.py and
+# test_modal_quit_in_flight_hooks.py pin Ctrl+Q's still-working answer and a
+# dialog that finishes under "Quit while still working?" closing after Wait
+# (~35 s serial together). The PR's two real-app quit files
+# (test_app_quit_in_flight_modals.py ~2.7 min, test_console_video_picker_cancel.py
+# ~1 min locally) stay out until the lane has a shard with room for them.
+MINIMUM_FILES = 135
 
 
 def read_census(path: Path) -> list[str]:

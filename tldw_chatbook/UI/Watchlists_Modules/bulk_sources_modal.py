@@ -157,6 +157,18 @@ class BulkSourcesModal(ModalScreen[None]):
             return
         self.dismiss(None)
 
+    async def confirm_quit(self) -> bool:
+        """Stay while sources are created, as Cancel does (TASK-33622.15).
+
+        Returns:
+            refuse_quit_while_working's answer mid-batch; else True.
+        """
+        if not self._batch_posted:
+            return True
+        from ...Widgets.quit_while_working import refuse_quit_while_working
+
+        return await refuse_quit_while_working(self, "Sources are still being created.")
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         button_id = str(event.button.id)
