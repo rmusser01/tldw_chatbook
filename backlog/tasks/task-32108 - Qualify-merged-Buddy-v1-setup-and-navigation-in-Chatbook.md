@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-09-09 04:32
-updated_date: 2026-10-04 02:54
+updated_date: 2026-10-04 03:30
 labels: []
 dependencies: []
 priority: high
@@ -72,4 +72,9 @@ PR2910 Qodo coverage finding on b6860cf13f was reproduced: serial/xdist child-on
 
 2026-09-30 SSH session follow-up dev rebase onto 856ffd9962253743173e4ec92c4cdbc609473bda (PR2907): all twelve preceding PR patches remain identical, with no conflicts. At tested source a242b1b82d69c0eb1aeb74a9ab85583ddffc8bfc, 125 targeted cases passed in 145.97s: 109 incoming SSH executor/registry/worker cases and 16 Buddy cases. Fresh/schema69 upgrade still reaches schema73 with unchanged ownership, workspace defaults and Static/Dynamic assertions. All 11 preflight guards pass with explicit existing Python 3.12.11; the first default selection chose 3.14.7 and failed only the pinned Mermaid build-version guard. Correcting the interpreter required no source or artifact regeneration. Scoped Ruff/format/diff checks pass. Sanitized receipt: Docs/Reviews/artifacts/buddy-v1-32108/ssh-dev-20260930/verification.md. The SSH fixtures run the real bootstrap/loader/bundle locally; no live SSH acceptance is claimed. Earlier coverage/MCP/Buddy receipts retain original tested-source attribution; passing 3d53 hosted gates remain old-head results. No full suite or paid provider calls. Native and physical voice acceptance remains open; task stays In Progress. ADR required: no; existing ADR126/139 apply and incoming SSH behavior follows ADR181.
 2026-10-03 Chatbook continuation: repaired and independently reviewed Home exact Resume on cached Console, persisted interaction/motion projection, cold management recognition of its unloaded saved local owner, and Console view/queued rebuild shutdown sequencing. TASK32108.1–.4 completed with 64 unique passing final targeted checks (63 combined plus corrected queued case), six compiled modules, no new source Ruff diagnostics and source-bound final Textual UI evidence. Earlier225/88/33 stages are separately attributed. Two older worker-group checks reproduce unchanged-base failures; no full suite is claimed. Final runtime remains in the supported Chatbook tab at127.0.0.1:18770 with Buddy visible. Overall UAT remains In Progress: fresh/upgraded/workspace/running-work coverage and native Terminal/physical mic/playback/configured OpenAI realtime acceptance are not all certified. User provider/model/profile preference question remains pending. Report: Docs/Reviews/2026-10-03-chatbook-buddy-uat.md.
+2026-10-03 remaining workspace/command qualification: TASK-32108.5 is complete. All 89 targeted checks passed in 189.68 seconds after repairing test profile lifetime, explicit native-streaming gateway scope and visible Send readiness. Product source stayed unchanged. Fresh/schema 69→75 app journeys, workspace inbox cases and retained commands passed with controlled headless/provider fixtures. The supported browser UI also created and applied Buddy UAT Workspace with Persona None, opened its read-only empty inbox, and returned to saved A with its exact unsent draft intact.
+
+Together with the 64 four-repair checks, 153 unique targeted checks pass on final product hashes. This is an aggregate of scoped runs. Updated report and sanitized receipts: Docs/Reviews/2026-10-03-chatbook-buddy-uat.md.
+
+Keep In Progress per the native-integration plan. Native Terminal, physical microphone/playback and application-configured OpenAI realtime acceptance remain open under TASK-31585. The provider/model/profile preference question is pending. Computer Use policy previously rejected native Terminal selection; no workaround was attempted.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

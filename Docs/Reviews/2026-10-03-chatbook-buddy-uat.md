@@ -9,7 +9,7 @@ Four scoped Chatbook repairs are verified on `codex/chatbook-buddy-uat`, based o
 3. **Opening management first after restart marked the saved owner unavailable.** Management recognizes only its already-bound saved local owner through metadata without loading its transcript or constructing execution services. Presentation-only Apply preserves that binding. Missing, deleted, remote, temporary and repurposed targets remain unavailable; Persona changes still require a live target.
 4. **Resume presentation and queued rebuilds could outlive shutdown.** Application shutdown cancels and drains only `console-sync` and `console-resume-navigation-startup` before runtime disposal. The retained shutdown task fences rollback sync, focus, startup and re-arming. Direct shutdown also sets Textual's existing exit flag, matching ordinary Quit and preventing queued rebuilds from mounting after child message pumps stop. Accepted execution keeps its existing runtime disposal policy.
 
-These repair existing behavior under [ADR-139](../../backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md), [ADR-147](../../backlog/decisions/147-conversation-archive-and-exact-resume.md), and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md). No new schema, provider contract or visual token is introduced. Tasks: TASK-32108.1–32108.4.
+These repair existing behavior under [ADR-139](../../backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md), [ADR-147](../../backlog/decisions/147-conversation-archive-and-exact-resume.md), and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md). No new schema, provider contract or visual token is introduced. Tasks: TASK-32108.1–32108.4. Command qualification harness repair: TASK-32108.5.
 
 ## Rendered Chatbook verification
 
@@ -35,9 +35,29 @@ The final checks cover cold/reused Home identity/history and independent drafts,
 
 Earlier stages passed 225 Buddy checks, 88 motion/config checks, and 33 Persona-assignment checks. They are recorded as stage-specific evidence, not claimed as one final full-suite run. The held-Resume regression first failed because shutdown returned with its worker RUNNING. The automatic-remount regression first reproduced the exact collapsed-feature `DuplicateIds`, then passed with existing Textual exit admission closed.
 
-All nine changed test files and the management module pass scoped Ruff and formatter checks. All six changed production modules compile. Ruff comparison against base reports 487 existing diagnostics and zero introduced diagnostics after normalizing shifted line references. Whole legacy modules were not mechanically reformatted. `git diff --check` passes.
+All ten changed test files and the management module pass scoped Ruff and formatter checks. All six changed production modules compile. Ruff comparison against base reports 487 existing diagnostics and zero introduced diagnostics after normalizing shifted line references. Whole legacy modules were not mechanically reformatted. `git diff --check` passes.
 
 Independent review found the malformed-motion case and both shutdown gaps, verified the resulting repairs and found no remaining actionable issue. Cold management review also exercised runtime/profile changes and loaded/repurposed slots during metadata I/O; admission failed closed and worker DB connections were closed.
+
+## Workspace and command qualification
+
+**The final targeted group passed all 89 checks in 189.68 seconds.** Fresh and schema 69→75 upgraded profiles render independent artwork without a Persona, retain exact conversation attachment, exercise complete Dynamic frame cycles and Static presentation, and clear an existing workspace Persona default to explicit None. Workspace inbox tests cover read-only opening, focus/selection retention, exact acknowledgement, newer unread receipts, moved owners and failed refreshes. Mounted command tests cover exact-owner sends, drafts, retained questions/approvals, stale owners, busy/attachment refusals, and late voice completion after closure.
+
+The first group passed 79 checks and failed 10. Several controller and full-app cases redirected imported config participants after import. Controller harnesses now retain the admitted bootstrap profile; the three full-app cases use the existing private-profile child before imports and production config writes. The profile correction passed 45 of 47 command checks. The two draft tests supplied only a stalled `stream_chat` gateway, while the default enabled agent bridge used a separate seam; they now explicitly select native streaming through production settings. One saved-owner case then pressed a still-disabled Send button between completed restoration and the next visible projection. Waiting for the actual enabled button preserves the user action and every original assertion. The two focused sends passed, followed by all 89 passing together. No product source or admission guard changed in this phase.
+
+Actual browser interaction also created the disposable **Buddy UAT Workspace**, applied its Buddy binding with default Persona None, and opened its read-only empty inbox. Opening and closing did not acknowledge results. This browser evidence qualifies the empty inbox; populated and running-work cases use controlled controller/receipt fixtures. The two full-app sends prove accepted native-streaming work survives closing Buddy while both Console drafts and the unrelated active selection remain intact. They use a gateway double, so no real provider or default agent execution is claimed.
+
+![Applied workspace binding retained on Home](artifacts/buddy-uat-20261003/buddy-final-workspace-binding.png)
+
+![Read-only workspace inbox](artifacts/buddy-uat-20261003/buddy-final-workspace-inbox.png)
+
+A separate same-process browser check returned from the workspace binding to saved A. Its original history and exact unsent phrase `Draft A stays with Buddy UAT A.` remained visible. The temporary wide viewport was reset afterward.
+
+![Saved A keeps its draft after the workspace detour](artifacts/buddy-uat-20261003/buddy-workspace-detour-draft.jpg)
+
+![Buddy remains visible at the restored default viewport](artifacts/buddy-uat-20261003/buddy-visible-qualified.jpg)
+
+These 89 checks and the 64 four-repair checks have no duplicate test identities: **153 unique passing targeted checks on the final product sources**, aggregated across recorded runs. Independent review found no actionable issue in the profile/mode/readiness repairs. The final test module passes Ruff, formatting, compile and whitespace checks. Six separate `command-*.svg` exports record headless fresh/upgrade Static, Dynamic and inbox views; their original/export and repository hashes are recorded separately.
 
 ## Coverage limits and retained attempts
 
@@ -52,4 +72,4 @@ Independent review found the malformed-motion case and both shutdown gaps, verif
 
 [Source, screenshot and verification hashes](artifacts/buddy-uat-20261003/verification.json) record final sources, earlier-stage attribution, targeted run counts and local log hashes. Screenshots contain synthetic fixtures. Config contents, bootstrap nonce, credentials, raw audio and raw application logs are excluded.
 
-Raw attempts remain under `/private/tmp/chatbook-*20261003*`. Final stages: `chatbook-buddy-final-repairs`, `chatbook-queued-shutdown-final`, `chatbook-buddy-final-static`, and `chatbook-worker-guard-base-control`.
+Raw attempts remain under `/private/tmp/chatbook-*20261003*`. Final stages: `chatbook-buddy-final-repairs`, `chatbook-queued-shutdown-final`, `chatbook-buddy-final-static`, `chatbook-worker-guard-base-control`, and `chatbook-buddy-workspace-command-qualified` (all with the 20261003 suffix).
