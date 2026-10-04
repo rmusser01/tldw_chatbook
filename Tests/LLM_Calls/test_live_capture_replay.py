@@ -190,6 +190,10 @@ async def test_captured_listing_discovers_in_its_recorded_shape(capture: dict[st
 
     Together answers /models with a bare array (TASK-34361); an envelope
     listing is served as ``{"data": [...]}``.
+
+    Args:
+        capture: One captured fixture; its ``models_response`` holds the
+            listing sample and whether it came in the ``data`` envelope.
     """
     listing = capture.get("models_response")
     if not listing:

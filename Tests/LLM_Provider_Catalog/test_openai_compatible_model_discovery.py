@@ -746,7 +746,11 @@ async def test_discovery_returns_typed_error_for_invalid_response():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("body", [["runtime-a"], [{"name": "no-id"}], [[{"id": "nested"}]]])
 async def test_bare_array_listing_of_non_model_objects_stays_invalid(body):
-    """TASK-34361 accepts Together's bare array, but only of model objects."""
+    """TASK-34361 accepts Together's bare array, but only of model objects.
+
+    Args:
+        body: A bare JSON array whose entries are not model objects with an id.
+    """
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body))
     ) as client:
