@@ -357,6 +357,15 @@ $ds-conversation-menu-width: 30;
     scrollbar-color-active: $ds-action-focus;
 }
 
+/* TASK-33007.6: with Advanced closed, Providers & Models fits the pane, and
+   the Model picker's open rows push it past the fold. Without a reserved
+   gutter, focusing or leaving the picker added or removed the scrollbar,
+   changed the content width and re-laid out the whole card: the blur
+   restore ran ~150 ms late, measured. The gutter keeps the width fixed. */
+#settings-detail-pane-body {
+    scrollbar-gutter: stable;
+}
+
 /* Narrow-width compact workbench (task-1342), following the personas
    precedent (personas-workbench-compact): at <=100 cols the 3:6:2 split
    leaves slivers, so the category pane becomes a fixed-width sidebar, the

@@ -224,6 +224,32 @@ about layout. To wait for geometry, wait for the event that produces it (`Resize
 widget's own "built" message), and keep a refresh-count only as the bound on a body that
 is already laid out and merely growing.
 
+## A pane whose content just fits flips its scrollbar on focus — reserve the gutter
+
+**TASK-33007.6, 2026-10-04.** Folding the rarely used Providers & Models controls
+made the card fit the Settings detail pane at 211x44 (32 rows of content in a 32-row
+pane). Focusing the Default model picker opens two more rows. That brings in the
+vertical scrollbar, and leaving the picker takes it away. Each flip changed the
+content width by one column (122 → 121 → 122) and re-laid out the whole card.
+
+`test_an_invalid_custom_id_is_rolled_back_when_the_field_is_left[focus-moves-away]`
+went from 0/12 to 6/12 failures. Its 0.05 s blur timer now fired about 225 ms after
+the blur instead of about 85 ms, which is later than the test's `pause(0.2)`.
+
+A CSS bisect pinned it down. Restoring either the card's frame or the Advanced
+disclosures' old 3-row frames brought the delay back to about 82 ms. Both only make
+the content overflow all the time, so the scrollbar never flips. Removing the new
+draft-status refresh hook did nothing (8/10 still failed). `scrollbar-gutter: stable`
+on `#settings-detail-pane-body` fixed it: the delay returned to 82–91 ms, and the
+test failed 0 times in 12 runs.
+
+A pane whose content sits within a row of its height will meet this sooner or later,
+because any focus-driven growth crosses the fold. Reserve the gutter on the scroll
+container. Pin the width with a test: measure the card's width at rest and with the
+growing control focused. That test failed (121 vs 122) when the gutter was removed.
+
+---
+
 ## `set_timer(0.0)` never fires — silently
 
 **TASK-21110, 2026-08-23.** The splash/initial-screen overlap is armed with
