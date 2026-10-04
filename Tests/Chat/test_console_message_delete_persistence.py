@@ -1523,6 +1523,99 @@ def test_flat_delete_tombstones_hidden_rows_later_in_the_chain(
     assert _tree_ids(reopened, reopened_session) == set(ids) - hidden
 
 
+#: The columns besides text that make resume show a row.
+_SHOWN_BY = ("image_data", "assistant_generation_state", "provider_continuation_json")
+
+#: A finished continuation: it sets no generation state of its own.
+_COMPLETE_CONTINUATION = {
+    "schema_version": 1,
+    "checkpoint_revision": 1,
+    "provider": "deepseek",
+    "protocol": "chat_completions",
+    "model": "deepseek-chat",
+    "api_base_url": "https://api.deepseek.com/v1",
+    "state": "complete",
+    "rounds": [
+        {
+            "assistant_content": "",
+            "reasoning_blocks": [],
+            "calls": [
+                {
+                    "call_id": "call-1",
+                    "name": "lookup",
+                    "arguments": "{}",
+                    "state": "completed",
+                    "result": "done",
+                }
+            ],
+        }
+    ],
+}
+
+
+@pytest.mark.parametrize(
+    "shown_by",
+    [
+        pytest.param(
+            {"image_data": b"\x89PNG\r\n\x1a\n", "image_mime_type": "image/png"},
+            id="image",
+        ),
+        pytest.param({"assistant_generation_state": "failed"}, id="generation-state"),
+        pytest.param(
+            {"provider_continuation_json": _COMPLETE_CONTINUATION},
+            id="provider-continuation",
+        ),
+    ],
+)
+def test_flat_delete_leaves_a_textless_root_that_resume_shows_live(shown_by):
+    """A root with no text is hidden only when nothing else shows it.
+
+    The hidden-root lookup reads presence flags, not text. Every root the
+    transcript chained after the deleted one is in the delete's own subtree,
+    so the flags decide only for a root outside that chain: here, a reply
+    saved after the transcript loaded. An image, a generation state or a
+    provider continuation each makes resume show it, so it stays live; with
+    that flag misread it would be tombstoned as never shown.
+    """
+    from tldw_chatbook.Chat.console_message_delete import delete_subtree_for_undo
+
+    rows = [_flat("f0", "user"), _flat("f1", "assistant"), _flat("f2", "user"),
+            _flat("f3", "assistant")]
+    ids = [row[0] for row in rows]
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed_flat(db, rows, leaf="f3")
+    store, session_id, native = _open_store(db, conversation_id)
+    db.add_message(
+        {
+            "id": "x1",
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "",
+            "timestamp": "2026-09-30T00:00:09.000000+00:00",
+            **shown_by,
+        }
+    )
+    saved = db.get_message_by_id("x1")
+    # Preconditions: no text and one column that shows it; the store chained
+    # the flat rows and never loaded this one.
+    assert saved["content"] == ""
+    assert [column for column in _SHOWN_BY if saved[column] is not None] == [
+        column for column in _SHOWN_BY if column in shown_by
+    ]
+    assert [m for m, _role in _visible(store, session_id)] == ids
+    assert "x1" not in _tree_ids(store, session_id)
+
+    deleted, _held = delete_subtree_for_undo(store, native["f1"])
+
+    assert {message_id for message_id, _version in deleted.tombstones} == {
+        "f1", "f2", "f3"
+    }
+    assert _deleted(db, [*ids, "x1"]) == [0, 1, 1, 1, 0]
+    reopened, reopened_session, _native = _open_store(db, conversation_id)
+    assert _tree_ids(reopened, reopened_session) == {"f0", "x1"}
+
+
 #: The two conversation-wide readers a Delete could reach for root rows.
 _CONVERSATION_READERS = (
     "get_message_tree_rows_for_conversation",
