@@ -471,3 +471,42 @@ def test_the_view_times_an_unpublished_first_send_from_when_it_saw_it_run(
     assert line.startswith(_WAITING), line
     assert "20s" in line
     assert ("may still be loading" in line) is hinted
+
+
+@pytest.mark.parametrize(
+    ("streamed", "waiting"),
+    [
+        ("Sure -- here is the start of a real, streaming answer.", False),
+        ("\n ", True),  # a server still reading the prompt sends stray deltas
+        ("The", True),
+    ],
+)
+def test_an_unpublished_send_already_streaming_text_is_not_waiting(
+    monkeypatch, streamed, waiting
+) -> None:
+    """Review A-F6: with nothing published by the bridge the view used to
+    assume zero output, so a reply that streamed text for over 15 s read
+    'Waiting for a reply'. The viewed transcript's streaming assistant row
+    is the evidence the answer started (the same 8-token floor, as text)."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.UI.Console_Modules import agent as agent_module
+
+    clock = [1000.0]
+    monkeypatch.setattr(
+        agent_module, "time", SimpleNamespace(monotonic=lambda: clock[0])
+    )
+    view = _waiting_view("llama_cpp")
+    rows = [
+        SimpleNamespace(role=ConsoleMessageRole.USER, status="complete", content="hi"),
+        SimpleNamespace(
+            role=ConsoleMessageRole.ASSISTANT, status="streaming", content=streamed
+        ),
+    ]
+    view._controller.store.read_only_messages_for_session = lambda _sid: list(rows)
+
+    view.console_turn_activity()
+    clock[0] += 20.0
+    line = view.console_turn_activity()
+
+    assert line.startswith(_WAITING) is waiting, line
+    assert "20s" in line

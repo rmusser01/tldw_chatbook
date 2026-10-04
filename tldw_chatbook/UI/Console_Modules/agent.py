@@ -434,6 +434,7 @@ def console_turn_activity_text(
     pending_copy: str = "",
     turn_started_at: float | None = None,
     self_hosted: bool = False,
+    reply_streaming: bool = False,
 ) -> str:
     """Return the live activity line for one in-flight Console turn.
 
@@ -508,6 +509,8 @@ def console_turn_activity_text(
             turn running; the elapsed base before any call usage exists.
         self_hosted: Whether the session's provider is self-hosted; only
             then does a long first-token wait add the cold-load hint.
+        reply_streaming: Review A-F6 -- with nothing published, whether the
+            viewed transcript already streams a real answer (no wait copy).
         pending_copy: Qodo #4 -- the waiting label for the KIND of round
             actually outstanding (``console_chat_models.console_pending_
             round_copy_for``): "Waiting for your answer" for an ask_user
@@ -579,6 +582,7 @@ def console_turn_activity_text(
             waited is not None
             and waited >= _FIRST_TOKEN_HINT_AFTER_SECONDS
             and (type(output) is not int or output < _FIRST_TOKEN_MIN_OUTPUT)
+            and not reply_streaming
         ):
             # TASK-34100.5 AC#5: the answer has not started (a cold local
             # model still processing the prompt streams at most a stray
@@ -631,6 +635,31 @@ def _viewed_provider_is_self_hosted(controller: Any, session_id: Any) -> bool:
     from tldw_chatbook.Chat.provider_readiness import is_self_hosted_provider
 
     return is_self_hosted_provider(provider)
+
+
+def _viewed_reply_is_streaming(controller: Any, session_id: Any) -> bool:
+    """Whether the viewed transcript already streams a real answer (A-F6).
+
+    Read only when the bridge published nothing for the turn, so the view
+    has no output count: the newest assistant row must be streaming and
+    hold the published path's floor (``_FIRST_TOKEN_MIN_OUTPUT`` tokens,
+    ~4 characters each, whitespace ignored -- a stray delta is not one).
+    """
+    store = getattr(controller, "store", None)
+    read = getattr(store, "read_only_messages_for_session", None)
+    if not callable(read) or not session_id:
+        return False
+    try:
+        messages = read(session_id)
+    except Exception:  # noqa: BLE001 -- the wait copy is optional
+        return False
+    for message in reversed(messages):
+        if getattr(message, "role", None) is ConsoleMessageRole.ASSISTANT:
+            text = "".join(str(getattr(message, "content", "") or "").split())
+            return getattr(message, "status", "") == "streaming" and (
+                len(text) >= _FIRST_TOKEN_MIN_OUTPUT * 4
+            )
+    return False
 
 
 #: TASK-34100.5 AC#5: the first-token wait copy and when it replaces
@@ -1130,14 +1159,20 @@ class ConsoleAgentController:
                 pending_copy = console_pending_round_copy_for(
                     controller, session_id or ""
                 )
+        now = time.monotonic()
         return console_turn_activity_text(
             snapshot,
-            now=time.monotonic(),
+            now=now,
             children=children,
             pending_approval=pending_approval,
             pending_copy=pending_copy,
             turn_started_at=seen[1],
             self_hosted=_viewed_provider_is_self_hosted(controller, viewed),
+            reply_streaming=(
+                getattr(snapshot, "status", "idle") == "idle"
+                and now - seen[1] >= _FIRST_TOKEN_HINT_AFTER_SECONDS
+                and _viewed_reply_is_streaming(controller, viewed)
+            ),
         )
 
     def console_turn_activity_abandon_action(self) -> str:
