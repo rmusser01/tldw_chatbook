@@ -2864,6 +2864,65 @@ def test_first_chat_unrelated_config_write_before_consume_still_applies(
     assert notices == []
 
 
+def test_first_chat_acknowledgement_survives_a_write_landing_mid_acknowledge(
+    monkeypatch,
+) -> None:
+    """Review round 1 (C-F5): an unrelated config write that publishes between
+    the value re-check and the guarded acknowledgement fails that one
+    acknowledgement. The consume re-verifies the values (the saved pair is
+    unchanged) and acknowledges under the new generation -- it must not roll
+    back with 'could not be acknowledged yet'."""
+
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = ConsoleChatStore()
+    console._console_chat_store = store
+    notices: list[str] = []
+    monkeypatch.setattr(
+        app, "notify", lambda message, **_kwargs: notices.append(str(message))
+    )
+    staged = RuntimeConfigSnapshot(23, _first_chat_config())
+    settings = build_default_console_session_settings(staged.values)
+    target = store.create_session(
+        session_id="existing-first-chat-target",
+        settings=settings,
+        canonical_settings_baseline=settings,
+    )
+    intent = ConsoleFirstChatIntent(target.id, "openai", "model-a", 23)
+    app.pending_handoffs.stage(HandoffChannel.CONSOLE_FIRST_CHAT, intent)
+    current = [staged]
+    monkeypatch.setattr(
+        session_module,
+        "get_runtime_config_snapshot",
+        lambda: current[0],
+        raising=False,
+    )
+    later = {**staged.values, "console": {"rail_state": {"seeded": True}}}
+    attempts: list[int] = []
+
+    def racing_guard(expected_generation: int, action) -> bool:
+        attempts.append(expected_generation)
+        if len(attempts) == 1:
+            current[0] = RuntimeConfigSnapshot(24, later)  # publishes first
+            return False
+        if current[0].generation != expected_generation:
+            return False
+        return action() is True
+
+    monkeypatch.setattr(
+        session_module,
+        "run_if_runtime_config_generation_current",
+        racing_guard,
+        raising=False,
+    )
+
+    assert _first_chat_owner(console).consume_pending_console_first_chat_intent()
+    assert attempts == [23, 24]
+    assert _pending_first_chat(app) is None
+    assert store.active_session_id == target.id
+    assert notices == []
+
+
 def test_first_chat_consumer_activates_once_and_acknowledges_exact_target(
     monkeypatch,
 ) -> None:
