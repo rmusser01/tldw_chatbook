@@ -367,3 +367,32 @@ async def test_field_search_opens_the_closed_disclosure_it_lands_in(
         assert focused is not None and focused.id == field_id, f"focused={focused!r}"
         assert not screen.query_one(f"#{disclosure_id}", Collapsible).collapsed
         assert focused.region.height > 0
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_opening_the_model_picker_keeps_the_card_width(request):
+    """With Advanced closed the card fits the pane, and the open Model picker
+    pushes it past the fold. The pane keeps its scrollbar gutter, so focusing
+    and leaving the picker never changes the card's width: a changing width
+    re-laid out the whole card and delayed the picker's blur restore by
+    ~150 ms (measured with the gutter removed)."""
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        body = screen.query_one("#settings-detail-pane-body")
+        card = screen.query_one("#settings-providers-models-card")
+        assert body.max_scroll_y == 0, "the closed card should fit the pane"
+        at_rest = card.region.width
+
+        screen.query_one("#model-search-picker-input", Input).focus()
+        await pilot.pause()
+        await pilot.pause()
+        assert body.max_scroll_y > 0, "the open picker should pass the fold"
+        assert card.region.width == at_rest
+
+        screen.set_focus(None)
+        await pilot.pause()
+        await pilot.pause()
+        assert card.region.width == at_rest
