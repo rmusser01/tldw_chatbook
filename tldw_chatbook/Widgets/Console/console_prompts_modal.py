@@ -1497,7 +1497,10 @@ class ConsolePromptsModal(
                 return
             kind = str(getattr(outcome, "kind", "applied"))
             if kind == "applied":
-                if not self.dismiss_safe_once(result):
+                # Covered (Ctrl+Q's quit-anyway question, say), the close is
+                # kept and finished once this modal is on top again; until
+                # then it says the apply landed (TASK-33622.15).
+                if not self.dismiss_safe_once_when_on_top(result):
                     self._set_improvement_status("Applied to the Console.")
                 return
             if kind == "persistence_failed":

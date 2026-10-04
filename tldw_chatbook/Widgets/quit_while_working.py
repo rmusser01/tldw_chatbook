@@ -24,17 +24,23 @@ asked through ``confirm_quit_discarding_edits`` and so through
 ``await_quit_prompt``, the quit flow's one choke point.
 
 While that question covers the modal, the modal cannot be dismissed
-(``SafeModalDismissMixin`` dismisses only the top screen). A modal that
-closes itself once its operation finishes therefore closes through
-``dismiss_safe_once_when_on_top``: a close made under the question is kept,
-and after Wait the modal closes as it would have uncovered, instead of
-sitting over finished work with Escape still refused.
+(``SafeModalDismissMixin`` dismisses only the top screen). So the modals
+here that close themselves once their operation finishes keep a close made
+under the question and finish it after Wait, as they would have uncovered,
+instead of sitting over finished work with Escape still refused: the fork
+dialog, the Trace export, both personal-context reviews, the Console
+Prompts apply and the session switcher's fallback-open and Library-recovery
+closes through ``dismiss_safe_once_when_on_top``; ProfileInterviewScreen
+through its own ``_close_with``, because its quit hook reads that close.
 
-Two known limits. The refused activity is remembered on the modal for its
+Known limits. The refused activity is remembered on the modal for its
 lifetime, so after one refusal a later operation with the same words in the
-same modal asks on its first Ctrl+Q. And BulkSourcesModal's owner drops a
-batch's result when anything covers the modal, this question included, so
-Wait can reveal it still creating sources; Ctrl+Q there still asks and quits.
+same modal asks on its first Ctrl+Q. The session switcher's character open
+reveals the chat synchronously as it commits; under the question that
+reveal is refused, so the open rolls back and the switcher shows "Could not
+open chat" with Retry. And BulkSourcesModal's owner drops a batch's result
+when anything covers the modal, this question included, so Wait can reveal
+it still creating sources; Ctrl+Q there still asks and quits.
 
 It is imported lazily from each ``confirm_quit``, so it never joins the
 ADR-097 boot census.

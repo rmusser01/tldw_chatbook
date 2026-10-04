@@ -2926,7 +2926,12 @@ async def test_stale_apply_completion_cannot_dismiss_a_new_top_screen() -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_completion_keeps_nested_top_and_reports_committed_state() -> None:
+async def test_apply_completion_keeps_nested_top_then_closes_once_uncovered() -> None:
+    """An apply that lands while another screen covers the modal never pops
+    that screen and says it applied; once uncovered the modal closes with
+    its result, as an uncovered apply does (TASK-33622.15: Ctrl+Q's
+    quit-anyway question is such a cover, and staying open after Wait left
+    the modal over a finished apply)."""
     backend = _PromptBackend()
     driver = _ImprovementDriver(
         PromptImprovementOutcome(
@@ -2957,13 +2962,13 @@ async def test_apply_completion_keeps_nested_top_and_reports_committed_state() -
         overlay = _ApplyOverlay()
         await app.push_screen(overlay)
         release.set()
-        await pilot.pause()
+        for _ in range(50):
+            if not modal._apply_in_progress:
+                break
+            await pilot.pause(0.02)
         await pilot.pause()
 
         assert app.screen is overlay
-        overlay.dismiss(None)
-        await pilot.pause()
-        assert app.screen is modal
         assert modal._apply_in_progress is False
         assert (
             str(
@@ -2973,6 +2978,17 @@ async def test_apply_completion_keeps_nested_top_and_reports_committed_state() -
             )
             == "Applied to the Console."
         )
+        assert app.results == []
+
+        overlay.dismiss(None)
+        for _ in range(50):
+            if modal not in app.screen_stack and app.results:
+                break
+            await pilot.pause(0.02)
+        assert modal not in app.screen_stack
+        assert len(app.results) == 1
+        assert app.results[0].kind == "apply"
+        assert app.results[0].user_text == "Committed candidate"
 
 
 @pytest.mark.asyncio
