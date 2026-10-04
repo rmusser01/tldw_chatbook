@@ -93,6 +93,17 @@ async def _open(host, pilot):
     return host.screen
 
 
+async def _open_saved_model_list(host, pilot):
+    """Open Advanced ▸ Saved model list from its title, as a keyboard user does.
+
+    TASK-33007.6, rewritten on purpose: Discover, Save selected, Clear and the
+    discovered list sit in that closed one-row disclosure.
+    """
+    await _tab_to(host, pilot, "#settings-advanced-saved-models CollapsibleTitle")
+    await pilot.press("enter")
+    await _settle(host, pilot)
+
+
 def _list(screen):
     return screen.query_one("#settings-discovered-models-list", SelectionList)
 
@@ -125,6 +136,8 @@ async def test_discovery_keyboard_selection_survives_rebuild_and_save(theme, siz
     host.theme = theme
     async with host.run_test(size=size) as pilot:
         screen = await _open(host, pilot)
+        # TASK-33007.6, rewritten on purpose: it stays open across the rebuild.
+        await _open_saved_model_list(host, pilot)
         await _tab_to(host, pilot, "#settings-discover-provider-models")
         await pilot.press("enter")
         await _settle(host, pilot)
@@ -371,6 +384,7 @@ async def test_discovered_models_highlight_is_a_readable_bar(theme):
     host.theme = theme
     async with host.run_test(size=(211, 44)) as pilot:
         screen = await _open(host, pilot)
+        await _open_saved_model_list(host, pilot)
         await _tab_to(host, pilot, "#settings-discover-provider-models")
         await pilot.press("enter")
         await _settle(host, pilot)

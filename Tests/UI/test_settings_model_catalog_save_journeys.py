@@ -63,6 +63,17 @@ async def _open(host, pilot):
     return host.screen
 
 
+async def _open_catalog_refresh(host, pilot):
+    """Open Advanced ▸ Catalog refresh from its title, as a keyboard user does.
+
+    TASK-33007.6, rewritten on purpose: the refresh controls sit in that
+    closed one-row disclosure, which stays open across a pane rebuild.
+    """
+    await _tab_to(host, pilot, "#settings-advanced-catalog-refresh CollapsibleTitle")
+    await pilot.press("enter")
+    await _settle(host, pilot)
+
+
 def _install(monkeypatch, writer):
     monkeypatch.setattr(
         settings_module, "load_settings", lambda: copy.deepcopy(writer.config)
@@ -88,6 +99,7 @@ async def test_catalog_keyboard_failure_retry_and_fractional_interval(
     async with host.run_test(size=size) as pilot:
         screen = await _open(host, pilot)
         assert not writer.calls
+        await _open_catalog_refresh(host, pilot)
         await _tab_to(host, pilot, MASTER)
         await pilot.press("space")
         await _settle(host, pilot)
@@ -197,6 +209,7 @@ async def test_catalog_checkbox_labels_are_fully_painted(size, theme, monkeypatc
     host.theme = theme
     async with host.run_test(size=size) as pilot:
         screen = await _open(host, pilot)
+        await _open_catalog_refresh(host, pilot)
         controls = list(screen.query("#settings-model-catalog-group Checkbox"))
         for checkbox in controls:
             await _tab_to(host, pilot, f"#{checkbox.id}")
