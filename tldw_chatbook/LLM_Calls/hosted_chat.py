@@ -553,7 +553,25 @@ def normalize_hosted_chat_response(
     tolerant_top_level_extras: bool = False,
     allowed_tool_call_keys: frozenset[str] = frozenset(),
 ) -> HostedChatTurn:
-    """Normalize one non-streaming OpenAI-shaped Chat response."""
+    """Normalize one non-streaming OpenAI-shaped Chat response.
+
+    Args:
+        response: The decoded response body.
+        finish_policy: Validates the finish reason and reasoning content.
+        allowed_extra_keys: Tolerated extra top-level keys.
+        allowed_choice_keys: Tolerated extra choice-level keys (value rule).
+        allowed_message_keys: Tolerated extra message-level keys (value rule).
+        tolerant_top_level_extras: The long-tail tolerant profile switch.
+        allowed_tool_call_keys: Tolerated extra keys on each tool-call object
+            (value rule), validated then dropped (TASK-34364).
+
+    Returns:
+        The normalized turn.
+
+    Raises:
+        HostedChatProtocolError: The response does not match the strict shape
+            plus the given allowances.
+    """
     if not _json_shape_is_safe(response) or not isinstance(response, Mapping):
         raise HostedChatProtocolError("Hosted Chat response JSON is malformed.")
     _check_top_level_extras(

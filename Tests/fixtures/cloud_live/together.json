@@ -5,12 +5,13 @@
   "statuses": {
     "plain": 200,
     "tool": 200,
-    "stream": 200
+    "stream": 200,
+    "tool_stream": 200
   },
   "chat_response": {
-    "id": "bf240304-aws_uw1",
+    "id": "56ba28f5-aws_uw1",
     "object": "chat.completion",
-    "created": 1791136563,
+    "created": 1791148994,
     "model": "deepseek-ai/DeepSeek-V4.1-Flash",
     "choices": [
       {
@@ -18,37 +19,38 @@
         "message": {
           "role": "assistant",
           "content": "ok",
-          "reasoning_content": "We need answer. User says \"Say ok.\" We should say ok. Simple."
+          "reasoning_content": "The user's query is extremely simple—just \"Say ok.\" There's no hidden complexity or need for analysis. The instruction is clear and direct: they want a single-word response. \n\nI should comply without adding anything extra. No need to overthink or provide explanations—just deliver the requested \"ok\" to match their expectation. \n\nThe response should be minimal and immediate. Any deviation would feel unnecessary. Keeping it straightforward aligns best with the user's intent."
         },
         "finish_reason": "stop"
       }
     ],
     "usage": {
       "prompt_tokens": 33,
-      "completion_tokens": 20,
-      "total_tokens": 53,
+      "completion_tokens": 96,
+      "total_tokens": 129,
       "prompt_tokens_details": {
         "cached_tokens": 0
       },
       "completion_tokens_details": {
-        "reasoning_tokens": 17
+        "reasoning_tokens": 93
       }
     },
     "system_fingerprint": "default"
   },
   "tool_call_response": {
-    "id": "c5dc4af5-aws_uw1",
+    "id": "f5ab6608-aws_uw1",
     "object": "chat.completion",
-    "created": 1791136563,
+    "created": 1791148995,
     "model": "deepseek-ai/DeepSeek-V4.1-Flash",
     "choices": [
       {
         "index": 0,
         "message": {
           "role": "assistant",
+          "content": "I'll check the weather in Tokyo for you.",
           "tool_calls": [
             {
-              "id": "call_01a1080f032771b48e11dc84",
+              "id": "call_01a108ccb2d6748088b424fb",
               "type": "function",
               "function": {
                 "name": "get_weather",
@@ -56,38 +58,51 @@
               }
             }
           ],
-          "reasoning_content": "We need answer weather in Tokyo. Use tool."
+          "reasoning_content": "The user wants the weather in Tokyo. I'll call the tool."
         },
         "finish_reason": "tool_calls"
       }
     ],
     "usage": {
       "prompt_tokens": 304,
-      "completion_tokens": 50,
-      "total_tokens": 354,
+      "completion_tokens": 63,
+      "total_tokens": 367,
       "prompt_tokens_details": {
         "cached_tokens": 0
       },
       "completion_tokens_details": {
-        "reasoning_tokens": 10
+        "reasoning_tokens": 14
       }
     },
     "system_fingerprint": "default"
   },
   "stream_events": [
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"\"},\"logprobs\":null,\"finish_reason\":null}]}",
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"We\"},\"logprobs\":null,\"finish_reason\":null}]}",
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" need answer. User says \\\"\"},\"logprobs\":null,\"finish_reason\":null}]}",
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"Say ok.\\\" Must\"},\"logprobs\":null,\"finish_reason\":null}]}",
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" comply\"},\"logprobs\":null,\"finish_reason\":null}]}",
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\". Just\"},\"logprobs\":null,\"finish_reason\":null}]}",
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" \\\"ok.\\\"\"},\"logprobs\":null,\"finish_reason\":null}]}",
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" Ensure\"},\"logprobs\":null,\"finish_reason\":null}]}",
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" no extra?\"},\"logprobs\":null,\"finish_reason\":null}]}",
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" likely.\"},\"logprobs\":null,\"finish_reason\":null}]}",
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok.\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}]}",
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":\"stop\"}]}",
-    "{\"id\":\"a27e6a27-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791136565,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[],\"usage\":{\"prompt_tokens\":33,\"completion_tokens\":27,\"total_tokens\":60,\"prompt_tokens_details\":{\"cached_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":23}}}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"We\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" need answer user. User\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" says \\\"Say ok.\\\"\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" Need comply\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\". Just \\\"ok\\\". Ensure\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" no extra?\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" Final likely\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" \\\"\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"ok\\\".\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\",\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":\"stop\"}]}",
+    "{\"id\":\"6fb72e4f-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[],\"usage\":{\"prompt_tokens\":33,\"completion_tokens\":30,\"total_tokens\":63,\"prompt_tokens_details\":{\"cached_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":27}}}",
+    "[DONE]"
+  ],
+  "tool_stream_events": [
+    "{\"id\":\"1757e011-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"reasoning_content\":\"\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"1757e011-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"The\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"1757e011-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" user wants weather\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"1757e011-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" in Tokyo. Call\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"1757e011-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\" get_weather.\"},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"1757e011-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_01a108ccb52d747b92f1a93f\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}],\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"1757e011-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\"}}],\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"1757e011-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"city\\\":\\\"Tokyo\\\"}\"}}],\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":null}]}",
+    "{\"id\":\"1757e011-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":null},\"logprobs\":null,\"finish_reason\":\"tool_calls\"}]}",
+    "{\"id\":\"1757e011-aws_uw1\",\"object\":\"chat.completion.chunk\",\"created\":1791148995,\"model\":\"deepseek-ai/DeepSeek-V4.1-Flash\",\"system_fingerprint\":\"default\",\"choices\":[],\"usage\":{\"prompt_tokens\":304,\"completion_tokens\":52,\"total_tokens\":356,\"prompt_tokens_details\":{\"cached_tokens\":0},\"completion_tokens_details\":{\"reasoning_tokens\":12}}}",
     "[DONE]"
   ],
   "models_response": {
@@ -691,5 +706,5 @@
       }
     ]
   },
-  "captured_at": "2026-10-04T17:56:04+00:00"
+  "captured_at": "2026-10-04T21:23:15+00:00"
 }

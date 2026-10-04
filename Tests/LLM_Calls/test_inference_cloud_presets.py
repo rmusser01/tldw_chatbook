@@ -94,6 +94,9 @@ def test_settings_defaults_carry_no_model_key(key: str) -> None:
 _CAPTURED_CHOICE_ALLOWANCES = {
     "together": frozenset({"logprobs"}),  # cloud_live/together.json (TASK-34362)
 }
+_CAPTURED_TOOL_CALL_ALLOWANCES = {
+    "fireworks": frozenset({"index", "name"}),  # cloud_live/fireworks.json (TASK-34364)
+}
 
 
 @pytest.mark.parametrize("key", PRESET_KEYS)
@@ -102,6 +105,7 @@ def test_allowances_ship_empty_pending_first_capture(key: str) -> None:
     assert record.response_allowances == frozenset()
     assert record.choice_allowances == _CAPTURED_CHOICE_ALLOWANCES.get(key, frozenset())
     assert record.message_allowances == frozenset()
+    assert record.tool_call_allowances == _CAPTURED_TOOL_CALL_ALLOWANCES.get(key, frozenset())
 
 
 def test_registry_carries_the_provisional_allowance_comment() -> None:

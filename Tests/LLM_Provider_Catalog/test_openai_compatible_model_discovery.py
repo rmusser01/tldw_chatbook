@@ -1153,6 +1153,8 @@ def test_normalize_models_rejects_unsafe_or_oversized_model_ids(model_id):
         {"large": ["x" * 5000]},
         {"not_finite": float("nan")},
         {"pricing": {f"tier_{n}": {"input": n, "output": n} for n in range(90)}},
+        {"blob": ["x" * 4000 for _ in range(5)]},  # 20 KB serialized, over 16 KiB
+        {"k" * 129: 1},  # key over MODEL_METADATA_MAX_KEY_CHARS
     ],
 )
 def test_normalize_models_keeps_a_model_but_none_of_its_unbounded_metadata(metadata):
