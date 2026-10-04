@@ -15420,7 +15420,9 @@ SplashScreen.hidden {
 }
 
 
-.setup-navigation Button:disabled {
+.setup-navigation Button#wizard-back:disabled,
+.setup-navigation Button#wizard-next:disabled,
+.setup-navigation Button#wizard-cancel:disabled {
     text-style: dim;
 }
 
