@@ -158,30 +158,19 @@ _BUDGETS: dict[str, int] = {
     # fence through finishing (3,181). The wizard keeps the container, progress,
     # nav bar, dialog and screen.
     "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3181,
-    # TASK-34100.1: the modules the wizard's steps moved into, each born
-    # governed at its exact size so the split cannot regrow one god module a
-    # step at a time. Review round 1 added the two first-run modules that had
-    # no row: the Voice step (moved out by TASK-33921) and the step guard,
-    # which owns contained errors, fenced focus and the worker helpers.
-    # So a fix to a step is net-zero in that step's module: new code goes in a
-    # new helper module beside the step (first_run_<step>_<topic>.py), never
-    # in a raised row. That is the room the split made: a fix lands beside a
-    # small step module, not inside one 9,866-line module at its limit.
+    # TASK-34100.1: the step modules the split left at 1,000 lines or more
+    # are pinned at their exact size, so the split cannot regrow a god module
+    # a step at a time: Provider, Speech, Voice (moved out by TASK-33921) and
+    # Model. New code for one of them goes in a helper module beside the step
+    # (first_run_<step>_<topic>.py), never in a raised row. The smaller step
+    # modules and helpers (Welcome, RAG, Tools, Notes, Appearance, Protect,
+    # Summary, the shared widgets, the discovery helpers, the busy line and
+    # the step guard) have no row: this file pins hand-picked god modules, and
+    # a row on a small module would stop the next fix adding even one line.
     "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2464,
     "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1716,
     "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1070,
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
-    "tldw_chatbook/UI/Wizards/first_run_step_guard.py": 850,
-    "tldw_chatbook/UI/Wizards/first_run_setup_widgets.py": 495,
-    "tldw_chatbook/UI/Wizards/first_run_summary_step.py": 469,
-    "tldw_chatbook/UI/Wizards/first_run_appearance_step.py": 291,
-    "tldw_chatbook/UI/Wizards/first_run_protect_step.py": 174,
-    "tldw_chatbook/UI/Wizards/first_run_model_discovery.py": 173,
-    "tldw_chatbook/UI/Wizards/first_run_rag_step.py": 125,
-    "tldw_chatbook/UI/Wizards/first_run_tools_step.py": 114,
-    "tldw_chatbook/UI/Wizards/first_run_busy_status.py": 104,
-    "tldw_chatbook/UI/Wizards/first_run_welcome_step.py": 90,
-    "tldw_chatbook/UI/Wizards/first_run_notes_step.py": 44,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
 }
