@@ -3676,3 +3676,31 @@ needs no repo change and no root, unlike `py-spy` on macOS. Record the load aver
 every timing. Also, in this app a focused `Input` draws a solid `┌─┐` border
 (`components/_forms.tcss`) and an unfocused one the tall `▊▔` border, so read focus from
 that glyph or `capture-pane -e`, not from "the border changed".
+
+## Read the whole screen after a live action, not just the line you added (TASK-34350, 2026-10-04)
+
+**Incident.** TASK-34350 gave a send that cannot fit its model a precise alert:
+"Your message was not sent: gpt-5.6-terra's 32,000-token context window (an
+estimate) is used up by … Max tokens (32,000) … Lower Max tokens …". Controller
+tests pinned the copy exactly and passed. The live run in the real app showed the
+copy correctly, and also, on the same screen, "Response accepted; waiting for
+dispatch." with [Retry response] [Discard] and a composer hint of "Send blocked —
+resolve response recovery first". The alert fired after the turn was accepted,
+and the durable dispatch checkpoint it left behind surfaced as a recovery panel
+that contradicted the alert and blocked the composer. That is the TASK-33621.4
+symptom, reached by a new path. No test looked at anything but the alert's own
+text. The fix moved the refusal before commit, and the live re-run then showed
+the alert alone, with the message in the "Unsent turn needs attention" shelf and
+Restore putting it back in the composer.
+
+The same session's live run also caught a second claim no test had checked: a
+custom 1,500-token budget was described as coming "from an estimated context
+window". It did not.
+
+**What to do.** After each live action, capture the full pane and read every
+surface that can carry state: the transcript rows, the composer hint, the shelf
+above the composer, callouts at the top of the transcript, and the run chip. Ask
+whether any of them contradicts what you just added. When a change adds copy
+that explains a state, grep the capture for the competing copies the app already
+has for nearby states ("waiting for dispatch", "Send blocked", "Unsent turn",
+"Failed"). A test that asserts only your new string cannot see them.
