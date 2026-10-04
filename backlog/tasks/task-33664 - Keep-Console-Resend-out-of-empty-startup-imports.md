@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 20:31'
+updated_date: '2026-10-04 22:30'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -491,6 +491,20 @@ Review focus: the controller's shared submit function must retain its preaccepta
 - [ ] Perform source-specific fatal/added-signature/format analysis against exact prior and incoming, preserving inherited style/size debt. Reproduce only newly affected source artifacts/diagnostic counts and authenticate unchanged CSS/native/guard/MAX/workflow/UI3 identities. Preserve exact task states: TASK31245 remains In Progress, TASK33621.2 Done as shipped, new follow-ups To Do; no implementation or broader task closure for them.
 - [ ] Obtain independent read-only Ready/no findings on the immutable source, functional/static/artifact/composition evidence and preserved history. After ALL test/artifact/reviewer activity settles, run the original unchanged FIVE guards ONCE for this distinct application source with exact REPO_ROOT cwd/PYTHONPATH/default pytest depth/full-process private HOME/USERPROFILE/TLDW/XDG; preserve every old MAX/pin/count/work/time/warmup boundary and actual counts/warnings/raw/XML. Supplemental independent Ready precedes AC3 Done; do not rerun any completed original5 measurement.
 - [ ] Close only AC3 via CLI with AC4 checked after both independent approvals, append only four owned canonical Markdown records, preserve reviewed source/deletion/full tree outside four and every historical positive/NON-GREEN/baseline/interrupted/unexecuted/metadata/warning/FD/style/optional/physical/wider limit. Fresh0b2f Qodo/all feedback/refs/live protection precede ONE exact-observed0b2f lease publication and concise body; verify actual local/remote/GitHub/body after any lag without another push. Fresh new-head Qodo/no actionable feedback and ALL FOUR gates requiring ALL THREE UI shards precede any later concurrency action or normal protected --match-head-commit merge. Verify actual MERGED parents/tree/concurrency then pause heartbeat/report completion.
+
+## Immediate protected merge update — October 4, 2026
+
+Goal: fulfill the owner's immediate merge instruction for PR2918 through normal branch protection. The exact21ead head has all FOUR conceptual CI gates green, including all THREE UI shards. A normal head-matched merge was attempted and GitHub refused because the branch is behind dev. The owner now directs immediate merging rather than further waiting for the stale Qodo summary, which still references old0b2f; no current-head Qodo approval is claimed. All historical resolved findings and full feedback pagination remain preserved.
+
+ADR required: no
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/103-fast-pr-lane-and-required-gate-aggregation.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; backlog/decisions/211-ephemeral-provider-failure-presentation.md; incoming backlog/decisions/218-in-repo-merge-queue.md.
+Reason: preserve accepted implementations and use existing protected merge behavior; no new owner, schema, authority, dependency, permission, pin, ceiling, timeout, warmup or queue policy. MERGE_QUEUE is unset/off and is not changed.
+
+1. Prospectively reopen TASK33664 AC3/In Progress with AC4 checked, retaining every prior plan/notes byte, and commit this append before source mutation. Preserve3822 reviewed records/full28001 tree and all historical evidence. Integrate only exact fetched dev a78a9a900b4901e33c031f830dd2d80224d5147d.
+2. Rebase once, retaining incoming61 paths. Actual feature overlaps are only derived-artifacts.yml and lessons-live-verification.md; reproduce independent clean three-way bytes and preserve three UI shards with the unchanged20-minute cap, serial partition order, dispatch-safe lane conditions, required aggregator and incoming non-required queue tick. Retain both complete lessons. All application/native/DB/CSS/guard sources outside incoming paths remain exact; incoming provider/Roleplay changes remain as shipped, without new live/physical certification.
+3. Authenticate the complete expected tree/index/disk blobs, prior nonoverlap and incoming nonfeature bytes. Run only necessary affected CI composition checks on this distinct source; retain incoming task states. Obtain immutable independent source/evidence review and explicit original-budget carry assessment; if relevant measured sources require a new original FIVE run, run it ONCE after all activity settles, never replaying previous measurements.
+4. After independent Ready, close AC3 through CLI/AC4 checked and append only the four owned canonical Markdown records, preserving all approved source and every historical positive/NON-GREEN/baseline/interrupted/unexecuted/metadata/warning/FD/style/optional/physical/wider limit. Publish once with exact observed21ead lease; verify actual GitHub/remote/body.
+5. Arm normal protected auto-merge for the verified published head so GitHub merges immediately once strict up-to-date status and required checks allow it. Address any newly actionable feedback without claiming stale Qodo approval. Do not weaken protection, use admin bypass, alter queue mode, dispatch/retry jobs or repeatedly rebase queued/running CI. Verify actual MERGED parents/tree/concurrency before pausing the heartbeat and reporting completion.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
