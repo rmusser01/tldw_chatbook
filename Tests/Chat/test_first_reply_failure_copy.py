@@ -221,7 +221,8 @@ def test_the_agent_failure_summary_keeps_the_whole_fix() -> None:
     summary = describe_stream_failure(RuntimeError(copy))
 
     assert len(summary) <= FAILURE_SUMMARY_MAX_CHARS
-    assert "(Alt+M: Switch model)." in summary[:FAILURE_SUMMARY_MAX_CHARS]
+    # The wrapper's closing parenthesis ends the copy's last clause (V2-F6).
+    assert summary.endswith("(Alt+M: Switch model))"), summary
     assert len(summary) > 500, "the old cut would have dropped the fix"
 
 
@@ -273,7 +274,7 @@ def test_agent_service_persists_the_whole_404_fix_in_its_error_step(
     errors = [step for step in outcome.steps if step.kind == STEP_ERROR]
     assert errors, outcome.steps
     summary = errors[-1].summary
-    assert summary.rstrip(")").endswith("(Alt+M: Switch model)."), summary
+    assert summary.endswith("(Alt+M: Switch model))"), summary
     assert db.get_run(run_id)["status"] == RUN_ERROR
 
 
@@ -299,6 +300,68 @@ def test_an_agent_failure_reason_that_ends_a_sentence_gets_no_second_period() ->
 
     assert copy.endswith("try a smaller model."), copy
     assert not copy.endswith("..")
+
+
+def test_the_gateways_own_copy_is_not_wrapped_in_a_second_status() -> None:
+    """Review round 2 (V2-F6), live g5-v2-gem: the gateway raises its own
+    finished copy with the status attached, and the agent step wrapped it
+    again -- 'provider returned HTTP 404 (Provider error from Google Gemini
+    ... Status: 404. ... (Alt+M: Switch model).).'"""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import RUN_ERROR, STEP_ERROR
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    raw = _raised_from_http(
+        ChatProviderError(
+            provider="google",
+            message="Error from google (Status 404).",
+            status_code=404,
+        ),
+        404,
+        GEMINI_RETIRED_MODEL_404,
+    )
+    gateway_copy = _provider_error_copy_with_model_recovery(
+        safe_provider_error_copy("google", raw),
+        model="gemini-2.0-flash",
+        status_code=404,
+    )
+    # The gateway's raise: its copy, the status, and no response.
+    raised = ChatProviderError(gateway_copy, provider="google", status_code=404)
+    outcome = SimpleNamespace(
+        status=RUN_ERROR,
+        steps=[SimpleNamespace(kind=STEP_ERROR, summary=describe_stream_failure(raised))],
+        final_text="",
+    )
+
+    copy = ConsoleChatController._agent_failure_visible_copy(outcome)
+
+    assert "HTTP 404" not in copy, copy
+    assert copy.count("404") == 1, copy
+    assert ".)" not in copy, copy
+    assert copy.endswith("(Alt+M: Switch model)."), copy
+
+
+def test_a_wrapped_reason_that_ends_a_sentence_keeps_one_period() -> None:
+    """V2-F6: a status-carrying error whose own text ends a sentence read
+    '... (Something broke.).' once the agent wrapper closed it."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import RUN_ERROR, STEP_ERROR
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    reason = describe_stream_failure(
+        ChatProviderError("Something broke.", provider="x", status_code=500)
+    )
+    outcome = SimpleNamespace(
+        status=RUN_ERROR,
+        steps=[SimpleNamespace(kind=STEP_ERROR, summary=reason)],
+        final_text="",
+    )
+
+    copy = ConsoleChatController._agent_failure_visible_copy(outcome)
+
+    assert copy == "Agent run failed: provider returned HTTP 500 (Something broke).", copy
 
 
 # --- Review round 1 -----------------------------------------------------------
@@ -477,3 +540,92 @@ async def test_the_stream_path_hides_the_sent_key_and_keeps_the_copy() -> None:
     assert credential not in copy
     assert "authentication failed" in copy, copy
     assert "(key hidden)" in copy
+
+
+# --- Review round 2 -----------------------------------------------------------
+
+#: A REAL llama.cpp reply (llama-server 0.5.0 build 11146, Qwen2.5-0.5B,
+#: ``-c 8192``), recorded 2026-10-04 with curl for both ``stream: true`` and
+#: ``stream: false`` -- the two are byte-identical.
+LLAMACPP_CONTEXT_OVERFLOW_400 = (
+    '{"error":{"code":400,"message":"request (14030 tokens) exceeds the '
+    'available context size (8192 tokens), try increasing it","type":'
+    '"exceed_context_size_error","n_prompt_tokens":14030,"n_ctx":8192}}'
+)
+
+
+async def _llamacpp_stream_failure(body: str, status: int = 400):
+    """Run the gateway's real llama.cpp stream path against ``body``."""
+    import httpx
+
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+
+    requests_seen: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests_seen.append(request)
+        return httpx.Response(
+            status, content=body.encode(), headers={"content-type": "application/json"}
+        )
+
+    gateway = ConsoleProviderGateway(
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+
+    async def admit():
+        return gateway._capture_off_admission(None)
+
+    async def admit_fallback(_endpoint, _payload):
+        return gateway._capture_off_admission(None)
+
+    with pytest.raises(Exception) as caught:
+        _ = [
+            item
+            async for item in gateway.stream_llamacpp_chat(
+                base_url="http://127.0.0.1:9099",
+                model="qwen2.5-0.5b-instruct",
+                messages=[{"role": "user", "content": "a very long message"}],
+                before_adapter=admit,
+                before_fallback_adapter=admit_fallback,
+            )
+        ]
+    return caught.value, requests_seen
+
+
+@pytest.mark.asyncio
+async def test_a_llamacpp_context_overflow_is_sent_once() -> None:
+    """V2-F3 (live g5-v2-local): the server refused a 6,202-token request for
+    its 4,096-token context, and the stream path's non-streaming fallback sent
+    the identical request again 0.8 s later. A context overflow is the same
+    with or without streaming, so it is not retried."""
+    _exc, sent = await _llamacpp_stream_failure(LLAMACPP_CONTEXT_OVERFLOW_400)
+
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_llamacpp_context_overflow_names_the_server_and_the_fix() -> None:
+    """V2-F3: the copy read 'Agent run failed: provider returned HTTP 400
+    (request (6202 tokens) exceeds ...)' -- no provider, no category, no fix."""
+    exc, _sent = await _llamacpp_stream_failure(LLAMACPP_CONTEXT_OVERFLOW_400)
+
+    copy = describe_stream_failure(exc)
+
+    assert copy.startswith("Provider error from llama.cpp:"), copy
+    assert "doesn't fit" in copy
+    assert (
+        "llama.cpp says: “request (14030 tokens) exceeds the available context "
+        "size (8192 tokens), try increasing it”"
+    ) in copy
+    assert "larger context" in copy and "-c" in copy
+    assert "context_window" in copy
+    assert "HTTP 400" not in copy
+
+
+@pytest.mark.asyncio
+async def test_a_llamacpp_400_that_is_not_an_overflow_still_falls_back() -> None:
+    """Control: the fallback exists for servers that refuse streaming with a
+    400; that path is unchanged."""
+    _exc, sent = await _llamacpp_stream_failure('{"error": "streaming disabled"}')
+
+    assert len(sent) == 2

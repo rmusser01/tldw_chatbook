@@ -154,6 +154,67 @@ def provider_reason_for_exception(
     return ""
 
 
+#: llama.cpp's error type for a prompt longer than the server's context, and
+#: the sentence its message carries (review round 2, V2-F3).
+_CONTEXT_OVERFLOW_TYPES = frozenset({"exceed_context_size_error"})
+_CONTEXT_OVERFLOW_TEXT = "exceeds the available context size"
+
+#: The category and the fix a context overflow is reported with.
+CONTEXT_OVERFLOW_CATEGORY = "this message doesn't fit the server's context"
+CONTEXT_OVERFLOW_FIX = (
+    " Start the server with a larger context size (llama.cpp: -c), or Set "
+    "context size: add a context_window for this model under "
+    "model_capabilities.models in config.toml so chatbook sizes requests to it."
+)
+
+
+def _body_is_context_overflow(body: str) -> bool:
+    try:
+        payload = json.loads(body[:_MAX_BODY_BYTES]) if body.strip() else None
+    except (TypeError, ValueError):
+        return False
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return False
+    message = error.get("message")
+    return error.get("type") in _CONTEXT_OVERFLOW_TYPES or (
+        isinstance(message, str) and _CONTEXT_OVERFLOW_TEXT in message
+    )
+
+
+def is_context_overflow_error(exc: BaseException) -> bool:
+    """Whether the server refused the request as longer than its context.
+
+    Reads the error type for classification only (it is never shown). A
+    ``context_overflow`` attribute set by an adapter counts too, so a copy
+    built without the body (a sensitive request) still names the fix.
+
+    Args:
+        exc: The provider failure.
+
+    Returns:
+        True for a context-size refusal anywhere on the unsuppressed chain.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if getattr(current, "context_overflow", False) is True:
+            return True
+        response: Any = getattr(current, "response", None)
+        if response is not None and _body_is_context_overflow(
+            bounded_response_body(response)
+        ):
+            return True
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif not current.__suppress_context__:
+            current = current.__context__
+        else:
+            current = None
+    return False
+
+
 def attach_provider_reason(
     exc: BaseException,
     response: object,

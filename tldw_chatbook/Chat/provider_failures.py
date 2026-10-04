@@ -153,6 +153,17 @@ def describe_stream_failure(exc: BaseException) -> str:
         if marker != -1:
             detail = detail[:marker].rstrip()
         detail = " ".join(detail.split())
+    if (
+        detail
+        and type(status_code) is int
+        and f"Status: {status_code}." in detail
+    ):
+        # Review round 2 (V2-F6): the gateway's own finished copy already
+        # names the status and the fix; wrapping it again read
+        # "HTTP 404 (... Status: 404. ... (Alt+M: Switch model).)."
+        return detail
     if detail and detail.lower() != summary.lower():
-        return f"{summary} ({detail})"
+        # The closing parenthesis ends the clause; a period inside it read
+        # "(... broke.)." once the caller closed the sentence.
+        return f"{summary} ({detail.rstrip('.')})"
     return summary
