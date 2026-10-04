@@ -17,6 +17,12 @@ from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_authentication_mode,
     normalize_openai_compatible_endpoint,
 )
+from tldw_chatbook.TTS.pocket_tts_native import (
+    POCKET_TTS_WAV_ONLY_COPY,
+    is_pocket_tts_native_url,
+    pocket_tts_form,
+    repair_streamed_wav,
+)
 from tldw_chatbook.config import (
     get_api_key,
     get_cli_setting,
@@ -111,6 +117,9 @@ class OpenAITTSBackend(APITTSBackend):
         # voices and are typically keyless, so OpenAI-specific constraints only
         # apply when talking to the official endpoint.
         self.is_custom_endpoint = not endpoint.official
+        # TASK-34100.8: pocket-tts's own server speaks POST /tts (form fields,
+        # streamed WAV), not the OpenAI route; an exact /tts path selects it.
+        self.pocket_tts_native = is_pocket_tts_native_url(self.base_url)
 
         if not self.api_key and authentication_mode is OpenAIAuthenticationMode.API_KEY:
             logger.warning("OpenAITTSBackend: No API key configured")
@@ -188,6 +197,9 @@ class OpenAITTSBackend(APITTSBackend):
         else:
             response_format = request.response_format
 
+        if self.pocket_tts_native and response_format != "wav":
+            raise ValueError(POCKET_TTS_WAV_ONLY_COPY)
+
         # Validate speed (0.25 to 4.0)
         speed = max(0.25, min(4.0, request.speed))
         if speed != request.speed:
@@ -209,10 +221,16 @@ class OpenAITTSBackend(APITTSBackend):
             f"format={response_format}, speed={speed}"
         )
 
+        if self.pocket_tts_native:
+            headers.pop("Content-Type")
+            body_kwargs: Dict[str, Any] = {"data": pocket_tts_form(request.input, voice)}
+        else:
+            body_kwargs = {"json": payload}
+        native_body = bytearray()
         safe_failure: ValueError | None = None
         try:
             async with self.client.stream(
-                "POST", self.base_url, headers=headers, json=payload
+                "POST", self.base_url, headers=headers, **body_kwargs
             ) as response:
                 response.raise_for_status()
 
@@ -230,7 +248,12 @@ class OpenAITTSBackend(APITTSBackend):
                 chunk_count = 0
 
                 async for chunk in response.aiter_bytes(chunk_size=chunk_size):
-                    yield chunk
+                    if self.pocket_tts_native:
+                        # The streamed header's sizes are placeholders; hold
+                        # the (small) body so they can be repaired below.
+                        native_body.extend(chunk)
+                    else:
+                        yield chunk
                     total_bytes += len(chunk)
                     chunk_count += 1
 
@@ -250,6 +273,8 @@ class OpenAITTSBackend(APITTSBackend):
 
                 if not total_bytes:
                     raise ValueError("TTS service returned no audio.")
+                if self.pocket_tts_native:
+                    yield repair_streamed_wav(bytes(native_body))
 
                 # Report completion
                 await self._report_progress(
