@@ -1433,3 +1433,37 @@ only key that opens a screen over a modal -- is repaired by nothing. A static
 scan for plain modals that dismiss from a timer or worker found one:
 `LibraryCharacterRepairDialog._apply_owned`, which dismisses when its repair
 worker finishes (the quit prompt over it is handled; nothing else is).
+
+## A name shaped like markup exits the whole app, and one escaper fits only one parser (TASK-34400, 2026-10-04)
+
+**Incident.** A Roleplay character named `[/]` (an imported card can carry it) made the
+app exit as soon as the Inspector showed it: `Static.update(f"Selected: {name}")` on a
+markup-on `Static` raised `MarkupError` while the screen was drawn. TASK-32533's
+keep-alive (`app_lifecycle._handle_exception`) only covers exceptions inside a widget's
+message handler; render, compositor and tooltip-timer errors still go to Textual's
+default, which exits. A sweep of the Roleplay code then found about 30 more sinks of
+the same kind, and `[@click=app.quit]x` turned names into live click actions.
+
+**What parses a `str` as markup on Textual 8.2.8** (all measured): `Static`/`Label`
+(construct and `.update`), `Button` labels, `Select` option prompts (the current label
+and the dropdown), `OptionList`/`Option` and `SelectionList` prompts, `RadioButton` and
+`Checkbox` labels, `DataTable` string cells (at render), `border_title`, tooltips (the
+tooltip is a `Static`), `Collapsible` titles, and `notify()` unless `markup=False`.
+Literal forms: `markup=False` on an owned `Static`, `textual.content.Content(text)` or
+`rich.text.Text(text)` for prompts, labels, cells and tooltips.
+
+**The escaper trap.** `Utils.input_validation.escape_markup` is correct for Textual's
+parser (`Content.from_markup`), including backslashes. It is **wrong** for Rich's
+`Text.from_markup`: Rich reads `\\[` as an escaped backslash plus a live tag, so
+`a\[/]b` (or an ordinary LaTeX reply `\[x^2\]`) crashed the preview transcript, which
+escaped with `escape_markup` and then parsed with Rich. `textual.markup.escape` is
+wrong on Textual 8.2.8 for `[/` and `[TODO] y`. Prefer building literal `Text` or
+`Content` over escaping; escape only into a shared markup-on widget you do not own.
+
+**The test trap.** A markup sink crashes only when it is drawn. A hidden widget, a
+clipped dropdown label or an unopened dropdown never parses, so a test that only
+"sets the value" passes on the broken code. Paint the surface (open the dropdown,
+render the tooltip text through `Static.update` the way the tooltip timer does), or
+assert the literal type (`Text`/`Content`) when the surface cannot be painted in the
+test, and prove the test red on the unfixed code. Tests:
+`Tests/UI/test_roleplay_hostile_names.py`, `Tests/UI/test_roleplay_hostile_text_surfaces.py`.
