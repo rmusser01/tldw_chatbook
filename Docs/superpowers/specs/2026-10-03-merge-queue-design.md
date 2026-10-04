@@ -90,8 +90,12 @@ Everything lives on `dev` and runs on the built-in token.
 2. **`scripts/merge_queue.py` (new).**
    - Standard library plus the `gh` CLI that hosted runners already have.
    - Read layer: one GraphQL query that returns the open PRs into `dev`. For each PR it reads number, head SHA and repo,
-     draft flag, `autoMergeRequest.enabledAt`, `mergeStateStatus`, unresolved thread count, and the required check's state
-     and completion time on the head. It also reads the head commit date and the `derived-artifacts.yml` runs on that head.
+     author type, draft flag, `autoMergeRequest.enabledAt`, `mergeStateStatus`, unresolved thread count, and the required
+     check's state and completion time on the head. It also reads the head commit date and the `derived-artifacts.yml`
+     runs on that head.
+   - Every list read (the open PRs, the check runs and the workflow runs on a head) follows pagination to the end, up to
+     10 pages of 100. A longer list fails the run instead of deciding on part of it, because an armed PR or a live run on
+     a later page would be invisible.
    - A pure `decide(state, now) -> list[Action]` function holding all queue rules (section 6).
    - An action layer that performs the decided actions with the guards in section 7.
 
@@ -130,9 +134,11 @@ Everything lives on `dev` and runs on the built-in token.
 
 ## 6. Queue rules — `decide`
 
-**The line.** Open PRs with base `dev`, auto-merge armed, not a draft, and head repo equal to the base repo. They are
-ordered by `autoMergeRequest.enabledAt`, oldest first.
+**The line.** Open PRs with base `dev`, auto-merge armed, not a draft, head repo equal to the base repo, and opened by a
+user (GraphQL `author.__typename == "User"`). They are ordered by `autoMergeRequest.enabledAt`, oldest first.
 - An armed fork PR gets one comment saying fork PRs are not queued and must be merged by hand. It is never part of the line.
+- An armed PR opened by a bot or app (Dependabot, an agent such as the Copilot coding agent, or a deleted "ghost"
+  account) gets one comment saying the same, for the security reason in section 9. It is never part of the line.
 
 **Front PR.** Fresh state is read first. If `mergeStateStatus` is `UNKNOWN`, the queue re-reads it up to 12 times, 10
 seconds apart (after each merge the next front is routinely `UNKNOWN` for a while); if it is still unknown, it does nothing.
@@ -165,7 +171,9 @@ never rebased, dispatched or commented on.
 ## 7. Actions and safety invariants
 
 - **Rebase** uses `updatePullRequestBranch(updateMethod: REBASE, expectedHeadOid: <head the queue read>)`. On any failure the
-  queue re-reads the PR:
+  queue re-reads the PR. If that shows the same head and not `DIRTY`, it waits 3 seconds and re-reads once more: a racing
+  run's accepted rebase moves the branch about a second after its mutation returns, and a refusal inside that window must
+  not count as this run's own failure. Then:
   - head moved: do nothing (someone else acted);
   - now `DIRTY`: evict;
   - anything else (same head, still not `DIRTY`): the first time, post a `rebase-failed` comment quoting the error (first
@@ -178,12 +186,18 @@ never rebased, dispatched or commented on.
   its own run and any merge-queue.yml run.
 - **Dispatch** of the PR's workflows happens only after this run's own rebase succeeded, or under the dispatch rows of the
   table above.
+  - Under the dispatch and retry rows, the queue re-reads the head's live `derived-artifacts.yml` runs immediately before
+    dispatching. If one appeared since the decision (a racing queue run dispatched first), it dispatches nothing.
+  - If GitHub refuses the required-check dispatch (for example HTTP 422 because the branch's `derived-artifacts.yml` is
+    broken or lacks the trigger), the queue evicts the PR ("CI dispatch failed: <first 200 characters>") and moves on to
+    the next front in the same run. After a rebase the eviction names the new head.
 - **Evict** means `disablePullRequestAutoMerge` plus one comment. The disarm is best-effort: two racing runs (a merge fires
   both `push` to `dev` and `closed`) can evict the same PR, and the second disarm hits an already-disarmed PR. Re-arming
   puts the PR at the back of the line.
 - **Comments** carry a hidden marker `<!-- merge-queue:<kind>:<head-sha> -->`. The queue never posts a kind twice for the same
   head. An eviction's kind names its cause (`evict-conflict`, `evict-failed-twice`, `evict-blocked`, `evict-stuck`,
-  `evict-rebase`), so a re-armed PR evicted again on the same head for a different reason is still told why.
+  `evict-rebase`, `evict-dispatch`), so a re-armed PR evicted again on the same head for a different reason is still told
+  why.
 - **Forbidden**, and enforced by a guard test:
   - enabling auto-merge;
   - merging a PR (GraphQL `mergePullRequest`, REST `PUT .../merge`, or `gh pr merge` without `--disable-auto`);
@@ -191,8 +205,11 @@ never rebased, dispatched or commented on.
 
   A merge done with `GITHUB_TOKEN` pushes to `dev` without triggering any workflows (D1), which would silently stop both the
   queue and dev's post-merge checks.
-- Every action is safe to repeat. Two queue runs racing produce at most one rebase (the pinned head makes the second fail),
-  at most one dispatch per successful rebase, and idempotent evictions.
+- Every action is safe to repeat. Two queue runs racing produce at most one rebase: the pinned head makes the second
+  mutation fail, and the post-failure re-read (above) makes the losing run see the moved head and do nothing, instead of
+  counting the refusal as its own failure. A duplicate dispatch is at worst one extra queued run: the pre-dispatch re-read
+  of live runs (above) closes the window down to the seconds between that read and the dispatch. Evictions are
+  idempotent.
 
 ## 8. Failure handling
 
@@ -212,6 +229,19 @@ never rebased, dispatched or commented on.
 
 - `pull_request` runs for same-repo PRs get the permissions declared above. Those authors already have write access, so
   there is no escalation.
+- A queue dispatch runs the PR branch's own copy of `derived-artifacts.yml`, so the branch controls every job in that run,
+  `queue-tick`'s write permissions included. Checking out `dev` inside a job cannot change that, because the branch can
+  edit the job. This equals the existing `pull_request` exposure: a same-repo `pull_request` run also executes the
+  branch's YAML with whatever `permissions:` it declares, and GitHub documents that anyone with write access can raise
+  the token's permissions by editing the workflow file. A wake-up job moved into `dev`'s copy (by dispatching a kick on
+  `dev`) would not help either: the branch could still declare write permissions on any job of the dispatched run, and
+  the extra hop would cost a queued run per CI completion.
+- The one difference is the actor. A dispatch runs as `github-actions[bot]`, so GitHub's actor-based gates on
+  `pull_request` runs do not apply to it: Dependabot runs get a read-only token and no secrets, and pushes by agents such
+  as the Copilot coding agent wait for a human's "Approve and run". The queue therefore only queues PRs opened by a user
+  (section 6). With that rule, every PR the queue dispatches on was opened by a user and armed by someone with write
+  access, on a branch only write-access accounts can push to, and those pushes' own `pull_request` runs could already do
+  anything a dispatched run can.
 - Fork PRs get a read-only token and are skipped explicitly.
 - Both entry points check out and run `dev`'s copy of the script, never the PR's copy.
 - PR titles, bodies and branch names are passed only as API arguments, never interpolated into shell. Workflow expressions
@@ -247,7 +277,8 @@ The rules depend on the mode, checked with `gh variable get MERGE_QUEUE`. A roll
   - empty line;
   - FIFO ordering;
   - PRs behind the front are untouched;
-  - fork skip and comment dedup;
+  - fork and bot-author skip, and comment dedup;
+  - a line, check-run list or workflow-run list that spans two pages;
   - `UNKNOWN` re-read;
   - the eviction loop bound;
   - each mode.
@@ -255,7 +286,12 @@ The rules depend on the mode, checked with `gh variable get MERGE_QUEUE`. A roll
   - a pinned-head rebase failure never evicts;
   - dispatch only after a successful rebase;
   - comments deduplicated by marker;
-  - `dry` makes zero mutating calls.
+  - `dry` makes zero mutating calls;
+  - a refused required-check dispatch evicts and the line moves on;
+  - a live run that appeared after the decision stops a dispatch;
+  - a refused rebase is re-read once more before it counts as a failure.
+- **Boundary test:** `main()` through the real `Gh` class down to the `gh` argv, with canned JSON, for a `BEHIND` front
+  PR.
 - **Guard test:** fails if the script can enable auto-merge, merge or push.
 - **Workflow-shape tests:**
   - `merge-queue.yml` has exactly the triggers above, and none of `pull_request_target`, `schedule`, `workflow_run` or
