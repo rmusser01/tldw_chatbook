@@ -1,5 +1,24 @@
 # Lessons: verifying against the real thing
 
+## A tmux key burst loses typed text, and an empty Input shows its placeholder
+
+**TASK-34100.8, 2026-10-04.** Live-editing the Voice step's Endpoint with
+`send-keys End C-u` immediately followed by `send-keys -l "http://…:8766/tts"`
+left the field "showing" `http://127.0.0.1:8000/tts`. It looked like the
+service switch to Custom had stolen focus or reset the value, and it was
+nearly filed as a bug. Neither was true. With a burst, Textual dispatches the
+bound keys (End, Ctrl+U) after the printable characters it forwards to the
+focused Input. So Ctrl+U ran last and emptied the field. The "value" in
+`capture-pane` was the Input's **placeholder**, which plain-text capture cannot
+tell apart from a value. A bare `App` holding one `Input` reproduces it: post
+`end`, `ctrl+u` and then the characters without yielding, and the result is `''`.
+
+**What to do.** Pause between an editing chord and the text that follows. A
+condition wait for the field to change is enough; a human never types that
+fast. Before calling a field's value wrong from a text capture, check whether
+the shown text equals the Input's placeholder. Use an `-e` (ANSI) capture to
+see its dim placeholder style, or change one character and re-capture.
+
 ## An isolated (`python -I`) worker ignores cwd, so a stale editable install breaks it alone
 
 **TASK-33940, 2026-10-02.** Every Console fs_*/git_* call on the owner's machine failed with
