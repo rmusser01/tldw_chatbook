@@ -30380,5 +30380,659 @@
       "Earlier Library reader2 admission refusals on f1f80847 and broader shared-pane MRO red on83c264f2 remain recorded on their actual baseline/runtime anchors. Neither old command is relabelled as a new457-pin run; no blanket claim that full Library/Architecture is green. Prior native and formatter W003 xfail receipts also retain original anchors.",
       "No fresh full Library, Architecture A/B, installed-wheel build, native Auth/sign-in, credential, live-server or full-suite replay. All3 tasks remain In Progress pending fresh exact-head clean/resolved Qodo and all5 hosted gates including both UI shards, then fresh final Done-metadata-head checks/review before protected normal merge; auto-merge off."
     ]
+  },
+  "oct04_encryption_startup_latest_dev_integration": {
+    "anchor_head": "abe69825078ad5c3accf61e51f736e7eba06db10",
+    "base": "057e62eaec5343ffce9445cfb32881e756dd7634",
+    "previous_published_head": "9b3070e6e86e963d6491f60622292d836f09f735",
+    "source_pin_count": 482,
+    "source_map_reconstruction": {
+      "base_key": "oct04_schema_migrations_latest_dev_integration",
+      "base_pin_count": 457,
+      "overrides": {
+        "Docs/security/production-diagnostic-inventory.json": "762431bd992f6ce8e82097f71b312bc52f14d3b91765f876727d97df6fb3506f",
+        "Tests/UI/test_settings_configuration_hub.py": "fef775e605e6c730441b627bfca9419b60b1731d7939764b33f13cb31c6051b6",
+        "tldw_chatbook/Chat/Chat_Functions.py": "b8a1dacb89807dd72207bf3a8bd465b3c85a6caad493786faceef0b8b4fc17a4",
+        "tldw_chatbook/Chat/console_session_settings.py": "71b9f14bc8645471def8433cefae5f8d911f8067bdbf08840c46d7d93d5157cf",
+        "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": "a0ab9b658fd85f12ab2cf56a97563c6dec8eb5f0d92c9c006f6098071bd44087",
+        "tldw_chatbook/UI/Screens/settings_screen.py": "053ef07c5e080f8e2462cdb8adaa53001b37ede431e3b7c3cbccc180530e466c",
+        "tldw_chatbook/app.py": "46272efc04201512022c3598a7c2e7b5ddbdf6c1b87a71e65dbd604126ebba3b",
+        "tldw_chatbook/config.py": "4d974c47d546e81780614f6c04998db297c6514a07b7a571b7d8703e95e177fb"
+      },
+      "additions": {
+        "Tests/Backup_Recovery/test_launcher.py": "cfd3b66667ebd395d4519a1e4e17511c0672b8bf648dbf851fcb09cc5d20e142",
+        "Tests/Backup_Recovery/test_startup_unlock.py": "5b86f8e7d096d63b58ac9d2561edca52cdffd9f35eb146a7037efffb0c66e201",
+        "Tests/Chat/test_encrypted_api_key_never_sent.py": "8367b225c6f5a7fc44a24c564f462aa0c591ca69c6a65b13ab4a9ab2af39371e",
+        "Tests/UI/test_settings_encryption_card.py": "73a201ddc8eb425ca7b10516d596f65d2eb4dbc9bcb4a2d095c4e05d1795a933",
+        "Tests/Widgets/test_password_dialog_focus.py": "185888d6f43465de89c5fe0e174a483cbba42e04f9b07483dc24453d0825ab9a",
+        "Tests/test_cli_startup_private_path.py": "851436dd592924e79b9a17b3414b7c4df3b48a26781477c860dee69fdd51903c",
+        "Tests/test_config_encryption_lifecycle.py": "d0dba7f683da7cd2000b7d62273c4abc410d56a588c9d77208110e64bffe26ca",
+        "scripts/textual_wait_push_census.tsv": "c2b76f667e43f1d51237737fd3705a1672b28f0a5fdca660df5dbd98c850b604",
+        "tldw_chatbook/Backup_Recovery/launcher.py": "a3f582753e75fc995504309f1615a6e3bfa7ebcbd87bc10043552c65d613c3ca",
+        "tldw_chatbook/Chat/provider_readiness.py": "fc980390d354eb444de68da524a2ee6abb301cfa700c99bae11c2b40f14530b0",
+        "tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py": "3c54210b92c0ae48429334d920e24f86f2f719e5ff3b20f6e5da97cdefd802e6",
+        "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": "15990cb9305dcaea01b810e6b0d65a9c25ce6f5c0eb2901216bd12f93a5f697d",
+        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": "399efee94b15d649f65317a1431a94572dfc48cda5e867a9ba9be85fcd978b03",
+        "tldw_chatbook/LLM_Calls/deepseek.py": "8dcc1a552c3d90d69caeb69454ce4aec686b1b5be35b4373c5f94ad89705ce6c",
+        "tldw_chatbook/LLM_Calls/groq.py": "07f8071da4408db16a4b9d8b4bd570c70717a5bdc1dd7602d49de941d7fcf083",
+        "tldw_chatbook/LLM_Calls/mistral.py": "d446312879a4da7d1dca84077e8af7beec2bff85f3cbc1ee245de4a0b78c95bc",
+        "tldw_chatbook/LLM_Calls/openrouter.py": "3d27dd597262150ee3e967881812a17b7529fc77268510a548ced53333c2fe50",
+        "tldw_chatbook/LLM_Calls/recovery_review.py": "fcc6aee046042b34414d53f80f2a5fc7c02f3802c1679c56289ed7b6782025bc",
+        "tldw_chatbook/UI/Screens/settings_encryption.py": "1856f205b4de523b6dfc0e00a702ad57387a656a08a8dc2208857719a893a73d",
+        "tldw_chatbook/UI/Screens/settings_search_index.py": "b066d7d13b50889ad1f204e3e26d11a1db52e9d7262b5c7674adde33632dcddb",
+        "tldw_chatbook/Utils/config_encryption.py": "340012d405930b0473430dedc80f04fc845ba2f2ddd45252c6986e30b6a764b1",
+        "tldw_chatbook/Widgets/password_dialog.py": "65b448b9b18de25f743c4677c8a205bc357f7134f0ee57dbcd3e4e858f6a1871",
+        "tldw_chatbook/Widgets/state_checkbox.py": "f6be6641834b95c388850356b4a130106d52b730531afb7f8a6d0a982f0333a8",
+        "tldw_chatbook/app_entry.py": "c52b6ef3a3449e8c5bfad5ac491f34234b3f8f354ba5589649252ebb00ae03a3",
+        "tldw_chatbook/cli.py": "ccb7bc00c209cc14cb5f190784c1f4604948872634b1ee9ad2819ba95ef73007"
+      },
+      "final_pin_count": 482
+    },
+    "rebase": {
+      "old_head": "d36d86023b3579b51d5c6c0220cad371f623856a",
+      "previous_published_head": "9b3070e6e86e963d6491f60622292d836f09f735",
+      "old_base": "14a14c4a7ab0da85831afb290ab90d75170fbb79",
+      "new_head": "abe69825078ad5c3accf61e51f736e7eba06db10",
+      "new_base": "057e62eaec5343ffce9445cfb32881e756dd7634",
+      "source_pin_count": 482,
+      "changed_source_pins": {
+        "Docs/security/production-diagnostic-inventory.json": {
+          "old": "0b61f0251a0aff6e355a710583841a12b652555e501f919b72122f073b38c67c",
+          "new": "762431bd992f6ce8e82097f71b312bc52f14d3b91765f876727d97df6fb3506f"
+        },
+        "Tests/UI/test_settings_configuration_hub.py": {
+          "old": "b69ed25629fa5480533d35ad68316c480514c5049af1446ffa5fce15c49a8c1a",
+          "new": "fef775e605e6c730441b627bfca9419b60b1731d7939764b33f13cb31c6051b6"
+        },
+        "tldw_chatbook/Chat/Chat_Functions.py": {
+          "old": "9d1a1a5a011912247561d1ad388f8384ad2262e61b9cf3ce92b6daadac0aab73",
+          "new": "b8a1dacb89807dd72207bf3a8bd465b3c85a6caad493786faceef0b8b4fc17a4"
+        },
+        "tldw_chatbook/Chat/console_session_settings.py": {
+          "old": "37c021bf9bfb8150fc7f5a8f7e19605ceaee5219a2db88f043cb4eff24553a50",
+          "new": "71b9f14bc8645471def8433cefae5f8d911f8067bdbf08840c46d7d93d5157cf"
+        },
+        "tldw_chatbook/LLM_Calls/LLM_API_Calls.py": {
+          "old": "c9cc3ccb8838497fd33a4dfa674d055bfd3b0a92c9d98ba0482220d152ea8e37",
+          "new": "a0ab9b658fd85f12ab2cf56a97563c6dec8eb5f0d92c9c006f6098071bd44087"
+        },
+        "tldw_chatbook/UI/Screens/settings_screen.py": {
+          "old": "e65c63eca2b67c360f120e67c5710a1d76a43f0838166d9f4fbb54c2e80c9e08",
+          "new": "053ef07c5e080f8e2462cdb8adaa53001b37ede431e3b7c3cbccc180530e466c"
+        },
+        "tldw_chatbook/app.py": {
+          "old": "6eed96ee0cf1cb200b618c9210eb8e2b1f58f25b4f032908847298a16f8d3466",
+          "new": "46272efc04201512022c3598a7c2e7b5ddbdf6c1b87a71e65dbd604126ebba3b"
+        },
+        "tldw_chatbook/config.py": {
+          "old": "729183d437f92656ab02e1d38239a15c5b8150bdff2c48b4a2e630ec8d850c06",
+          "new": "4d974c47d546e81780614f6c04998db297c6514a07b7a571b7d8703e95e177fb"
+        }
+      },
+      "added_source_pins": {
+        "Tests/Backup_Recovery/test_launcher.py": "cfd3b66667ebd395d4519a1e4e17511c0672b8bf648dbf851fcb09cc5d20e142",
+        "Tests/Backup_Recovery/test_startup_unlock.py": "5b86f8e7d096d63b58ac9d2561edca52cdffd9f35eb146a7037efffb0c66e201",
+        "Tests/Chat/test_encrypted_api_key_never_sent.py": "8367b225c6f5a7fc44a24c564f462aa0c591ca69c6a65b13ab4a9ab2af39371e",
+        "Tests/UI/test_settings_encryption_card.py": "73a201ddc8eb425ca7b10516d596f65d2eb4dbc9bcb4a2d095c4e05d1795a933",
+        "Tests/Widgets/test_password_dialog_focus.py": "185888d6f43465de89c5fe0e174a483cbba42e04f9b07483dc24453d0825ab9a",
+        "Tests/test_cli_startup_private_path.py": "851436dd592924e79b9a17b3414b7c4df3b48a26781477c860dee69fdd51903c",
+        "Tests/test_config_encryption_lifecycle.py": "d0dba7f683da7cd2000b7d62273c4abc410d56a588c9d77208110e64bffe26ca",
+        "scripts/textual_wait_push_census.tsv": "c2b76f667e43f1d51237737fd3705a1672b28f0a5fdca660df5dbd98c850b604",
+        "tldw_chatbook/Backup_Recovery/launcher.py": "a3f582753e75fc995504309f1615a6e3bfa7ebcbd87bc10043552c65d613c3ca",
+        "tldw_chatbook/Chat/provider_readiness.py": "fc980390d354eb444de68da524a2ee6abb301cfa700c99bae11c2b40f14530b0",
+        "tldw_chatbook/LLM_Calls/LLM_API_Calls_Local.py": "3c54210b92c0ae48429334d920e24f86f2f719e5ff3b20f6e5da97cdefd802e6",
+        "tldw_chatbook/LLM_Calls/Local_Summarization_Lib.py": "15990cb9305dcaea01b810e6b0d65a9c25ce6f5c0eb2901216bd12f93a5f697d",
+        "tldw_chatbook/LLM_Calls/Summarization_General_Lib.py": "399efee94b15d649f65317a1431a94572dfc48cda5e867a9ba9be85fcd978b03",
+        "tldw_chatbook/LLM_Calls/deepseek.py": "8dcc1a552c3d90d69caeb69454ce4aec686b1b5be35b4373c5f94ad89705ce6c",
+        "tldw_chatbook/LLM_Calls/groq.py": "07f8071da4408db16a4b9d8b4bd570c70717a5bdc1dd7602d49de941d7fcf083",
+        "tldw_chatbook/LLM_Calls/mistral.py": "d446312879a4da7d1dca84077e8af7beec2bff85f3cbc1ee245de4a0b78c95bc",
+        "tldw_chatbook/LLM_Calls/openrouter.py": "3d27dd597262150ee3e967881812a17b7529fc77268510a548ced53333c2fe50",
+        "tldw_chatbook/LLM_Calls/recovery_review.py": "fcc6aee046042b34414d53f80f2a5fc7c02f3802c1679c56289ed7b6782025bc",
+        "tldw_chatbook/UI/Screens/settings_encryption.py": "1856f205b4de523b6dfc0e00a702ad57387a656a08a8dc2208857719a893a73d",
+        "tldw_chatbook/UI/Screens/settings_search_index.py": "b066d7d13b50889ad1f204e3e26d11a1db52e9d7262b5c7674adde33632dcddb",
+        "tldw_chatbook/Utils/config_encryption.py": "340012d405930b0473430dedc80f04fc845ba2f2ddd45252c6986e30b6a764b1",
+        "tldw_chatbook/Widgets/password_dialog.py": "65b448b9b18de25f743c4677c8a205bc357f7134f0ee57dbcd3e4e858f6a1871",
+        "tldw_chatbook/Widgets/state_checkbox.py": "f6be6641834b95c388850356b4a130106d52b730531afb7f8a6d0a982f0333a8",
+        "tldw_chatbook/app_entry.py": "c52b6ef3a3449e8c5bfad5ac491f34234b3f8f354ba5589649252ebb00ae03a3",
+        "tldw_chatbook/cli.py": "ccb7bc00c209cc14cb5f190784c1f4604948872634b1ee9ad2819ba95ef73007"
+      },
+      "all_81_owned_runtime_native_paths_byte_exact": true,
+      "all_incoming_non_composed_paths_exact_dev": true,
+      "all_ten_metadata_patches_raw_exact": true,
+      "diagnostic_inventory_regenerated_from_actual_combined_sources": true,
+      "diagnostic_inventory_needed_following_commit": false,
+      "authoritative_migration_sql_files": 73,
+      "UI_census": {
+        "entries": 130,
+        "floor": 128,
+        "unchanged": true
+      },
+      "workflow_real_profile_guards_and_owner_budgets_unchanged": true,
+      "ADR_path": "existing Console ADR094/097/150/195/212 and inherited database ADR208",
+      "limits": "Incoming owner config/encryption/startup/readiness and normal profile changes retained; all81 owned Console runtime/native paths unchanged. Prior schema/native/failure receipts retain actual anchors; fresh targeted encryption/Console/runtime evidence pending, no full-suite/native/live-key replay."
+    },
+    "fresh_checks": {
+      "owner": {
+        "label": "encryption-owner",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-owner-s4v3zhk4/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-owner-s4v3zhk4/pytest.xml",
+          "Tests/test_config_encryption_lifecycle.py",
+          "Tests/Chat/test_encrypted_api_key_never_sent.py",
+          "Tests/Backup_Recovery/test_startup_unlock.py",
+          "Tests/Backup_Recovery/test_launcher.py",
+          "Tests/Widgets/test_password_dialog_focus.py",
+          "Tests/UI/test_settings_encryption_card.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 124.56,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-owner-s4v3zhk4",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 180,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "hub": {
+        "label": "encryption-hub",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-hub-r0tm6ohs/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-hub-r0tm6ohs/pytest.xml",
+          "Tests/UI/test_settings_configuration_hub.py::test_settings_read_only_overview_hides_actions_and_clean_privacy_disables_them",
+          "Tests/UI/test_settings_configuration_hub.py::test_settings_privacy_and_diagnostics_label_unsupported_mutations_as_wip",
+          "Tests/UI/test_settings_configuration_hub.py::test_settings_privacy_security_renders_guided_redacted_posture"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 68.62,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-hub-r0tm6ohs",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "cli": {
+        "label": "encryption-cli",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-cli-sgcxn_y3/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-cli-sgcxn_y3/pytest.xml",
+          "Tests/test_cli_startup_private_path.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 3.44,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-cli-sgcxn_y3",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "models": {
+        "label": "encryption-models",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-models-6jxa38zc/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-models-6jxa38zc/pytest.xml",
+          "Tests/Chat/test_console_chat_models.py",
+          "Tests/Chat/test_console_interrupt_rounds.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 8.87,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-models-6jxa38zc",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 48,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "ui": {
+        "label": "encryption-ui",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-ui-i7iyspzc/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-ui-i7iyspzc/pytest.xml",
+          "Tests/UI/test_chat_approval_card.py",
+          "Tests/UI/test_console_pending_interrupt_projection.py",
+          "Tests/UI/test_console_approval_compact_layout.py",
+          "Tests/UI/test_console_session_tab_close.py",
+          "Tests/UI/test_console_session_close_impact.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 322.93,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-ui-i7iyspzc",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 53,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "library": {
+        "label": "encryption-library",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-library-71m7yib6/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-library-71m7yib6/pytest.xml",
+          "Tests/UI/test_library_conversation_reader_freshness.py",
+          "Tests/UI/test_library_reader_console_delete_refresh.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 73.59,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-library-71m7yib6",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 12,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "startup": {
+        "label": "encryption-startup",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-startup-mwazx6hb/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-startup-mwazx6hb/pytest.xml",
+          "Tests/Performance/test_app_import_weight.py",
+          "Tests/Performance/test_ui_ready_module_census.py",
+          "Tests/Performance/test_boot_worker_census.py",
+          "Tests/Performance/test_textual_css_fastpath.py",
+          "Tests/Performance/test_boot_css_byte_budget.py",
+          "Tests/Performance/test_screen_preimport_payload_budget.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 90.26,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-startup-mwazx6hb",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 22,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "latency": {
+        "label": "encryption-latency",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-latency-xgedinil/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-latency-xgedinil/pytest.xml",
+          "Tests/Performance/test_ui_latency_guardrails.py",
+          "Tests/Utils/test_ui_responsiveness_stall_persist.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 61.13,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-latency-xgedinil",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 13,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "CI": {
+        "label": "encryption-CI",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-CI-0rzbejvo/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-CI-0rzbejvo/pytest.xml",
+          "Tests/CI/test_ci_queue_pressure_contract.py",
+          "Tests/CI/test_derived_artifacts_workflow.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 2.53,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-CI-0rzbejvo",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 34,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      }
+    },
+    "fresh_targeted_passed": 368,
+    "fresh_targeted_collected": 368,
+    "preflight": {
+      "head": "abe69825078ad5c3accf61e51f736e7eba06db10",
+      "base": "057e62eaec5343ffce9445cfb32881e756dd7634",
+      "exit_code": 0,
+      "elapsed_seconds": 88.0,
+      "log": "/tmp/console-tool-ux-encryption-preflight.log",
+      "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-encryption-preflight-23xrfvx3",
+      "sources_stable": true,
+      "success_line": true
+    },
+    "static": {
+      "head": "abe69825078ad5c3accf61e51f736e7eba06db10",
+      "base": "057e62eaec5343ffce9445cfb32881e756dd7634",
+      "source_pins": 482,
+      "sources_stable": true,
+      "Ruff_zero_new": {
+        "base": "057e62eaec5343ffce9445cfb32881e756dd7634",
+        "files": {
+          "Docs/superpowers/qa/2026-10-01-console-approval-layout/native_check.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Docs/superpowers/qa/2026-10-01-console-close-followup/native_check.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Chat/test_console_ask_user_round.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "Tests/Chat/test_console_chat_create_confirm.py": {
+            "before": 6,
+            "after": 6,
+            "new": []
+          },
+          "Tests/Chat/test_console_chat_create_integration.py": {
+            "before": 11,
+            "after": 11,
+            "new": []
+          },
+          "Tests/Chat/test_console_local_review_hook.py": {
+            "before": 2,
+            "after": 2,
+            "new": []
+          },
+          "Tests/Chat/test_console_runtime_shutdown.py": {
+            "before": 2,
+            "after": 2,
+            "new": []
+          },
+          "Tests/Chat/test_console_session_settings.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Packaging/test_console_interaction_import_closure.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Performance/test_console_keystroke_work_census.py": {
+            "before": 2,
+            "after": 2,
+            "new": []
+          },
+          "Tests/Performance/test_ui_ready_module_census.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_chat_approval_card.py": {
+            "before": 5,
+            "after": 5,
+            "new": []
+          },
+          "Tests/UI/test_console_approval_compact_layout.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_console_button_routing.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "Tests/UI/test_console_pending_interrupt_projection.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_console_session_close_impact.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_console_session_tab_close.py": {
+            "before": 4,
+            "after": 4,
+            "new": []
+          },
+          "Tests/UI/test_console_turn_resend_ui.py": {
+            "before": 2,
+            "after": 1,
+            "new": []
+          },
+          "Tests/Utils/test_mcp_native_qa_args.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Widgets/test_confirmation_dialog_literal_text.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "scripts/check_ui_pr_gate_census.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_chat_controller.py": {
+            "before": 199,
+            "after": 199,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_chat_models.py": {
+            "before": 28,
+            "after": 28,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_display_state.py": {
+            "before": 27,
+            "after": 27,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_message_actions.py": {
+            "before": 6,
+            "after": 6,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_runtime.py": {
+            "before": 30,
+            "after": 30,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_turn_resend.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "tldw_chatbook/UI/Console_Modules/message.py": {
+            "before": 38,
+            "after": 38,
+            "new": []
+          },
+          "tldw_chatbook/UI/Console_Modules/session.py": {
+            "before": 42,
+            "after": 41,
+            "new": []
+          },
+          "tldw_chatbook/UI/Console_Modules/wiring.py": {
+            "before": 4,
+            "after": 4,
+            "new": []
+          },
+          "tldw_chatbook/UI/Screens/chat_screen.py": {
+            "before": 200,
+            "after": 200,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": {
+            "before": 6,
+            "after": 6,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/Console/console_transcript.py": {
+            "before": 27,
+            "after": 26,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/cancel_confirmation_dialog.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/confirmation_dialog.py": {
+            "before": 7,
+            "after": 7,
+            "new": []
+          }
+        }
+      },
+      "public_signature_audit": [],
+      "checks": {
+        "diff": {
+          "exit_code": 0,
+          "output": ""
+        },
+        "backlog_ids": {
+          "exit_code": 0,
+          "output": "No duplicate task IDs across 4942 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.\n"
+        },
+        "UI_census": {
+          "exit_code": 0,
+          "output": "OK: 130 Tests/UI files in the PR gate (floor 128); every listed path exists.\n"
+        }
+      },
+      "scope": "Latest dev integration preserves all four overlapping Console module ASTs and comment tokens with upstream Ruff0.15.22 formatting. Incoming runtime/fixture/checker changes are retained exactly. Original native artifacts and all non-overlap feature sources remain byte-identical; no guard/getter/admission/budget/cap changes."
+    },
+    "ADR_required": "no new ADR; direct integration of existing owner config/encryption/admission boundaries and selected Console ADR094/097/150/195/212; prior database ADR208 remains applicable",
+    "limits": [
+      "368 actual targeted passes: six incoming owner encryption suites180, three modified Privacy hub cases3, affected CLI private-path3, Console models48/UI53, real Delete/Undo-to-Library12, startup22, latency13, CI34. All482 pins stable and original profiles/guards/caps retained.",
+      "All81 owned Console runtime/native paths unchanged; incoming non-composed paths and10 metadata patches exact.8 pin overrides+25 additions reconstruct482, preserving all73 migration SQL pins. Actual combined inventory regenerates with no delta; census130/floor128 unchanged.",
+      "Owner part1 encryption/startup/readiness/Settings boundaries are retained. Owner deferred wizard and non-LLM credential TASK34100.4.1 work is not part of the selected3Console tasks; no new security/credential implementation or fake getter/admission/marker/worker/canary/budget/cap exception was introduced.",
+      "Earlier DB163/combined345 passes retain their actual457-pin b0b9d5a7 anchor and source map. Database/migration/recovery schema sources are unchanged; new config/startup/Console integration is independently checked. Earlier reader2 admission and broaderMROred, native and W003xfail receipts also retain original anchors; no relabelled historical commands.",
+      "Owner-reported broader Console-session-settings/config-admission failure sets were not replayed here; no blanket Library/Architecture/Settings green claim. No new full-suite, full Library/Architecture A-B, installed-wheel build, native Auth/sign-in, live-key/live-server or external-credential verification. All3 tasks remain In Progress pending fresh exact-head clean/resolved Qodo and all5 hosted gates including both UI shards, then fresh Done-metadata-head checks/review before protected normal merge; auto off."
+    ]
   }
 }
