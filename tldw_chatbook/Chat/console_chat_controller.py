@@ -13573,10 +13573,14 @@ class ConsoleChatController:
             }
             else ConsoleDispatchRecoveryActionId.RETRY_RESPONSE
         )
-        claimed = self.store.claim_dispatch_recovery_action(session_id, action_id)
+        from tldw_chatbook.Chat import console_predispatch_block as predispatch
+
+        # TASK-34100.5 review (F13): claim only what the presented card offers.
+        shown = predispatch.presented_owner(recovery)
+        claimed = predispatch.claim_offered_action(self.store, session_id, shown, action_id)
         if claimed is None:
             action = next(
-                (item for item in recovery.actions if item.action_id is action_id),
+                (item for item in shown.actions if item.action_id is action_id),
                 None,
             )
             return ConsoleSubmitResult(

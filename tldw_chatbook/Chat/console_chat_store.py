@@ -1929,8 +1929,6 @@ class ConsoleChatStore:
         self._dispatch_recoveries_by_session: dict[
             str, ConsoleDispatchRecoveryState
         ] = {}
-        # TASK-34100.5 AC#3: owners refused before dispatch (session -> block).
-        self._predispatch_blocks: dict[str, str] = {}
         self._dispatch_recovery_message_baselines: dict[str, ConsoleChatMessage] = {}
         # First generation token issued while one recovery owner is in flight.
         # Generic outer settlement rollback paths do not own the inner stream
@@ -3302,17 +3300,7 @@ class ConsoleChatStore:
         recovery = self.dispatch_recovery_for_session(session_id)
         if recovery is None or not recovery.recovery_needed:
             return None
-        if self._predispatch_blocks.get(session_id) != recovery.assistant_message_id:
-            return recovery
-        from tldw_chatbook.Chat.console_predispatch_block import (
-            present_predispatch_block,
-        )
-
-        return present_predispatch_block(recovery)
-
-    def note_predispatch_block(self, session_id: str, assistant_message_id: str) -> None:
-        """Record that this turn was refused before dispatch (TASK-34100.5 AC#3)."""
-        self._predispatch_blocks[session_id] = assistant_message_id
+        return recovery
 
     def dispatch_recovery_blocks_submission(self, session_id: str | None) -> bool:
         """Return whether one UNRESOLVED source-local owner blocks the next send.

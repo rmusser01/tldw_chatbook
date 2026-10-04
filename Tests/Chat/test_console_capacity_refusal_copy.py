@@ -133,9 +133,18 @@ async def test_a_refused_send_reads_not_sent_and_names_the_working_path(
     await controller.submit_draft("hello there", session_id="session-1")
 
     def shown_actions():
-        shown = store.dispatch_recovery_for_presentation("session-1")
-        assert shown is not None, "the turn still needs Discard"
-        return shown, {action.action_id: action for action in shown.actions}
+        # The card's own projection: what the user sees and can press.
+        from tldw_chatbook.UI.Console_Modules.dispatch_recovery import (
+            derive_dispatch_recovery_presentation,
+        )
+
+        owner = store.dispatch_recovery_for_presentation("session-1")
+        assert owner is not None, "the turn still needs Discard"
+        shown = derive_dispatch_recovery_presentation(owner)
+        return shown, {
+            ConsoleDispatchRecoveryActionId(action.action_id): action
+            for action in shown.actions
+        }
 
     shown, actions = shown_actions()
     assert "accepted" not in shown.visible_copy.lower(), shown.visible_copy
@@ -156,3 +165,58 @@ async def test_a_refused_send_reads_not_sent_and_names_the_working_path(
     _shown, actions = shown_actions()
     assert actions[ConsoleDispatchRecoveryActionId.RETRY_RESPONSE].enabled is False
     assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_the_controller_itself_refuses_retry_for_a_refused_send(
+    tmp_path, monkeypatch
+) -> None:
+    """Review round 1 (F13): Retry was disabled only on the presented card;
+    ``controller.retry_dispatch_recovery`` still claimed RETRY_RESPONSE from
+    the raw owner and replayed the frozen turn. Any caller now gets the
+    card's reason and nothing is claimed or sent."""
+    from tldw_chatbook.Chat.console_predispatch_block import RETRY_DISABLED_REASON
+    from tldw_chatbook.Utils import token_counter
+
+    monkeypatch.setitem(token_counter.PROVIDER_CONTEXT_WINDOWS, "openai", 4096)
+    _db, store, controller, gateway = _live_controller(
+        tmp_path,
+        gateway=_UnknownWindowGateway(),
+        overrides=ConsoleContextPolicyOverrides(),
+    )
+    await controller.submit_draft("hello there", session_id="session-1")
+    rows_before = list(_system_rows(store))
+
+    result = await controller.retry_dispatch_recovery("session-1")
+
+    assert result.accepted is False
+    assert result.visible_copy == RETRY_DISABLED_REASON
+    owner = store.dispatch_recovery_for_session("session-1")
+    assert owner is not None and not owner.in_flight, "nothing was claimed"
+    assert list(_system_rows(store)) == rows_before
+    assert gateway.stream_calls == 0
+
+
+def test_the_refusal_record_is_bounded() -> None:
+    """Review round 1 (F13): the record of refused turns cannot grow with a
+    long session; the oldest is forgotten first."""
+    from tldw_chatbook.Chat import console_predispatch_block as blocks
+
+    first = "assistant-bounded-0"
+    blocks.note_predispatch_block(first)
+    for index in range(1, blocks.MAX_NOTED_BLOCKS + 1):
+        blocks.note_predispatch_block(f"assistant-bounded-{index}")
+
+    assert not blocks.is_predispatch_block(first)
+    assert blocks.is_predispatch_block(f"assistant-bounded-{blocks.MAX_NOTED_BLOCKS}")
+    assert len(blocks._NOTED) == blocks.MAX_NOTED_BLOCKS
+
+
+def test_the_store_carries_no_predispatch_side_table() -> None:
+    """Review round 1 (F8): the store is over its size budget; the record
+    lives beside the presentation, not in the store."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    store = ConsoleChatStore()
+    assert not hasattr(store, "_predispatch_blocks")
+    assert not hasattr(ConsoleChatStore, "note_predispatch_block")

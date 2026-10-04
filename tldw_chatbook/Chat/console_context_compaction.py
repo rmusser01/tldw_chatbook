@@ -3645,9 +3645,9 @@ class ConsoleCompactionPreflight:
             )
             if alert is None:
                 return self.read_global__flatten_preflight_messages()(semantic), None
-            self.read_controller_store().note_predispatch_block(
-                session_id, assistant_message_id
-            )
+            from tldw_chatbook.Chat.console_predispatch_block import note_predispatch_block
+
+            note_predispatch_block(assistant_message_id)
             return provider_messages, blocked(alert)
 
         requested_representation = resolved.policy.compaction_representation
