@@ -63,10 +63,6 @@ from ..Navigation.conversation_settings_navigation import (
     ConversationSettingsReturnOutcome,
     ProviderSettingsNavigationTarget,
 )
-from ..Navigation.vllm_handoff import (
-    VllmConsoleIntent,
-    owner_has_current_intent,
-)
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
 
@@ -353,10 +349,6 @@ from ...Chat.console_session_settings import (
     build_target_default_console_session_settings,
     unsaved_console_endpoint_warning,
     validate_console_session_settings,
-)
-from ...Chat.console_session_endpoint_policy import (
-    ConsoleEndpointRollbackOutcome,
-    ConsoleEphemeralEndpointPolicy,
 )
 from ...Chat.console_chat_store import (
     MAX_PENDING_ATTACHMENTS,
@@ -7918,283 +7910,6 @@ class ChatScreen(BaseAppScreen):
             (provider_config_key(provider), model_id),
             "",
         )
-
-    def consume_pending_vllm_console_intent(self) -> bool:
-        """Apply one current verified vLLM target to the active session only."""
-
-        return self._consume_verified_console_intent(
-            HandoffChannel.VLLM_CONSOLE,
-            VllmConsoleIntent,
-            "vllm",
-            "_vllm_connection_owner",
-            owner_has_current_intent,
-        )
-
-    def consume_pending_llamacpp_console_intent(self) -> bool:
-        """Apply one current verified llama.cpp target to this session only."""
-
-        from ..Navigation.llamacpp_handoff import (
-            LlamaCppConsoleIntent,
-            owner_has_current_intent as llama_owner_has_current_intent,
-        )
-
-        return self._consume_verified_console_intent(
-            HandoffChannel.LLAMACPP_CONSOLE,
-            LlamaCppConsoleIntent,
-            "llama_cpp",
-            "_llamacpp_connection_owner",
-            llama_owner_has_current_intent,
-        )
-
-    def _consume_verified_console_intent(
-        self, channel, intent_type, provider, owner_attribute, current_intent
-    ) -> bool:
-        """Reuse the exact session adoption and compensation transaction."""
-
-        provider_name = "vLLM" if provider == "vllm" else "llama.cpp"
-        store = getattr(self.app_instance, "pending_handoffs", None)
-        if type(store) is not PendingHandoffStore:
-            return False
-        if store.release_recovery(channel) is not None:
-            recovery_result = store.retry_release_recovery(
-                channel,
-                automatic=False,
-            )
-            if recovery_result != "released":
-                self.app_instance.notify(
-                    "verified provider session handoff cleanup is still pending. It will "
-                    "retry on the next Console activation.",
-                    severity="warning",
-                )
-                return False
-        claim = store.claim(channel)
-        if claim is None:
-            return False
-        session_store = None
-        session_id = None
-        current = None
-        next_settings = None
-        current_has_user_work = None
-        current_controller = None
-        current_provider_selection = None
-        current_summary_state = None
-        current_endpoint_policy = None
-        adoption_receipt = None
-        replacement_started = False
-        try:
-            intent = claim.value
-            if type(intent) is not intent_type:
-                raise TypeError(f"{provider_name} Console handoff was not exact")
-            owner = getattr(self.app_instance, owner_attribute, None)
-            if not current_intent(owner, intent):
-                raise ValueError(f"{provider_name} Console handoff is stale")
-            if not self.is_attached:
-                raise RuntimeError("Console is detached")
-            session_store = self._ensure_console_chat_store()
-            current = self._session._ensure_active_console_session_settings()
-            session_id = session_store.active_session_id
-            if session_id is None:
-                raise RuntimeError("Console active session is unavailable")
-            rebase_controller = self._console_chat_controller
-            if rebase_controller is None:
-                rebase_controller = self._ensure_console_chat_controller()
-            current_summary_state = self._build_console_settings_summary_state()
-            if (
-                not self.is_attached
-                or session_store.active_session_id != session_id
-                or not current_intent(owner, intent)
-            ):
-                raise RuntimeError("Console handoff changed before adoption")
-            # Controller initialization can synchronize live settings. Capture
-            # compensation only after that synchronization has completed.
-            current = session_store.session_settings(session_id)
-            if current is None:
-                raise RuntimeError("Console active session settings are unavailable")
-            active_session = session_store.ensure_session()
-            if active_session.id != session_id:
-                raise RuntimeError("Console active session changed before adoption")
-            current_has_user_work = active_session.has_user_work
-            current_endpoint_policy = session_store.session_ephemeral_endpoint_policy(
-                session_id
-            )
-            current_controller = self._console_chat_controller
-            current_provider_selection = self._build_console_provider_selection()
-            configured_provider = build_target_default_console_session_settings(
-                self._provider_readiness_app_config(),
-                provider,
-                intent.model_id,
-            )
-            draft = self._console_settings_initial_draft(
-                current,
-                session_store.session_context_policy_overrides(session_id),
-                exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
-            )
-            rebased = rebase_controller.rebase_console_settings_draft(
-                draft,
-                provider=provider,
-                model=intent.model_id,
-                app_config=self._provider_readiness_app_config(),
-                exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
-            )
-            next_settings = replace(
-                rebased.settings,
-                base_url=configured_provider.base_url,
-                source="user",
-            )
-            endpoint_policy = ConsoleEphemeralEndpointPolicy(
-                provider=provider,
-                model=intent.model_id,
-                base_url=intent.api_url,
-            )
-            errors = validate_console_session_settings(
-                endpoint_policy.effective_settings(next_settings),
-                app_config=self._provider_readiness_app_config(),
-            )
-            if errors:
-                raise ValueError(
-                    f"{provider_name} Console session settings are invalid"
-                )
-            adoption_receipt = session_store.adopt_session_ephemeral_endpoint(
-                session_id,
-                settings=next_settings,
-                policy=endpoint_policy,
-            )
-            replacement_started = True
-            self._sync_console_chat_core_state()
-            self._sync_console_settings_summary()
-            if (
-                not self.is_attached
-                or session_store.active_session_id != session_id
-                or not current_intent(owner, intent)
-                or not store.acknowledge_current(claim)
-            ):
-                raise RuntimeError(
-                    f"{provider_name} Console handoff changed during adoption"
-                )
-        except BaseException as error:
-            if (
-                replacement_started
-                and session_store is not None
-                and session_id is not None
-                and next_settings is not None
-                and current is not None
-                and current_has_user_work is not None
-            ):
-                try:
-                    outcome = (
-                        session_store.rollback_session_ephemeral_endpoint_adoption(
-                            session_id,
-                            expected_settings=next_settings,
-                            expected_policy=endpoint_policy,
-                            prior_settings=current,
-                            prior_policy=current_endpoint_policy,
-                            prior_has_user_work=current_has_user_work,
-                            receipt=adoption_receipt,
-                        )
-                    )
-                    if outcome is ConsoleEndpointRollbackOutcome.LOST_SESSION_FENCE:
-                        raise RuntimeError(
-                            f"{provider_name} Console rollback lost its session fence"
-                        )
-                    if (
-                        outcome is ConsoleEndpointRollbackOutcome.RESTORED
-                        and session_store.active_session_id == session_id
-                    ):
-                        try:
-                            self._sync_console_chat_core_state()
-                        except BaseException:
-                            if current_controller is None:
-                                if self._console_chat_controller is not None:
-                                    raise
-                            elif current_provider_selection is None:
-                                raise
-                            else:
-                                current_controller.update_provider_selection(
-                                    current_provider_selection
-                                )
-                        try:
-                            self._sync_console_settings_summary()
-                        except BaseException:
-                            if current_summary_state is None:
-                                raise
-                            self._apply_console_settings_summary_state(
-                                current_summary_state
-                            )
-                    elif (
-                        outcome
-                        is ConsoleEndpointRollbackOutcome.BLOCKED_DURABLE_RESTORE
-                        and session_store.active_session_id == session_id
-                    ):
-                        self.app_instance.notify(
-                            f"{provider_name} session endpoint blocked because the prior "
-                            "conversation metadata could not be restored. Retry "
-                            "the handoff or choose a provider before sending.",
-                            severity="error",
-                        )
-                        self._sync_console_chat_core_state()
-                        self._sync_console_settings_summary()
-                except BaseException as rollback_error:
-                    logger.warning(
-                        f"{provider_name} Console handoff rollback failed "
-                        "(revision={}, exception_category={})",
-                        claim.revision,
-                        type(rollback_error).__name__,
-                    )
-                    self.app_instance.notify(
-                        f"{provider_name} session handoff could not restore its exact prior "
-                        "state. Review the current provider before sending.",
-                        severity="error",
-                    )
-            release_failure = "false"
-            try:
-                released = store.release(claim) is True
-            except BaseException as release_error:
-                released = False
-                release_failure = "exception"
-                logger.warning(
-                    f"{provider_name} Console handoff claim release failed "
-                    "(revision={}, exception_category={})",
-                    claim.revision,
-                    type(release_error).__name__,
-                )
-            if not released:
-                try:
-                    store.retain_release_recovery(
-                        claim,
-                        failed_attempts=1,
-                        automatic_retry_limit=3,
-                        last_failure=release_failure,
-                    )
-                except BaseException as retention_error:
-                    logger.warning(
-                        f"{provider_name} Console handoff cleanup ownership transfer failed "
-                        "(revision={}, exception_category={})",
-                        claim.revision,
-                        type(retention_error).__name__,
-                    )
-                self.app_instance.notify(
-                    f"{provider_name} session handoff could not be re-queued yet. Console "
-                    "retained cleanup ownership and will retry before adoption.",
-                    severity="error",
-                )
-            if isinstance(
-                error,
-                (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit),
-            ):
-                raise
-            logger.warning(
-                f"{provider_name} Console handoff will retry "
-                "(channel={}, revision={}, exception_category={})",
-                claim.channel.value,
-                claim.revision,
-                type(error).__name__,
-            )
-            return False
-        self.app_instance.notify(
-            f"Using the verified {provider_name} target for this Console session only.",
-            severity="information",
-        )
-        return True
 
     def _active_console_settings_context_estimate(
         self,
@@ -16992,11 +16707,11 @@ class ChatScreen(BaseAppScreen):
             )
             self.set_timer(
                 self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                self.consume_pending_vllm_console_intent,
+                self._session.consume_pending_vllm_console_intent,
             )
             self.set_timer(
                 self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                self.consume_pending_llamacpp_console_intent,
+                self._session.consume_pending_llamacpp_console_intent,
             )
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
             # link (staged while Console was not mounted) and switch to the
@@ -24051,11 +23766,11 @@ class ChatScreen(BaseAppScreen):
                 ),
                 self.set_timer(
                     self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                    self.consume_pending_vllm_console_intent,
+                    self._session.consume_pending_vllm_console_intent,
                 ),
                 self.set_timer(
                     self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                    self.consume_pending_llamacpp_console_intent,
+                    self._session.consume_pending_llamacpp_console_intent,
                 ),
                 # PR3a-2 Task 4: mirrors the on_mount claim -- a completion
                 # staged while the user was on another screen is claimed on

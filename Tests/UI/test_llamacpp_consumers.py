@@ -268,7 +268,7 @@ async def test_llamacpp_console_adoption_failure_restores_session_and_requeues(
         monkeypatch.setattr(
             console, "_sync_console_chat_core_state", sync_after_adoption
         )
-        assert console.consume_pending_llamacpp_console_intent() is False
+        assert console._session.consume_pending_llamacpp_console_intent() is False
         assert len(entered) == 1
         assert (entered[0].provider, entered[0].model, entered[0].base_url) == (
             "llama_cpp",
@@ -407,9 +407,9 @@ async def test_verified_console_adoption_exact_authority_and_compensation(
                 lambda selected: claim if selected is channel else None,
             )
         consume = (
-            console.consume_pending_llamacpp_console_intent
+            console._session.consume_pending_llamacpp_console_intent
             if provider == "llama_cpp"
-            else console.consume_pending_vllm_console_intent
+            else console._session.consume_pending_vllm_console_intent
         )
         if outcome == "cancel":
             with pytest.raises(asyncio.CancelledError) as caught:
@@ -504,9 +504,9 @@ async def test_verified_console_adoption_rebases_a_dropped_sampler(request, prov
         config_before = get_cli_config_path().read_bytes()
         app.pending_handoffs.stage(channel, intent_type.from_target(target))
         consume = (
-            console.consume_pending_llamacpp_console_intent
+            console._session.consume_pending_llamacpp_console_intent
             if provider == "llama_cpp"
-            else console.consume_pending_vllm_console_intent
+            else console._session.consume_pending_vllm_console_intent
         )
         assert consume() is True
         effective = store.effective_session_settings(session_id)
@@ -562,9 +562,9 @@ async def test_verified_console_adoption_uses_canonical_target_defaults(
         config_before = get_cli_config_path().read_bytes()
         app.pending_handoffs.stage(channel, intent_type.from_target(target))
         consume = (
-            console.consume_pending_llamacpp_console_intent
+            console._session.consume_pending_llamacpp_console_intent
             if provider == "llama_cpp"
-            else console.consume_pending_vllm_console_intent
+            else console._session.consume_pending_vllm_console_intent
         )
         assert consume() is True
         settings = store.session_settings(session_id)
@@ -657,7 +657,7 @@ async def test_verified_console_adoption_captures_rollback_after_controller_sync
             console, "_sync_console_chat_core_state", fail_after_adoption
         )
         app.pending_handoffs.stage(channel, intent_type.from_target(target))
-        assert console.consume_pending_llamacpp_console_intent() is False
+        assert console._session.consume_pending_llamacpp_console_intent() is False
         assert ensured and ensured[0] is False
         assert missing_read == [False]
         assert len(entered) == 1 and entered[0].base_url == target.base_url

@@ -127,7 +127,9 @@ from .workspace import (
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
-    from tldw_chatbook.Widgets.Console.console_voice_preview import VoicePreviewProjection
+    from tldw_chatbook.Widgets.Console.console_voice_preview import (
+        VoicePreviewProjection,
+    )
     from ..Screens.chat_screen import ChatScreen
 
 __all__ = ["build_console_controllers"]
@@ -320,10 +322,7 @@ async def _resend_refused_console_echo(screen: Any, echo: Any) -> str | None:
 def _commit_captured_console_draft(screen: Any, session_id: str, stash: Any) -> None:
     """Commit and persist a custody handoff only in its owning session view."""
     composer = screen._console_composer_or_none()
-    if (
-        composer is not None
-        and screen._console_visible_draft_session_id == session_id
-    ):
+    if composer is not None and screen._console_visible_draft_session_id == session_id:
         composer.commit_captured_draft(stash)
         try:
             screen._ensure_console_chat_store().set_session_draft(
@@ -877,9 +876,9 @@ def build_console_controllers(
         ),
         library_rag_source_scope=rag_source_types_accessor,
         library_rag_top_k=rag_top_k_accessor,
-        pending_launch=lambda: screen._console_runtime().snapshot_console_staged_evidence()[
-            0
-        ],
+        pending_launch=lambda: (
+            screen._console_runtime().snapshot_console_staged_evidence()[0]
+        ),
         set_pending_launch=(
             lambda launch: screen._console_runtime().stage_console_staged_evidence(
                 launch
@@ -1183,6 +1182,7 @@ def build_console_controllers(
             lambda **kwargs: screen._render_character_avatar_into_section(**kwargs)
         ),
     )
+
     def _character_progress_counts() -> dict[str, int]:
         bridge = screen._ensure_console_agent_bridge()
         store = screen._console_chat_store
@@ -1258,34 +1258,38 @@ def build_console_controllers(
                 screen, key, database, name, is_current
             )
         ),
-        state_changed=lambda state: _sync_character_context_presentation(
-            screen, state
-        ),
+        state_changed=lambda state: _sync_character_context_presentation(screen, state),
         query_handoff_capability=ConsoleCharacterQueryHandoffCapability(
             available=screen.console_character_switcher_available()
         ),
         query_handoff=(
-            lambda handoff: screen.open_console_character_switcher_query(
-                handoff.query
-            )
+            lambda handoff: screen.open_console_character_switcher_query(handoff.query)
         ),
     )
 
     async def _seed_console_fleet_history(wake) -> None:
         import asyncio
+
         try:
             if await asyncio.to_thread(wake.seed_from_marks):
                 wake.retry_soon()
         except Exception as exc:
             from loguru import logger
-            logger.warning("console fleet history seed failed (exception_type={})", type(exc).__name__)
+
+            logger.warning(
+                "console fleet history seed failed (exception_type={})",
+                type(exc).__name__,
+            )
 
     def _schedule_console_fleet_history_seed() -> bool:
         from functools import partial
+
         wake = getattr(screen._console_chat_controller, "fleet_wake", None)
         store = screen._console_chat_store
-        if wake is not None and store is not None and any(
-            session.persisted_conversation_id for session in store.sessions()
+        if (
+            wake is not None
+            and store is not None
+            and any(session.persisted_conversation_id for session in store.sessions())
         ):
             screen.run_worker(
                 partial(_seed_console_fleet_history, wake),
@@ -1503,6 +1507,17 @@ def build_console_controllers(
         app_instance=screen.app_instance,
         chat_store_accessor=lambda: screen._ensure_console_chat_store(),
         current_chat_store_accessor=lambda: screen._console_chat_store,
+        current_chat_controller_accessor=lambda: screen._console_chat_controller,
+        build_current_provider_selection=lambda: (
+            screen._build_console_provider_selection()
+        ),
+        build_settings_summary=lambda: screen._build_console_settings_summary_state(),
+        apply_settings_summary=lambda state: (
+            screen._apply_console_settings_summary_state(state)
+        ),
+        settings_initial_draft=lambda settings, context_policy, **kwargs: (
+            screen._console_settings_initial_draft(settings, context_policy, **kwargs)
+        ),
         ensure_console_chat_controller=(
             lambda: screen._ensure_console_chat_controller()
         ),
@@ -2092,6 +2107,7 @@ def build_console_controllers(
         sync_console_system_prompt_surfaces=_sync_console_system_prompt_surfaces,
         sync_console_command_popup=lambda: screen._sync_console_command_popup(),
     )
+
     #: The agent runtime's screen-side cluster -- the lazily-built
     #: `ConsoleAgentBridge`, the Agent rail section's text derivation, the
     #: sub-agent drill-in cycle, the "View full log" target/probe/loader,
@@ -2114,6 +2130,7 @@ def build_console_controllers(
     #: this cluster.
     def _reveal_agent_detail() -> None:
         from ...Chat.console_rail_state import console_context_reveal_preferences
+
         columns = screen._console_rail_available_columns()
         changes = console_context_reveal_preferences(
             screen._current_console_rail_state(available_columns=columns), columns

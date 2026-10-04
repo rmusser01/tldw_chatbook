@@ -1479,7 +1479,7 @@ async def test_vllm_console_session_endpoint_never_enters_conversation_metadata(
             HandoffChannel.VLLM_CONSOLE,
             VllmConsoleIntent.from_target(target),
         )
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         immediate_record = app.chachanotes_db.get_conversation_by_id(conversation_id)
         assert immediate_record is not None
         immediate_metadata = str(immediate_record.get("metadata") or "")
@@ -1565,7 +1565,7 @@ async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint(
             HandoffChannel.VLLM_CONSOLE,
             VllmConsoleIntent.from_target(target),
         )
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         assert store.effective_session_settings(session_id).base_url == target.api_url
 
         conversation_id = store.persist_session_if_needed(session_id)
@@ -1620,7 +1620,7 @@ async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_de
             HandoffChannel.VLLM_CONSOLE,
             VllmConsoleIntent.from_target(target),
         )
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         message = store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
@@ -1670,7 +1670,7 @@ async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy
             HandoffChannel.VLLM_CONSOLE,
             VllmConsoleIntent.from_target(target),
         )
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         boundary = store.append_message(
             session.id,
             role=ConsoleMessageRole.USER,
@@ -1776,7 +1776,7 @@ async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
             VllmConsoleIntent.from_target(target),
         )
 
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         assert session_store.active_session_id == session_id
         assert session_store.session_settings(session_id) == before
         assert session.has_user_work is False
@@ -1793,7 +1793,7 @@ async def test_vllm_console_handoff_rolls_back_after_post_mutation_sync_failure(
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
         monkeypatch.setattr(console, "_sync_console_settings_summary", original_sync)
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
@@ -1854,7 +1854,7 @@ async def test_vllm_console_handoff_blocks_endpoint_when_durable_rollback_fails(
             VllmConsoleIntent.from_target(target),
         )
 
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         raw = session_store.session_settings(session_id)
         effective = session_store.effective_session_settings(session_id)
         assert raw is not None and effective is not None
@@ -1931,7 +1931,7 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
             VllmConsoleIntent.from_target(target),
         )
 
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         durable = app.chachanotes_db.get_conversation_by_id(conversation_id)
         assert durable is not None
         assert durable.get("metadata") == winner_metadata
@@ -2061,7 +2061,7 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
             VllmConsoleIntent.from_target(target),
         )
 
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         monkeypatch.setattr(console, failing_sync, original_sync)
         assert calls == 2
         assert failed_phases == ["forward", "rollback"]
@@ -2079,7 +2079,7 @@ async def test_vllm_console_handoff_restores_projections_when_rollback_sync_fail
         ) == controller_before
         assert summary_widget.state == summary_before
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
@@ -2108,7 +2108,7 @@ async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
         intent = VllmConsoleIntent.from_target(target)
         app.pending_handoffs.stage(HandoffChannel.VLLM_CONSOLE, intent)
         owner.invalidate("target_changed")
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         assert console._session._active_console_session_settings() == before
 
@@ -2121,10 +2121,10 @@ async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
         session_store.adopt_session_ephemeral_endpoint = lambda *_args, **_kwargs: (
             _ for _ in ()
         ).throw(RuntimeError("replace failed"))
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         session_store.adopt_session_ephemeral_endpoint = original_adopt
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
         rollback_settings = replace(
@@ -2147,7 +2147,7 @@ async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
             return receipt
 
         session_store.adopt_session_ephemeral_endpoint = replace_then_switch
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         assert session_store.session_settings(origin_id) == rollback_settings
         assert session_store.active_session_id != origin_id
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
@@ -2158,7 +2158,7 @@ async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
         HandoffChannel.VLLM_CONSOLE,
         VllmConsoleIntent.from_target(fresh_target),
     )
-    assert console.consume_pending_vllm_console_intent() is False
+    assert console._session.consume_pending_vllm_console_intent() is False
     assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
 
 
@@ -2206,7 +2206,7 @@ async def test_vllm_console_failed_release_survives_for_later_readoption(
             VllmConsoleIntent.from_target(target),
         )
 
-        assert console.consume_pending_vllm_console_intent() is False
+        assert console._session.consume_pending_vllm_console_intent() is False
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         recovery = app.pending_handoffs.release_recovery(HandoffChannel.VLLM_CONSOLE)
         assert recovery is not None
@@ -2219,7 +2219,7 @@ async def test_vllm_console_failed_release_survives_for_later_readoption(
             real_adopt,
         )
         monkeypatch.setattr(app.pending_handoffs, "release", real_release)
-        assert console.consume_pending_vllm_console_intent() is True
+        assert console._session.consume_pending_vllm_console_intent() is True
         assert (
             app.pending_handoffs.release_recovery(HandoffChannel.VLLM_CONSOLE) is None
         )
