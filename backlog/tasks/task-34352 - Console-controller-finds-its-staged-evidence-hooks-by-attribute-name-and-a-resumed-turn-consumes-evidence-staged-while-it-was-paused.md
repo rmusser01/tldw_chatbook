@@ -3,11 +3,11 @@ id: TASK-34352
 title: >-
   Console controller finds its staged-evidence hooks by attribute name, and a
   resumed turn consumes evidence staged while it was paused
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-03 18:37'
-updated_date: '2026-10-04 07:59'
+updated_date: '2026-10-04 12:16'
 labels:
   - console
   - rag
@@ -34,7 +34,7 @@ On dev `01a2020981` the only controller the app builds is ConsoleRuntime's, and 
 - [x] #2 A turn admitted with nothing staged that pauses and is resumed does not consume evidence staged while it was paused; that evidence stays staged for the next message
 - [x] #3 The controller receives its staged-evidence collaborators as explicit constructor dependencies; no `__self__` or private-name `getattr` lookup remains for them
 - [x] #4 A turn that holds a staged launch with no capture collaborator fails loudly when the lease is built, instead of silently sending without the evidence
-- [ ] #5 Existing staged-evidence, queue-custody and dispatch-recovery tests pass, compared against dev `01a2020981` for any suite that already fails locally
+- [x] #5 Existing staged-evidence, queue-custody and dispatch-recovery tests pass, compared against dev `01a2020981` for any suite that already fails locally
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -57,4 +57,6 @@ The real gap (AC2): a custodied turn admitted with nothing staged recorded stage
 AC3/AC4: the controller takes staged_evidence_snapshot and frozen_rag_capture as explicit constructor dependencies; no __self__ or private-name getattr remains for them. _PreparedEvidenceLease refuses at construction a staged launch with no capture collaborator (RuntimeError), instead of the old silent drop at capture time. The tests that wired a ConsoleRetrievalController owner by attribute name now pass it explicitly (_retrieval_evidence_owner / _wire_retrieval_evidence_owner in Tests/Chat/test_console_automatic_library_preparation.py; round1/round3/round4 import them).
 
 Tests: Tests/Chat/test_console_staged_evidence_dispatch_pin.py (2, runtime-owned controller via runtime.accept_turn, private profiles).
+
+Regression (2026-10-04): 64 suites (every touched file plus the staged-evidence / queue-custody / dispatch-recovery / compaction / trace-recovery suites) compared against a clean worktree at the PR's dev base df2ba424de: 1,253 failures shared. Every difference was classified by isolated reruns. In test_console_automatic_library_preparation.py all 16 branch-only entries behave identically on both sides run one per process (10 hang on both, 6 fail on both under the local RecoveryRequired trap). With that trap bypassed by the sanctioned bootstrap profile, all 13 evidence / staged / lease / recovery tests in the file pass on both sides. Four other differences (two speculative-voice timing tests, one live-work handoff, one session-settings test) pass 3/3 individually on both sides, apart from one voice-test flake on each. Net: no branch-only regressions.
 <!-- SECTION:NOTES:END -->

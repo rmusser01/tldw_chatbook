@@ -3,11 +3,11 @@ id: TASK-34350
 title: >-
   Console: a send over the context budget should prompt to compact,
   auto-compact, or alert, instead of dead-ending
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-03 18:37'
-updated_date: '2026-10-04 09:26'
+updated_date: '2026-10-04 12:16'
 labels:
   - console
   - context-compaction
@@ -82,4 +82,6 @@ Qodo round (PR #3003):
 - Not changed: an uncompacted over-ceiling send is windowed by the real preparation, as compaction Off is; this is pinned by a test.
 - ADR-097 UI-ready census kept flat by importing the copy module lazily.
 Tests added: hook context refused before commit (real RunHooksEngine, mutation-checked); late hold after hooks resumes without repeats (window measured with the real probe); Automatic-meanwhile; abandoned resume; over-ceiling windowing.
+
+Regression (2026-10-04): 64 suites (every touched file plus the staged-evidence / queue-custody / dispatch-recovery / compaction / trace-recovery suites) compared against a clean worktree at the PR's dev base df2ba424de: 1,253 failures shared. Every difference was classified by isolated reruns. In test_console_automatic_library_preparation.py all 16 branch-only entries behave identically on both sides run one per process (10 hang on both, 6 fail on both under the local RecoveryRequired trap). With that trap bypassed by the sanctioned bootstrap profile, all 13 evidence / staged / lease / recovery tests in the file pass on both sides. Four other differences (two speculative-voice timing tests, one live-work handoff, one session-settings test) pass 3/3 individually on both sides, apart from one voice-test flake on each. Net: no branch-only regressions.
 <!-- SECTION:NOTES:END -->
