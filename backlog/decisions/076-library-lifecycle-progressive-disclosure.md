@@ -1,6 +1,6 @@
 # ADR-076: Library Lifecycle Progressive Disclosure
 
-Status: Accepted
+Status: Accepted (amended 2026-10-03: the setup owner is ADR-217's, with several surfaces — TASK-34100.17)
 Date: 2026-08-20
 Related Tasks: TASK-19022
 Supersedes: N/A
@@ -91,6 +91,21 @@ than adding a lifecycle framework or tutorial data model.
   user may intentionally return to Starter.
 - Source-specific empty-state improvements ship in later atomic tasks rather
   than through one shared compositor.
+
+## Amendment 2026-10-03 (TASK-34100.17): more setup surfaces, one owner
+
+Source: the [first-run setup shape spec](../../Docs/superpowers/specs/2026-10-03-first-run-setup-shape-design.md), approved by the owner on
+2026-10-03, [ADR-217](217-first-run-setup-shape-and-surfaces.md) and
+[TASK-34100.17](../tasks/task-34100.17%20-%20Owner-approved-design-spec-for-the-setup-flow-Quick-track-tldw-server-re-run-dashboard-Say-hello.md).
+
+- **One owner.** "The existing application first-run wizard remains the only
+  startup/setup owner" now means the setup owner of ADR-217. That owner presents a
+  first-run corridor, a re-run dashboard, single-step sheets and a plain-text CLI,
+  all on one setup core. None of them is a second onboarding wizard.
+- **Library unchanged.** Library still reads only the startup admission fact, and
+  never writes or reinterprets setup completion. The documents-first exit lands on
+  Library Import through the existing exit route, and Library's starter lifecycle is
+  unchanged.
 
 ## Links
 
