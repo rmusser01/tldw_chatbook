@@ -167,10 +167,12 @@ Master password (leave empty if you forgot it):
   Security ▸ Encryption). In that window, opening another profile from
   Backup & Restore says it needs a terminal instead of ending the session.
 
-A saved key that is still encrypted is never treated as a usable key: if a
-key cannot be decrypted, its provider shows as not set up rather than ready
-("Saved API key is still encrypted"), even a local provider that needs no
-key. Re-enter or clear the key in Settings ▸ Providers & Models.
+A saved key that is still encrypted is never treated as a usable key. If a
+key cannot be decrypted, its provider shows as not ready, never ready. A
+provider that needs a key reads as missing its key ("API key missing", and
+"API key source: missing" in Providers & Models). A local provider that
+needs no key still says why: "Saved API key is still encrypted". Either
+way, re-enter or clear the key in Settings ▸ Providers & Models.
 
 ## Running it again
 
