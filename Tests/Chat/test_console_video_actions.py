@@ -66,13 +66,13 @@ def _video_action_screen(tmp_path, *, container="mp4"):
         extension=container,
     )
     resolve_calls = []
-    real_resolve = video_store.resolve
+    real_resolve = video_store.resolve_state
 
     def _resolve(message_id, slug, **kwargs):
         resolve_calls.append((message_id, slug, kwargs.get("extension")))
         return real_resolve(message_id, slug, **kwargs)
 
-    video_store.resolve = _resolve
+    video_store.resolve_state = _resolve
 
     screen = ChatScreen.__new__(ChatScreen)
     notifications = []
@@ -87,7 +87,7 @@ def _video_action_screen(tmp_path, *, container="mp4"):
     # reads `self._fleet._console_wake_user_priority` (TASK-21381) and
     # `self._library_activity.build_provider` (TASK-23144) unguarded. The
     # `build_console_controllers` call below replaces both with the real
-    # thing; it runs too late for the store assignment.
+    # owners and initializes Session before the store attachment.
     stub_fleet_controller(screen, context="video actions bare screen")
     stub_library_activity_controller(screen, context="video actions bare screen")
     build_console_controllers(
