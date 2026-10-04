@@ -31034,5 +31034,934 @@
       "Earlier DB163/combined345 passes retain their actual457-pin b0b9d5a7 anchor and source map. Database/migration/recovery schema sources are unchanged; new config/startup/Console integration is independently checked. Earlier reader2 admission and broaderMROred, native and W003xfail receipts also retain original anchors; no relabelled historical commands.",
       "Owner-reported broader Console-session-settings/config-admission failure sets were not replayed here; no blanket Library/Architecture/Settings green claim. No new full-suite, full Library/Architecture A-B, installed-wheel build, native Auth/sign-in, live-key/live-server or external-credential verification. All3 tasks remain In Progress pending fresh exact-head clean/resolved Qodo and all5 hosted gates including both UI shards, then fresh Done-metadata-head checks/review before protected normal merge; auto off."
     ]
+  },
+  "oct04_chat_settings_phase6_latest_dev_integration": {
+    "anchor_head": "8e54a7063428f631f0f9f67394396b6830e5984f",
+    "base": "df2ba424de63576d36d9c3e38387c84285303f1c",
+    "previous_published_head": "640a8abcfbe9c4c825433ef777cae767464e8c4d",
+    "source_pin_count": 533,
+    "source_map_reconstruction": {
+      "base_key": "oct04_encryption_startup_latest_dev_integration",
+      "base_pin_count": 482,
+      "overrides": {
+        "Tests/Chat/test_console_session_settings.py": "7df95063b91cc426fe31edcff59df05b07829a6d76deec71ee354fe57d87e880",
+        "Tests/UI/test_console_native_chat_flow.py": "dc7fb3a3b2b29a32c2c89ec0b65b333d4f439be1b33689563ebd328809e0ff7d",
+        "Tests/UI/test_console_session_settings.py": "df9bb8d1c01332399dc75791071d017b510666ab30d1d0fdc220a281b6b9167e",
+        "Tests/UI/test_settings_configuration_hub.py": "e69bcc9e060c08b4cc9b392597ff7ce8944ceabe64f6fd04e0c3b88e8c151a01",
+        "scripts/check_ui_pr_gate_census.py": "c6ace7e159635ce2f38924c574793d9c89eda0b09d43f64348d7597e38513ffa",
+        "scripts/ui_pr_gate_census.txt": "0ec7a90250501893d89429e984eef1ab8c4b83f7d5040a75a085a2b89d14d88b",
+        "tldw_chatbook/Chat/console_provider_support.py": "243265850e1e1fe32da993c4c98cec2444d37f2c0119e3eee84701a5af881230",
+        "tldw_chatbook/Chat/console_session_settings.py": "8b6f65f6154150925f4b50dca9953c572dcfb0825d4c66d3ce6052ebaf43be9c",
+        "tldw_chatbook/UI/Console_Modules/model_switcher.py": "1a0c7af8a1396becd4f0e17c3d50851b67953da8c18e5cdc86bde62878e40e71",
+        "tldw_chatbook/UI/Screens/chat_screen.py": "431aabb095d9079bd42958460de9565293b266ad89e53965356ac9602379cd99",
+        "tldw_chatbook/UI/Screens/settings_screen.py": "a1d0d673d76d0024f26878ab48dd458656f06d0327c1fb7168cf0910377180cb",
+        "tldw_chatbook/Widgets/Console/console_model_popover.py": "f8bc0ebed599138e2370d002d86cbb5ab99e02ee77ff9aa1ef61bd0c745e297b",
+        "tldw_chatbook/Widgets/Console/console_settings_modal.py": "2a6b6972a83dd9c584fc4c65ec64cfdcd95cbacf4e3049ff522fffb1eca02fe7",
+        "tldw_chatbook/Widgets/Console/console_settings_summary.py": "bccf00eeada1233eb3847fae777f030fd21f71c3253018776887897618b1e79a",
+        "tldw_chatbook/Widgets/Console/console_settings_unsaved.py": "52a0837dd9de052f736fce5806e1d8d81fceea676643d15f78d3a48ff09aca14",
+        "tldw_chatbook/app.py": "6f8f10d4c0ec2f1ce583c6ac040e34d10b47553f79df9ee5aa2a4c1123be612e",
+        "tldw_chatbook/css/components/_agentic_terminal.tcss": "7fa610d66298aba896bdce1b03e8b4cf3788014a952cb5b8a2f4aea5bfc8c691",
+        "tldw_chatbook/css/core/_variables.tcss": "593b6d18c2243c8ce5b55ba224b29666630a7e1e291abdcfe4fcdd5169d2b7b0",
+        "tldw_chatbook/css/features/_console_panels.tcss": "ee2aa48954beacfeae422b1f16dd9ef53b2cca800d1fce8c45d6c11c547c5f7c",
+        "tldw_chatbook/css/screen_modal_console_delete_receipt.tcss": "bc547b49f9bc2e1464c30d89ac48426921cc7d8c52468216600f38c4b3ceb289",
+        "tldw_chatbook/css/tldw_cli_modular.tcss": "b392643c2a19f57955e00d950859949329d9c5e7b29658ecf56dc7a2e4c2885a",
+        "tldw_chatbook/css/widget_defaults_self.tcss": "69ca6e5ae60475dea5461b75436d27f1637d43875f8ed923c35646d95921982e"
+      },
+      "additions": {
+        "Tests/Architecture/test_chat_settings_name.py": "38d1efa0add74924aac4dfbf69abcb6bd21da78004d7a66af8bccc2833df0c23",
+        "Tests/Architecture/test_module_size_ratchet.py": "610350b8eda4c1e51874659503b32ee252f021b8ffaf42eebdd8040c0a9da65e",
+        "Tests/ChaChaNotesDB/test_chachanotes_db.py": "06a633ae7c7ac9893827691a1304915b97b20e05d24876b34e296fc9ba2c8d60",
+        "Tests/Chat/test_console_chat_fork.py": "53ff47c466ea7680d83f6b42efb387af3fbe634eb0f910b26eabcce6a8315d7d",
+        "Tests/Chat/test_console_provider_gateway.py": "8d24a4e7f65004549c176574048626859cb2f616c74a4831233fc338c3194f96",
+        "Tests/Chat/test_custom_openai_execution_keys_constant.py": "29c09fa9975fa58b241aa2f89119462243992a6ab989974ad73251aacc10f564",
+        "Tests/Packaging/test_conversation_settings_boot_closure.py": "f539866edbc60d4009e221d7dd8888d3715f0c413329fbe3002aa715104db185",
+        "Tests/Performance/boot_budget_snapshots/boot_css_bytes.json": "ad1592d290f0b49587319fda809699af02afde5ab70df2e074c7933827784917",
+        "Tests/State/test_conversation_settings_navigation.py": "8db108183ff9ac7f11a256f443d87f7697784053b4e0a5e8f0a8e22ce21b7dd3",
+        "Tests/State/test_pending_handoff_store.py": "b585dbffcd1aabf7f61f98711857b7b37c620dde70f8d400d7d39ccfac9c9c95",
+        "Tests/State/test_screen_state_store.py": "e8c3a1aebdf1bfc95d08f4f1e2dbadbf97e094941716a09feec8394adcb46259",
+        "Tests/UI/modal_wide_tier_registry.py": "75029c1e0e5069e55eb6e211dac39926bc4aded681124c6b46f64eb8db1b96e0",
+        "Tests/UI/test_console_context_controls.py": "2eff255bc79d13502371be078f2505e110371465a6b8e4e61a04aa965b365d87",
+        "Tests/UI/test_console_context_window_modal.py": "ded70a793c4d72c7a9b3e5f5d12728ec6be888a331680264fc3b824ed5b74267",
+        "Tests/UI/test_console_endpoint_discovery.py": "edc7372463a3fa7a2c93efe82182fa2379da6f322efdeec3caf4167cf7b7b7f4",
+        "Tests/UI/test_console_internals_decomposition.py": "1ce60f2f39fbf60b236e3dc478b4d6f82d29232967a4a68ef35b64b48be08054",
+        "Tests/UI/test_console_local_server_probe_isolation.py": "b16b5ed6252a6ff9ba88e93dd04351415ae819040138a82c0c367cddf59c1540",
+        "Tests/UI/test_console_modal_dismissal.py": "5418edf8203ae17bc8ee97c6059c9b768b41992ea1c4f02c213a846a60492267",
+        "Tests/UI/test_console_popover_context_window.py": "85734d79ef040fcd7d9251fbc0c3263dfe7055f4970c9b218c0768817ef2e2dd",
+        "Tests/UI/test_console_resize_reflow.py": "ddbf9075fc5eea2aa19b7a855400d231428501597ed4958fd29d214551e9650d",
+        "Tests/UI/test_console_saved_defaults_flow.py": "078ac87d7c9bc76f3f5a9798aa97d0c73d537b42737678630a53403c31a6eb2d",
+        "Tests/UI/test_console_settings_core_first.py": "de5804b8e2408e4521df16553a31fc069e9783268cb3fbe21fa257650bbef330",
+        "Tests/UI/test_console_settings_disclosures.py": "c5e095b67520a35d8702f7a2626fdece99c91c1ef2f5adc65b1e4dffad49749a",
+        "Tests/UI/test_console_settings_geometry.py": "bd8295f9ad7ec462a568c409dcab8309bf0a2b17ac317e4e3b4be7198687f318",
+        "Tests/UI/test_console_settings_hidden_fields.py": "cddfea9842a3eb7151b95867f1749418d312004ef6fd951ff1018d7cebcbb992",
+        "Tests/UI/test_console_settings_model_change.py": "3225fc37d0ed664f3b3dfa35253699f8180086f60bc68dd374b81e935c385ab5",
+        "Tests/UI/test_console_settings_retention.py": "451c060b5be861821877b565e529a71cb828850ad7ff841faf1d887017628562",
+        "Tests/UI/test_console_settings_saved_defaults.py": "8d00a1f1184a26ab91a58ff72b134d69a8d690eec3a0b3eb18aba5ed08eb0035",
+        "Tests/UI/test_console_settings_unsaved_guard.py": "79f3606511477136769fb409a3758cf8c9dc8c67cc93646c033baf2aeed485ce",
+        "Tests/UI/test_console_subscription_readiness.py": "2967e1f841aaa26903b3f78172765429a65bddf51c5077aeb7625fcd6f00d3cd",
+        "Tests/UI/test_console_switch_model_entry_points.py": "641b2f4537e6c518daa819e88e7f55d8100b2445ffd78a566e8f07f075596f39",
+        "Tests/UI/test_css_parse_cache_modal_probe.py": "2b176891ef11681ec190728c0e8897033aeae37c5c404ba8e93b7717912133d5",
+        "Tests/UI/test_focus_keeps_committed_value.py": "b0a9a88a3bdc1456967cf24025d5a7287a2429efcace66a2ef416de5e27aef26",
+        "Tests/UI/test_model_config_field_labels.py": "9ecff1f4bfdd9ca53955fe8d2cf417313a5530623a2c93c2ed6e0f5fcd633571",
+        "Tests/UI/test_scoped_collapsible_select_rules.py": "07d2b8898db33b8f1a10392bd6e5a9f12a8d586ac8edff1c70f3766a91fe5038",
+        "tldw_chatbook/Chat/console_chat_fork.py": "c117a1c27468dc1e3ad22b52e280e4de4159e41534ae5fdd3d4ea4e44a2b4dd5",
+        "tldw_chatbook/Chat/console_compaction_failure.py": "2cdc6585bff3187e44ede6578acb843c2ccb9092a39f01f52461c619762ee69c",
+        "tldw_chatbook/Chat/console_persona_assignment.py": "4feeafbd8965a833f51a9dd1e78389ff037350f819d39b84810b1ec605406d70",
+        "tldw_chatbook/Chat/console_provider_endpoints.py": "5ec180791ea0224a791c6aa24b8f548768c2c53aac74eb09bce56e10eb27b22c",
+        "tldw_chatbook/Chat/console_settings_apply.py": "8903623ae2db6cf38fa7a0fb56c9b2244d3e6f7bce460c5b454d92ef989c411a",
+        "tldw_chatbook/UI/Navigation/conversation_settings_navigation.py": "8af9944cb4eccf9109b416fb883dbcf522dcd4f64bfee5ccaf378c03f601c48a",
+        "tldw_chatbook/UI/Navigation/pending_handoff_store.py": "54b523796cca487aca9e6af69026771cf6212e25a7360b16574a32a1d59b5f4e",
+        "tldw_chatbook/Widgets/Console/console_endpoint_template_modal.py": "1e61cf7975dcdc552fdd0826c74fd9cd2660ba681fbbe905f601de9fc8825a52",
+        "tldw_chatbook/Widgets/Console/console_settings_field_row.py": "07cde2c33ee04d3c1076edfa57e407ca39684812a9022e0ae3c6dec406644e20",
+        "tldw_chatbook/Widgets/Console/console_settings_saved_defaults.py": "548c39f9429d79a9def9c21b47bdda9b967e2511bfeff16bdbe97d200ee4a150",
+        "tldw_chatbook/css/screen_agentic_library.tcss": "629aca0e2e1a1af30d81d0b2212c74e5dbd31d0ace1d1957a50641335308038f",
+        "tldw_chatbook/css/screen_agentic_settings.tcss": "3ec8828978d8f2a3eaef714e4c0fa671f6bdb897d00bed1c02aa622e96c4febd",
+        "tldw_chatbook/css/screen_feature_evals.tcss": "c76f0febcdddc24d6ea70ba126c572cd7b6d96c26baf963a771ac899fa6ded5b",
+        "tldw_chatbook/css/screen_feature_scheduling.tcss": "24f5949c9c8a75ce40eab0e05c7ff6bb8014fd7b5d599625be0f899fdedc8e7a",
+        "tldw_chatbook/css/screen_feature_watchlists.tcss": "22be32bfcb876746bf663fff8b47cf35d5d4f3e6781d81e5653094583057da92",
+        "tldw_chatbook/css/screen_feature_workflows.tcss": "81fb9803bcf86e3f02c7609c31cc3f57401ca1702b54ca1f726a3af75b962465"
+      },
+      "final_pin_count": 533
+    },
+    "rebase": {
+      "old_head": "5b02073f48d4fe1096870c345cd90ae9e998903f",
+      "previous_published_head": "640a8abcfbe9c4c825433ef777cae767464e8c4d",
+      "old_base": "057e62eaec5343ffce9445cfb32881e756dd7634",
+      "new_head": "8e54a7063428f631f0f9f67394396b6830e5984f",
+      "new_base": "df2ba424de63576d36d9c3e38387c84285303f1c",
+      "source_pin_count": 533,
+      "changed_source_pins": {
+        "Tests/Chat/test_console_session_settings.py": {
+          "old": "966febe5d24aefa8c3d5d25ab78824f043475f3f3a17d4c26a3d9cb09e9ea368",
+          "new": "7df95063b91cc426fe31edcff59df05b07829a6d76deec71ee354fe57d87e880"
+        },
+        "Tests/UI/test_console_native_chat_flow.py": {
+          "old": "a0c857eafb1e83def7cd3d0d68b8415d1e0d1b54805d5f33bb02bd6dee7ece57",
+          "new": "dc7fb3a3b2b29a32c2c89ec0b65b333d4f439be1b33689563ebd328809e0ff7d"
+        },
+        "Tests/UI/test_console_session_settings.py": {
+          "old": "2e4a256e619427151cf0a5181ce932a1a5ca584baac3287c281bb409543dec92",
+          "new": "df9bb8d1c01332399dc75791071d017b510666ab30d1d0fdc220a281b6b9167e"
+        },
+        "Tests/UI/test_settings_configuration_hub.py": {
+          "old": "fef775e605e6c730441b627bfca9419b60b1731d7939764b33f13cb31c6051b6",
+          "new": "e69bcc9e060c08b4cc9b392597ff7ce8944ceabe64f6fd04e0c3b88e8c151a01"
+        },
+        "scripts/check_ui_pr_gate_census.py": {
+          "old": "5d265e06215cbba939ae3257ba0d43cc43bec1529fb361c83323b51659b8962a",
+          "new": "c6ace7e159635ce2f38924c574793d9c89eda0b09d43f64348d7597e38513ffa"
+        },
+        "scripts/ui_pr_gate_census.txt": {
+          "old": "544dded13bb723e699ad46a270b3fd5fe852f7f86ca3d2b3a41bc0d3f420be72",
+          "new": "0ec7a90250501893d89429e984eef1ab8c4b83f7d5040a75a085a2b89d14d88b"
+        },
+        "tldw_chatbook/Chat/console_provider_support.py": {
+          "old": "79559afc82f952d4e07d14d86d7cd5b5f9177d30b6643d3f160634f1b32fc2fe",
+          "new": "243265850e1e1fe32da993c4c98cec2444d37f2c0119e3eee84701a5af881230"
+        },
+        "tldw_chatbook/Chat/console_session_settings.py": {
+          "old": "71b9f14bc8645471def8433cefae5f8d911f8067bdbf08840c46d7d93d5157cf",
+          "new": "8b6f65f6154150925f4b50dca9953c572dcfb0825d4c66d3ce6052ebaf43be9c"
+        },
+        "tldw_chatbook/UI/Console_Modules/model_switcher.py": {
+          "old": "72047b8f9b31bb5e6c8bd9fec9841e4a19bf84ed573d19f5325b596b6437c27f",
+          "new": "1a0c7af8a1396becd4f0e17c3d50851b67953da8c18e5cdc86bde62878e40e71"
+        },
+        "tldw_chatbook/UI/Screens/chat_screen.py": {
+          "old": "4098eb6663e719b395e10c9382e2c0cc89c8ea12842e1788834a8e7da4195596",
+          "new": "431aabb095d9079bd42958460de9565293b266ad89e53965356ac9602379cd99"
+        },
+        "tldw_chatbook/UI/Screens/settings_screen.py": {
+          "old": "053ef07c5e080f8e2462cdb8adaa53001b37ede431e3b7c3cbccc180530e466c",
+          "new": "a1d0d673d76d0024f26878ab48dd458656f06d0327c1fb7168cf0910377180cb"
+        },
+        "tldw_chatbook/Widgets/Console/console_model_popover.py": {
+          "old": "1e15900dc0aa855af8b13302280a21d180e110334b449bb60f1c670950ce3176",
+          "new": "f8bc0ebed599138e2370d002d86cbb5ab99e02ee77ff9aa1ef61bd0c745e297b"
+        },
+        "tldw_chatbook/Widgets/Console/console_settings_modal.py": {
+          "old": "f62a11c61b14b6772b63d9c2c53b36bf2fa6cb5553c2ee1aa2c2071aae5585c2",
+          "new": "2a6b6972a83dd9c584fc4c65ec64cfdcd95cbacf4e3049ff522fffb1eca02fe7"
+        },
+        "tldw_chatbook/Widgets/Console/console_settings_summary.py": {
+          "old": "fe5fa1d84edb6c4f939dd162bc9b88e86a4accc740b119bdec296435e75e4850",
+          "new": "bccf00eeada1233eb3847fae777f030fd21f71c3253018776887897618b1e79a"
+        },
+        "tldw_chatbook/Widgets/Console/console_settings_unsaved.py": {
+          "old": "3320bf25daeea0fe726658c4824e90a8a173e252a39cf3d10da0f28472dfdb1b",
+          "new": "52a0837dd9de052f736fce5806e1d8d81fceea676643d15f78d3a48ff09aca14"
+        },
+        "tldw_chatbook/app.py": {
+          "old": "46272efc04201512022c3598a7c2e7b5ddbdf6c1b87a71e65dbd604126ebba3b",
+          "new": "6f8f10d4c0ec2f1ce583c6ac040e34d10b47553f79df9ee5aa2a4c1123be612e"
+        },
+        "tldw_chatbook/css/components/_agentic_terminal.tcss": {
+          "old": "0efa660ce5b8d6dec8306d352373c4308ef657487bba74f0b7fe1f366a3402d3",
+          "new": "7fa610d66298aba896bdce1b03e8b4cf3788014a952cb5b8a2f4aea5bfc8c691"
+        },
+        "tldw_chatbook/css/core/_variables.tcss": {
+          "old": "a28132137a6ff8d6c247e64b340f1b96c2d3106db58c6c6d20f7d31cca817287",
+          "new": "593b6d18c2243c8ce5b55ba224b29666630a7e1e291abdcfe4fcdd5169d2b7b0"
+        },
+        "tldw_chatbook/css/features/_console_panels.tcss": {
+          "old": "c824a618faea2184f9e446d25cc752a874d9a66cb049e26f468cd90bbd33d266",
+          "new": "ee2aa48954beacfeae422b1f16dd9ef53b2cca800d1fce8c45d6c11c547c5f7c"
+        },
+        "tldw_chatbook/css/screen_modal_console_delete_receipt.tcss": {
+          "old": "4e7e12934154eccff5377801827b0268361088c35ae5d78e77126c75aad2df21",
+          "new": "bc547b49f9bc2e1464c30d89ac48426921cc7d8c52468216600f38c4b3ceb289"
+        },
+        "tldw_chatbook/css/tldw_cli_modular.tcss": {
+          "old": "c303af3d00c1166f746b1d10d73867f1083577dee6c1c081c1fb2ae1553d6051",
+          "new": "b392643c2a19f57955e00d950859949329d9c5e7b29658ecf56dc7a2e4c2885a"
+        },
+        "tldw_chatbook/css/widget_defaults_self.tcss": {
+          "old": "824c7e1e38543059aa36443303b8d8d772e178a1107321f43f3c8aaf55519456",
+          "new": "69ca6e5ae60475dea5461b75436d27f1637d43875f8ed923c35646d95921982e"
+        }
+      },
+      "added_source_pins": {
+        "Tests/Architecture/test_chat_settings_name.py": "38d1efa0add74924aac4dfbf69abcb6bd21da78004d7a66af8bccc2833df0c23",
+        "Tests/Architecture/test_module_size_ratchet.py": "610350b8eda4c1e51874659503b32ee252f021b8ffaf42eebdd8040c0a9da65e",
+        "Tests/ChaChaNotesDB/test_chachanotes_db.py": "06a633ae7c7ac9893827691a1304915b97b20e05d24876b34e296fc9ba2c8d60",
+        "Tests/Chat/test_console_chat_fork.py": "53ff47c466ea7680d83f6b42efb387af3fbe634eb0f910b26eabcce6a8315d7d",
+        "Tests/Chat/test_console_provider_gateway.py": "8d24a4e7f65004549c176574048626859cb2f616c74a4831233fc338c3194f96",
+        "Tests/Chat/test_custom_openai_execution_keys_constant.py": "29c09fa9975fa58b241aa2f89119462243992a6ab989974ad73251aacc10f564",
+        "Tests/Packaging/test_conversation_settings_boot_closure.py": "f539866edbc60d4009e221d7dd8888d3715f0c413329fbe3002aa715104db185",
+        "Tests/Performance/boot_budget_snapshots/boot_css_bytes.json": "ad1592d290f0b49587319fda809699af02afde5ab70df2e074c7933827784917",
+        "Tests/State/test_conversation_settings_navigation.py": "8db108183ff9ac7f11a256f443d87f7697784053b4e0a5e8f0a8e22ce21b7dd3",
+        "Tests/State/test_pending_handoff_store.py": "b585dbffcd1aabf7f61f98711857b7b37c620dde70f8d400d7d39ccfac9c9c95",
+        "Tests/State/test_screen_state_store.py": "e8c3a1aebdf1bfc95d08f4f1e2dbadbf97e094941716a09feec8394adcb46259",
+        "Tests/UI/modal_wide_tier_registry.py": "75029c1e0e5069e55eb6e211dac39926bc4aded681124c6b46f64eb8db1b96e0",
+        "Tests/UI/test_console_context_controls.py": "2eff255bc79d13502371be078f2505e110371465a6b8e4e61a04aa965b365d87",
+        "Tests/UI/test_console_context_window_modal.py": "ded70a793c4d72c7a9b3e5f5d12728ec6be888a331680264fc3b824ed5b74267",
+        "Tests/UI/test_console_endpoint_discovery.py": "edc7372463a3fa7a2c93efe82182fa2379da6f322efdeec3caf4167cf7b7b7f4",
+        "Tests/UI/test_console_internals_decomposition.py": "1ce60f2f39fbf60b236e3dc478b4d6f82d29232967a4a68ef35b64b48be08054",
+        "Tests/UI/test_console_local_server_probe_isolation.py": "b16b5ed6252a6ff9ba88e93dd04351415ae819040138a82c0c367cddf59c1540",
+        "Tests/UI/test_console_modal_dismissal.py": "5418edf8203ae17bc8ee97c6059c9b768b41992ea1c4f02c213a846a60492267",
+        "Tests/UI/test_console_popover_context_window.py": "85734d79ef040fcd7d9251fbc0c3263dfe7055f4970c9b218c0768817ef2e2dd",
+        "Tests/UI/test_console_resize_reflow.py": "ddbf9075fc5eea2aa19b7a855400d231428501597ed4958fd29d214551e9650d",
+        "Tests/UI/test_console_saved_defaults_flow.py": "078ac87d7c9bc76f3f5a9798aa97d0c73d537b42737678630a53403c31a6eb2d",
+        "Tests/UI/test_console_settings_core_first.py": "de5804b8e2408e4521df16553a31fc069e9783268cb3fbe21fa257650bbef330",
+        "Tests/UI/test_console_settings_disclosures.py": "c5e095b67520a35d8702f7a2626fdece99c91c1ef2f5adc65b1e4dffad49749a",
+        "Tests/UI/test_console_settings_geometry.py": "bd8295f9ad7ec462a568c409dcab8309bf0a2b17ac317e4e3b4be7198687f318",
+        "Tests/UI/test_console_settings_hidden_fields.py": "cddfea9842a3eb7151b95867f1749418d312004ef6fd951ff1018d7cebcbb992",
+        "Tests/UI/test_console_settings_model_change.py": "3225fc37d0ed664f3b3dfa35253699f8180086f60bc68dd374b81e935c385ab5",
+        "Tests/UI/test_console_settings_retention.py": "451c060b5be861821877b565e529a71cb828850ad7ff841faf1d887017628562",
+        "Tests/UI/test_console_settings_saved_defaults.py": "8d00a1f1184a26ab91a58ff72b134d69a8d690eec3a0b3eb18aba5ed08eb0035",
+        "Tests/UI/test_console_settings_unsaved_guard.py": "79f3606511477136769fb409a3758cf8c9dc8c67cc93646c033baf2aeed485ce",
+        "Tests/UI/test_console_subscription_readiness.py": "2967e1f841aaa26903b3f78172765429a65bddf51c5077aeb7625fcd6f00d3cd",
+        "Tests/UI/test_console_switch_model_entry_points.py": "641b2f4537e6c518daa819e88e7f55d8100b2445ffd78a566e8f07f075596f39",
+        "Tests/UI/test_css_parse_cache_modal_probe.py": "2b176891ef11681ec190728c0e8897033aeae37c5c404ba8e93b7717912133d5",
+        "Tests/UI/test_focus_keeps_committed_value.py": "b0a9a88a3bdc1456967cf24025d5a7287a2429efcace66a2ef416de5e27aef26",
+        "Tests/UI/test_model_config_field_labels.py": "9ecff1f4bfdd9ca53955fe8d2cf417313a5530623a2c93c2ed6e0f5fcd633571",
+        "Tests/UI/test_scoped_collapsible_select_rules.py": "07d2b8898db33b8f1a10392bd6e5a9f12a8d586ac8edff1c70f3766a91fe5038",
+        "tldw_chatbook/Chat/console_chat_fork.py": "c117a1c27468dc1e3ad22b52e280e4de4159e41534ae5fdd3d4ea4e44a2b4dd5",
+        "tldw_chatbook/Chat/console_compaction_failure.py": "2cdc6585bff3187e44ede6578acb843c2ccb9092a39f01f52461c619762ee69c",
+        "tldw_chatbook/Chat/console_persona_assignment.py": "4feeafbd8965a833f51a9dd1e78389ff037350f819d39b84810b1ec605406d70",
+        "tldw_chatbook/Chat/console_provider_endpoints.py": "5ec180791ea0224a791c6aa24b8f548768c2c53aac74eb09bce56e10eb27b22c",
+        "tldw_chatbook/Chat/console_settings_apply.py": "8903623ae2db6cf38fa7a0fb56c9b2244d3e6f7bce460c5b454d92ef989c411a",
+        "tldw_chatbook/UI/Navigation/conversation_settings_navigation.py": "8af9944cb4eccf9109b416fb883dbcf522dcd4f64bfee5ccaf378c03f601c48a",
+        "tldw_chatbook/UI/Navigation/pending_handoff_store.py": "54b523796cca487aca9e6af69026771cf6212e25a7360b16574a32a1d59b5f4e",
+        "tldw_chatbook/Widgets/Console/console_endpoint_template_modal.py": "1e61cf7975dcdc552fdd0826c74fd9cd2660ba681fbbe905f601de9fc8825a52",
+        "tldw_chatbook/Widgets/Console/console_settings_field_row.py": "07cde2c33ee04d3c1076edfa57e407ca39684812a9022e0ae3c6dec406644e20",
+        "tldw_chatbook/Widgets/Console/console_settings_saved_defaults.py": "548c39f9429d79a9def9c21b47bdda9b967e2511bfeff16bdbe97d200ee4a150",
+        "tldw_chatbook/css/screen_agentic_library.tcss": "629aca0e2e1a1af30d81d0b2212c74e5dbd31d0ace1d1957a50641335308038f",
+        "tldw_chatbook/css/screen_agentic_settings.tcss": "3ec8828978d8f2a3eaef714e4c0fa671f6bdb897d00bed1c02aa622e96c4febd",
+        "tldw_chatbook/css/screen_feature_evals.tcss": "c76f0febcdddc24d6ea70ba126c572cd7b6d96c26baf963a771ac899fa6ded5b",
+        "tldw_chatbook/css/screen_feature_scheduling.tcss": "24f5949c9c8a75ce40eab0e05c7ff6bb8014fd7b5d599625be0f899fdedc8e7a",
+        "tldw_chatbook/css/screen_feature_watchlists.tcss": "22be32bfcb876746bf663fff8b47cf35d5d4f3e6781d81e5653094583057da92",
+        "tldw_chatbook/css/screen_feature_workflows.tcss": "81fb9803bcf86e3f02c7609c31cc3f57401ca1702b54ca1f726a3af75b962465"
+      },
+      "unchanged_owned_byte_paths": [
+        "Docs/User_Guide/console/agent-runs-and-tools.md",
+        "Docs/User_Guide/console/sessions-tabs-workspaces.md",
+        "Docs/superpowers/plans/2026-10-01-console-tool-ux-followups.md",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/baseline-governance.json",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/css-formatting-proof.json",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/lint-delta.json",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/native/235x52-inspect-True-fast-deny-pending.svg",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/native/235x52-inspect-True-fast-deny-pending.txt",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/native/80x24-inspect-False-approve-once-pending.svg",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/native/80x24-inspect-False-approve-once-pending.txt",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/native/80x24-inspect-True-deny-all-decision.svg",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/native/80x24-inspect-True-deny-all-decision.txt",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/native/isolation.json",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/native/process-exit.txt",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/native/result.json",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/native_check.py",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/README.md",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/isolation.json",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-235x52-approval-closed.txt",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-235x52-approval-confirm.svg",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-235x52-approval-confirm.txt",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-235x52-question-closed.txt",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-235x52-question-confirm.svg",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-235x52-question-confirm.txt",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x18-all-consequences-long-title-scrolled.png",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x18-all-consequences-long-title-scrolled.svg",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x18-all-consequences-long-title-scrolled.txt",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x18-all-consequences-long-title-top.png",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x18-all-consequences-long-title-top.svg",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x18-all-consequences-long-title-top.txt",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x24-all-consequences-long-title.png",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x24-all-consequences-long-title.svg",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x24-all-consequences-long-title.txt",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x24-approval-closed.txt",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x24-approval-confirm.png",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x24-approval-confirm.svg",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x24-approval-confirm.txt",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x24-question-closed.txt",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x24-question-confirm.svg",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/dark-80x24-question-confirm.txt",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native/result.json",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native_check.py",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/terminal-process.json",
+        "Tests/Chat/test_console_ask_user_round.py",
+        "Tests/Chat/test_console_chat_create_confirm.py",
+        "Tests/Chat/test_console_chat_create_integration.py",
+        "Tests/Chat/test_console_local_review_hook.py",
+        "Tests/Chat/test_console_runtime_shutdown.py",
+        "Tests/Packaging/test_console_interaction_import_closure.py",
+        "Tests/Performance/test_console_keystroke_work_census.py",
+        "Tests/Performance/test_ui_ready_module_census.py",
+        "Tests/UI/test_chat_approval_card.py",
+        "Tests/UI/test_console_approval_compact_layout.py",
+        "Tests/UI/test_console_button_routing.py",
+        "Tests/UI/test_console_pending_interrupt_projection.py",
+        "Tests/UI/test_console_session_close_impact.py",
+        "Tests/UI/test_console_session_tab_close.py",
+        "Tests/UI/test_console_turn_resend_ui.py",
+        "Tests/Utils/test_mcp_native_qa_args.py",
+        "Tests/Widgets/test_confirmation_dialog_literal_text.py",
+        "tldw_chatbook/Chat/console_chat_controller.py",
+        "tldw_chatbook/Chat/console_chat_models.py",
+        "tldw_chatbook/Chat/console_display_state.py",
+        "tldw_chatbook/Chat/console_interrupt_rounds.py",
+        "tldw_chatbook/Chat/console_message_actions.py",
+        "tldw_chatbook/Chat/console_runtime.py",
+        "tldw_chatbook/Chat/console_turn_resend.py",
+        "tldw_chatbook/UI/Console_Modules/message.py",
+        "tldw_chatbook/UI/Console_Modules/session.py",
+        "tldw_chatbook/UI/Console_Modules/wiring.py",
+        "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
+        "tldw_chatbook/Widgets/Console/console_transcript.py",
+        "tldw_chatbook/Widgets/cancel_confirmation_dialog.py",
+        "tldw_chatbook/Widgets/confirmation_dialog.py",
+        "tldw_chatbook/css/components/_dialogs.tcss"
+      ],
+      "python_reverse_feature_patch_recovers_exact_dev": [
+        "Tests/Chat/test_console_session_settings.py",
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "backlog/docs/lessons-testing-evidence.md"
+      ],
+      "CSS_semantic_composition_exact": true,
+      "metadata_patches_raw_exact": 12,
+      "all_incoming_non_composed_paths_exact_dev": true,
+      "diagnostic_inventory_regenerated_from_actual_combined_sources": true,
+      "diagnostic_inventory_following_commit": false,
+      "authoritative_migration_sql_files": 73,
+      "UI_census": {
+        "entries": 135,
+        "floor": 133,
+        "all_prior_and_incoming_entries_retained": true
+      },
+      "owner_budget_snapshot_and_ratchets_exact_dev": true,
+      "token_delta": "Only unused wide-max token removed; no existing token value changed",
+      "ADR_path": "existing Console ADR095/031/033/097/150/161/195/212",
+      "limits": "Owner Phase6 deferred riders and historical red receipts retained; fresh targeted checks pending. No new full-suite, native/Auth, full Library/Architecture, key/server claims."
+    },
+    "fresh_checks": {
+      "p6-owner": {
+        "label": "p6-owner",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-owner-hyyrymri/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-owner-hyyrymri/pytest.xml",
+          "Tests/UI/test_console_settings_core_first.py",
+          "Tests/UI/test_console_settings_hidden_fields.py",
+          "Tests/UI/test_console_settings_disclosures.py",
+          "Tests/UI/test_console_settings_model_change.py",
+          "Tests/UI/test_console_settings_saved_defaults.py",
+          "Tests/UI/test_console_saved_defaults_flow.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 286.98,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-owner-hyyrymri",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 136,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "p6-contracts": {
+        "label": "p6-contracts",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-contracts-i81lxvhm/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-contracts-i81lxvhm/pytest.xml",
+          "Tests/Chat/test_console_session_settings.py::test_shared_evidence_adds_no_provider_config_reads",
+          "Tests/Chat/test_console_session_settings.py::test_new_chats_resolve_the_chat_defaults_pair",
+          "Tests/Chat/test_console_session_settings.py::test_readiness_blocks_unsaved_generic_endpoint_with_safe_details",
+          "Tests/Chat/test_console_session_settings.py::test_settings_modal_min_p_for_anthropic_is_neither_sent_nor_saved",
+          "Tests/Chat/test_console_session_settings.py::test_summary_names_the_provider_for_a_blank_required_sampler",
+          "Tests/Chat/test_console_chat_fork.py::test_fork_configuration_accepts_a_sampler_the_provider_drops",
+          "Tests/Chat/test_console_provider_gateway.py::test_resolve_for_send_blocks_generic_base_url_override_that_differs_from_config",
+          "Tests/Chat/test_console_provider_gateway.py::test_resolve_for_send_preserves_explicit_cloud_url_without_configured_endpoint",
+          "Tests/Chat/test_console_provider_gateway.py::test_resolve_for_send_blocks_malformed_generic_base_url_without_crashing",
+          "Tests/State/test_conversation_settings_navigation.py",
+          "Tests/ChaChaNotesDB/test_chachanotes_db.py::TestConversationsAndMessages::test_update_conversation_takes_the_write_lock_before_reading_the_version"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 7.28,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-contracts-i81lxvhm",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 40,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "p6-models": {
+        "label": "p6-models",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-models-dp31qdbc/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-models-dp31qdbc/pytest.xml",
+          "Tests/Chat/test_console_chat_models.py",
+          "Tests/Chat/test_console_interrupt_rounds.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 7.41,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-models-dp31qdbc",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 48,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "p6-ui": {
+        "label": "p6-ui",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-ui-jtdsl57a/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-ui-jtdsl57a/pytest.xml",
+          "Tests/UI/test_chat_approval_card.py",
+          "Tests/UI/test_console_pending_interrupt_projection.py",
+          "Tests/UI/test_console_approval_compact_layout.py",
+          "Tests/UI/test_console_session_tab_close.py",
+          "Tests/UI/test_console_session_close_impact.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 291.37,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-ui-jtdsl57a",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 53,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "p6-library": {
+        "label": "p6-library",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-library-oklprc7g/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-library-oklprc7g/pytest.xml",
+          "Tests/UI/test_library_conversation_reader_freshness.py",
+          "Tests/UI/test_library_reader_console_delete_refresh.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 67.3,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-library-oklprc7g",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 12,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "p6-startup": {
+        "label": "p6-startup",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-startup-ca_dt7c7/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-startup-ca_dt7c7/pytest.xml",
+          "Tests/Performance/test_app_import_weight.py",
+          "Tests/Performance/test_ui_ready_module_census.py",
+          "Tests/Performance/test_boot_worker_census.py",
+          "Tests/Performance/test_textual_css_fastpath.py",
+          "Tests/Performance/test_boot_css_byte_budget.py",
+          "Tests/Performance/test_screen_preimport_payload_budget.py",
+          "Tests/Packaging/test_conversation_settings_boot_closure.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 91.7,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-startup-ca_dt7c7",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 23,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "p6-latency": {
+        "label": "p6-latency",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-latency-69fp7eoi/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-latency-69fp7eoi/pytest.xml",
+          "Tests/Performance/test_ui_latency_guardrails.py",
+          "Tests/Utils/test_ui_responsiveness_stall_persist.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 67.11,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-latency-69fp7eoi",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 13,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "p6-CI": {
+        "label": "p6-CI",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-CI-2gxjpnme/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-CI-2gxjpnme/pytest.xml",
+          "Tests/CI/test_ci_queue_pressure_contract.py",
+          "Tests/CI/test_derived_artifacts_workflow.py"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 2.49,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-CI-2gxjpnme",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [],
+        "junit": {
+          "tests": 34,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "p6-governance": {
+        "label": "p6-governance",
+        "command": [
+          "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/.venv/bin/python",
+          "-m",
+          "pytest",
+          "-p",
+          "pytest_asyncio.plugin",
+          "-p",
+          "pytest_timeout",
+          "-p",
+          "no:cacheprovider",
+          "-q",
+          "--timeout=180",
+          "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0/pytest",
+          "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0/pytest.xml",
+          "Tests/UI/test_design_token_governance.py",
+          "Tests/UI/test_component_pattern_governance.py",
+          "Tests/Architecture/test_chat_settings_name.py",
+          "Tests/Architecture/test_module_size_ratchet.py::test_module_does_not_grow_past_its_budget[tldw_chatbook/Widgets/Console/console_settings_modal.py]",
+          "Tests/Architecture/test_module_size_ratchet.py::test_budget_is_not_left_slack[tldw_chatbook/Widgets/Console/console_settings_modal.py]"
+        ],
+        "exit_code": 1,
+        "elapsed_seconds": 126.92,
+        "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0",
+        "sources_stable": true,
+        "plugin": "",
+        "failures": [
+          {
+            "report": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0/pytest.xml",
+            "message": "Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0/pytest/test_dimension_literal_ratchet0/private-profile-process/pytest.log\n--- child failure: AssertionError: Raw numeric dimension literals remain (ADR-161 spec 3.10: the floor is hard zero; raw values are legal only in token definitions, which live in core/_variables.tcss):\n    components/_agentic_terminal.tcss: 1\n    components/_settings_splash_theme.tcss: 2\n    features/_workflows.tcss: 11\nassert not ['components/_agentic_terminal.tcss: 1', 'components/_settings_splash_theme.tcss: 2', 'features/_workflows.tcss: 11']\nrequest = <FixtureRequest for <Coroutine test_dimension_literal_ratchet>>\n\n    @private_profile_test\n    def test_dimension_literal_ratchet(request) -> None:\n        \"\"\"The dimension floor is a HARD ZERO (ADR-161 task 11 close-out).\n    \n        Every baseline entry reached zero during the task-11 migration, so the\n        baseline-pinned allowance ratchet was replaced by a flat ban: no\n        hand-written sheet outside the tokens file may carry a raw numeric\n        padding/margin/width/height declaration. ``core/_variables.tcss`` alone\n        is exempt -- mirroring the hex ratchet's tokens-file exemption in\n        ``test_design_token_governance.py``.\n        \"\"\"\n        offenders: list[str] = []\n        for sheet, css in _sheet_sources().items():\n            if sheet == TOKENS_SHEET:\n                continue\n            count = len(_DIM.findall(css))\n            if count:\n                offenders.append(f\"{sheet}: {count}\")\n>       assert not offenders, (\n            \"Raw numeric dimension literals remain (ADR-161 spec 3.10: the \"\n            \"floor is hard zero; raw values are legal only in token \"\n            \"definitions, which live in core/_variables.tcss):\\n  \" + \"\\n  \".join(offenders)\n        )\nE       AssertionError: Raw numeric dimension literals remain (ADR-161 spec 3.10: the floor is hard zero; raw values are legal only in token definitions, which live in core/_variables.tcss):\nE           components/_agentic_terminal.tcss: 1\nE           components/_settings_splash_theme.tcss: 2\nE           features/_workflows.tcss: 11\nE       assert not ['components/_agentic_terminal.tcss: 1', 'components/_settings_splash_theme.tcss: 2', 'features/_workflows.tcss: 11']\n\nTests/UI/test_component_pattern_governance.py:283: AssertionError\n--- child log tail ---\nF                                                                        [100%]\n=================================== FAILURES ===================================\n________________________ test_dimension_literal_ratchet ________________________\n\nrequest = <FixtureRequest for <Coroutine test_dimension_literal_ratchet>>\n\n    @private_profile_test\n    def test_dimension_literal_ratchet(request) -> None:\n        \"\"\"The dimension floor is a HARD ZERO (ADR-161 task 11 close-out).\n    \n        Every baseline entry reached zero during the task-11 migration, so the\n        baseline-pinned allowance ratchet was replaced by a flat ban: no\n        hand-written sheet outside the tokens file may carry a raw numeric\n        padding/margin/width/height declaration. ``core/_variables.tcss`` alone\n        is exempt -- mirroring the hex ratchet's tokens-file exemption in\n        ``test_design_token_governance.py``.\n        \"\"\"\n        offenders: list[str] = []\n        for sheet, css in _sheet_sources().items():\n            if sheet == TOKENS_SHEET:\n                continue\n            count = len(_DIM.findall(css))\n            if count:\n                offenders.append(f\"{sheet}: {count}\")\n>       assert not offenders, (\n            \"Raw numeric dimension literals remain (ADR-161 spec 3.10: the \"\n            \"floor is hard zero; raw values are legal only in token \"\n            \"definitions, which live in core/_variables.tcss):\\n  \" + \"\\n  \".join(offenders)\n        )\nE       AssertionError: Raw numeric dimension literals remain (ADR-161 spec 3.10: the floor is hard zero; raw values are legal only in token definitions, which live in core/_variables.tcss):\nE           components/_agentic_terminal.tcss: 1\nE           components/_settings_splash_theme.tcss: 2\nE           features/_workflows.tcss: 11\nE       assert not ['components/_agentic_terminal.tcss: 1', 'components/_settings_splash_theme.tcss: 2', 'features/_workflows.tcss: 11']\n\nTests/UI/test_component_pattern_governance.py:283: AssertionError\n---------------------------- Captured stderr setup -----------------------------\n2026-10-04 02:20:37.522 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-04 02:20:37.565 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio\n2026-10-04 02:20:37.607 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available\n2026-10-04 02:20:37.608 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection\n2026-10-04 02:20:37.747 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.\n2026-10-04 02:20:38.045 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets\n- generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0/pytest/test_dimension_literal_ratchet0/private-profile-process/pytest.xml -\n============================= slowest 25 durations =============================\n1.01s setup    Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet\n\n(2 durations < 1s hidden.)\n=========================== short test summary info ============================\nFAILED Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet\n1 failed in 1.20s",
+            "text": "():\nE                       if sheet == TOKENS_SHEET:\nE                           continue\nE                       count = len(_DIM.findall(css))\nE                       if count:\nE                           offenders.append(f\"{sheet}: {count}\")\nE           >       assert not offenders, (\nE                       \"Raw numeric dimension literals remain (ADR-161 spec 3.10: the \"\nE                       \"floor is hard zero; raw values are legal only in token \"\nE                       \"definitions, which live in core/_variables.tcss):\\n  \" + \"\\n  \".join(offenders)\nE                   )\nE           E       AssertionError: Raw numeric dimension literals remain (ADR-161 spec 3.10: the floor is hard zero; raw values are legal only in token definitions, which live in core/_variables.tcss):\nE           E           components/_agentic_terminal.tcss: 1\nE           E           components/_settings_splash_theme.tcss: 2\nE           E           features/_workflows.tcss: 11\nE           E       assert not ['components/_agentic_terminal.tcss: 1', 'components/_settings_splash_theme.tcss: 2', 'features/_workflows.tcss: 11']\nE           \nE           Tests/UI/test_component_pattern_governance.py:283: AssertionError\nE           ---------------------------- Captured stderr setup -----------------------------\nE           2026-10-04 02:20:37.522 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\nE           2026-10-04 02:20:37.565 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio\nE           2026-10-04 02:20:37.607 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available\nE           2026-10-04 02:20:37.608 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection\nE           2026-10-04 02:20:37.747 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.\nE           2026-10-04 02:20:38.045 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets\nE           - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0/pytest/test_dimension_literal_ratchet0/private-profile-process/pytest.xml -\nE           ============================= slowest 25 durations =============================\nE           1.01s setup    Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet\nE           \nE           (2 durations < 1s hidden.)\nE           =========================== short test summary info ============================\nE           FAILED Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet\nE           1 failed in 1.20s\n\nTests/private_profile.py:158: Failed"
+          },
+          {
+            "report": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0/pytest.xml",
+            "message": "Failed: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0/pytest/test_python_style_ratchet0/private-profile-process/pytest.log\n--- child failure: AssertionError: Ad-hoc Python visual writes remain (ADR-161 spec 3.10, HARD ZERO). Compose token-backed classes. Only nonliteral runtime geometry/user previews with an adjacent '# ds-runtime: <specific reason>' and None resets are exempt:\n    Widgets/Library/library_skill_work_pane.py:170: assignment width (static)\nassert not ['Widgets/Library/library_skill_work_pane.py:170: assignment width (static)']\nrequest = <FixtureRequest for <Coroutine test_python_style_ratchet>>\n\n    @private_profile_test\n    def test_python_style_ratchet(request) -> None:\n        \"\"\"No token-covered static or unmarked Python visual writes remain.\"\"\"\n        offenders: list[str] = []\n        for path in sorted(PKG.rglob(\"*.py\")):\n            relative = path.relative_to(PKG)\n            for write in inventory_styles(path.read_text(encoding=\"utf-8\")):\n                if write.violation:\n                    offenders.append(\n                        f\"{relative}:{write.line}: {write.form} {write.property} \"\n                        f\"({write.value_kind})\"\n                    )\n>       assert not offenders, (\n            \"Ad-hoc Python visual writes remain (ADR-161 spec 3.10, HARD ZERO). \"\n            \"Compose token-backed classes. Only nonliteral runtime geometry/user \"\n            \"previews with an adjacent '# ds-runtime: <specific reason>' and \"\n            \"None resets are exempt:\\n  \" + \"\\n  \".join(offenders)\n        )\nE       AssertionError: Ad-hoc Python visual writes remain (ADR-161 spec 3.10, HARD ZERO). Compose token-backed classes. Only nonliteral runtime geometry/user previews with an adjacent '# ds-runtime: <specific reason>' and None resets are exempt:\nE           Widgets/Library/library_skill_work_pane.py:170: assignment width (static)\nE       assert not ['Widgets/Library/library_skill_work_pane.py:170: assignment width (static)']\n\nTests/UI/test_component_pattern_governance.py:302: AssertionError\n--- child log tail ---\nF                                                                        [100%]\n=================================== FAILURES ===================================\n__________________________ test_python_style_ratchet ___________________________\n\nrequest = <FixtureRequest for <Coroutine test_python_style_ratchet>>\n\n    @private_profile_test\n    def test_python_style_ratchet(request) -> None:\n        \"\"\"No token-covered static or unmarked Python visual writes remain.\"\"\"\n        offenders: list[str] = []\n        for path in sorted(PKG.rglob(\"*.py\")):\n            relative = path.relative_to(PKG)\n            for write in inventory_styles(path.read_text(encoding=\"utf-8\")):\n                if write.violation:\n                    offenders.append(\n                        f\"{relative}:{write.line}: {write.form} {write.property} \"\n                        f\"({write.value_kind})\"\n                    )\n>       assert not offenders, (\n            \"Ad-hoc Python visual writes remain (ADR-161 spec 3.10, HARD ZERO). \"\n            \"Compose token-backed classes. Only nonliteral runtime geometry/user \"\n            \"previews with an adjacent '# ds-runtime: <specific reason>' and \"\n            \"None resets are exempt:\\n  \" + \"\\n  \".join(offenders)\n        )\nE       AssertionError: Ad-hoc Python visual writes remain (ADR-161 spec 3.10, HARD ZERO). Compose token-backed classes. Only nonliteral runtime geometry/user previews with an adjacent '# ds-runtime: <specific reason>' and None resets are exempt:\nE           Widgets/Library/library_skill_work_pane.py:170: assignment width (static)\nE       assert not ['Widgets/Library/library_skill_work_pane.py:170: assignment width (static)']\n\nTests/UI/test_component_pattern_governance.py:302: AssertionError\n---------------------------- Captured stderr setup -----------------------------\n2026-10-04 02:20:40.094 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\n2026-10-04 02:20:40.168 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio\n2026-10-04 02:20:40.221 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available\n2026-10-04 02:20:40.237 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection\n2026-10-04 02:20:40.398 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.\n2026-10-04 02:20:40.727 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets\n=============================== warnings summary ===============================\nTests/UI/test_component_pattern_governance.py::test_python_style_ratchet\n  <unknown>:31: SyntaxWarning: invalid escape sequence '\\ '\n\nTests/UI/test_component_pattern_governance.py::test_python_style_ratchet\n  <unknown>:32: SyntaxWarning: invalid escape sequence '\\ '\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n- generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0/pytest/test_python_style_ratchet0/private-profile-process/pytest.xml -\n============================= slowest 25 durations =============================\n20.22s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet\n1.15s setup    Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet\n\n(1 durations < 1s hidden.)\n=========================== short test summary info ============================\nFAILED Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet\n1 failed, 2 warnings in 21.64s",
+            "text": "join(offenders)\nE                   )\nE           E       AssertionError: Ad-hoc Python visual writes remain (ADR-161 spec 3.10, HARD ZERO). Compose token-backed classes. Only nonliteral runtime geometry/user previews with an adjacent '# ds-runtime: <specific reason>' and None resets are exempt:\nE           E           Widgets/Library/library_skill_work_pane.py:170: assignment width (static)\nE           E       assert not ['Widgets/Library/library_skill_work_pane.py:170: assignment width (static)']\nE           \nE           Tests/UI/test_component_pattern_governance.py:302: AssertionError\nE           ---------------------------- Captured stderr setup -----------------------------\nE           2026-10-04 02:20:40.094 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.\nE           2026-10-04 02:20:40.168 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio\nE           2026-10-04 02:20:40.221 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available\nE           2026-10-04 02:20:40.237 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection\nE           2026-10-04 02:20:40.398 | WARNING  | tldw_chatbook.Prompt_Management.Prompts_Interop:<module>:53 - python-frontmatter not installed. Markdown import will not be available.\nE           2026-10-04 02:20:40.727 | INFO     | tldw_chatbook.Evals.task_loader:<module>:36 - HuggingFace evaluation datasets are unavailable. Install with: pip install datasets\nE           =============================== warnings summary ===============================\nE           Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet\nE             <unknown>:31: SyntaxWarning: invalid escape sequence '\\ '\nE           \nE           Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet\nE             <unknown>:32: SyntaxWarning: invalid escape sequence '\\ '\nE           \nE           -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\nE           - generated xml file: /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0/pytest/test_python_style_ratchet0/private-profile-process/pytest.xml -\nE           ============================= slowest 25 durations =============================\nE           20.22s call     Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet\nE           1.15s setup    Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet\nE           \nE           (1 durations < 1s hidden.)\nE           =========================== short test summary info ============================\nE           FAILED Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet\nE           1 failed, 2 warnings in 21.64s\n\nTests/private_profile.py:158: Failed"
+          },
+          {
+            "report": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0/pytest/test_dimension_literal_ratchet0/private-profile-process/pytest.xml",
+            "message": "AssertionError: Raw numeric dimension literals remain (ADR-161 spec 3.10: the floor is hard zero; raw values are legal only in token definitions, which live in core/_variables.tcss):\n    components/_agentic_terminal.tcss: 1\n    components/_settings_splash_theme.tcss: 2\n    features/_workflows.tcss: 11\nassert not ['components/_agentic_terminal.tcss: 1', 'components/_settings_splash_theme.tcss: 2', 'features/_workflows.tcss: 11']",
+            "text": "request = <FixtureRequest for <Coroutine test_dimension_literal_ratchet>>\n\n    @private_profile_test\n    def test_dimension_literal_ratchet(request) -> None:\n        \"\"\"The dimension floor is a HARD ZERO (ADR-161 task 11 close-out).\n    \n        Every baseline entry reached zero during the task-11 migration, so the\n        baseline-pinned allowance ratchet was replaced by a flat ban: no\n        hand-written sheet outside the tokens file may carry a raw numeric\n        padding/margin/width/height declaration. ``core/_variables.tcss`` alone\n        is exempt -- mirroring the hex ratchet's tokens-file exemption in\n        ``test_design_token_governance.py``.\n        \"\"\"\n        offenders: list[str] = []\n        for sheet, css in _sheet_sources().items():\n            if sheet == TOKENS_SHEET:\n                continue\n            count = len(_DIM.findall(css))\n            if count:\n                offenders.append(f\"{sheet}: {count}\")\n>       assert not offenders, (\n            \"Raw numeric dimension literals remain (ADR-161 spec 3.10: the \"\n            \"floor is hard zero; raw values are legal only in token \"\n            \"definitions, which live in core/_variables.tcss):\\n  \" + \"\\n  \".join(offenders)\n        )\nE       AssertionError: Raw numeric dimension literals remain (ADR-161 spec 3.10: the floor is hard zero; raw values are legal only in token definitions, which live in core/_variables.tcss):\nE           components/_agentic_terminal.tcss: 1\nE           components/_settings_splash_theme.tcss: 2\nE           features/_workflows.tcss: 11\nE       assert not ['components/_agentic_terminal.tcss: 1', 'components/_settings_splash_theme.tcss: 2', 'features/_workflows.tcss: 11']\n\nTests/UI/test_component_pattern_governance.py:283: AssertionError"
+          },
+          {
+            "report": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-p6-governance-d6hhcwm0/pytest/test_python_style_ratchet0/private-profile-process/pytest.xml",
+            "message": "AssertionError: Ad-hoc Python visual writes remain (ADR-161 spec 3.10, HARD ZERO). Compose token-backed classes. Only nonliteral runtime geometry/user previews with an adjacent '# ds-runtime: <specific reason>' and None resets are exempt:\n    Widgets/Library/library_skill_work_pane.py:170: assignment width (static)\nassert not ['Widgets/Library/library_skill_work_pane.py:170: assignment width (static)']",
+            "text": "request = <FixtureRequest for <Coroutine test_python_style_ratchet>>\n\n    @private_profile_test\n    def test_python_style_ratchet(request) -> None:\n        \"\"\"No token-covered static or unmarked Python visual writes remain.\"\"\"\n        offenders: list[str] = []\n        for path in sorted(PKG.rglob(\"*.py\")):\n            relative = path.relative_to(PKG)\n            for write in inventory_styles(path.read_text(encoding=\"utf-8\")):\n                if write.violation:\n                    offenders.append(\n                        f\"{relative}:{write.line}: {write.form} {write.property} \"\n                        f\"({write.value_kind})\"\n                    )\n>       assert not offenders, (\n            \"Ad-hoc Python visual writes remain (ADR-161 spec 3.10, HARD ZERO). \"\n            \"Compose token-backed classes. Only nonliteral runtime geometry/user \"\n            \"previews with an adjacent '# ds-runtime: <specific reason>' and \"\n            \"None resets are exempt:\\n  \" + \"\\n  \".join(offenders)\n        )\nE       AssertionError: Ad-hoc Python visual writes remain (ADR-161 spec 3.10, HARD ZERO). Compose token-backed classes. Only nonliteral runtime geometry/user previews with an adjacent '# ds-runtime: <specific reason>' and None resets are exempt:\nE           Widgets/Library/library_skill_work_pane.py:170: assignment width (static)\nE       assert not ['Widgets/Library/library_skill_work_pane.py:170: assignment width (static)']\n\nTests/UI/test_component_pattern_governance.py:302: AssertionError"
+          }
+        ],
+        "junit": {
+          "tests": 30,
+          "failures": 2,
+          "errors": 0,
+          "skipped": 0
+        }
+      }
+    },
+    "fresh_targeted_passed": 387,
+    "fresh_targeted_collected": 389,
+    "fresh_targeted_failures": 2,
+    "actual_dev_baseline": {
+      "verified_base": "df2ba424de63576d36d9c3e38387c84285303f1c",
+      "baseline_full_tree_exact_git_archive": true,
+      "application_module_origin_verified": true,
+      "normal_guards_preserved": true,
+      "failures_same_as_head": true,
+      "head_offenders": [
+        "Widgets/Library/library_skill_work_pane.py:170: assignment width (static)",
+        "Widgets/Library/library_skill_work_pane.py:170: assignment width (static)']",
+        "components/_agentic_terminal.tcss: 1",
+        "components/_settings_splash_theme.tcss: 2",
+        "features/_workflows.tcss: 11"
+      ],
+      "baseline_offenders": [
+        "Widgets/Library/library_skill_work_pane.py:170: assignment width (static)",
+        "Widgets/Library/library_skill_work_pane.py:170: assignment width (static)']",
+        "components/_agentic_terminal.tcss: 1",
+        "components/_settings_splash_theme.tcss: 2",
+        "features/_workflows.tcss: 11"
+      ],
+      "exit_code": 1,
+      "elapsed_seconds": 30.49,
+      "nodes": [
+        "Tests/UI/test_component_pattern_governance.py::test_dimension_literal_ratchet",
+        "Tests/UI/test_component_pattern_governance.py::test_python_style_ratchet"
+      ],
+      "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-2953-p6-governance-dev-df2-3ap2xeu6",
+      "profile": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-2953-p6-governance-dev-profile-td6a812h",
+      "failed_names": [
+        "test_dimension_literal_ratchet",
+        "test_python_style_ratchet"
+      ],
+      "limits": "Only the two actual failing dimension/Python-style checks on unmodified dev; ordinary conftest/private profile/guard assertions untouched. No full Architecture/Library/full-suite/native replay."
+    },
+    "preflight": {
+      "head": "8e54a7063428f631f0f9f67394396b6830e5984f",
+      "base": "df2ba424de63576d36d9c3e38387c84285303f1c",
+      "exit_code": 0,
+      "elapsed_seconds": 127.78,
+      "log": "/tmp/console-tool-ux-settings-p6-preflight.log",
+      "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-settings-p6-preflight-a9pwwwao",
+      "sources_stable": true,
+      "success_line": true
+    },
+    "static": {
+      "head": "8e54a7063428f631f0f9f67394396b6830e5984f",
+      "base": "df2ba424de63576d36d9c3e38387c84285303f1c",
+      "source_pins": 533,
+      "sources_stable": true,
+      "Ruff_zero_new": {
+        "base": "df2ba424de63576d36d9c3e38387c84285303f1c",
+        "files": {
+          "Docs/superpowers/qa/2026-10-01-console-approval-layout/native_check.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Docs/superpowers/qa/2026-10-01-console-close-followup/native_check.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Chat/test_console_ask_user_round.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "Tests/Chat/test_console_chat_create_confirm.py": {
+            "before": 6,
+            "after": 6,
+            "new": []
+          },
+          "Tests/Chat/test_console_chat_create_integration.py": {
+            "before": 11,
+            "after": 11,
+            "new": []
+          },
+          "Tests/Chat/test_console_local_review_hook.py": {
+            "before": 2,
+            "after": 2,
+            "new": []
+          },
+          "Tests/Chat/test_console_runtime_shutdown.py": {
+            "before": 2,
+            "after": 2,
+            "new": []
+          },
+          "Tests/Chat/test_console_session_settings.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Packaging/test_console_interaction_import_closure.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Performance/test_console_keystroke_work_census.py": {
+            "before": 2,
+            "after": 2,
+            "new": []
+          },
+          "Tests/Performance/test_ui_ready_module_census.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_chat_approval_card.py": {
+            "before": 5,
+            "after": 5,
+            "new": []
+          },
+          "Tests/UI/test_console_approval_compact_layout.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_console_button_routing.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "Tests/UI/test_console_pending_interrupt_projection.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_console_session_close_impact.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/UI/test_console_session_tab_close.py": {
+            "before": 4,
+            "after": 4,
+            "new": []
+          },
+          "Tests/UI/test_console_turn_resend_ui.py": {
+            "before": 2,
+            "after": 1,
+            "new": []
+          },
+          "Tests/Utils/test_mcp_native_qa_args.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "Tests/Widgets/test_confirmation_dialog_literal_text.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "scripts/check_ui_pr_gate_census.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_chat_controller.py": {
+            "before": 199,
+            "after": 199,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_chat_models.py": {
+            "before": 28,
+            "after": 28,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_display_state.py": {
+            "before": 27,
+            "after": 27,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_message_actions.py": {
+            "before": 6,
+            "after": 6,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_runtime.py": {
+            "before": 30,
+            "after": 30,
+            "new": []
+          },
+          "tldw_chatbook/Chat/console_turn_resend.py": {
+            "before": 0,
+            "after": 0,
+            "new": []
+          },
+          "tldw_chatbook/UI/Console_Modules/message.py": {
+            "before": 38,
+            "after": 38,
+            "new": []
+          },
+          "tldw_chatbook/UI/Console_Modules/session.py": {
+            "before": 42,
+            "after": 41,
+            "new": []
+          },
+          "tldw_chatbook/UI/Console_Modules/wiring.py": {
+            "before": 4,
+            "after": 4,
+            "new": []
+          },
+          "tldw_chatbook/UI/Screens/chat_screen.py": {
+            "before": 200,
+            "after": 200,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": {
+            "before": 6,
+            "after": 6,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/Console/console_transcript.py": {
+            "before": 27,
+            "after": 26,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/cancel_confirmation_dialog.py": {
+            "before": 1,
+            "after": 1,
+            "new": []
+          },
+          "tldw_chatbook/Widgets/confirmation_dialog.py": {
+            "before": 7,
+            "after": 7,
+            "new": []
+          }
+        }
+      },
+      "public_signature_audit": [],
+      "checks": {
+        "diff": {
+          "exit_code": 0,
+          "output": ""
+        },
+        "backlog_ids": {
+          "exit_code": 0,
+          "output": "No duplicate task IDs across 4960 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.\n"
+        },
+        "UI_census": {
+          "exit_code": 0,
+          "output": "OK: 135 Tests/UI files in the PR gate (floor 133); every listed path exists.\n"
+        }
+      },
+      "scope": "Latest dev integration preserves all four overlapping Console module ASTs and comment tokens with upstream Ruff0.15.22 formatting. Incoming runtime/fixture/checker changes are retained exactly. Original native artifacts and all non-overlap feature sources remain byte-identical; no guard/getter/admission/budget/cap changes."
+    },
+    "ADR_required": "no new ADR; direct implementation/integration of existing ADR095/031/033/097/150/161/195/212",
+    "limits": [
+      "Incoming Phase6 owner layout, pair-only model picker, hidden-field disclosure and saved-default staging retained. Owner deferred riders remain outside these three selected Console tasks. No new architecture or AC.",
+      "75 non-overlap owned source/native paths byte-exact; reversing the original feature changes recovers exact dev for both shared Python modules and the lessons appendix. Shared approval CSS semantics are unchanged with the obsolete wide settings cap removed.12 metadata patches raw-exact.",
+      "Source map533 reconstructs482+22 overrides+51 additions, with all73 migration SQL pins. Actual CSS build and diagnostic generator reproduce; census135/floor133 retains all prior and incoming entries. Incoming budget snapshot and module ratchets are exact dev; no existing token value changed.",
+      "The new checks use the ordinary unchanged profile/admission/getter/worker/canary/budget/cap contracts. Prior encryption368, DB345, reader/MRO/native/W003 receipts retain actual original anchors; none are relabelled as a new533-pin run.",
+      "No new full-suite, full Library/Architecture A-B, installed-wheel, native Auth/sign-in, live-key/server or external credential verification. Owner-reported broader settings/admission reds and deferred riders are not claimed fixed. Three tasks stay In Progress until fresh exact-head resolved clean review and all5 hosted gates, followed by final metadata qualification and protected normal merge; auto off.",
+      "The two full component governance checks fail on inherited dimension/Python-style offenders; actual unmodified dev reproduces the exact same failures and offenders under unchanged ordinary profile guards. No assertion, marker, floor or allowlist was suppressed."
+    ]
   }
 }
