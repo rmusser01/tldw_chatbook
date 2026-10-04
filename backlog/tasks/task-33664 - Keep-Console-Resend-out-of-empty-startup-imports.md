@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 06:31'
+updated_date: '2026-10-04 07:20'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -361,6 +361,21 @@ Reason: integrate existing upstream fixes and formatter reflow without adding a 
 6. Only after approvals, close AC3/Done via CLI (AC4 checked); append only the four owned canonical Markdown records, preserving all reviewed source/deletion and full tree outside four. Read fresh13a Qodo/current jobs/actualrefs/protection, then publish ONCE with exact observed13a lease and concise body; verify actual remote/GitHub/body after lag without a second push. Approvals qualify ONLYca2992; later dev remains separately unqualified. Require fresh new-head Qodo/no actionable threads/ALL FOUR jobs before any later concurrency inspection/fetch/rebase or normal protected --match-head-commit merge. Verify actual MERGED parents/tree/concurrency before heartbeat pause/completion report.
 
 No full suite/live providers/user keys/physical CtrlQ/relaunch/real voice provisioning/service/download/playback/native-Linux/Windows/aggregate/package/index/installed-native-release/wider-audit certification; no admin bypass, weakened gates/pins/ceilings/counts/time/warmup/work, shared stash or foreign cleanup. Incoming task statuses, ADR statuses and all historical evidence remain as shipped; no unrelated task closure is authorized. The unrecovered historical followups-published-tree serialized-byte limitation remains, with logical Git-tree authentication separate. App automation API update remains unavailable; authoritative scratch handoff supersedes its stale cac prompt.
+
+## Required shared-pane, CI-shard and setup-design integration — October 4
+
+ADR required: no new ADR
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; backlog/decisions/211-ephemeral-provider-failure-presentation.md; incoming backlog/decisions/212-shared-adaptive-pane-shell.md and backlog/decisions/217-first-run-setup-shape-and-surfaces.md.
+Reason: preserve landed shared-pane extraction, neutral aliases, opt-in Tab contracts, CI sharding and accepted setup design without creating a new runtime, owner, authority, schema, permission, dependency or performance decision. The incoming owner-approved preimport 556→557 exception is separate from the unchanged original four guards/five cases; root does not change any pin.
+
+1. All FOUR conceptual published065 gates PASS at07:06, including both UI matrix components, and exact-head Qodo is clear with four resolved threads and complete older/nested pagination. Only afterward live strict/admin/conversation protection and actual dev67fc5310471823262eb6ce344a539e699784bed8 were read/fetched. Reopen existing TASK33664 AC3/In Progress before preserving source mutation; AC4 remains checked. Record published065/oldbaseca2992/incoming67 and all prior source/evidence identities.
+2. Preserve all3,182 prior reviewed records and all106 incoming paths through a single required rebase. There are18 prior-manifest overlaps and only the ADR README in the actual feature patch intersection. Independently compose the README to retain ADR211 plus every exact incoming row/amendment including ADR212/217. Authenticate all3,164 prior nonoverlaps, all105 incoming non-feature paths, full planned+incoming+explicit-composition Git/index/disk SHA/mode/blob tree, complete lesson histories, source comments and capture_cloud.py deletion. No runtime or test repair is planned.
+3. Preserve the shared resolver's same-object neutral aliases and read-only nav properties, thin Library subclasses/message identity, exact destination CSS classes and lazy sheets, shared mount/focus/row behavior, default stock nonpriority Tab walk and Console/Library overrides. Qualify the three new layout controls, new shared-pane/rail-row/Tab modules and bounded real routes, eight affected Library shell controls and MRO guard. Use exact incoming fixtures/profile admission; preserve any refusal NON-GREEN and qualify only failed nodes against exact incoming when necessary. No marker/config/readiness/fixture adapter or physical-key certificate.
+4. Qualify the two owning CI modules and source-derived126-file census: two disjoint63-file round-robin subsequences in census order, serial per shard, fail-fast:false, strict Derived fan-in and unchanged caps/minimal-dependency posture. Do not replay the whole126-file UI lane locally. Both fresh published UI shard components must succeed before aggregate UI Fast Lane qualification.
+5. Measure the separate shipped preimport guard against its exact557/LOC ceiling and snapshot/ADR097 ledger without root repin. Check proportional fatal/whole/added-line/format debt, supported task-ID/path/readability, whitespace, CSS reproduction/source governance, actual diagnostic/worker artifacts and relevant source identities. Carry unchanged orchestration/SQLite/fallback/privacy/refusal/custody behavior only by authenticated prior source/evidence, without replaying completed old checks or inventing new behavior measurements.
+6. Preserve incoming task statuses/criteria and accepted setup design as shipped. TASK33910.1 and TASK34353 remain In Progress; TASK34353 timing AC3 stays unchecked; B0.29/.30 remain To Do, including the Notes entry-focus race and red grip-keyboard guarantee. TASK34100.17 Done is design approval; .18–.34 remain separate To Do. Incoming captures/sweeps are historical only, with no new setup/keychain/server/provider/probe/CLI implementation or certification. Read existing ADR/design/lesson guidance and retain every prior positive/NON-GREEN/baseline/interrupted/unexecuted/metadata/warning/style/size/optional/physical/wider limit unsummed.
+7. Obtain independent immutable source/targeted-functional/artifact approval with no actionable findings. Only AFTER all root/reviewer/test/artifact activity settles, run the ORIGINAL unchanged five cases ONCE for this source, default pytest temp depth, exact REPO_ROOT cwd/PYTHONPATH and full-process outer HOME/USERPROFILE/TLDW/XDG through teardown; retain original ceilings/work/time/warmup/counts and fresh raw/XML/counts/warnings. Supplemental independent budget/source review precedes CLI AC3/Done.
+8. Close only the four owned canonical Markdown records after both approvals, preserving all reviewed source/deletion/full tree outside four. Final task/whitespace guards and fresh published065 Qodo/all gates/actual refs/live protection precede a SINGLE EXACT observed065 lease push and concise body. Verify actual remote/GitHub/body after any lag without second push. Approval qualifies ONLY67fc531; later dev is separately unqualified. Require fresh new-head Qodo/no actionable threads, ALL FOUR conceptual gates (both UI components), current live strict/admin/conversation protection and necessary concurrency qualification before normal protected --match-head-commit merge. Verify actual MERGED parents/tree/concurrency, THEN pause heartbeat/report. No admin bypass, weakened gates, full suite, live providers/keys, physical keys/relaunch, real voice/install/native release/aggregate/wider audit, shared stash or foreign cleanup.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
