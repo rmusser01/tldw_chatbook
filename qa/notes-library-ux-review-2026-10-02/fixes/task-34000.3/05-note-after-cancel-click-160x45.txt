@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Export failed — choose another destination and try again. · Next: Review   │
+│   a  │ Library notes · Ready                                        │  o  the error, then keep editing.                                                      │
+│   v  │ Notes (122)                                                  │  t      ‹ Notes      Index — start here                                                │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s                                                                                     │
+│      │ copy or keep a folder synced, choose Add from files.         │      In the Library database only — no file on disk                                    │
+│      │                                                              │     S                                                                                  │
+│      │ Filter                                                       │              Edit           Preview            Info               Save         Use in  │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                                                        │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ┌────────────────────────────────────────────────────────────────────────────────┐ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │Properties                                                                      │ │
+│      │                                                              │     │Keywords                                                                        │ │
+│      │    New     Sort: Newest     Select                           │     │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│ │
+│ ---> │    Add from files…     Export                                │     │▊ moc                                                                          ▎│ │
+│      │ Folders & placement                                          │     │▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│ │
+│      │    New folder     Add to folder     Move note                │     │                                                                                │ │
+│      │    ○ Remove placement                                        │     │Created   2026-10-01 13:47 · 2d ago                                             │ │
+│      │                                                              │     │Modified  2026-10-01 13:47 · 2d ago                                             │ │
+│      │                                                              │<--- │Version   v1                                                                    │ │
+│      │  ▸ Agent_Lessons                                             │     │Words     45 words                                                              │ │
+│      │  ▸ Journal                                                   │     │Linked from (0) — no notes link here yet                                        │ │
+│      │  ▸ Meetings                                                  │     │Reuse & Export                                                                  │ │
+│      │  ▸ Projects                                                  │     │      Copy                                                                      │ │
+│ ---> │  ▸ Recipes                                                   │     │  Export Markdown                                                               │ │
+│      │  ▸ Research                                                  │     │  Export text                                                                   │ │
+│      │  ▸ Study                                                     │     │Export failed — choose another destination and try again.                       │ │
+│      │  ▾ Unfiled                                                   │     │Danger                                                                          │ │
+│      │    Ideas inbox · 23h                                         │     │    ┃    Delete    ┃                                                            │ │
+│      │    Reading list · 1d                                         │     │                                                                                │ │
+│      │    Index — start here · 2d                                   │     │                                                                                │ │
+│      │    Meeting Notes 2026-09-30 · 3d                             │     │                                                                                │ │
+│      │    Gardening log · 5d                                        │     │                     ╭──────────────────────────────────────────────────────────╮ │
+│      │    📚 Reading queue 2026 ✨ · 1w                             │     │                     │                                                          │ │
+│      │    A very long note title that keeps going so we can test …  │     │                     │ Note export cancelled. precious.md was left unchanged.   │ │
+│      │    Daily log 2026-09-21 · 1w                                 │     │                     │                                                          │ │
+│      │    Daily log 2026-09-20 · 1w                                 │     └─────────────────────╰──────────────────────────────────────────────────────────╯ │
+│      └──────────────────────────────────────────────────────────────┘     Export failed — choose another destination and try again.                          │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter delete note | esc back to note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

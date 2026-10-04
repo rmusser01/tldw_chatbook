@@ -466,7 +466,7 @@ action so the list retains its row budget.
 | **Save** | Saves immediately, without waiting for autosave. It remains visible beside the mode controls. |
 | **Use in Console** | Hands the note to the Console as staged context, with the suggested prompt "Use this note as context and help me work with it." It remains visible beside **Save**. |
 | **Copy** (Info) | Copies the note to the clipboard as Markdown — "Note copied to clipboard as markdown!" |
-| **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick; success shows "Note exported successfully to \<name\>". |
+| **Export Markdown** / **Export text** (Info) | Saves the note to a file you pick. The picker opens in the folder you last exported to this session (your home folder until then). If a file of that name already exists there, a "Replace existing file?" prompt names the file and its folder — `Replace "Reading list.md" in ~/exp?` — with **Cancel** focused; Escape, a click outside the prompt or **Cancel** leave the existing file exactly as it was, and only **Replace** writes. If the file you chose is a link to another file, the prompt names that file and its folder, and Replace writes through the link, leaving the link in place. The write is atomic (a temporary file in the same folder, then a rename), so a failed write never leaves a truncated file. Success shows "Note exported successfully to ~/exp/Reading list.md" — the folder and the file, not just the name. |
 | **Delete** (Info → Danger) | Asks inline, in place — Info stays open and the prompt renders inside the Info box, on the row directly under the Delete button that raised it: "Delete this note? Undo will be available in the Notes list." Tab / Shift+Tab cycle only between **Cancel** and **Delete** while it is open, and the footer names whichever one is focused ("enter cancel" or "enter delete"). Every other Info action — including "‹ Notes" / "‹ Back to list" — is disabled until you choose Cancel or Delete. Cancelling puts focus back on Delete and leaves Info scrolled exactly where it was. A successful delete returns to the list with a named "✓ deleted · …" receipt offering **Undo** and **Dismiss**. |
 
 Opening a note shows "Loading note…" only while the note is being read. If a
@@ -1317,7 +1317,11 @@ written locally, and a note is a local write.
 ### Export a note as Markdown
 1. Open the note, choose **Info**, and click **Export Markdown**.
 2. Choose a destination in the "Export Note as Markdown" dialog — the
-   toast confirms "Note exported successfully to \<name\>".
+   toast confirms "Note exported successfully to ~/exp/\<name\>" with the
+   folder and the file.
+3. If that file already exists, the "Replace existing file?" prompt asks
+   first. **Cancel** is focused, so Enter or Escape keeps your file as it
+   is; choose **Replace** to overwrite it.
 
 ### Undo a deleted note
 

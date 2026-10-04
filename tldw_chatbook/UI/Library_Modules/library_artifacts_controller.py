@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -730,6 +729,7 @@ class LibraryArtifactsController:
     async def _export_dialog(self, key, profile, presentation) -> None:
         from ...Subscriptions.briefing_export import default_briefing_filename
         from ...Third_Party.textual_fspicker import FileSave
+        from .library_file_export import library_export_picker_location
 
         db = getattr(
             self.app_instance,
@@ -756,7 +756,7 @@ class LibraryArtifactsController:
         # The accepted picker result owns its captured copy across parent suspension.
         await self.screen.app.push_screen(
             FileSave(
-                location=str(Path.home()),
+                location=library_export_picker_location(self.screen.app),
                 title="Export report as Markdown",
                 default_file=default_briefing_filename(
                     report, watchlist_name=str(report.get("watchlist_name") or "Report")
@@ -766,24 +766,11 @@ class LibraryArtifactsController:
         )
 
     async def _write_export(self, path, report, profile) -> None:
-        from ...Subscriptions.briefing_export import briefing_markdown_document
-        from ...Utils.path_validation import validate_path_simple
+        # The body lives in library_file_export (TASK-34000.3): it asks before
+        # replacing an existing file, writes atomically, and names the full path.
+        from .library_file_export import export_library_report_file
 
-        if not path or self.profile() != profile or self.disposed:
-            return
-        try:
-            destination = validate_path_simple(Path(path), require_exists=False)
-            await asyncio.to_thread(
-                destination.write_text,
-                briefing_markdown_document(report),
-                encoding="utf-8",
-            )
-            self.notify(f"Report exported to {destination.name}")
-        except Exception:  # noqa: BLE001 - preserve the mounted reader on owner failure
-            self.notify(
-                "Report could not be exported. Check the destination and retry.",
-                "error",
-            )
+        await export_library_report_file(self, path, report, profile)
 
     async def _play(self, key, profile, presentation) -> None:
         from ...Subscriptions.briefing_audio import briefing_audio_dir

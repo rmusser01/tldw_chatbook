@@ -4249,17 +4249,17 @@ class LibraryNotesController:
             ).rstrip()
             or "note"
         )
-        default_filename = (
-            f"{safe_title}.md" if export_format == "markdown" else f"{safe_title}.txt"
-        )
+        default_filename = f"{safe_title}.{'md' if export_format == 'markdown' else 'txt'}"
         dialog_title = (
             "Export Note as Markdown"
             if export_format == "markdown"
             else "Export Note as Text"
         )
+        from .library_file_export import library_export_picker_location  # lazy, TASK-34000.3
+
         await self.app.push_screen(
             FileSave(
-                location=str(Path.home()),
+                location=library_export_picker_location(self.app),
                 title=dialog_title,
                 default_file=default_filename,
             ),

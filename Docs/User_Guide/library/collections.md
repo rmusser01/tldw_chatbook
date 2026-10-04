@@ -194,7 +194,11 @@ bounded, read-only inspector of those records with **Export complete
 JSON…** and **Close inspector**. Those records cannot be created, renamed,
 deleted, restored, or added to — the local Collections service refuses
 every one of those writes — so read and export are the only two things you
-can do with them (task-32057).
+can do with them (task-32057). The export picker opens in the folder you last
+exported to this session; if the chosen `.json` file already exists, a
+"Replace existing file?" prompt names it and its folder, with **Cancel**
+focused, and only **Replace** overwrites it. The status line then reads
+"Legacy recovery export complete: ~/exp/legacy-collections-recovery.json".
 
 Profiles with no legacy records never see any of this.
 

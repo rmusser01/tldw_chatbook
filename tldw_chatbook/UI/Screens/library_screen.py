@@ -220,7 +220,6 @@ from ...Library.library_notes_state import (
     LibraryNotesListState,
     LibraryNotesOperationState,
     build_library_notes_list_state,
-    build_note_export_content,
     patch_note_records_after_save,
     resolve_note_template_placeholders,
     sort_notes_records,
@@ -289,7 +288,6 @@ from ...Library.library_skills_state import (
     coerce_skill_editor_mode,
     coerce_skill_reader_mode,
 )
-from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
 from ...Prompt_Management.prompt_variables import (
     PromptVariableApplication,
     compile_prompt_variables,
@@ -21485,11 +21483,13 @@ class LibraryScreen(BaseAppScreen):
         storage-location fields). It rejects null bytes and other
         shell-metacharacter/traversal patterns; a rejected path is a quiet
         warning notice with no write and no crash, same as any other
-        failure in this method. This method awaits nothing (the write is a
-        plain synchronous ``Path.write_text``), so it is a plain method
-        rather than a coroutine -- Textual's ``call_after_refresh`` (its
-        only caller, via ``_export_library_note``'s ``FileSave`` callback)
-        accepts either.
+        failure in this method. The write itself is
+        ``library_file_export.export_library_note_file`` (TASK-34000.3): it
+        asks before replacing an existing file, writes atomically, and
+        reports the full path. This method awaits nothing, so it is a plain
+        method rather than a coroutine -- Textual's ``call_after_refresh``
+        (its only caller, via ``_export_library_note``'s ``FileSave``
+        callback) accepts either.
 
         Args:
             selected_path: The chosen destination, or ``None`` if the
@@ -21528,31 +21528,19 @@ class LibraryScreen(BaseAppScreen):
                 failure_next_action="choose another destination and try again",
             )
             return
-        try:
-            validated_path.write_text(
-                build_note_export_content(
-                    title, content, keywords_text, note_id, export_format
-                ),
-                encoding="utf-8",
-            )
-        except Exception as exc:
-            logger.opt(exception=True).warning(
-                f"Error exporting Library note {note_id!r} to '{validated_path}'."
-            )
-            if callable(notify):
-                notify(f"Error exporting note: {type(exc).__name__}", severity="error")
-            self._finish_library_notes_operation(
-                active_operation,
-                success=False,
-                failure_next_action="check the destination and try again",
-            )
-            return
-        if callable(notify):
-            notify(
-                f"Note exported successfully to {validated_path.name}",
-                severity="information",
-            )
-        self._finish_library_notes_operation(active_operation, success=True)
+        # Lazy: keeps the export seam off the Library preimport closure.
+        from ..Library_Modules.library_file_export import export_library_note_file
+
+        export_library_note_file(
+            self,
+            validated_path,
+            export_format,
+            title,
+            content,
+            keywords_text,
+            note_id,
+            active_operation,
+        )
 
     @on(Button.Pressed, "#library-note-context-export-md")
     @on(Button.Pressed, "#library-note-export-md")
@@ -27870,9 +27858,11 @@ class LibraryScreen(BaseAppScreen):
         Mirrors ``_write_library_note_export_file`` exactly: runs the
         dialog-returned path through ``validate_path_simple`` (the same
         base-directory-free validator this screen uses for every other
-        user-chosen save path) before writing, and is a plain (not async)
-        method since the write is a synchronous ``Path.write_text`` --
-        ``call_after_refresh`` (its only caller) accepts either.
+        user-chosen save path), then hands the write to
+        ``library_file_export.export_library_prompt_file`` (TASK-34000.3:
+        asks before replacing an existing file, atomic write, full-path
+        receipt). A plain (not async) method -- ``call_after_refresh`` (its
+        only caller) accepts either.
 
         Args:
             selected_path: The chosen destination, or ``None`` if the
@@ -27916,20 +27906,10 @@ class LibraryScreen(BaseAppScreen):
         }
         if artifact_fields:
             detail.update(artifact_fields)
-        try:
-            validated_path.write_text(render_prompt_markdown(detail), encoding="utf-8")
-        except Exception as exc:
-            logger.warning(
-                "Failed to export Library prompt {} (category={}).",
-                prompt_id,
-                type(exc).__name__,
-            )
-            notify(f"Error exporting prompt: {type(exc).__name__}", severity="error")
-            return
-        notify(
-            f"Prompt exported successfully to {validated_path.name}",
-            severity="information",
-        )
+        # Lazy: keeps the export seam off the Library preimport closure.
+        from ..Library_Modules.library_file_export import export_library_prompt_file
+
+        export_library_prompt_file(self, validated_path, detail, prompt_id, notify)
 
     @on(Button.Pressed, "#library-prompt-duplicate")
     def handle_library_prompt_duplicate(self, event: Button.Pressed) -> None:

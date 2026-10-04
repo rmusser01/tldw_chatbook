@@ -82,6 +82,7 @@ Tests/UI/test_library_conversation_reader_freshness.py
 Tests/UI/test_library_export_cancel.py
 Tests/UI/test_library_export_destination_validation.py
 Tests/UI/test_library_export_progress_apply.py
+Tests/UI/test_library_export_replace_confirm.py
 Tests/UI/test_library_footer_focus.py
 Tests/UI/test_library_grip_capture.py
 Tests/UI/test_library_notes_sync_attention.py
