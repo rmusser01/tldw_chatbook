@@ -293,6 +293,16 @@ Reason: preserve newly landed upstream runtime/tooling behavior and inspect its 
 - [ ] Re-measure literal existing module rows intersecting actual changed source. The earlier29315 controller proof is bound to d344/5e and is not a fit for dev's additional compaction source. Keep Task9 selection pending until an actual current-dev formatted coherent boundary fits; inspect any newly affected ChatScreen row rather than assuming the old Task7 cap receipt qualifies it. No raised threshold or hidden responsibility.
 - [ ] Freeze exact rebase union, affected receipts and limitations for independent scoped integration review. Root selects any additional structural scope and canonical amendment before implementation, then executes Task9 source and the single final startup/public-navigation qualification. Do not push/merge or claim latest ancestry until final remote/current-head gates qualify it.
 
+#### Task11 inherited capture-cancellation fixture admission repair
+
+ADR required: no new ADR
+ADR path: N/A (test-only canonical private-profile admission; runtime remains governed by the Task11 ADRs).
+Reason: the exact original failure and immutable f800 trace show submission refuses before the original capture barrier; the per-test redirect does not match collection-bound configuration. The precise underlying exception has not yet been observed, so its fixed reason remains an inference until direct capture.
+
+- [ ] Preserve original300s timeout and interrupted batch22pass/1fail, the immutable observation-only refused submission and early interruption, and every already passing Task11 receipt. Do not repeat the impossible barrier wait or call it a capture/cancellation behavior RED. Directly observe the underlying snapshot exception in the same immutable cause using only type and equality to the fixed expected reason, without emitting configuration bodies or arbitrary exception strings.
+- [ ] In Tests/Chat/test_console_automatic_library_preparation.py import existing Tests.private_profile.private_profile_test, decorate only test_explicit_evidence_lease_cancel_keeps_original_staged below its existing asyncio marker and add request alongside monkeypatch. Preserve every original body statement/assertion and every other existing function AST. Add only one positive actual async hook-admission precondition immediately after real controller construction, before scheduling submission, so later reached capture/cancel assertions cannot be vacuous. No production hook/admission/config/source/permission policy, conftest enrollment, marker/skip/xfail, timeout or capture-barrier weakening.
+- [ ] Qualify only this one repaired node with stable source/test hashes, retain the fixed reason/admitted-child snapshot and original capture/cancel/persistence assertions, and carry22 prior passes through exact other-function ASTs. Run only remaining previously unexecuted selected Chat nodes and directly affected static/formatter/source-map guards. The independent remaining/UI/native/derived receipts carry by exact identity; no replay of passing cohorts. Freeze source correction and exact before/after fixture map for independent scoped integration review.
+
 ## External review and publication
 
 - [x] Independent task review of Task1, then whole-branch review of the rebased PR. Package diffs before dispatch; reviewers do not repeat completed test runs.
