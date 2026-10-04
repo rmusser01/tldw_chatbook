@@ -610,3 +610,53 @@ async def test_legacy_recovery_export_confirms_the_json_normalized_destination(
     assert "recovery.json" in str(app.pushed[0][0].message)
     assert existing.read_bytes() == PRECIOUS
     assert not os.path.exists(existing.with_suffix(""))
+
+
+@pytest.mark.asyncio
+async def test_legacy_recovery_export_never_replaces_a_file_that_appeared_unasked(
+    tmp_path, monkeypatch
+):
+    """Final review M3: nothing was at the destination when the seam checked,
+    so no one was asked. A file that appears before the publish must be left
+    alone. The publish used to read the target's identity at publish time
+    whatever ``overwrite`` said, which handed the real recovery service
+    permission to replace that file. Driven through the real service."""
+    from Tests.Library.test_collections_legacy_recovery import _seed_legacy
+    from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+    from tldw_chatbook.Library.collections_legacy_recovery import (
+        LegacyCollectionsRecovery,
+    )
+    from tldw_chatbook.UI.Library_Modules import library_file_export
+
+    database = LibraryCollectionsDB(tmp_path / "collections.db")
+    _seed_legacy(database, count=1)
+    folder = tmp_path / "exp"
+    folder.mkdir()
+    destination = folder / "legacy-collections-recovery.json"
+    real_exists = library_file_export.export_destination_exists
+
+    def appears_after_the_check(path):
+        seen = real_exists(path)
+        Path(path).write_bytes(PRECIOUS)  # another program writes it just now
+        return seen
+
+    monkeypatch.setattr(
+        library_file_export, "export_destination_exists", appears_after_the_check
+    )
+    app = _FakeApp()
+    controller, state, _ = _collections_controller(
+        app, LegacyCollectionsRecovery(database)
+    )
+    try:
+        await controller._export_library_collection_legacy_recovery(destination)
+    finally:
+        database.close()
+
+    assert destination.read_bytes() == PRECIOUS, (
+        "the export replaced a file that appeared after the check, without asking"
+    )
+    assert "complete" not in state.action_status.lower(), state.action_status
+    assert state.action_status.startswith(
+        "Legacy export failed: legacy export target"
+    ), state.action_status
+    assert app.pushed == []

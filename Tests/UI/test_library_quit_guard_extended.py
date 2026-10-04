@@ -83,11 +83,10 @@ async def test_ctrl_q_on_an_untouched_new_note_leaves_no_untitled_row(
             assert await _ctrl_q(pilot, app, events) is None
             [(kind, rows)] = events
             assert kind == "quit"
-            assert sorted(rows) == sorted([(_TITLE, _BODY), (_OTHER_TITLE, _OTHER_BODY)]), (
-                f"the untouched new note survived the quit: {rows}"
-            )
+            assert sorted(rows) == sorted(
+                [(_TITLE, _BODY), (_OTHER_TITLE, _OTHER_BODY)]
+            ), f"the untouched new note survived the quit: {rows}"
     profile.db.close_connection()
-
 
 
 async def test_ctrl_q_on_a_new_note_with_only_a_blank_title_discards_it(
@@ -123,7 +122,6 @@ async def test_ctrl_q_on_a_new_note_with_only_a_blank_title_discards_it(
     profile.db.close_connection()
 
 
-
 async def test_a_failed_write_asks_instead_of_exiting(tmp_path, monkeypatch):
     """Write failure: the note's text is never silently dropped."""
     _no_autosave(monkeypatch)
@@ -152,7 +150,6 @@ async def test_a_failed_write_asks_instead_of_exiting(tmp_path, monkeypatch):
             assert body.text == _BODY + " unsaved"
             assert profile.note(profile.note_id)["content"] == _BODY
     profile.db.close_connection()
-
 
 
 async def test_a_conflicting_save_asks_and_keeps_the_other_version(
@@ -198,7 +195,6 @@ async def test_a_conflicting_save_asks_and_keeps_the_other_version(
     profile.db.close_connection()
 
 
-
 async def test_continuous_typing_is_saved_within_the_max_wait(tmp_path, monkeypatch):
     """One key every 0.25 s never lets a 1 s debounce fire; the max wait does.
 
@@ -238,7 +234,6 @@ async def test_continuous_typing_is_saved_within_the_max_wait(tmp_path, monkeypa
                 "fire; this run cannot tell the max wait from the debounce"
             )
     profile.db.close_connection()
-
 
 
 async def test_keys_typed_while_a_save_is_in_flight_are_saved(tmp_path, monkeypatch):
@@ -286,7 +281,6 @@ async def test_keys_typed_while_a_save_is_in_flight_are_saved(tmp_path, monkeypa
             )
             assert not screen._library_note_session.snapshot.dirty
     profile.db.close_connection()
-
 
 
 async def test_ctrl_q_with_a_dirty_prompt_draft_asks_and_keeps_it(
@@ -341,7 +335,6 @@ async def test_ctrl_q_with_a_dirty_prompt_draft_asks_and_keeps_it(
     prompts_db.close_connection()
 
 
-
 async def test_ctrl_q_with_a_dirty_skill_draft_asks(tmp_path, monkeypatch):
     events: list = []
     app, _ = _library_app(
@@ -371,7 +364,6 @@ async def test_ctrl_q_with_a_dirty_skill_draft_asks(tmp_path, monkeypatch):
             await _keep_editing(pilot, app, screen, prompt)
             assert screen._skills_state.dirty
             assert name.value == "dirty-demo"
-
 
 
 async def test_ctrl_q_flushes_a_folder_files_edit_to_disk(tmp_path, monkeypatch):
@@ -420,4 +412,3 @@ async def test_ctrl_q_flushes_a_folder_files_edit_to_disk(tmp_path, monkeypatch)
             # The workspace keeps the file's final newline on save.
             assert text == "# Source\ntail\n", "Ctrl+Q exited before the file was saved"
     replica.close()
-

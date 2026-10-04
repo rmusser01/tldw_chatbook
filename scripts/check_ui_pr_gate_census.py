@@ -112,7 +112,13 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # slice's test_library_notes_sync_delete_restore.py (one boot: Delete holds the
 # synced folder, Undo returns it) joined the census without a floor bump of
 # their own, which left them free to be deleted unnoticed.
-MINIMUM_FILES = 142
+# The wave's final review raised it to 143 (C1):
+# Tests/UI/test_library_note_autosave_recovers.py is two real-app boots, about
+# 20 s locally. A burst whose max wait had run out armed a 0 s timer, which
+# Textual never fires, so autosave stayed dead after Keep editing on a refused
+# quit and after a rail switch away and back. The unit test that should have
+# caught it asserted the 0.0 against a fake ``set_timer``; these read the row.
+MINIMUM_FILES = 143
 
 
 def read_census(path: Path) -> list[str]:

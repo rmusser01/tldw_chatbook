@@ -38,8 +38,23 @@ from .screen_constants import LIBRARY_NOTES_SOURCE_DATABASE
 
 #: How long the post-save re-read waits for the sync pass that save hinted.
 #: The pass normally lands in well under a second; past this the row keeps
-#: what it can say now and the next save or visit catches up.
+#: what it can say now and the next save or visit catches up. A clean quit
+#: flush waits this long too before the app exits (final review I4).
 SYNC_PASS_WAIT_SECONDS = 5.0
+
+#: How long a SAVE of a synced note waits for the pass its previous save
+#: hinted before it commits (final review I1). The executor fences a folder
+#: when a note moves on between a pass admitting its ``update_file`` and that
+#: write completing, so a save must not land inside that window. Shorter than
+#: the navigation and quit flush bound (5 s): a flush that has to wait must
+#: still have time to commit. Past this the save proceeds, and a hold it
+#: causes is visible and healable, as before.
+RESAVE_SYNC_PASS_WAIT_SECONDS = 3.0
+
+#: ``_ask``'s answer when the runtime could not say (final review I3). It is
+#: not the question's default: "nothing is held" is an answer, and a refused
+#: or failed read is not one.
+_COULD_NOT_SAY: Any = object()
 
 #: The Notes views whose canvas paints the tree, the list or the editor.
 _ATTENTION_VIEWS = frozenset({"editor", "list"})
@@ -98,7 +113,16 @@ def _runtime(host: Any) -> Any:
 
 
 async def _ask(runtime: Any, name: str, *args: Any, default: Any) -> Any:
-    """Ask the runtime one read-only question; any failure is ``default``."""
+    """Ask the runtime one read-only question.
+
+    Returns:
+        The answer; ``default`` when there is nothing to ask (no runtime, or
+        one without this question); ``_COULD_NOT_SAY`` when the question
+        failed. Both runtime reads are producer calls, so they are refused
+        while a backup holds the producer fence. The caller keeps its last
+        known answer then: painting ``default`` would say "nothing is held"
+        over a held folder (final review I3).
+    """
 
     method = getattr(runtime, name, None)
     if not callable(method):
@@ -112,21 +136,29 @@ async def _ask(runtime: Any, name: str, *args: Any, default: Any) -> Any:
             question=name,
             error_type=type(error).__name__,
         )
-        return default
+        return _COULD_NOT_SAY
 
 
-async def _await_sync_pass(runtime: Any) -> None:
-    """Let the pass a save just hinted land before the line is re-read.
+async def await_sync_pass(runtime: Any, *, timeout: float | None = None) -> None:
+    """Let the sync pass a save just hinted land, bounded.
 
-    ``settle`` joins the runtime's own hint tasks; it is shielded so this
-    worker being superseded (``exclusive=True``) can never cancel them.
+    ``settle`` joins the runtime's own hint tasks; it is shielded so a caller
+    that is superseded (``exclusive=True``) or times out can never cancel
+    them. Three callers: the post-save re-read of the editor's line, a save of
+    a note whose previous save hinted a pass (final review I1), and a clean
+    quit flush (I4).
+
+    Args:
+        runtime: The sync runtime, or None when the app has none.
+        timeout: The bound; ``SYNC_PASS_WAIT_SECONDS`` when not given.
     """
 
     settle = getattr(runtime, "settle", None)
     if not callable(settle):
         return
+    bound = SYNC_PASS_WAIT_SECONDS if timeout is None else timeout
     with contextlib.suppress(Exception):
-        await asyncio.wait_for(asyncio.shield(settle()), SYNC_PASS_WAIT_SECONDS)
+        await asyncio.wait_for(asyncio.shield(settle()), bound)
 
 
 async def load_library_note_location(
@@ -150,14 +182,27 @@ async def load_library_note_location(
         return
     runtime = _runtime(host)
     if after_save and runtime is not None:
-        await _await_sync_pass(runtime)
-    path = str(await _ask(runtime, "note_file_location", note_id, default="") or "")
-    attention = bool(path) and bool(
+        await await_sync_pass(runtime)
+    located = await _ask(runtime, "note_file_location", note_id, default="")
+    if located is _COULD_NOT_SAY:
+        # Keep the line as it is: "" here would say "not in a synced folder".
+        return
+    path = str(located or "")
+    asked = (
         await _ask(runtime, "note_sync_needs_attention", note_id, default=False)
+        if path
+        else False
     )
     written = await asyncio.to_thread(note_file_written_label, path)
     if note_id != host._selected_note_id or host._library_notes_view != "editor":
         return
+    previous = host._library_note_location
+    attention = (
+        # Could not say: keep what was last known about this same file.
+        (previous[2] if previous[0] == path else False)
+        if asked is _COULD_NOT_SAY
+        else bool(asked)
+    )
     host._library_note_location = (path, written, attention)
     host._apply_library_note_presentation_state()
     await refresh_library_notes_sync_attention(host, runtime=runtime)
@@ -176,22 +221,33 @@ async def refresh_library_notes_sync_attention(
     runtime = runtime if runtime is not None else _runtime(host)
     ensure_library_notes_sync_attention_listener(host, runtime=runtime)
     refresh_manage_sync_folders_rows(host)
-    folder_ids = frozenset(
-        await _ask(runtime, "attention_folder_ids", default=frozenset()) or ()
-    )
+    held = await _ask(runtime, "attention_folder_ids", default=frozenset())
+    if held is _COULD_NOT_SAY:
+        # Keep the last known answer and paint nothing (final review I3).
+        return
+    folder_ids = frozenset(held or ())
     notes_state = host._notes_state
     if folder_ids == getattr(notes_state, "tree_attention_folder_ids", frozenset()):
         return
-    notes_state.tree_attention_folder_ids = folder_ids
     note_id = getattr(host, "_selected_note_id", None)
+    asked: Any = _COULD_NOT_SAY
+    if note_id and getattr(host, "_library_note_location", ("", "", False))[0]:
+        asked = await _ask(runtime, "note_sync_needs_attention", note_id, default=False)
+    # Both reads are done. Nothing below awaits: this worker is exclusive, and
+    # a successor that cancelled it between the write and the paint would find
+    # the stored answer "unchanged" and never paint it (deferred minor T2-a).
+    if folder_ids == getattr(notes_state, "tree_attention_folder_ids", frozenset()):
+        return
+    notes_state.tree_attention_folder_ids = folder_ids
     location = getattr(host, "_library_note_location", ("", "", False))
-    if note_id and location[0]:
-        attention = bool(
-            await _ask(runtime, "note_sync_needs_attention", note_id, default=False)
-        )
-        if attention != location[2] and note_id == host._selected_note_id:
-            host._library_note_location = (location[0], location[1], attention)
-            host._apply_library_note_presentation_state()
+    if (
+        asked is not _COULD_NOT_SAY
+        and location[0]
+        and note_id == host._selected_note_id
+        and bool(asked) != location[2]
+    ):
+        host._library_note_location = (location[0], location[1], bool(asked))
+        host._apply_library_note_presentation_state()
     if (
         host.is_mounted
         and host._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
@@ -220,7 +276,10 @@ def refresh_manage_sync_folders_rows(host: Any) -> bool:
     """
 
     controller = getattr(host, "_library_notes_sync_controller", None)
-    if controller is None or getattr(host, "_library_notes_view", "") != "lasting_roots":
+    if (
+        controller is None
+        or getattr(host, "_library_notes_view", "") != "lasting_roots"
+    ):
         return False
     before = controller.snapshot.roots
     controller.refresh_roots(publish=False)
@@ -354,7 +413,9 @@ class LibraryNotesSyncAttentionListener:
         schedule_library_notes_sync_attention(self._host)
 
 
-def ensure_library_notes_sync_attention_listener(host: Any, *, runtime: Any = None) -> None:
+def ensure_library_notes_sync_attention_listener(
+    host: Any, *, runtime: Any = None
+) -> None:
     """Register this host's listener with the runtime once (idempotent).
 
     Called from every refresh, because the runtime can start after the
@@ -392,9 +453,11 @@ def release_library_notes_sync_attention_listener(host: Any) -> None:
 
 
 __all__ = [
+    "RESAVE_SYNC_PASS_WAIT_SECONDS",
     "STATUS_LISTENER_DEBOUNCE_SECONDS",
     "SYNC_PASS_WAIT_SECONDS",
     "LibraryNotesSyncAttentionListener",
+    "await_sync_pass",
     "ensure_library_notes_sync_attention_listener",
     "library_notes_tree_folder_sets",
     "load_library_note_location",

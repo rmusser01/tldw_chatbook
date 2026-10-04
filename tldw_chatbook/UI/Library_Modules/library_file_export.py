@@ -102,9 +102,7 @@ def replace_prompt_message(destination: Path, picked: Path | None = None) -> str
         f'Replace "{destination.name}" in {describe_export_folder(destination.parent)}?'
     )
     if picked is not None and picked != destination:
-        message += (
-            f' ("{picked.name}" in {describe_export_folder(picked.parent)} links to it.)'
-        )
+        message += f' ("{picked.name}" in {describe_export_folder(picked.parent)} links to it.)'
     return message + "\n\nThe existing file will be overwritten by this export."
 
 
@@ -136,7 +134,9 @@ def export_destination_exists(destination: Path) -> bool:
     return destination.is_symlink() or destination.exists()
 
 
-def write_export_text(destination: Path, content: str, *, overwrite: bool = True) -> None:
+def write_export_text(
+    destination: Path, content: str, *, overwrite: bool = True
+) -> None:
     """Write ``content`` to ``destination`` atomically (same-directory temp + replace).
 
     Keeps the existing file's permission bits when it is being replaced. Does
@@ -188,7 +188,10 @@ def remember_export_directory(app: Any, destination: Path) -> None:
     """Record ``destination``'s folder as where this session last exported to."""
     try:
         setattr(app, _LAST_EXPORT_DIRECTORY_ATTR, str(destination.parent))
-    except (AttributeError, TypeError):  # a slotted or frozen stand-in: nothing to remember on
+    except (
+        AttributeError,
+        TypeError,
+    ):  # a slotted or frozen stand-in: nothing to remember on
         logger.debug("library_export_directory_not_remembered")
 
 
@@ -420,7 +423,10 @@ REPORT_EXPORT_FAILED = "Report could not be exported. Check the destination and 
 
 
 async def export_library_report_file(
-    controller: LibraryArtifactsController, path: Any, report: Mapping[str, Any], profile: Any
+    controller: LibraryArtifactsController,
+    path: Any,
+    report: Mapping[str, Any],
+    profile: Any,
 ) -> None:
     """Write (after a replace check) a Report artifact as Markdown.
 
@@ -512,13 +518,16 @@ async def export_library_collections_recovery(
     target = resolve_export_destination(destination)
 
     async def _publish(*, overwrite: bool = True) -> None:
-        # ``overwrite`` is accepted for the seam's contract; the recovery
-        # service is itself no-clobber: with ``overwrite_identity=None`` it
-        # refuses (``legacy_export_target_changed``) if a file appeared.
-        del overwrite
+        # The target's identity is read only for an explicit Replace. Without
+        # one, nothing was there when the seam checked and no one was asked:
+        # the service gets ``overwrite_identity=None`` and is itself
+        # no-clobber, refusing (``legacy_export_target_changed``) a file that
+        # appeared since. Reading the identity here whatever ``overwrite``
+        # said gave it permission to replace that file, so the no-clobber
+        # claim held only by timing (final review M3).
         try:
             overwrite_identity = None
-            if target.exists():
+            if overwrite and target.exists():
                 metadata = target.lstat()
                 overwrite_identity = (metadata.st_dev, metadata.st_ino)
             await asyncio.to_thread(
@@ -581,4 +590,3 @@ __all__ = [
     "resolve_export_destination",
     "write_export_text",
 ]
-

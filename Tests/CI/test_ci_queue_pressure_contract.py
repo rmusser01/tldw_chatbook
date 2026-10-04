@@ -48,6 +48,22 @@ FAST_LANE_TARGETS = (
     "Tests/Architecture/test_flush_screens_have_quit_hooks.py",
     "Tests/Architecture/test_quit_flow_prompt_choke_point.py",
     "Tests/Library/test_library_note_autosave_max_wait.py",
+    # TASK-34000 wave 1a final review (I2): the fast pins for the export seam
+    # (atomic write, no-clobber, symlink write-through, the Report and
+    # Collections replace checks) and for every sync status publication
+    # carrying its time. About 6 s together; nothing else gated them.
+    "Tests/Library/test_library_file_export.py",
+    "Tests/Architecture/test_notes_sync_snapshot_construction.py",
+)
+#: The lasting-sync real-stack files (a real database, a real ``.md``, the
+#: production runtime). They are ``bootstrap_profile``, so they run in the
+#: admission-sensitive invocation, never in the sandboxed one above. Pinned as
+#: a subset: that step also holds other teams' files.
+NOTES_SYNC_REAL_STACK_TARGETS = (
+    "Tests/Notes/test_notes_sync_tail_edit.py",
+    "Tests/Notes/test_notes_sync_delete_restore_signal.py",
+    "Tests/Notes/test_notes_sync_resave_window.py",
+    "Tests/Notes/test_notes_sync_attention_fence.py",
 )
 HEAVY_JOB_KEYS = {
     "core-tests",
@@ -253,6 +269,29 @@ def test_fast_lane_target_set_is_exact_and_non_overlapping() -> None:
             other_path = Path(other)
             assert target_path not in other_path.parents
             assert other_path not in target_path.parents
+
+
+def test_admission_sensitive_step_gates_the_notes_sync_real_stack_files() -> None:
+    """Keep the "no silent winner" and no-hold pins on every pull request.
+
+    TASK-34000 wave 1a final review (I2): on a pull request only these lists
+    and the UI census run; the rest of ``Tests/Notes`` runs on pushes to
+    ``main``. A later PR could otherwise break the released pass, the Recovery
+    negative controls or the re-save wait and merge green.
+    """
+    workflow = _workflow("derived-artifacts.yml")
+    fast = workflow["jobs"]["pr-fast-lane"]
+    targets = _pytest_targets(
+        _named_step(fast, "Run admission-sensitive suites")["run"]
+    )
+
+    missing = [name for name in NOTES_SYNC_REAL_STACK_TARGETS if name not in targets]
+    assert not missing, f"not gated on pull requests: {missing}"
+    assert len(set(targets)) == len(targets)
+    for target in targets:
+        assert (PROJECT_ROOT / target).exists(), f"gated target is gone: {target}"
+    # Their enrollment poisons sandboxed suites sharing a process (TASK-32873).
+    assert not set(targets) & set(FAST_LANE_TARGETS)
 
 
 def test_required_context_fails_closed_and_keeps_artifact_checks_install_free() -> None:

@@ -21360,16 +21360,14 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.shortcut_status = ""
         self._notes_state.autosave_state = "saving"
         self._update_library_note_meta_static(content=snapshot.body)
-        if (
-            autosave_generation is not None
-            and autosave_generation != self._notes_state.autosave_generation
-        ):
+        from ..Library_Modules import library_note_autosave as autosave
+
+        # The burst ends here, when its save starts, not when its timer fired.
+        if not autosave.note_save_starts(self._notes_state, autosave_generation):
             return
         outcome = await self._library_note_session.request_save(explicit=explicit)
-        from ..Library_Modules.library_note_autosave import keep_autosave_veto_in_place
-
         # TASK-34000.1 (N-07): a refused AUTOSAVE never moves a typing user.
-        if explicit or not keep_autosave_veto_in_place(self, outcome):
+        if explicit or not autosave.keep_autosave_veto_in_place(self, outcome):
             self._apply_library_note_save_outcome(outcome)
 
     async def _flush_library_note_save(

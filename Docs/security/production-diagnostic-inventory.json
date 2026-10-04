@@ -3088,8 +3088,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 3,
-      "diagnostic_digest": "34d191909d570fcde211",
+      "call_count": 4,
+      "diagnostic_digest": "83f2eeb4bb78c9ca219c",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Library_Modules/note_session_port.py",
       "reason": "remaining Chatbook production diagnostic owner"

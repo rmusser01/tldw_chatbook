@@ -123,14 +123,18 @@ async def test_a_watcher_driven_hold_turns_the_three_surfaces_without_a_keypress
                 )
                 await _until(
                     pilot,
-                    lambda: SYNC_ATTENTION_LIST_STATUS
-                    in _text(screen, "#library-notes-authority"),
+                    lambda: (
+                        SYNC_ATTENTION_LIST_STATUS
+                        in _text(screen, "#library-notes-authority")
+                    ),
                     "the list to say a sync folder needs attention",
                 )
                 await _until(
                     pilot,
-                    lambda: NOTE_LOCATION_ATTENTION
-                    in _text(screen, "#library-note-location"),
+                    lambda: (
+                        NOTE_LOCATION_ATTENTION
+                        in _text(screen, "#library-note-location")
+                    ),
                     "the editor's location row to say the folder needs attention",
                 )
                 assert "Ready" not in _text(screen, "#library-notes-authority")

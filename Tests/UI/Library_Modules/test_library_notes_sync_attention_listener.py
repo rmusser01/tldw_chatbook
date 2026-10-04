@@ -101,7 +101,9 @@ def test_ensure_registers_once_and_release_unregisters() -> None:
 
     attention.ensure_library_notes_sync_attention_listener(host)
     attention.ensure_library_notes_sync_attention_listener(host)
-    assert len(added) == 2 and added[0] is added[1], "the same listener object each time"
+    assert len(added) == 2 and added[0] is added[1], (
+        "the same listener object each time"
+    )
 
     attention.release_library_notes_sync_attention_listener(host)
     assert removed == [added[0]]
@@ -128,7 +130,9 @@ class _SignalRuntime:
 
 
 @pytest.mark.asyncio
-async def test_signal_library_note_lasting_sync_hints_the_runtime_and_never_raises() -> None:
+async def test_signal_library_note_lasting_sync_hints_the_runtime_and_never_raises() -> (
+    None
+):
     """One seam for the Notes side's writes that bypass the editor port."""
 
     runtime = _SignalRuntime()
@@ -141,7 +145,9 @@ async def test_signal_library_note_lasting_sync_hints_the_runtime_and_never_rais
 
     # No runtime yet (boot-deferred), no note id, or a refusing runtime: the
     # write that just succeeded is never failed by its signal.
-    assert await attention.signal_library_note_lasting_sync(_Host(_App()), "note-1") == ()
+    assert (
+        await attention.signal_library_note_lasting_sync(_Host(_App()), "note-1") == ()
+    )
     assert await attention.signal_library_note_lasting_sync(host, "") == ()
     assert runtime.asked == ["note-1"]
     host.app_instance.notes_sync_runtime_owner = _SignalRuntime(raise_error=True)
@@ -162,7 +168,9 @@ class _SyncController:
             self.snapshot = SimpleNamespace(roots=next(self._rows, self.snapshot.roots))
 
 
-def test_manage_sync_folders_rows_follow_a_publication_and_publish_only_a_change() -> None:
+def test_manage_sync_folders_rows_follow_a_publication_and_publish_only_a_change() -> (
+    None
+):
     """The rows re-project through the same listener seam; a no-change refresh
     publishes nothing, so the publication's own attention refresh cannot loop."""
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -446,7 +447,10 @@ async def test_a_planner_shaped_hold_with_an_open_operation_is_refused(
         assert await owner.note_changed("note-1") == ()
         await owner.settle()
         after = owner.snapshot().roots[0]
-        assert (after.status, after.next_action) == ("needs_attention", "review_changes")
+        assert (after.status, after.next_action) == (
+            "needs_attention",
+            "review_changes",
+        )
         # Still blocked: a hint is refused for the held root.
         assert owner.schedule_hint("root-1") is None
         assert vault.file.read_bytes() == VAULT_BYTES
@@ -589,7 +593,9 @@ class _ObservationGate:
 LATE_SAVE = VAULT_TEXT + "saved while the released pass ran"
 
 
-@pytest.mark.parametrize("second_folder", [True, False], ids=["two-folders", "one-folder"])
+@pytest.mark.parametrize(
+    "second_folder", [True, False], ids=["two-folders", "one-folder"]
+)
 async def test_a_save_during_the_released_pass_is_run_after_it(
     vault: Vault, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, second_folder: bool
 ) -> None:
@@ -606,7 +612,9 @@ async def test_a_save_during_the_released_pass_is_run_after_it(
     await second.start()
     try:
         if second_folder:
-            assert second.schedule_hint("root-2") is not None, "the watcher runs for root-2"
+            assert second.schedule_hint("root-2") is not None, (
+                "the watcher runs for root-2"
+            )
             await second.settle()
         await _restore(vault, tombstone_version)
         assert await second.note_changed("note-1") == ("root-1",)
@@ -750,3 +758,188 @@ async def test_a_failure_inside_the_released_pass_blocks_the_root_and_publishes_
         assert vault.file.read_bytes() == VAULT_BYTES
     finally:
         await second.shutdown()
+
+
+# --- Final whole-branch review: M1, M2, M7 ---------------------------------------
+
+
+async def test_a_pause_during_the_released_pass_is_not_followed_by_its_rerun(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Final review M1. A save marks the root dirty while the released pass is
+    in flight, and the user presses Pause before the pass takes its lease. The
+    pass then un-blocks the root as it leases and re-plans, so its re-run for
+    the dirty mark was admitted on the root being paused: a second pass, which
+    with other timing publishes "offline" over "paused"."""
+
+    tombstone_version = await _held_in_a_later_session(vault)
+    second = build_owner(vault)
+    await second.start()
+    runtime = _runtime(second)
+    at_lease = asyncio.Event()
+    go = asyncio.Event()
+    real_lease = NotesSyncRuntimeOwner._ensure_lease
+    calls = {"count": 0}
+
+    async def gated_lease(self, root, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            # Hold the released pass before its lease lands.
+            at_lease.set()
+            await go.wait()
+        return await real_lease(self, root, **kwargs)
+
+    admitted_on_a_closed_root: list[str] = []
+    real_schedule = NotesSyncRuntimeOwner.schedule_hint
+
+    def recording_schedule(self, root_id):
+        task = real_schedule(self, root_id)
+        if task is not None and root_id in self._closed_roots:
+            admitted_on_a_closed_root.append(root_id)
+        return task
+
+    monkeypatch.setattr(NotesSyncRuntimeOwner, "_ensure_lease", gated_lease)
+    monkeypatch.setattr(NotesSyncRuntimeOwner, "schedule_hint", recording_schedule)
+    try:
+        await _restore(vault, tombstone_version)
+        assert await second.note_changed("note-1") == ("root-1",)
+        await asyncio.wait_for(at_lease.wait(), 10)
+        vault.edit_note(LATE_SAVE)
+        assert await second.note_changed("note-1") == ("root-1",)
+        pause = asyncio.create_task(second.pause_root("root-1"))
+        await asyncio.sleep(0.05)
+        assert "root-1" in runtime._closed_roots
+        go.set()
+        result = await asyncio.wait_for(pause, 30)
+        await asyncio.wait_for(second.settle(), 30)
+
+        assert admitted_on_a_closed_root == [], "a pass was re-run on a paused root"
+        assert (result.status, result.next_action) == ("paused", "resume_sync")
+        final = second.snapshot().roots[0]
+        assert (final.status, final.next_action) == ("paused", "resume_sync")
+    finally:
+        go.set()
+        await second.shutdown()
+
+
+async def test_an_unknown_runtime_error_in_the_released_pass_ends_failed_never_healthy(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Final review M2: the handler was narrowed to three named refusals. A
+    ``RuntimeError`` that is none of them is a failed pass: published
+    ``failed``, the root blocked, and no healthy status at any point."""
+
+    tombstone_version = await _held_in_a_later_session(vault)
+    second = build_owner(vault)
+    await second.start()
+    published: list[tuple[str, str]] = []
+    second.add_status_listener(
+        lambda snapshot: published.append((snapshot.status, snapshot.next_action))
+    )
+
+    async def failing_lease(self, root, **kwargs):
+        raise RuntimeError("coordinator_unavailable")
+
+    try:
+        await _restore(vault, tombstone_version)
+        monkeypatch.setattr(NotesSyncRuntimeOwner, "_ensure_lease", failing_lease)
+        assert await second.note_changed("note-1") == ("root-1",)
+        await second.settle()
+
+        runtime = _runtime(second)
+        failed = second.snapshot().roots[0]
+        assert (failed.status, failed.next_action) == ("failed", "review_changes")
+        assert published == [("failed", "review_changes")]
+        assert "root-1" in runtime._blocked_roots
+        assert vault.file.read_bytes() == VAULT_BYTES
+        # A failed pass is not a planner hold: the next signal does not pretend.
+        assert await second.note_changed("note-1") == ()
+    finally:
+        await second.shutdown()
+
+
+async def test_a_lease_lost_inside_the_released_pass_reads_offline(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Final review M2. ``root_lease_required`` is raised only by the plan and
+    execute steps, and the settled pass handles it there. The released pass's
+    own handler never sees it, which is why its ``root_lease_required`` branch
+    was deleted rather than pinned. This pins where the answer comes from."""
+
+    tombstone_version = await _held_in_a_later_session(vault)
+    second = build_owner(vault)
+    await second.start()
+
+    async def lease_lost(self, root):
+        raise RuntimeError("root_lease_required")
+
+    try:
+        await _restore(vault, tombstone_version)
+        monkeypatch.setattr(NotesSyncRuntimeOwner, "_fresh_authority", lease_lost)
+        assert await second.note_changed("note-1") == ("root-1",)
+        await second.settle()
+
+        offline = second.snapshot().roots[0]
+        assert (offline.status, offline.next_action) == ("offline", "reconnect_folder")
+        assert "root-1" in _runtime(second)._blocked_roots
+        assert vault.file.read_bytes() == VAULT_BYTES
+    finally:
+        await second.shutdown()
+
+
+async def test_a_signal_in_flight_at_shutdown_is_joined_and_reads_nothing_after_it(
+    vault: Vault, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Final review M7. ``note_changed`` read the store with a bare
+    ``asyncio.to_thread``, which shutdown and maintenance cannot see: the store
+    was closed under the read, and the loop went on to read the next root
+    after the close, re-opening it. The read is now a maintenance-visible
+    offload, and admission is re-checked after it."""
+
+    _add_second_root(vault, tmp_path)
+    owner = build_owner(vault)
+    await owner.start()
+    runtime = _runtime(owner)
+    reading = threading.Event()
+    proceed = threading.Event()
+    log: list[str] = []
+    real_read = NotesDeviceStateStore.active_binding_note_ids
+    real_close = NotesDeviceStateStore.close
+
+    def gated_read(store, root_id):
+        log.append(f"read {root_id}")
+        if root_id == "root-1":
+            reading.set()
+            proceed.wait(10)
+        try:
+            return real_read(store, root_id)
+        finally:
+            log.append(f"read {root_id} done")
+
+    def recording_close(store):
+        if store is runtime._store:
+            log.append("close")
+        return real_close(store)
+
+    monkeypatch.setattr(NotesDeviceStateStore, "active_binding_note_ids", gated_read)
+    monkeypatch.setattr(NotesDeviceStateStore, "close", recording_close)
+    shutdown: asyncio.Task[None] | None = None
+    try:
+        signal = asyncio.create_task(owner.note_changed("note-1"))
+        assert await asyncio.to_thread(reading.wait, 10)
+        shutdown = asyncio.create_task(owner.shutdown())
+        await asyncio.sleep(0.3)
+        closed_under_the_read = "close" in log
+        proceed.set()
+        hinted = await asyncio.wait_for(signal, 10)
+        await asyncio.wait_for(shutdown, 30)
+
+        assert not closed_under_the_read, "shutdown closed the store under the read"
+        assert hinted == (), "a signal that lost admission must hint nothing"
+        assert log[:2] == ["read root-1", "read root-1 done"]
+        assert "read root-2" not in log, "the signal read on after shutdown began"
+        assert "close" in log and log[-1] == "close"
+    finally:
+        proceed.set()
+        if shutdown is None:
+            await owner.shutdown()

@@ -9,7 +9,9 @@ awaited ``flush_pending_work``.
 
 * ``confirm_library_quit`` awaits that same flush -- Folder files, the
   Database note session, prompt and skill drafts -- so a quit persists what
-  a tab switch would. When the flush is vetoed (validation, conflict, a
+  a tab switch would. After a clean flush it also waits, bounded, for the
+  lasting-sync pass that flush hinted, so a synced note's file holds the last
+  edit when the app exits. When the flush is vetoed (validation, conflict, a
   failed write), raises, or outlasts its wait, it asks
   'Quit and discard unsaved changes to "<title>"?' through the quit flow's
   one prompt choke point, ``await_quit_prompt`` (TASK-33622.10), with Keep
@@ -155,6 +157,7 @@ async def confirm_library_quit(screen: LibraryScreen) -> bool:
     """
     reason = await _flush_for_quit(screen)
     if reason is None:
+        await _settle_lasting_sync(screen)
         return True
     names = _unsaved_names(screen)
     if not names:
@@ -179,6 +182,28 @@ async def prepare_library_quit(screen: LibraryScreen) -> None:
         screen: The Library screen whose open note is checked.
     """
     await gc_untouched_session_blank_note(screen)
+
+
+async def _settle_lasting_sync(screen: LibraryScreen) -> None:
+    """Let the sync pass a clean quit flush hinted run before the app exits.
+
+    Final review I4. The flush saves a synced note and hints its folder, and
+    the pass that writes the file runs afterwards. The runtime's shutdown
+    closes admission before a scheduled hint has run and starts no action
+    once it is closing, so a quit that did not wait left the file without the
+    last edit until the next launch. The wait is the editor's own post-save
+    one: bounded (``SYNC_PASS_WAIT_SECONDS``) and shielded, so a slow folder
+    delays the quit by that much at most and is never cancelled mid-write.
+    With nothing in flight it returns at once.
+    """
+    runtime = getattr(
+        getattr(screen, "app_instance", None), "notes_sync_runtime_owner", None
+    )
+    if runtime is None:
+        return
+    from .library_notes_sync_attention import await_sync_pass
+
+    await await_sync_pass(runtime)
 
 
 async def _flush_for_quit(screen: LibraryScreen) -> str | None:
@@ -219,7 +244,12 @@ def _veto_reason(screen: LibraryScreen) -> str:
     status = (snapshot.status_message if snapshot is not None else "").strip()
     if snapshot is not None and snapshot.in_conflict:
         return "The note changed elsewhere since you opened it."
-    if snapshot is not None and snapshot.dirty and status and status != "Unsaved changes":
+    if (
+        snapshot is not None
+        and snapshot.dirty
+        and status
+        and status != "Unsaved changes"
+    ):
         return f"These changes could not be saved: {status}"
     return "These changes are not saved."
 
@@ -231,7 +261,9 @@ def _unsaved_names(screen: LibraryScreen) -> list[str]:
     if workspace is not None and workspace.save_state in _FILE_UNSAVED_STATES:
         names.append(workspace.current_path or "the open file")
     snapshot = screen._library_note_session.snapshot
-    if snapshot is not None and (snapshot.dirty or snapshot.saving or snapshot.in_conflict):
+    if snapshot is not None and (
+        snapshot.dirty or snapshot.saving or snapshot.in_conflict
+    ):
         names.append(snapshot.title.strip() or LIBRARY_NOTE_BLANK_SEED_TITLE)
     if screen._prompts_state.dirty:
         names.append(screen._prompts_state.original_name.strip() or "new prompt")

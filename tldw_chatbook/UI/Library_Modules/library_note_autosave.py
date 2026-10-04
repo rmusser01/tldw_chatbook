@@ -3,7 +3,9 @@
 TASK-34000.1 (review N-01). The 2 s debounce re-armed on every keystroke, so
 one key every 1.2 s was never saved at all. ``arm_library_note_autosave``
 caps each debounce with a maximum wait measured from the first unsaved
-keystroke of a burst.
+keystroke of a burst. The delay it arms is never zero or negative
+(``AUTOSAVE_MIN_DELAY_SECONDS``), and a burst ends when a save of the note
+starts (``note_save_starts``).
 
 That cap means an autosave can now fire while the user is still typing. An
 autosave the save refuses (a title with a trailing space, unsafe markup, a
@@ -44,6 +46,12 @@ _EDITOR_FIELD_IDS = frozenset(
 )
 #: Autosave outcomes that used to route to a field and focus it.
 _REFUSED = frozenset({NoteSaveOutcomeKind.VALIDATION_VETO, NoteSaveOutcomeKind.FAILED})
+#: The shortest delay an autosave timer is ever armed with (final review C1).
+#: Textual 8.2.8's ``Timer._run`` divides by the interval when it skips a late
+#: tick, so a 0 s Timer dies with ``ZeroDivisionError`` before it calls back,
+#: and the app then raises that error when it shuts down. A burst whose max
+#: wait has already run out therefore saves "almost at once", never "at once".
+AUTOSAVE_MIN_DELAY_SECONDS = 0.05
 
 
 def library_note_autosave_delay(
@@ -58,9 +66,13 @@ def library_note_autosave_delay(
 
     A burst starts at the first unsaved keystroke and is keyed on the note,
     its session and its saved revision, so a landed save, another note or a
-    reopened session starts a new one. The timer callback ends the burst
-    too (``arm_library_note_autosave``), so a vetoed or failed autosave does
-    not turn every later keystroke into an immediate retry.
+    reopened session starts a new one. A save that starts ends the burst too
+    (``note_save_starts``), so a vetoed or failed autosave does not
+    turn every later keystroke into an immediate retry.
+
+    A burst can outlive its max wait without its timer firing: a quit flush
+    or a rail switch cancels the timer and may leave the draft unsaved. The
+    next keystroke then gets ``AUTOSAVE_MIN_DELAY_SECONDS``, not zero.
 
     Args:
         state: The screen's Notes state, which holds the current burst.
@@ -71,7 +83,8 @@ def library_note_autosave_delay(
 
     Returns:
         Seconds until the autosave should fire: the debounce, or less when
-        the burst's max wait runs out first (never negative).
+        the burst's max wait runs out first. Always positive: at least
+        ``AUTOSAVE_MIN_DELAY_SECONDS``.
     """
     now = time.monotonic() if now is None else now
     key = (snapshot.note_id, snapshot.session_generation, snapshot.saved_revision)
@@ -79,7 +92,35 @@ def library_note_autosave_delay(
     if burst is None or burst[0] != key:
         burst = (key, now)
         state.autosave_burst = burst
-    return max(0.0, min(debounce, burst[1] + max_wait - now))
+    return max(AUTOSAVE_MIN_DELAY_SECONDS, min(debounce, burst[1] + max_wait - now))
+
+
+def note_save_starts(state: LibraryNotesState, autosave_generation: int | None) -> bool:
+    """A save of the open note is about to reach the session: end its burst.
+
+    The burst ends here and not in the timer callback (final review C1). The
+    callback only queues the save worker, and a keystroke handled before that
+    worker starts invalidates it. Ending the burst in the callback made that
+    keystroke begin a new burst with a full max wait, so the max-wait save
+    was dropped and a steady typist could wait a second max wait for it.
+
+    Args:
+        state: The screen's Notes state, which holds the current burst.
+        autosave_generation: The timer generation an autosave captured, or
+            None for an explicit Save.
+
+    Returns:
+        False when a newer keystroke superseded this autosave: it must not
+        save, and the burst (with what is left of its max wait) stays. True
+        otherwise, with the burst ended.
+    """
+    if (
+        autosave_generation is not None
+        and autosave_generation != state.autosave_generation
+    ):
+        return False
+    state.autosave_burst = None
+    return True
 
 
 def arm_library_note_autosave(
@@ -108,14 +149,16 @@ def arm_library_note_autosave(
     )
 
     def _fire() -> None:
-        if generation == state.autosave_generation:
-            state.autosave_burst = None
+        # Queues the save worker only. The burst ends when that save starts
+        # (``note_save_starts``), so a key landing first keeps it.
         screen._notes_controller._fire_library_note_autosave(generation)
 
     state.autosave_timer = screen.set_timer(delay, _fire)
 
 
-def keep_autosave_veto_in_place(screen: LibraryScreen, outcome: NoteSaveOutcome) -> bool:
+def keep_autosave_veto_in_place(
+    screen: LibraryScreen, outcome: NoteSaveOutcome
+) -> bool:
     """Present a refused autosave without moving a typing user (review N-07).
 
     Args:

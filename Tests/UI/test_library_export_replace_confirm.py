@@ -68,8 +68,9 @@ async def _await_replace_prompt(host, pilot, destination, before) -> Confirmatio
     """Wait for the replace prompt; fail first on the file having changed."""
     await _wait_for_condition(
         pilot,
-        lambda: isinstance(host.screen, ConfirmationDialog)
-        or _md5(destination) != before,
+        lambda: (
+            isinstance(host.screen, ConfirmationDialog) or _md5(destination) != before
+        ),
         message="neither a replace prompt nor a write followed Save",
     )
     assert _md5(destination) == before, (
@@ -135,8 +136,10 @@ def _prompt_host(tmp_path):
 async def _picker_location(host, pilot) -> Path:
     await _wait_for_condition(
         pilot,
-        lambda: isinstance(host.screen, FileSave)
-        and isinstance(host.screen.focused, FileNameInput),
+        lambda: (
+            isinstance(host.screen, FileSave)
+            and isinstance(host.screen.focused, FileNameInput)
+        ),
         message="the next export picker did not open",
     )
     return Path(host.screen.query_one(DirectoryNavigation).location)
@@ -206,8 +209,10 @@ async def _open_note_export(host, screen, pilot):
     screen.query_one("#library-note-export-md", Button).press()
     await _wait_for_condition(
         pilot,
-        lambda: isinstance(host.screen, FileSave)
-        and isinstance(host.screen.focused, FileNameInput),
+        lambda: (
+            isinstance(host.screen, FileSave)
+            and isinstance(host.screen.focused, FileNameInput)
+        ),
         message="Export Markdown did not open the picker with filename focus",
     )
     dialog = host.screen

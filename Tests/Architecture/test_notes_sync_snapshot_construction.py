@@ -47,9 +47,11 @@ def _construction_sites() -> list[tuple[str, str]]:
                 owner, (ast.FunctionDef, ast.AsyncFunctionDef)
             ):
                 owner = parents[owner]
-            enclosing = owner.name if isinstance(
-                owner, (ast.FunctionDef, ast.AsyncFunctionDef)
-            ) else "<module>"
+            enclosing = (
+                owner.name
+                if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef))
+                else "<module>"
+            )
             sites.append((path.relative_to(_PACKAGE.parent).as_posix(), enclosing))
     return sites
 

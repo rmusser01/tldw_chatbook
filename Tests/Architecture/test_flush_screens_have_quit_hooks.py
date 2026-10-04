@@ -90,7 +90,9 @@ def scan_source(source: str, label: str) -> tuple[list[str], list[str]]:
     """
     flushing: list[str] = []
     offences: list[str] = []
-    for cls in (node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ClassDef)):
+    for cls in (
+        node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.ClassDef)
+    ):
         if not any(_base_name(base).endswith("Screen") for base in cls.bases):
             continue
         methods = {

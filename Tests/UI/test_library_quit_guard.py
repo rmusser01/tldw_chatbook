@@ -88,7 +88,6 @@ async def test_ctrl_q_inside_the_autosave_window_persists_the_typed_tail(
     profile.db.close_connection()
 
 
-
 async def test_ctrl_q_on_a_new_note_keeps_its_typed_title_and_body(
     tmp_path, monkeypatch
 ):
@@ -116,7 +115,6 @@ async def test_ctrl_q_on_a_new_note_keeps_its_typed_title_and_body(
             assert len(rows) == 3, f"expected the two seeds plus the new note: {rows}"
             assert not [row for row in rows if row[0] == "Untitled"], rows
     profile.db.close_connection()
-
 
 
 # --- AC#2 + the N-07 core guard: one refused draft ---------------------------

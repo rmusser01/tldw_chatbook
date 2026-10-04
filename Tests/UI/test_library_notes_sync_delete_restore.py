@@ -37,7 +37,9 @@ from Tests.UI.library_quit_guard_support import (
 )
 from Tests.UI.test_library_shell import _seed_conversations, _wait_for_selector
 from Tests.app_module_patches import patch_app_global
-from tldw_chatbook.Widgets.Library.library_notes_canvas import DELETE_CONFIRM_COPY_SYNCED
+from tldw_chatbook.Widgets.Library.library_notes_canvas import (
+    DELETE_CONFIRM_COPY_SYNCED,
+)
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
 
@@ -71,7 +73,9 @@ async def _open_manage_sync_folders(screen, pilot) -> str:
     # Fix round 1 (review Important 1): Undo's own recompose can leave the
     # toolbar briefly unmounted; wait for the button and press the node the
     # settle pause re-queried, never a detached one.
-    button = await _wait_for_selector(screen, pilot, "#library-notes-manage-sync-folders")
+    button = await _wait_for_selector(
+        screen, pilot, "#library-notes-manage-sync-folders"
+    )
     button.press()
     await _wait_for_selector(screen, pilot, ROOT_STATUS)
     await pilot.pause(0.1)
@@ -176,12 +180,16 @@ async def test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date(tmp_pat
                 assert owner.schedule_hint("root-1") is not None
                 await _until(
                     pilot,
-                    lambda: _text_or_empty(screen, ROOT_STATUS)
-                    == "⚠ Needs attention · Next: Review changes",
+                    lambda: (
+                        _text_or_empty(screen, ROOT_STATUS)
+                        == "⚠ Needs attention · Next: Review changes"
+                    ),
                     "the Manage row to follow the hold without a keypress",
                 )
                 assert vault.note()["content"] == VAULT_TEXT + "app side"
-                assert vault.file.read_bytes() == (VAULT_TEXT + "disk side\n").encode("utf-8")
+                assert vault.file.read_bytes() == (VAULT_TEXT + "disk side\n").encode(
+                    "utf-8"
+                )
     finally:
         await owner.shutdown()
         vault.close()

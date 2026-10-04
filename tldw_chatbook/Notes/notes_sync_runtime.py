@@ -3344,10 +3344,22 @@ class NotesSyncRuntimeOwner:
         for root_id in sorted(self._root_paths):
             if root_id in self._closed_roots:
                 continue
-            bound = await asyncio.to_thread(
+            # Final review M7: a maintenance-visible offload, not a bare
+            # ``asyncio.to_thread``. Shutdown and a backup's drain wait for
+            # it, so the store is never closed under this read.
+            bound = await self._maintenance_offload(
                 self._store.active_binding_note_ids, root_id
             )
-            if note_id not in bound:
+            # Re-checked after the await: once shutdown or maintenance has
+            # closed admission, reading the next root would re-open the store
+            # after it was closed, and nothing could be hinted anyway.
+            if (
+                self._maintenance_closed
+                or not self._admission_open
+                or self._status != "active"
+            ):
+                break
+            if root_id in self._closed_roots or note_id not in bound:
                 continue
             running = self._hint_tasks.get(root_id)
             if running is not None and not running.done():
@@ -3483,13 +3495,13 @@ class NotesSyncRuntimeOwner:
                     # Admission closed (a Pause, or maintenance) between the
                     # release and the pass: the hold stands until a pass can run.
                     return False
-                # Review 3 Minor 2/6: anything else is a failed pass, handled
-                # the way ``_run_hint`` handles one -- held, published, logged.
+                # Review 3 Minor 2/6: anything else is a failed pass -- held,
+                # published, logged. There is no ``root_lease_required``
+                # branch here, unlike ``_run_hint``: only the plan and execute
+                # steps raise it, and ``_run_settled_pass`` handles it there
+                # (publishing "offline") before it could reach this handler.
                 _log_bounded_failure("released pass", error)
-                if str(error) == "root_lease_required":
-                    await self._publish(root_id, "offline", "reconnect_folder")
-                else:
-                    await self._publish(root_id, "failed", "review_changes")
+                await self._publish(root_id, "failed", "review_changes")
                 return False
             except Exception as error:  # noqa: BLE001 - a pass never leaks a task exception
                 self._blocked_roots.add(root_id)
@@ -3506,7 +3518,11 @@ class NotesSyncRuntimeOwner:
             current = asyncio.current_task()
             if self._hint_tasks.get(root_id) is current:
                 self._hint_tasks.pop(root_id, None)
-            if rerun:
+            # Final review M1: not on a root a Pause closed meanwhile. This
+            # pass un-blocked the root as it leased and re-planned, so
+            # ``schedule_hint`` alone would admit a second pass on the root
+            # being paused; Resume re-plans it, dirty mark or not.
+            if rerun and root_id not in self._closed_roots:
                 self.schedule_hint(root_id)
 
     @producer_call

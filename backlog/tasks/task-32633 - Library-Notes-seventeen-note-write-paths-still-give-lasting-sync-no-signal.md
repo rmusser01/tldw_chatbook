@@ -13,7 +13,7 @@ labels:
   - rider
 dependencies: []
 priority: medium
-updated_date: '2026-10-04 13:20'
+updated_date: '2026-10-04 16:30'
 ---
 
 ## Description
@@ -301,4 +301,10 @@ line-neutral), `UI/Screens/library_screen.py` (line-neutral),
 `Tests/Architecture/test_library_modules_size_ratchet.py` (re-pin),
 `scripts/ui_pr_gate_census.txt`, `Docs/security/production-diagnostic-inventory.json`,
 `Docs/User_Guide/library/notes.md`, `backlog/tasks/task-34000.49 ...md` (new).
+
+**Final review fixes (whole-branch review, 2026-10-04).**
+- *M1.* The released pass's re-run for a dirty mark is no longer scheduled on a root a Pause closed while the pass was in flight (`rerun and root_id not in self._closed_roots`).
+- *M2.* The narrowed `RuntimeError` handler in `_run_released_pass` is pinned: an unknown `RuntimeError` ends `failed`, blocked and never healthy. Its `root_lease_required` branch was deleted as unreachable: only the plan and execute steps raise that code, and `_run_settled_pass` handles it there (a second test pins that such a pass reads "offline").
+- *M7.* `note_changed` reads each root's bindings through `_maintenance_offload`, so shutdown and a backup's drain wait for the read instead of closing the store under it, and it re-checks admission after the await so it never reads on after shutdown began.
+- *I2.* `Tests/Notes/test_notes_sync_delete_restore_signal.py` (these three pins included) now runs on every pull request, in the admission-sensitive step beside the tail-edit file.
 <!-- SECTION:NOTES:END -->

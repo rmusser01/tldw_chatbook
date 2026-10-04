@@ -479,7 +479,9 @@ works.
 **Autosave** runs about two seconds after you stop typing; the meta line
 flips to "saving…" and back to "saved". If you keep typing without a
 two-second pause, it still saves at least every ten seconds, so a long
-burst of steady typing is never held back until you stop. If an autosave is
+burst of steady typing is never held back until you stop. (A note in a synced
+folder can take up to three seconds longer, while the folder finishes syncing
+the previous save.) If an autosave is
 refused — a title with a leading or trailing space, unsafe markup, a
 duplicate keyword — or the write fails, the status line says why, and your
 cursor stays in the field you are typing in. Nothing jumps to another field
@@ -803,15 +805,18 @@ write left no trace anywhere in the app.
 Saving a note in Chatbook is enough to produce that "Wrote note to file" row:
 a note inside an active root that you save in the editor is written to its
 file on its own, on the same terms a file you edit on disk is read into its
-note — you do not have to run **Check changes**, and the row goes on saying
-"✓ Up to date" because by then it is (task-32604). This depends on lasting
+note — you do not have to run **Check changes**, and the row reads
+"✓ Up to date as of HH:MM", the minute that write was confirmed, because by
+then it is (task-32604). **Ctrl+Q** right after such a save waits for that
+write before Chatbook exits — up to five seconds; if the folder's sync takes
+longer than that, the file receives the edit when Chatbook next starts. This
+depends on lasting
 sync still running: if it has stopped, nothing is carrying changes either way
 and the root's row says so — "⚠ Sync stopped · Next: Check changes" — instead
 of claiming to be up to date. (That one label still appears only on the next
 redraw — on opening **Manage sync folders**, or on returning to the Library:
 a runtime that has stopped publishes nothing, so a list you are already
-sitting on cannot learn it from a publication.) Until this the note
-side
+sitting on cannot learn it from a publication.) Until this the note side
 produced no signal at all: Chatbook watches the folder, not the notes
 database, so a note you saved stayed in Notes only and its file kept its old
 bytes until something else touched the disk — with the row reading
@@ -829,7 +834,13 @@ note in that folder says "Saved HH:MM in Notes · ⚠ Sync needs attention" with
 surfaces follow the folder as its state changes — a hold that a background pass
 produces while you sit idle (a disk edit colliding with a note edit, say)
 reaches them within a moment, without a keypress — and they return to the
-healthy wording the same way once the folder is resolved. Before this
+healthy wording the same way once the folder is resolved. Typing in a synced
+note can still, rarely, hold its folder: Chatbook saves the note while you
+type, and each save first waits up to three seconds for the folder's previous
+sync to finish, so on a folder slow enough to outlast that wait a save can
+land in the middle of a sync, and the folder is then held until you press
+**Recovery**, which loses nothing (TASK-34000.51 is to make that settle on its
+own). Before this
 an ordinary edit — Ctrl+End, then a word without Enter, in a vault whose files
 end with a newline — left a `postcondition_failed` entry open on the folder
 while the tree, the list and the editor went on saying Sync managed, Ready and
@@ -872,9 +883,11 @@ direction** while it is held. The one way back is to restore the note:
 **Undo** on the receipt, or **Restore** in **Recently deleted**, in this
 session or a later one. The folder then returns to "✓ Up to date as of HH:MM"
 on its own, with no **Check changes**, and the file is unchanged throughout.
-(One narrow exception: if a backup is capturing the profile at the moment you
-restore, the folder waits for your next change to one of its notes, or for
-**Check changes**.)
+(Two narrow exceptions, with the same way out. If a backup is capturing the
+profile at the moment you restore, the folder waits for your next change to
+one of its notes, or for **Check changes**. And **Ctrl+Q** right after a
+restore waits up to five seconds for the folder to be checked; on a folder
+that takes longer, the next session opens with it still held.)
 One known gap remains after that: the first edit you make to that file *on
 disk* is refused by the folder — "⚠ Needs attention" with nothing to review —
 until TASK-34000.49 lands; editing the note in Chatbook first turns it into an
