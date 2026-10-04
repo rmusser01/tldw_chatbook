@@ -17,7 +17,6 @@ jobs:
     timeout-minutes: 25
     env:
       PYTHONUTF8: "1"
-      TLDW_PAUSE_PROBE_RESULT: ${{ runner.temp }}/console-pause.json
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,6 +36,8 @@ jobs:
           "TEMP=$pauseTemp" >> $env:GITHUB_ENV
           "TMP=$pauseTemp" >> $env:GITHUB_ENV
       - name: Measure real guarded Console and three immediate captured replies
+        env:
+          TLDW_PAUSE_PROBE_RESULT: ${{ runner.temp }}/console-pause.json
         run: python -m pytest Tests/Performance/test_console_native_pause_probe.py -q --timeout=900 --junitxml=${{ runner.temp }}/console-pause.xml
       - name: Retain native evidence even on failure
         if: always()
