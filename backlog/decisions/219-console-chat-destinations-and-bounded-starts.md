@@ -138,3 +138,12 @@ Final exact v77 catalog, stamp and integrity validation must succeed before
 commit; failure or cancellation rolls back the disposable candidate. Ordinary
 v75 and shipped v76 remain validation/export compatible but do not gain staged
 DDL migration support. Their runtime constructor upgrades remain supported.
+
+
+## Committed Close compatibility for prepared creation (2026-10-04)
+
+Latest dev PR2953 fences agent creation and source-view placement on committed, exact-generation source Close. Prepared `new_chat` preserves that refusal before durable-save entry and through native preparation until AgentRuns acceptance. Its exact record/approval and remembered grants finalize atomically with Close under the existing pending-creation lock; validation does not recursively acquire that lock and no registry lock spans SQLite I/O.
+
+A successfully saved approved version-2 conversation/draft is the artifact required by Decision6. If source Close races that save before native acceptance, keep the saved draft, suppress stale source placement and automatic launch, and report the created conversation with `draft` or `not_started` plus the fixed `source_unavailable` reason. Existing launch-metadata failure handling remains `review_required`/`outcome_unconfirmed`; there is no deletion or automatic retry. This prepared route therefore does not use the legacy fork/create orphan cleanup that removes an unplaced legacy result.
+
+Decision7's AgentRuns acceptance remains the source-ownership cutoff. After acceptance, source Close cannot delete the target, undo draft consumption, refund accepted charges or rewrite the launch outcome. The current-source view callback is an observer and may be suppressed after Close independently of the target. Legacy `fork_chat` keeps latest-dev Close and orphan cleanup behavior. This clarification combines the two existing contracts without changing storage, allowance, authority, retry or lock policy.
