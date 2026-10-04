@@ -75,10 +75,11 @@ _BLOCKED_EXTRA_NETWORKS = (
 
 
 def _is_public_ip(ip_str: str) -> bool:
-    ip = ipaddress.ip_address(ip_str)
-    mapped = getattr(ip, "ipv4_mapped", None)
-    if mapped is not None:  # ::ffff:127.0.0.1 -> check the embedded v4 address
-        ip = mapped
+    # ::ffff:127.0.0.1 and 64:ff9b::7f00:1 are judged as the IPv4 address
+    # they embed, the same unwrapping Utils.egress applies (ADR-206).
+    from ..Utils.egress import _effective_ip
+
+    ip = _effective_ip(ip_str)
     if any(ip in net for net in _BLOCKED_EXTRA_NETWORKS):
         return False
     return not (

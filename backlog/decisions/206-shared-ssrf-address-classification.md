@@ -76,8 +76,8 @@ egress's classification, and `Petdex/network.py` imports `_classify_ip`
 directly; both can adopt `address_is_fetchable` in place — left as
 follow-ups since neither was in task-609's scope. Petdex inherits the
 embedded-IPv4 verdict through `_classify_ip`; `_is_public_ip` keeps its own
-predicate chain and still refuses the whole NAT64 prefix until it adopts
-the shared one.
+predicate chain but unwraps addresses through the same `_effective_ip`, so
+all four consumers agree on NAT64 and IPv4-mapped addresses.
 
 ## Considered and rejected
 
