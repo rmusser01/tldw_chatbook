@@ -19548,6 +19548,7 @@ class ConsoleChatController:
         if (
             self._disposed
             or session is None
+            or not self._chat_create_source_is_open(session.id)
             or not run_id
             or bridge is None
             or run_id in self._chat_creation_revoked_runs
@@ -19792,23 +19793,29 @@ class ConsoleChatController:
         self, payload: Mapping[str, Any]
     ) -> dict[str, Any] | None:
         with self._pending_chat_create_lock:
-            record = self._chat_creation_records.get(payload.get("_creation_token"))
-            if record is None or any(
-                payload.get(key) != value for key, value in record["payload"].items()
-            ):
-                return None
-            source = self.store._sessions.get(record["payload"]["session_id"])
-            if (
-                not self._chat_creation_source_live(record["payload"])
-                or (
-                    record.get("source_cancel_event") is not None
-                    and record["source_cancel_event"].is_set()
-                )
-                or source is None
-                or source.workspace_id != record["payload"]["source_workspace_id"]
-            ):
-                return None
-            return record
+            return self._chat_creation_record_locked(payload)
+
+    def _chat_creation_record_locked(
+        self, payload: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        """Validate exact preparation while the caller holds the registry lock."""
+        record = self._chat_creation_records.get(payload.get("_creation_token"))
+        if record is None or any(
+            payload.get(key) != value for key, value in record["payload"].items()
+        ):
+            return None
+        source = self.store._sessions.get(record["payload"]["session_id"])
+        if (
+            not self._chat_creation_source_live(record["payload"])
+            or (
+                record.get("source_cancel_event") is not None
+                and record["source_cancel_event"].is_set()
+            )
+            or source is None
+            or source.workspace_id != record["payload"]["source_workspace_id"]
+        ):
+            return None
+        return record
 
     def _start_created_chat(
         self, approved: Mapping[str, Any], target: ConsoleChatSession
@@ -19905,6 +19912,13 @@ class ConsoleChatController:
                 workspace_id=approved["workspace_id"],
             ):
                 raise PermissionError("destination_unavailable")
+            # No registry lock spans SQLite I/O. A successful save owns the
+            # durable draft even if Close retires its source during that write.
+            if (
+                self._chat_creation_record(payload) is not record
+                or not record["approved"]
+            ):
+                raise PermissionError("source_unavailable")
             self.store.persistence.persist_console_conversation_with_policy(
                 conversation_id=conversation_id,
                 policy_candidate=ConsoleLibraryPolicyCandidate(
@@ -19935,9 +19949,12 @@ class ConsoleChatController:
                 if approved["mode"] == "draft"
                 else HANDOFF_LAUNCH_NOT_STARTED,
             }
+            target = None
             try:
 
                 def restore():
+                    if not self._chat_create_source_is_open(approved["session_id"]):
+                        return None
                     created_session = self.store.restore_persisted_session(
                         title=title,
                         workspace_id=approved["workspace_id"]
@@ -19966,13 +19983,24 @@ class ConsoleChatController:
                     return created_session
 
                 target = self.app.call_from_thread(restore)
-                if approved["mode"] == "start":
+                if target is None:
+                    result["reason"] = "source_unavailable"
+                elif approved["mode"] == "start":
                     result.update(self._start_created_chat(approved, target))
             except Exception:
-                result["reason"] = "restore_unavailable"
+                result["reason"] = (
+                    "restore_unavailable"
+                    if target is not None
+                    or self._chat_create_source_is_open(approved["session_id"])
+                    else "source_unavailable"
+                )
                 if approved["mode"] == "start":
                     result["launch_status"] = HANDOFF_LAUNCH_NOT_STARTED
-            if result.get("reason") in {"restore_unavailable", "runtime_unavailable"}:
+            if result.get("reason") in {
+                "restore_unavailable",
+                "runtime_unavailable",
+                "source_unavailable",
+            }:
                 from .message_metadata import AgentHandoffLaunchMetadata
 
                 try:
@@ -19991,10 +20019,13 @@ class ConsoleChatController:
                         launch_status=HANDOFF_LAUNCH_REVIEW_REQUIRED,
                         reason="outcome_unconfirmed",
                     )
-            if self.complete_agent_chat_create is not None:
-                try:
-                    self.app.call_from_thread(
-                        self.complete_agent_chat_create,
+
+            def complete_if_source_open():
+                if not self._chat_create_source_is_open(approved["session_id"]):
+                    return
+                complete = self.complete_agent_chat_create
+                if complete is not None:
+                    complete(
                         session_id=approved["session_id"],
                         conversation_id=conversation_id,
                         title=title,
@@ -20005,8 +20036,11 @@ class ConsoleChatController:
                         launch_status=result["launch_status"],
                         reason=result.get("reason"),
                     )
-                except Exception:
-                    pass
+
+            try:
+                self.app.call_from_thread(complete_if_source_open)
+            except Exception:
+                pass
             return result
         except (ValueError, PermissionError):
             return {
@@ -20107,25 +20141,31 @@ class ConsoleChatController:
             "parent_run_id": requesting_parent,
             "agent_task": requesting_task,
         }
-        # Session-scoped remember: a standing grant for this (session, tool)
-        # pair short-circuits -- no card is armed at all.
+        # Decide a remembered grant atomically with Close and revocation.
         with self._pending_chat_create_lock:
-            if owning_session_id in self._session_close_generations:
-                return {"allow": False, "remember": False}
-        record = self._chat_creation_record(payload) if tool == "new_chat" else None
-        if tool == "new_chat" and record is None:
+            record = (
+                self._chat_creation_record_locked(payload)
+                if tool == "new_chat"
+                else None
+            )
+            refused = owning_session_id in self._session_close_generations or (
+                tool == "new_chat" and record is None
+            )
+            grant = payload["_grant_scope"] if record is not None else tool
+            if (
+                not refused
+                and requesting_kind == AGENT_KIND_PRIMARY
+                and grant
+                in self._chat_create_session_grants.get(owning_session_id, set())
+            ):
+                if record is not None:
+                    record["approved"] = True
+                return {"allow": True, "remember": True}
+        if refused:
             token = payload.get("_creation_token")
             if isinstance(token, _ChatCreationToken):
                 token.close()
             return {"allow": False, "remember": False}
-        grant = payload["_grant_scope"] if record is not None else tool
-        if (
-            requesting_kind == AGENT_KIND_PRIMARY
-            and grant in self._chat_create_session_grants.get(owning_session_id, set())
-        ):
-            if record is not None:
-                record["approved"] = True
-            return {"allow": True, "remember": True}
         if self.app is None or self.set_pending_chat_create is None:
             if record is not None:
                 payload["_creation_token"].close()
@@ -20244,7 +20284,7 @@ class ConsoleChatController:
                 # Decide and remember atomically with the Close/revocation sweep.
                 # A remembered deny must never become a standing grant.
                 if allow and tool == "new_chat":
-                    allow = self._chat_creation_record(payload) is record
+                    allow = self._chat_creation_record_locked(payload) is record
                     if allow:
                         record["approved"] = True
                 if allow and remember:
@@ -20410,8 +20450,8 @@ class ConsoleChatController:
         returned an allow (the bridge closure enforces that ordering), so
         refusal before creation makes no chat; the outcome's ``kind``
         tells the model (and the run log) why. A source retired during I/O
-        refuses UI placement and discards its newly committed row through
-        the existing best-effort orphan soft-delete helper.
+        refuses UI placement. Legacy forks discard their orphan row; prepared
+        new chats retain their successfully saved draft before launch.
 
         For ``fork_chat`` the new conversation copies the source's active
         path verbatim (``ChatConversationService.copy_conversation_active_
@@ -20445,9 +20485,6 @@ class ConsoleChatController:
         )
         from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 
-        if payload.get("tool") == "new_chat":
-            return self._execute_prepared_chat_create(payload)
-
         tool = str(payload.get("tool") or "")
         session_id = str(payload.get("session_id") or "")
         # A committed Close retains its source during drain; an earlier Allow
@@ -20458,6 +20495,9 @@ class ConsoleChatController:
                 "kind": _CHAT_CREATE_SESSION_GONE,
                 "error": "source session is closing",
             }
+        if tool == "new_chat":
+            return self._execute_prepared_chat_create(payload)
+
         session = next((s for s in self.store.sessions() if s.id == session_id), None)
         if session is None:
             return {

@@ -1012,7 +1012,7 @@ async def _native_start_rig(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["source_stop", "edit", "clear"])
+@pytest.mark.parametrize("action", ["source_stop", "source_close", "edit", "clear"])
 async def test_before_cutoff_withdrawal_preserves_latest_draft_and_refunds(
     tmp_path, action
 ):
@@ -1021,6 +1021,8 @@ async def test_before_cutoff_withdrawal_preserves_latest_draft_and_refunds(
     controller, store, runs, source, target, chain, request = await _native_start_rig(
         tmp_path
     )
+    if action == "source_close":
+        _seed_close_source_message(controller, source)
     reached = asyncio.Event()
 
     async def paused(_selection):
@@ -1031,8 +1033,16 @@ async def test_before_cutoff_withdrawal_preserves_latest_draft_and_refunds(
     start = asyncio.create_task(controller._chat_start.start(request))
     try:
         await asyncio.wait_for(reached.wait(), 5)
-        if action == "source_stop":
-            controller._signal_stop(session_id=source.id)
+        if action in {"source_stop", "source_close"}:
+            if action == "source_close":
+                controller.begin_session_close(
+                    source.id,
+                    expected_revision=controller.lifecycle_impact(
+                        session_id=source.id
+                    ).revision,
+                )
+            else:
+                controller._signal_stop(session_id=source.id)
             expected = "original"
         else:
             expected = "edited" if action == "edit" else ""
@@ -1055,7 +1065,9 @@ async def test_before_cutoff_withdrawal_preserves_latest_draft_and_refunds(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["source_stop", "write_failure", "target_stop"])
+@pytest.mark.parametrize(
+    "action", ["source_stop", "source_close", "write_failure", "target_stop"]
+)
 async def test_ledger_cutoff_retains_charge_and_requires_conversation_receipt(
     tmp_path, action
 ):
@@ -1065,6 +1077,8 @@ async def test_ledger_cutoff_retains_charge_and_requires_conversation_receipt(
     controller, store, runs, source, target, chain, request = await _native_start_rig(
         tmp_path
     )
+    if action == "source_close":
+        _seed_close_source_message(controller, source)
     entered, release = Event(), Event()
     original_commit = store.commit_durable_turn
 
@@ -1080,8 +1094,16 @@ async def test_ledger_cutoff_retains_charge_and_requires_conversation_receipt(
     try:
         assert await asyncio.to_thread(entered.wait, 5)
         assert runs.automatic_work.snapshot(chain).used["generation"] == 1
-        if action == "source_stop":
-            controller._signal_stop(session_id=source.id)
+        if action in {"source_stop", "source_close"}:
+            if action == "source_close":
+                controller.begin_session_close(
+                    source.id,
+                    expected_revision=controller.lifecycle_impact(
+                        session_id=source.id
+                    ).revision,
+                )
+            else:
+                controller._signal_stop(session_id=source.id)
         if action == "target_stop":
             store.switch_session(target.id)
             assert controller.stop_active_run()
@@ -1089,7 +1111,9 @@ async def test_ledger_cutoff_retains_charge_and_requires_conversation_receipt(
         outcome = await start
         await asyncio.gather(*controller._chat_start.tasks())
         assert outcome.launch_status == (
-            "started" if action == "source_stop" else "review_required"
+            "started"
+            if action in {"source_stop", "source_close"}
+            else "review_required"
         ), outcome
         rows = store.persistence.db.get_messages_for_conversation(
             request.conversation_id
@@ -1097,11 +1121,28 @@ async def test_ledger_cutoff_retains_charge_and_requires_conversation_receipt(
         assert any(
             row["sender"] == "assistant" and row["content"] == "target answer"
             for row in rows
-        ) == (action == "source_stop")
+        ) == (action in {"source_stop", "source_close"})
+        if action == "source_close":
+            attempt = runs.automatic_work.read_chat_start_attempt(
+                request.attempt_id, owner_id=controller.fleet_wake.runtime_owner_id
+            )
+            assert attempt.state == "completed"
+            user = next(row for row in rows if row["sender"] == "user")
+            assert (
+                json.loads(user["metadata_json"])["agent_chat_start"]["attempt_id"]
+                == request.attempt_id
+            )
+            handoff = json.loads(
+                store.persistence.db.get_conversation_by_id(request.conversation_id)[
+                    "metadata"
+                ]
+            )["console_agent_handoff"]
+            assert handoff["state"] == "consumed" and handoff["draft"] == ""
+            assert target.agent_handoff_state == "consumed" and target.draft == ""
         if action == "write_failure":
             assert not rows and target.draft == "original"
         assert runs.automatic_work.snapshot(chain).used["generation"] == 1
-        if action != "source_stop":
+        if action not in {"source_stop", "source_close"}:
             assert (
                 runs.automatic_work.read_chat_start_attempt(
                     request.attempt_id, owner_id=controller.fleet_wake.runtime_owner_id
@@ -3035,3 +3076,162 @@ async def test_native_uncontended_acceptance_restores_full_policy_and_retires_ow
         await controller.shutdown()
         runs.close()
         store.persistence.db.close_connection()
+
+
+def _seed_close_source_message(controller, source):
+    """Give actual Close the live message owned by the original rig's turn."""
+    from tldw_chatbook.Chat.console_chat_store import ConsoleMessageRole
+
+    controller.store.append_message(
+        source.id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="",
+        message_id=controller._active_assistant_message_ids[source.id],
+    )
+
+
+@pytest.mark.parametrize("close_before_decision", [False, True])
+def test_prepared_worker_decision_and_close_terminate(
+    creation_controller, close_before_decision
+):
+    """Exercise the actual decision lock with a prepared primary worker."""
+    import threading
+    from Tests.Chat.test_console_skill_script_confirm import _wait_until
+
+    controller, source, _db = creation_controller
+    _seed_close_source_message(controller, source)
+    prepared = _prepared_creation(controller, source)
+    controller.set_pending_chat_create = lambda payload: None
+    decisions = []
+
+    def decide():
+        with use_run_id("source-run"):
+            decisions.append(
+                controller.request_chat_create_confirm(prepared, session_id=source.id)
+            )
+
+    worker = threading.Thread(target=decide, daemon=True)
+    worker.start()
+    _wait_until(lambda: bool(controller.pending_chat_create_ids()))
+    request_id = controller.pending_chat_create_ids()[0]
+    if close_before_decision:
+        controller.begin_session_close(
+            source.id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=source.id
+            ).revision,
+        )
+    controller.resolve_pending_chat_create(True, True, request_id=request_id)
+    worker.join(5)
+    assert not worker.is_alive(), (
+        "prepared decision recursively acquired the plain lock"
+    )
+    assert decisions == [
+        {"allow": not close_before_decision, "remember": not close_before_decision}
+    ]
+    if close_before_decision:
+        assert not controller._chat_creation_records
+        assert not controller._chat_create_session_grants.get(source.id)
+    else:
+        assert controller._chat_creation_record(prepared)["approved"]
+        assert controller._chat_create_session_grants[source.id] == {
+            prepared["_grant_scope"]
+        }
+        prepared["_creation_token"].close()
+
+
+@pytest.mark.parametrize("mode", ["draft", "start"])
+@pytest.mark.parametrize("phase", ["before_save", "saved", "queued_restore"])
+def test_prepared_close_preserves_only_successfully_saved_draft(
+    creation_controller, monkeypatch, mode, phase
+):
+    controller, source, db = creation_controller
+    _seed_close_source_message(controller, source)
+    prepared = _prepared_creation(controller, source, mode=mode)
+    controller._chat_create_session_grants[source.id] = {prepared["_grant_scope"]}
+    assert controller.request_chat_create_confirm(prepared, session_id=source.id)[
+        "allow"
+    ]
+    completions, starts, saves = [], [], []
+    controller.complete_agent_chat_create = lambda **kwargs: completions.append(kwargs)
+    monkeypatch.setattr(
+        controller, "_start_created_chat", lambda *args: starts.append(args)
+    )
+
+    def close():
+        controller.begin_session_close(
+            source.id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=source.id
+            ).revision,
+        )
+
+    original_save = (
+        controller.store.persistence.persist_console_conversation_with_policy
+    )
+
+    def save(**kwargs):
+        original_save(**kwargs)
+        saves.append(kwargs["conversation_id"])
+        if phase == "saved":
+            close()
+
+    monkeypatch.setattr(
+        controller.store.persistence, "persist_console_conversation_with_policy", save
+    )
+    if phase == "before_save":
+        available = controller._chat_creation_destination_available
+
+        def retire_before_save(**kwargs):
+            result = available(**kwargs)
+            close()
+            return result
+
+        monkeypatch.setattr(
+            controller, "_chat_creation_destination_available", retire_before_save
+        )
+    elif phase == "queued_restore":
+        original_marshal = controller.app.call_from_thread
+
+        def marshal(callback, *args, **kwargs):
+            if callback.__name__ == "restore":
+                close()
+            return original_marshal(callback, *args, **kwargs)
+
+        controller.app.call_from_thread = marshal
+    result = controller.execute_agent_chat_create(prepared)
+    assert not starts and not completions
+    assert not controller._chat_creation_records
+    assert len(controller.store.sessions()) == 1
+    if phase == "before_save":
+        assert not result["ok"]
+        assert not saves
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM conversations")
+            .fetchone()[0]
+            == 1
+        )
+        return
+    assert result["ok"] and result["conversation_id"] == saves[0]
+    assert result["launch_status"] == ("draft" if mode == "draft" else "not_started")
+    assert result["reason"] == "source_unavailable"
+    row = db.get_conversation_by_id(saves[0])
+    assert row and not row["deleted"]
+    handoff = json.loads(row["metadata"])["console_agent_handoff"]
+    assert handoff == {
+        "version": 2,
+        "created_via": "new_chat",
+        "state": "pending",
+        "draft_revision": 1,
+        "draft": "opening",
+        "source_run_id": "source-run",
+        "launch": {
+            "mode": mode,
+            "status": result["launch_status"],
+            "reason": "source_unavailable",
+        },
+    }
+    assert not db.get_messages_for_conversation(saves[0])
+    assert not controller.execute_agent_chat_create(prepared)["ok"]
+    assert len(saves) == 1

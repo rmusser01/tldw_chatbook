@@ -403,16 +403,24 @@ async def _verify_chat_create_confirmation_has_its_own_kind_and_review_route(
     async with app.run_test(size=(160, 48), notifications=True) as pilot:
         console, controller, store, session_id = await _seed_console(app, pilot)
         assistant_id = _start_live_turn(console, controller, store, session_id)
-        result = {}
-        worker = threading.Thread(
-            target=lambda: result.update(
-                controller.request_chat_create_confirm(
-                    {"tool": "new_chat", "title": "Proposed chat"},
-                    session_id=session_id,
-                )
-            ),
-            daemon=True,
+        from Tests.Chat.test_console_chat_create_integration import (
+            _prepare_close_new_chat,
         )
+        from tldw_chatbook.Agents.run_context import use_run_id
+
+        controller._active_assistant_message_ids[session_id] = assistant_id
+        prepared, run = _prepare_close_new_chat(controller, session_id, "Proposed chat")
+        result = {}
+
+        def request_confirmation():
+            with use_run_id(run):
+                result.update(
+                    controller.request_chat_create_confirm(
+                        prepared, session_id=session_id
+                    )
+                )
+
+        worker = threading.Thread(target=request_confirmation, daemon=True)
         workers.append(worker)
         worker.start()
         try:
@@ -547,11 +555,20 @@ async def _verify_late_chat_create_projection_transition(
                 session_id: Existing source or live sibling session.
                 key: Result identity for this worker.
             """
+            from Tests.Chat.test_console_chat_create_integration import (
+                _prepare_close_new_chat,
+            )
+            from tldw_chatbook.Agents.run_context import use_run_id
+
             try:
-                results[key] = controller.request_chat_create_confirm(
-                    {"tool": "new_chat", "title": f"Proposed {key}"},
-                    session_id=session_id,
+                prepared, run = _prepare_close_new_chat(
+                    controller, session_id, f"Proposed {key}"
                 )
+                with use_run_id(run):
+                    results[key] = controller.request_chat_create_confirm(
+                        prepared,
+                        session_id=session_id,
+                    )
             except Exception as exc:  # noqa: BLE001 - expose worker failure
                 errors.append((key, type(exc).__name__))
 

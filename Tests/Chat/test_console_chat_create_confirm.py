@@ -414,7 +414,10 @@ def test_close_cannot_resurrect_a_remembered_chat_create_grant(
     Args:
         make_controller: Existing standalone confirmation controller fixture.
     """
+    from tldw_chatbook.Agents.run_context import use_run_id
+
     controller = make_controller()
+    controller._agent_bridge = type("B", (), {"agent_runs_db": _FakeAgentDB("primary")})
     session = controller.store.create_session(title="Source")
     entered = threading.Event()
     release = threading.Event()
@@ -441,13 +444,16 @@ def test_close_cannot_resurrect_a_remembered_chat_create_grant(
             return super().setdefault(key, default)
 
     controller._chat_create_session_grants = PausedGrants()
-    worker = threading.Thread(
-        target=lambda: results.update(
-            decision=controller.request_chat_create_confirm(
-                _payload(), session_id=session.id
+
+    def confirm_as_primary():
+        with use_run_id("run-9"):
+            results.update(
+                decision=controller.request_chat_create_confirm(
+                    _payload(), session_id=session.id
+                )
             )
-        )
-    )
+
+    worker = threading.Thread(target=confirm_as_primary)
     worker.start()
     try:
         _wait_until(lambda: bool(controller.pending_chat_create_ids()))

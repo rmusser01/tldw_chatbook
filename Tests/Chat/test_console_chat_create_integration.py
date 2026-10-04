@@ -817,6 +817,83 @@ def test_fork_from_child_run_context_copies_parent_conversation(real_db_controll
     assert handoff["conversation_id"] == outcome["conversation_id"]
 
 
+def _prepare_close_new_chat(controller, session_id, title):
+    """Prepare the exact live primary request used by Close integration fixtures."""
+    from types import SimpleNamespace
+    from tldw_chatbook.Agents.run_context import use_run_id
+    from tldw_chatbook.Chat.console_chat_store import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    source = controller.store._sessions[session_id]
+    if not source.persisted_conversation_id:
+        source.persisted_conversation_id = (
+            controller.store.persistence.create_conversation(
+                conversation_title=source.title
+            )
+        )
+    message_id = controller._active_assistant_message_ids.get(session_id)
+    if message_id is None:
+        message_id = controller.store.append_message(
+            session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+        ).id
+        controller._active_assistant_message_ids[session_id] = message_id
+    controller._active_cancel_events.setdefault(session_id, threading.Event())
+    bridge = controller._agent_bridge
+    if bridge is None:
+        bridge = SimpleNamespace(_live_primary_runs={}, rows={})
+        bridge.runs_db = SimpleNamespace(get_run=lambda run: bridge.rows.get(run))
+        bridge.live_primary_run_id = lambda conversation: bridge._live_primary_runs.get(
+            conversation
+        )
+        controller._agent_bridge = bridge
+    run = f"close-create-{session_id}"
+    if hasattr(bridge.runs_db, "create_run"):
+        run = bridge.runs_db.create_run(
+            conversation_id=source.persisted_conversation_id, agent_kind="primary"
+        )
+    else:
+        bridge.rows[run] = {
+            "id": run,
+            "conversation_id": source.persisted_conversation_id,
+            "agent_kind": "primary",
+            "status": "running",
+        }
+    bridge._live_primary_runs[source.persisted_conversation_id] = run
+    if not hasattr(controller.app, "console_runtime"):
+        controller.app.app_config = {}
+        runtime = SimpleNamespace(_app=controller.app)
+        runtime._resolve_new_console_assistant = lambda workspace, settings: (
+            ConsoleRuntime._resolve_new_console_assistant(runtime, workspace, settings)
+        )
+        controller.app.console_runtime = runtime
+    with use_run_id(run):
+        prepared = controller.prepare_agent_chat_create(
+            {
+                "tool": "new_chat",
+                "session_id": session_id,
+                "title": title,
+                "source_run_id": run,
+                "source_message_id": message_id,
+            }
+        )
+    return prepared, run
+
+
+def _approve_close_new_chat(controller, source, title):
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    prepared, run = _prepare_close_new_chat(controller, source.id, title)
+
+    def approve(pending):
+        if pending:
+            controller.resolve_pending_chat_create(True, False, pending["request_id"])
+
+    controller.set_pending_chat_create = approve
+    with use_run_id(run):
+        assert controller.request_chat_create_confirm(prepared)["allow"]
+    return prepared
+
+
 @pytest.mark.parametrize("tool", ["new_chat", "fork_chat"])
 def test_confirmed_create_refuses_a_source_retained_during_close(
     real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
@@ -840,15 +917,18 @@ def test_confirmed_create_refuses_a_source_retained_during_close(
     db.set_conversation_active_leaf(conversation_id, str(message_id))
     completed = []
     controller.complete_agent_chat_create = lambda **kwargs: completed.append(kwargs)
+    payload = (
+        _approve_close_new_chat(controller, source, "Late creation")
+        if tool == "new_chat"
+        else {"tool": tool, "session_id": source.id, "title": "Late creation"}
+    )
     before = _live_conversation_count(db)
     ticket = controller.begin_session_close(
         source.id,
         expected_revision=controller.lifecycle_impact(session_id=source.id).revision,
     )
     assert any(session.id == source.id for session in controller.store.sessions())
-    outcome = controller.execute_agent_chat_create(
-        {"tool": tool, "session_id": source.id, "title": "Late creation"}
-    )
+    outcome = controller.execute_agent_chat_create(payload)
     assert not outcome["ok"] and outcome["kind"] == "session_gone"
     assert _live_conversation_count(db) == before
     assert completed == []
@@ -884,10 +964,20 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
         {"conversation_id": source_conv, "sender": "user", "content": "hi"}
     )
     db.set_conversation_active_leaf(source_conv, str(message_id))
+    payload = (
+        _approve_close_new_chat(controller, source, "Late creation")
+        if tool == "new_chat"
+        else {"tool": tool, "session_id": source.id, "title": "Late creation"}
+    )
     entered, release = threading.Event(), threading.Event()
     created, completed, queued = [], [], []
     result = {}
-    original_create = controller.store.persistence.create_conversation
+    persistence_method = (
+        "persist_console_conversation_with_policy"
+        if tool == "new_chat"
+        else "create_conversation"
+    )
+    original_create = getattr(controller.store.persistence, persistence_method)
     original_marshal = controller.app.call_from_thread
     before = _live_conversation_count(db)
     controller.complete_agent_chat_create = lambda **kwargs: completed.append(kwargs)
@@ -905,6 +995,8 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
             entered.set()
             assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
         conversation_id = original_create(**kwargs)
+        if tool == "new_chat":
+            conversation_id = kwargs["conversation_id"]
         created.append(conversation_id)
         return conversation_id
 
@@ -919,7 +1011,11 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
         Returns:
             The result produced by the actual callback on the UI thread.
         """
-        if close_at.startswith("ui-handoff") and threading.current_thread() is worker:
+        if (
+            close_at.startswith("ui-handoff")
+            and threading.current_thread() is worker
+            and not queued
+        ):
             queued.append((callback, args, kwargs))
             entered.set()
             assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
@@ -928,17 +1024,13 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
             return result["ui_result"]
         return original_marshal(callback, *args, **kwargs)
 
-    monkeypatch.setattr(
-        controller.store.persistence, "create_conversation", paused_create
-    )
+    monkeypatch.setattr(controller.store.persistence, persistence_method, paused_create)
     monkeypatch.setattr(controller.app, "call_from_thread", queued_marshal)
 
     def execute():
         """Capture executor failure without abandoning test-owned thread cleanup."""
         try:
-            result["outcome"] = controller.execute_agent_chat_create(
-                {"tool": tool, "session_id": source.id, "title": "Late creation"}
-            )
+            result["outcome"] = controller.execute_agent_chat_create(payload)
         except Exception as exc:  # noqa: BLE001 -- surface owned thread failures
             result["error"] = str(exc)
 
@@ -961,14 +1053,29 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
         release.set()
         worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert not worker.is_alive()
-    assert _live_conversation_count(db) == before
+    assert _live_conversation_count(db) == before + (tool == "new_chat")
     assert "error" not in result
-    assert not result["outcome"]["ok"]
-    assert result["outcome"]["kind"] == "session_gone"
     assert completed == []
     assert len(created) == 1
-    assert db.get_conversation_by_id(created[0]) is None
-    assert db.get_conversation_by_id(created[0], include_deleted=True)["deleted"] == 1
+    if tool == "new_chat":
+        # ADR219: an approved saved draft remains durable across source Close.
+        assert result["outcome"]["ok"]
+        assert result["outcome"]["launch_status"] == "draft"
+        assert result["outcome"]["reason"] == "source_unavailable"
+        row = db.get_conversation_by_id(created[0])
+        assert row and not row["deleted"]
+        assert (
+            json.loads(row["metadata"])["console_agent_handoff"]["state"] == "pending"
+        )
+        assert not controller._chat_creation_records
+        assert not controller.store.sessions()
+    else:
+        assert not result["outcome"]["ok"]
+        assert result["outcome"]["kind"] == "session_gone"
+        assert db.get_conversation_by_id(created[0]) is None
+        assert (
+            db.get_conversation_by_id(created[0], include_deleted=True)["deleted"] == 1
+        )
 
 
 @pytest.mark.parametrize("view_change", ["detached", "reattached"])
@@ -986,6 +1093,7 @@ def test_chat_create_completion_uses_the_current_view_sink(
     """
     controller, db = real_db_controller
     source = controller.store.create_session(title="Source")
+    prepared = _approve_close_new_chat(controller, source, "Live source")
     old_completed, new_completed = [], []
     controller.complete_agent_chat_create = lambda **kwargs: old_completed.append(
         kwargs
@@ -1010,9 +1118,7 @@ def test_chat_create_completion_uses_the_current_view_sink(
         return callback(*args, **kwargs)
 
     monkeypatch.setattr(controller.app, "call_from_thread", handoff_after_view_change)
-    outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": source.id, "title": "Live source"}
-    )
+    outcome = controller.execute_agent_chat_create(prepared)
     assert outcome["ok"]
     assert db.get_conversation_by_id(outcome["conversation_id"]) is not None
     assert old_completed == []
@@ -1031,6 +1137,8 @@ def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
     """
     controller, db = real_db_controller
     source = controller.store.create_session(title="Source")
+    prepared = _approve_close_new_chat(controller, source, "Placed chat")
+    original_restore = controller.store.restore_persisted_session
     placed = []
 
     def place_then_fail(**kwargs):
@@ -1039,16 +1147,7 @@ def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
         Args:
             kwargs: Real executor completion inputs.
         """
-        placed.append(
-            controller.store.restore_persisted_session(
-                title=kwargs["title"],
-                workspace_id=kwargs["workspace_id"],
-                persisted_conversation_id=kwargs["conversation_id"],
-                all_nodes=kwargs["nodes"],
-                active_leaf_persisted_id=kwargs["active_leaf_persisted_id"],
-                activate=False,
-            )
-        )
+        placed.append(original_restore(**kwargs))
         raise RuntimeError("completion failed after placement")
 
     def retire_before_worker_receives_error(callback, *args, **kwargs):
@@ -1074,14 +1173,12 @@ def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
             controller.finalize_session_close(ticket)
             raise
 
-    controller.complete_agent_chat_create = place_then_fail
+    monkeypatch.setattr(controller.store, "restore_persisted_session", place_then_fail)
     monkeypatch.setattr(
         controller.app, "call_from_thread", retire_before_worker_receives_error
     )
-    with pytest.raises(RuntimeError, match="completion failed after placement"):
-        controller.execute_agent_chat_create(
-            {"tool": "new_chat", "session_id": source.id, "title": "Placed chat"}
-        )
+    outcome = controller.execute_agent_chat_create(prepared)
+    assert outcome["ok"] and outcome["reason"] == "source_unavailable"
     assert len(placed) == 1
     assert placed[0] in controller.store.sessions()
     assert db.get_conversation_by_id(placed[0].persisted_conversation_id) is not None
