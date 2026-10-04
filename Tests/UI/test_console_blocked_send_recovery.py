@@ -42,13 +42,16 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat import console_runtime
+from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunStatus,
     GenerationVariantMeta,
 )
+from tldw_chatbook.Chat.conversation_archive_actions import conversation_send_refusal
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Console_Modules.prompt_queue import turn_recovery_label
 from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
     TraceCallRecoveryCallout,
 )
@@ -498,3 +501,52 @@ async def test_provenance_failure_recovery_actions_work(tmp_path, monkeypatch, a
         assert not project_console_send_authority(
             h.console._build_console_inspector_state(None)
         ).run.startswith("Blocked")
+
+
+@pytest.mark.asyncio
+async def test_a_send_refused_because_the_chat_was_archived_keeps_its_reason(
+    tmp_path, monkeypatch
+):
+    """AC#4: the runtime's own archive check parks the turn with its reason.
+
+    The send boundary re-reads the saved chat's archive flag before the
+    controller runs. A chat archived while its tab stays open is refused
+    there, and that refusal's copy must reach the unsent-turn shelf like a
+    controller refusal's does, not the generic label.
+    """
+    async with _mounted_console(tmp_path, monkeypatch, (80, 24)) as h:
+        service = ChatConversationService(h.database)
+        h.console.app_instance.local_chat_conversation_service = service
+        await _send(h, "Hello")
+        await _until_completed(h)
+        conversation_id = next(
+            session.persisted_conversation_id
+            for session in h.store.sessions()
+            if session.id == h.store.active_session_id
+        )
+        assert conversation_id
+        version = h.database.get_conversation_by_id(conversation_id)["version"]
+        archived = service.set_conversations_archived(
+            [conversation_id],
+            archived=True,
+            expected_versions={conversation_id: version},
+        )
+        assert conversation_id in archived["changed"]
+        refusal = await conversation_send_refusal(
+            h.console.app_instance, conversation_id
+        )
+        assert refusal and "archived" in refusal
+
+        await _send(h, "Second")
+
+        assert len(h.calls) == 1, "the archived chat's send reached the provider"
+        summary = h.console.query_one("#console-prompt-queue-summary", Static)
+        await _until(h.pilot, lambda: summary.region.width > 0)
+        assert str(summary.render()).startswith(
+            "Not sent: This conversation is archived"
+        )
+        assert str(summary.render()) == turn_recovery_label(refusal)
+        (entry,) = h.console._console_runtime().recoveries_for_session(
+            h.store.active_session_id
+        )
+        assert (entry.draft, entry.reason) == ("Second", refusal)

@@ -2468,6 +2468,9 @@ class ConsoleRuntime:
                 self._app, record.archive_conversation_id
             )
             if refusal:
+                # TASK-33621.2: the parked turn's shelf entry states this
+                # refusal too, like a controller refusal's below.
+                record.refusal = refusal
                 notify = getattr(self._app, "notify", None)
                 if callable(notify):
                     notify(refusal, severity="warning")

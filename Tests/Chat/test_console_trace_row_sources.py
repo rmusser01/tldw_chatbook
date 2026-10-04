@@ -3,13 +3,21 @@
 Each case builds a real Capture-On request with ``build_console_request`` (the
 aggregate that refused every system-prompt chat before the provider was
 contacted) from the sources ``unsaved_row_sources`` assigns, and pairs it with
-the labelling that the aggregate rejects for the same rows.
+the labelling that the aggregate rejects for the same rows. The
+``saved_message_id`` cases pin when a row built from a saved message may
+carry that message's saved revision: only when it sends every image the
+message holds.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from tldw_chatbook.Chat.console_chat_models import (
+    ConsoleChatMessage,
+    ConsoleMessageRole,
+    MessageAttachment,
+)
 from tldw_chatbook.Chat.console_prepared_request import (
     build_console_request,
     tagged_memory_message,
@@ -22,6 +30,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
     TraceProvenanceSource,
 )
 from tldw_chatbook.Chat.console_trace_row_sources import (
+    saved_message_id,
     unsaved_row_sources,
     unsaved_trace_artifact_source,
 )
@@ -140,3 +149,78 @@ def test_the_final_row_is_the_active_request():
         TraceProvenanceSource.RENDERED_SYSTEM,
         TraceProvenanceSource.ACTIVE_REQUEST,
     )
+
+
+SAVED_ID = "saved-message-7"
+TEXT_PART = {"type": "text", "text": "Look at these."}
+IMAGE_PART = {
+    "type": "image_url",
+    "image_url": {"url": "data:image/png;base64,cG5n"},
+}
+
+
+def _saved(*, images: int, role=ConsoleMessageRole.USER, persisted=SAVED_ID):
+    """A saved Console message holding ``images`` image attachments."""
+    return ConsoleChatMessage(
+        role=role,
+        content="Look at these.",
+        persisted_message_id=persisted,
+        attachments=tuple(
+            MessageAttachment(
+                data=b"png",
+                mime_type="image/png",
+                display_name=f"image-{position}.png",
+                position=position,
+            )
+            for position in range(images)
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("message", "content"),
+    [
+        pytest.param(_saved(images=0), "Look at these.", id="text-only"),
+        pytest.param(
+            _saved(images=2), [TEXT_PART, IMAGE_PART, IMAGE_PART], id="every-image-sent"
+        ),
+        pytest.param(
+            _saved(images=1), [TEXT_PART, IMAGE_PART, IMAGE_PART], id="more-images-sent"
+        ),
+    ],
+)
+def test_a_row_that_sends_every_saved_image_is_the_saved_revision(message, content):
+    row = {"role": message.role.value, "content": content}
+
+    assert saved_message_id(message, row) == SAVED_ID
+
+
+@pytest.mark.parametrize(
+    ("message", "content"),
+    [
+        pytest.param(
+            _saved(images=1, role=ConsoleMessageRole.ASSISTANT),
+            "[image] a red square",
+            id="image-result-sent-as-text",
+        ),
+        pytest.param(_saved(images=2), [TEXT_PART], id="every-image-omitted"),
+        pytest.param(
+            _saved(images=2), [TEXT_PART, IMAGE_PART], id="some-images-omitted"
+        ),
+        pytest.param(
+            _saved(images=2),
+            [TEXT_PART, "Look at these.", IMAGE_PART],
+            id="only-image-parts-count",
+        ),
+    ],
+)
+def test_a_row_that_omits_saved_media_is_not_the_saved_revision(message, content):
+    row = {"role": message.role.value, "content": content}
+
+    assert saved_message_id(message, row) is None
+
+
+def test_an_unsaved_message_has_no_saved_revision():
+    message = _saved(images=0, persisted=None)
+
+    assert saved_message_id(message, {"role": "user", "content": "Look"}) is None
