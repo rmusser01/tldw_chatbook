@@ -17,7 +17,11 @@ from typing import TYPE_CHECKING, Literal, TypeVar, cast
 
 from loguru import logger
 
-from tldw_chatbook.Notes.file_notes_replica import FileNotesReplica, ReplicaFileInfo
+from tldw_chatbook.Notes.file_notes_replica import (
+    FileNotesReplica,
+    ReplicaFileInfo,
+    ReplicaRevisionInfo,
+)
 from tldw_chatbook.Notes.file_notes_session_owner import (
     FileNotesSessionOwner,
     SessionBinding,
@@ -38,6 +42,8 @@ INTERACTIVE_FILE_CHARS = 200_000
 LARGE_FILE_EXCERPT_CHARS = 100_000
 EXACT_EXPORT_CHUNK_BYTES = 64 * 1024
 SUPPORTED_EXTENSIONS = frozenset({".md", ".markdown", ".txt", ".text"})
+#: How many revisions one bounded history read returns, newest first.
+REVISION_HISTORY_LIMIT = 10
 _ACTIVATION_WARNING = "Recovery activation required; replica refresh is inactive"
 UTF8_BOM = b"\xef\xbb\xbf"
 
@@ -176,6 +182,14 @@ class ReconcileResult:
     modified: tuple[str, ...] = ()
     deleted: tuple[str, ...] = ()
     offline: bool = False
+    replica_warning: str | None = None
+
+
+@dataclass(frozen=True)
+class RevisionHistoryResult:
+    """Bounded revision listing for one replicated file."""
+
+    entries: tuple[ReplicaRevisionInfo, ...] = ()
     replica_warning: str | None = None
 
 
@@ -1162,6 +1176,357 @@ class FileNotesService:
         return self._finish_published_file(
             "restored",
             relative_path,
+            path,
+            raw_bytes,
+            content_hash=content_hash,
+        )
+
+    def _load_revision(
+        self,
+        relative_path: str,
+        destination_path: str,
+        *,
+        kind: str,
+        session_key: str | None,
+    ) -> tuple[OperationResult | None, bytes, str]:
+        """Load one verified revision for publication.
+
+        Args:
+            relative_path: Revision's file path relative to the notes root.
+            destination_path: Publication target, for refusal results.
+            kind: Revision kind (``pre_edit`` or ``delete``).
+            session_key: Coalescing session identifier; ``None`` selects the
+                deletion revision.
+
+        Returns:
+            A refusal result, or ``None`` plus the revision's exact bytes and
+            their recorded digest (which the bytes were verified against).
+        """
+        if self._replica is None:
+            return (
+                _result(
+                    "replica-error",
+                    destination_path,
+                    "Revision recovery requires the replica",
+                ),
+                b"",
+                "",
+            )
+        try:
+            self._safe_path(relative_path)
+            destination = self._safe_path(destination_path)
+        except ValueError as error:
+            return _result("unsafe", destination_path, str(error)), b"", ""
+        if not self._is_supported(destination):
+            return _result("unsupported", destination_path), b"", ""
+        try:
+            revision = self._replica.get_revision(
+                self.root_key,
+                relative_path,
+                kind=kind,
+                session_key=session_key,
+            )
+        except Exception as error:
+            return (
+                _result(
+                    "replica-error",
+                    destination_path,
+                    "Could not load revision bytes",
+                    warning=_replica_warning(error),
+                ),
+                b"",
+                "",
+            )
+        if revision is None:
+            return (
+                _result(
+                    "missing",
+                    destination_path,
+                    "Revision not found",
+                ),
+                b"",
+                "",
+            )
+        raw_bytes = revision.raw_bytes
+        if len(raw_bytes) > MAX_FILE_BYTES:
+            return (
+                _result(
+                    "readonly",
+                    destination_path,
+                    "Revision exceeds size limits",
+                ),
+                b"",
+                "",
+            )
+        if _digest(raw_bytes) != revision.content_hash:
+            return (
+                _result(
+                    "conflict",
+                    destination_path,
+                    "Revision bytes do not match the stored hash",
+                ),
+                b"",
+                "",
+            )
+        return None, raw_bytes, revision.content_hash
+
+    @_serialized
+    def list_revision_history(
+        self,
+        relative_path: str,
+        *,
+        limit: int = REVISION_HISTORY_LIMIT,
+    ) -> RevisionHistoryResult:
+        """List one file's stored revisions, most recent first, bounded.
+
+        Args:
+            relative_path: File path relative to the notes root.
+            limit: Maximum number of entries returned.
+
+        Returns:
+            Bounded revision entries and any replica warning.
+        """
+        if self._replica is None or limit <= 0:
+            warning = None if self._replica is not None else "Replica unavailable"
+            return RevisionHistoryResult(replica_warning=warning)
+        try:
+            return RevisionHistoryResult(
+                entries=tuple(
+                    self._replica.list_revisions(
+                        self.root_key,
+                        relative_path,
+                        limit=limit,
+                    )
+                )
+            )
+        except Exception as error:
+            return RevisionHistoryResult(replica_warning=_replica_warning(error))
+
+    @_serialized
+    def verify_revision(
+        self,
+        relative_path: str,
+        *,
+        kind: str,
+        session_key: str | None,
+    ) -> OperationResult:
+        """Compare one revision's stored bytes with its recorded digest.
+
+        Args:
+            relative_path: File path relative to the notes root.
+            kind: Revision kind (``pre_edit`` or ``delete``).
+            session_key: Coalescing session identifier; ``None`` selects the
+                deletion revision.
+
+        Returns:
+            Verification status with a reason for every refusal.
+        """
+        if self._replica is None:
+            return _result(
+                "replica-error",
+                relative_path,
+                "Revision verification requires the replica",
+            )
+        try:
+            verified = self._replica.verify_revision(
+                self.root_key,
+                relative_path,
+                kind=kind,
+                session_key=session_key,
+            )
+        except Exception as error:
+            return _result(
+                "replica-error",
+                relative_path,
+                "Could not read the revision",
+                warning=_replica_warning(error),
+            )
+        if verified is None:
+            return _result("missing", relative_path, "Revision not found")
+        if not verified:
+            return _result(
+                "conflict",
+                relative_path,
+                "Revision bytes do not match the stored hash",
+            )
+        return OperationResult(status="ok", relative_path=relative_path)
+
+    @_serialized
+    def export_revision_file(
+        self,
+        relative_path: str,
+        destination_path: str,
+        *,
+        kind: str,
+        session_key: str | None,
+    ) -> OperationResult:
+        """Exact-export one revision to an absent path, never replacing it.
+
+        Mirrors :meth:`export_exact_file`: bytes stream to a same-directory
+        temporary file whose digest must equal the revision's recorded digest
+        before an ``os.link`` publishes it, so an existing destination is
+        never replaced and a corrupted revision never publishes a copy.
+
+        Args:
+            relative_path: Revision's file path relative to the notes root.
+            destination_path: New path relative to the notes root.
+            kind: Revision kind (``pre_edit`` or ``delete``).
+            session_key: Coalescing session identifier; ``None`` selects the
+                deletion revision.
+
+        Returns:
+            Export status and the exact exported content hash.
+        """
+        if not self._root_is_online():
+            return _result("offline", destination_path)
+        refusal, raw_bytes, expected_hash = self._load_revision(
+            relative_path,
+            destination_path,
+            kind=kind,
+            session_key=session_key,
+        )
+        if refusal is not None:
+            return refusal
+        assert isinstance(raw_bytes, bytes)
+        try:
+            destination = self._safe_path(destination_path)
+        except ValueError as error:
+            return _result("unsafe", destination_path, str(error))
+
+        temporary_descriptor = -1
+        temporary_path: str | None = None
+        digest = hashlib.sha256()
+        try:
+            try:
+                temporary_descriptor, temporary_path = tempfile.mkstemp(
+                    prefix=f".{destination.name}.",
+                    suffix=".tmp",
+                    dir=destination.parent,
+                )
+            except OSError as error:
+                return _result("error", destination_path, str(error))
+            assert temporary_path is not None
+            with os.fdopen(temporary_descriptor, "wb") as target:
+                temporary_descriptor = -1
+                target.write(raw_bytes)
+                digest.update(raw_bytes)
+                target.flush()
+                fchmod = getattr(os, "fchmod", None)
+                if fchmod is not None:
+                    fchmod(target.fileno(), 0o644)
+                flush_file(target.fileno())
+            if fchmod is None:
+                os.chmod(temporary_path, 0o644)
+            content_hash = digest.hexdigest()
+            if content_hash != expected_hash:
+                return _result(
+                    "conflict",
+                    destination_path,
+                    "Revision bytes do not match the stored hash",
+                )
+            try:
+                os.link(temporary_path, destination, follow_symlinks=False)
+            except FileExistsError:
+                return _result("exists", destination_path)
+            except OSError as error:
+                if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+                    return _result("unsafe", destination_path, str(error))
+                return _result("error", destination_path, str(error))
+            # Every handler above returns, so reaching here means the link
+            # published; persist the directory entry that names it.
+            fsync_parent_directory(destination.parent)
+        except OSError as error:
+            return _result("error", destination_path, str(error))
+        finally:
+            if temporary_descriptor >= 0:
+                os.close(temporary_descriptor)
+            if temporary_path is not None:
+                try:
+                    os.unlink(temporary_path)
+                except OSError as error:
+                    logger.warning(
+                        "Could not remove a File Notes revision export temporary: {}",
+                        type(error).__name__,
+                    )
+
+        self._record_session_change(SessionChange("created", destination_path))
+        return OperationResult(
+            status="ok",
+            relative_path=destination_path,
+            content_hash=content_hash,
+        )
+
+    @_serialized
+    def restore_revision(
+        self,
+        relative_path: str,
+        destination_path: str,
+        *,
+        kind: str,
+        session_key: str | None,
+    ) -> OperationResult:
+        """Restore one revision to an absent path with an exclusive create.
+
+        Args:
+            relative_path: Revision's file path relative to the notes root.
+            destination_path: New path relative to the notes root.
+            kind: Revision kind (``pre_edit`` or ``delete``).
+            session_key: Coalescing session identifier; ``None`` selects the
+                deletion revision.
+
+        Returns:
+            Restore status, resulting hash, and any replica warning.
+        """
+        if not self._root_is_online():
+            return _result("offline", destination_path)
+        refusal, raw_bytes, _expected_hash = self._load_revision(
+            relative_path,
+            destination_path,
+            kind=kind,
+            session_key=session_key,
+        )
+        if refusal is not None:
+            return refusal
+        assert isinstance(raw_bytes, bytes)
+        try:
+            path = self._safe_path(destination_path)
+        except ValueError as error:
+            return _result("unsafe", destination_path, str(error))
+
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags, 0o666)
+        except FileExistsError:
+            return _result(
+                "exists",
+                destination_path,
+                "Destination already exists; restore never replaces a file",
+            )
+        except FileNotFoundError:
+            return _result(
+                "missing",
+                destination_path,
+                "Parent directory is missing",
+            )
+        except OSError as error:
+            if error.errno in {errno.ELOOP, errno.ENOTDIR}:
+                return _result("unsafe", destination_path, str(error))
+            return _result("error", destination_path, str(error))
+        try:
+            with os.fdopen(descriptor, "wb") as destination:
+                destination.write(raw_bytes)
+        except OSError as error:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            return _result("error", destination_path, str(error))
+
+        content_hash = _digest(raw_bytes)
+        return self._finish_published_file(
+            "restored",
+            destination_path,
             path,
             raw_bytes,
             content_hash=content_hash,

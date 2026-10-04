@@ -465,6 +465,156 @@ def test_checkpoint_coalesces_exact_bytes_once_per_session_key(
     ]
 
 
+def test_list_revisions_returns_most_recent_first_and_is_bounded(
+    replica: FileNotesReplica,
+) -> None:
+    root = "/notes"
+    relative_path = "important.md"
+    for index in range(1, 6):
+        payload = f"revision {index}".encode()
+        replica.checkpoint(
+            root,
+            relative_path,
+            payload,
+            content_hash=_digest(payload),
+            session_key=f"session-{index}",
+            created_at=f"2026-10-01T10:0{index}:00Z",
+        )
+    deletion_bytes = b"deleted bytes"
+    _upsert(replica, root, relative_path, deletion_bytes)
+    replica.prepare_deletion(
+        root,
+        relative_path,
+        deletion_bytes,
+        content_hash=_digest(deletion_bytes),
+        decoded_text=deletion_bytes.decode("utf-8"),
+        deleted_at="2026-10-02T10:00:00Z",
+        created_at="2026-10-02T10:00:00Z",
+    )
+
+    listed = replica.list_revisions(root, relative_path, limit=3)
+
+    assert [(item.kind, item.session_key) for item in listed] == [
+        ("delete", None),
+        ("pre_edit", "session-5"),
+        ("pre_edit", "session-4"),
+    ]
+    newest = listed[0]
+    assert newest.created_at == "2026-10-02T10:00:00Z"
+    assert newest.content_hash == _digest(deletion_bytes)
+    assert newest.size == len(deletion_bytes)
+    # Bounded means bounded: zero refuses nothing rather than listing anything.
+    assert replica.list_revisions(root, relative_path, limit=0) == []
+    # Root namespacing holds on the read-path exactly as on the write-path.
+    assert replica.list_revisions("/other", relative_path, limit=10) == []
+
+
+def test_get_revision_selects_by_kind_and_session_key_and_verify_reads_hash(
+    replica: FileNotesReplica,
+) -> None:
+    root = "/notes"
+    relative_path = "important.md"
+    checkpoint_bytes = b"checkpoint payload"
+    replica.checkpoint(
+        root,
+        relative_path,
+        checkpoint_bytes,
+        content_hash=_digest(checkpoint_bytes),
+        session_key="session-1",
+        created_at="2026-10-01T10:00:00Z",
+    )
+    deletion_bytes = b"deletion payload"
+    _upsert(replica, root, relative_path, deletion_bytes)
+    replica.prepare_deletion(
+        root,
+        relative_path,
+        deletion_bytes,
+        content_hash=_digest(deletion_bytes),
+        decoded_text=deletion_bytes.decode("utf-8"),
+        deleted_at="2026-10-02T10:00:00Z",
+        created_at="2026-10-02T10:00:00Z",
+    )
+
+    checkpoint = replica.get_revision(
+        root,
+        relative_path,
+        kind="pre_edit",
+        session_key="session-1",
+    )
+    deletion = replica.get_revision(
+        root,
+        relative_path,
+        kind="delete",
+        session_key=None,
+    )
+    assert checkpoint == (checkpoint_bytes, _digest(checkpoint_bytes))
+    assert deletion == (deletion_bytes, _digest(deletion_bytes))
+    assert (
+        replica.get_revision(
+            root,
+            relative_path,
+            kind="pre_edit",
+            session_key="absent",
+        )
+        is None
+    )
+
+    assert (
+        replica.verify_revision(
+            root,
+            relative_path,
+            kind="pre_edit",
+            session_key="session-1",
+        )
+        is True
+    )
+    assert (
+        replica.verify_revision(
+            root,
+            relative_path,
+            kind="delete",
+            session_key=None,
+        )
+        is True
+    )
+    assert (
+        replica.verify_revision(
+            root,
+            relative_path,
+            kind="pre_edit",
+            session_key="absent",
+        )
+        is None
+    )
+
+
+def test_verify_revision_detects_a_hash_that_no_longer_matches(
+    replica: FileNotesReplica,
+) -> None:
+    root = "/notes"
+    relative_path = "corrupt.md"
+    # The service always passes a digest of raw_bytes; a mismatch here stands
+    # for replica corruption or a writer bug -- exactly what verify must name.
+    replica.checkpoint(
+        root,
+        relative_path,
+        b"stored bytes",
+        content_hash=_digest(b"different bytes"),
+        session_key="session-1",
+        created_at="2026-10-01T10:00:00Z",
+    )
+
+    assert (
+        replica.verify_revision(
+            root,
+            relative_path,
+            kind="pre_edit",
+            session_key="session-1",
+        )
+        is False
+    )
+
+
 def test_prepare_deletion_rolls_back_snapshot_when_tombstone_write_fails(
     replica: FileNotesReplica,
 ) -> None:

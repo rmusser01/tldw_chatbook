@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 from collections.abc import Iterator
@@ -32,6 +33,23 @@ class ReplicaFileInfo(NamedTuple):
     content_hash: str
     size: int
     mtime_ns: int
+
+
+class ReplicaRevisionInfo(NamedTuple):
+    """One bounded history-listing entry for a replicated file."""
+
+    kind: str
+    session_key: str | None
+    created_at: str
+    content_hash: str
+    size: int
+
+
+class ReplicaRevisionBytes(NamedTuple):
+    """Exact stored bytes of one revision and their recorded digest."""
+
+    raw_bytes: bytes
+    content_hash: str
 
 
 class FileNotesReplica:
@@ -554,6 +572,122 @@ class FileNotesReplica:
             )
             inserted = cursor.rowcount > 0
         return inserted
+
+    def list_revisions(
+        self,
+        root: str,
+        relative_path: str,
+        *,
+        limit: int = 10,
+    ) -> list[ReplicaRevisionInfo]:
+        """List one file's revisions, most recent first, bounded to ``limit``.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+            limit: Maximum number of entries returned.
+
+        Returns:
+            Revision entries (time, kind, session, hash, size) newest first.
+        """
+        if limit <= 0:
+            return []
+        with self._locked_connection():
+            rows = self._connection.execute(
+                """
+                SELECT kind, session_key, created_at, content_hash, raw_bytes
+                FROM revisions
+                WHERE root = ? AND relative_path = ?
+                ORDER BY created_at DESC, kind, session_key
+                LIMIT ?
+                """,
+                (root, relative_path, limit),
+            ).fetchall()
+        return [
+            ReplicaRevisionInfo(
+                kind=str(row["kind"]),
+                session_key=(
+                    None if row["session_key"] is None else str(row["session_key"])
+                ),
+                created_at=str(row["created_at"]),
+                content_hash=str(row["content_hash"]),
+                size=len(row["raw_bytes"]),
+            )
+            for row in rows
+        ]
+
+    def get_revision(
+        self,
+        root: str,
+        relative_path: str,
+        *,
+        kind: str,
+        session_key: str | None,
+    ) -> ReplicaRevisionBytes | None:
+        """Return one revision's exact bytes and recorded digest.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+            kind: Revision kind (``pre_edit`` or ``delete``).
+            session_key: Coalescing session identifier; ``None`` selects the
+                deletion revision, whose session key is NULL.
+
+        Returns:
+            Stored bytes with their digest, or ``None`` when absent.
+        """
+        with self._locked_connection():
+            row = self._connection.execute(
+                """
+                SELECT raw_bytes, content_hash
+                FROM revisions
+                WHERE root = ?
+                  AND relative_path = ?
+                  AND kind = ?
+                  AND session_key IS ?
+                """,
+                (root, relative_path, kind, session_key),
+            ).fetchone()
+        if row is None:
+            return None
+        return ReplicaRevisionBytes(
+            raw_bytes=bytes(row["raw_bytes"]),
+            content_hash=str(row["content_hash"]),
+        )
+
+    def verify_revision(
+        self,
+        root: str,
+        relative_path: str,
+        *,
+        kind: str,
+        session_key: str | None,
+    ) -> bool | None:
+        """Check one revision's stored bytes against its recorded digest.
+
+        Args:
+            root: Canonical notes-root identifier.
+            relative_path: File path relative to ``root``.
+            kind: Revision kind (``pre_edit`` or ``delete``).
+            session_key: Coalescing session identifier; ``None`` selects the
+                deletion revision.
+
+        Returns:
+            ``True`` when the digest of the stored bytes equals the recorded
+            digest, ``False`` on mismatch, ``None`` when the revision is
+            absent.
+        """
+        revision = self.get_revision(
+            root,
+            relative_path,
+            kind=kind,
+            session_key=session_key,
+        )
+        if revision is None:
+            return None
+        return (
+            hashlib.sha256(revision.raw_bytes).hexdigest() == revision.content_hash
+        )
 
     def prepare_deletion(
         self,
