@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from functools import partial
+from functools import cache, partial
 from typing import TYPE_CHECKING
 
 from textual import events
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.content import Content
 from textual.css.query import QueryError
 from textual.errors import NoWidget
 from textual.message import Message
@@ -56,7 +57,6 @@ from ...LLM_Provider_Catalog.model_catalog_settings import (
 )
 from ...Widgets.model_search_picker import ModelSearchPicker, PickerSearchInput
 from ..Screens.settings_context_memory import model_context_window_state
-from .settings_field_rows import compose_model_defaults
 from ..Screens.settings_provider_view_model import (
     custom_endpoint_rows,
     provider_picker_summary,
@@ -84,6 +84,7 @@ from ..Screens.settings_screen import (
     _fold_long_tokens,
     _ProviderTestResult,
 )
+from .settings_field_rows import compose_model_defaults, format_value
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
@@ -134,6 +135,23 @@ MANUAL_ENTRY_POLICY_COPY = (
     "or use Manual / custom provider for other keys."
 )
 SAMPLING_ROUTE_COPY = "Sampling and transport defaults are routed to Console Behavior."
+#: TASK-33007.6: Advanced follows Model defaults as closed one-row
+#: disclosures (spec mock (c)); each title says its state.
+ADVANCED_DISCLOSURE_CLASS = "settings-advanced-disclosure"
+CONTEXT_WINDOW_DISCLOSURE_ID = "settings-advanced-context-window"
+SAVED_MODELS_DISCLOSURE_ID = "settings-advanced-saved-models"
+CATALOG_REFRESH_DISCLOSURE_ID = "settings-advanced-catalog-refresh"
+CUSTOM_ENDPOINTS_DISCLOSURE_ID = "settings-advanced-custom-endpoints"
+#: Prompt-cache snapshots keeps the id its tests already open it by.
+SNAPSHOTS_DISCLOSURE_ID = "settings-snapshot-controls"
+CATALOG_STARTUP_ID = "settings-model-catalog-auto-refresh"
+CATALOG_STARTUP_OFF_ID = "settings-model-catalog-startup-off"
+CATALOG_STARTUP_OFF_COPY = (
+    "Refresh on startup is Off, so the per-provider choices below are not in effect."
+)
+#: The head of ADR-033's instant-apply label, for one-row titles.
+APPLIES_IMMEDIATELY = "applies immediately"
+SNAPSHOTS_SCOPE = "llama.cpp only"
 
 
 class ProviderFilterInput(PickerSearchInput):
@@ -654,6 +672,250 @@ def refresh_next_new_chat(screen: SettingsScreen) -> None:
     screen._set_static_text("#settings-provider-next-chat-values", values)
 
 
+def context_window_summary(screen: SettingsScreen) -> str:
+    """Say the context size the card shows and whether an override is set.
+
+    Args:
+        screen: The Settings screen that owns the card.
+
+    Returns:
+        E.g. "200,000 tokens · detected, no override", "131,072 tokens ·
+        override set", "... · edited *" before a save, or "unknown".
+    """
+    values = screen._provider_display_setting_values()
+    model = str(values.get("model") or "").strip()
+    if not model:
+        return "choose a model first"
+    try:
+        shown: object = screen.query_one("#settings-model-context-window", Input).value
+    except QueryError:
+        shown = values.get("model_context_window")
+    try:
+        tokens = int(str(shown).strip())
+    except ValueError:
+        tokens = 0
+    if tokens <= 0:
+        return "unknown · enter the model's documented limit"
+    state = model_context_window_state(
+        screen._app_config_mapping(), str(values.get("provider") or ""), model
+    )
+    if tokens != state.effective_tokens:
+        return f"{tokens:,} tokens · {SELECTION_SOURCE_WORDS['settings_draft']}"
+    if state.has_configured_override:
+        return f"{tokens:,} tokens · override set"
+    return f"{tokens:,} tokens · detected, no override"
+
+
+def saved_models_summary(screen: SettingsScreen) -> str:
+    """Count the provider's saved models against the discovered ones.
+
+    Args:
+        screen: The Settings screen that owns the discovery state.
+
+    Returns:
+        E.g. "12 saved in config · 41 discovered, 29 not saved · 2 selected".
+    """
+    saved_ids = set(screen._provider_saved_model_ids(screen._provider_widget_value()))
+    parts = [f"{len(saved_ids)} saved in config"]
+    rows = [
+        model
+        for model in screen._model_discovery_models
+        if str(getattr(model, "model_id", "") or "").strip()
+    ]
+    if not rows:
+        parts.append("none discovered")
+        return " · ".join(parts)
+    unsaved = sum(
+        not screen._discovered_model_is_saved(model, saved_ids) for model in rows
+    )
+    parts.append(f"{len(rows)} discovered, {unsaved} not saved")
+    if screen._model_discovery_selected_model_ids:
+        parts.append(f"{len(screen._model_discovery_selected_model_ids)} selected")
+    return " · ".join(parts)
+
+
+def catalog_refresh_summary(screen: SettingsScreen) -> str:
+    """Say whether startup refresh runs, how often, and for how many providers.
+
+    Args:
+        screen: The Settings screen (it resolves the shown catalog settings).
+
+    Returns:
+        E.g. "applies immediately · startup refresh On · every 24 h · 29 of 30
+        providers"; while startup refresh is Off, that the per-provider
+        choices are not in effect.
+    """
+    settings = screen._model_catalog_card_settings()
+    if not settings.auto_refresh_enabled:
+        return (
+            f"{APPLIES_IMMEDIATELY} · startup refresh Off · "
+            "per-provider choices not in effect"
+        )
+    hours = settings.stale_after_hours
+    every = "every launch" if hours <= 0 else f"every {hours:g} h"
+    refreshed = sum(
+        provider_config_key(provider) not in settings.auto_refresh_disabled
+        for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
+    )
+    return (
+        f"{APPLIES_IMMEDIATELY} · startup refresh On · {every} · "
+        f"{refreshed} of {len(AUTO_REFRESH_PROVIDER_LIST_KEYS)} providers"
+    )
+
+
+def custom_endpoints_summary(screen: SettingsScreen) -> str:
+    """Count the named custom endpoints.
+
+    Args:
+        screen: The Settings screen (it reads the freshest config).
+
+    Returns:
+        E.g. "no named endpoints · applies immediately" or "2 named
+        endpoints · ..."; built-in slots are listed inside.
+    """
+    named = len(load_custom_endpoints(screen._custom_endpoints_view_config()))
+    count = f"{named or 'no'} named endpoint" + "s" * (named != 1)
+    return f"{count} · {APPLIES_IMMEDIATELY}"
+
+
+def snapshots_summary(screen: SettingsScreen) -> str:
+    """Say whether prompt-cache snapshots are on and how many are kept.
+
+    Args:
+        screen: The Settings screen that owns the snapshot draft.
+
+    Returns:
+        E.g. "llama.cpp only · Off" or "llama.cpp only · On · keep 20".
+    """
+    if screen._snapshot_preferences_unavailable:
+        return f"{SNAPSHOTS_SCOPE} · unavailable"
+    enabled, keep = screen._snapshot_preferences_raw or (False, "")
+    if not enabled:
+        return f"{SNAPSHOTS_SCOPE} · Off"
+    keep = str(keep).strip()
+    return (
+        f"{SNAPSHOTS_SCOPE} · On · keep {keep}" if keep else f"{SNAPSHOTS_SCOPE} · On"
+    )
+
+
+#: The Advanced disclosures in the card's order: id -> (name, summary).
+ADVANCED_DISCLOSURES = {
+    CONTEXT_WINDOW_DISCLOSURE_ID: ("Context window", context_window_summary),
+    SAVED_MODELS_DISCLOSURE_ID: ("Saved model list", saved_models_summary),
+    CATALOG_REFRESH_DISCLOSURE_ID: ("Catalog refresh", catalog_refresh_summary),
+    CUSTOM_ENDPOINTS_DISCLOSURE_ID: ("Custom endpoints", custom_endpoints_summary),
+    SNAPSHOTS_DISCLOSURE_ID: ("Prompt-cache snapshots", snapshots_summary),
+}
+
+
+def advanced_title(screen: SettingsScreen, disclosure_id: str) -> Content:
+    """Build an Advanced disclosure's one-row title: its name and state.
+
+    Args:
+        screen: The Settings screen that owns the card.
+        disclosure_id: A key of ``ADVANCED_DISCLOSURES``.
+
+    Returns:
+        A literal title, e.g. "Catalog refresh · applies immediately · ...".
+    """
+    name, summary = ADVANCED_DISCLOSURES[disclosure_id]
+    return Content(f"{name} · {summary(screen)}")
+
+
+def advanced_disclosure(screen: SettingsScreen, disclosure_id: str) -> Collapsible:
+    """Build one Advanced disclosure, closed unless the user left it open.
+
+    Args:
+        screen: The Settings screen; it remembers which ones are open.
+        disclosure_id: A key of ``ADVANCED_DISCLOSURES``.
+
+    Returns:
+        The disclosure, to compose its rows into.
+    """
+    return Collapsible(
+        title=advanced_title(screen, disclosure_id),
+        collapsed=disclosure_id not in screen._advanced_disclosures_open,
+        id=disclosure_id,
+        classes=ADVANCED_DISCLOSURE_CLASS,
+    )
+
+
+@cache
+def catalog_toggle_prefixes() -> Mapping[str, str]:
+    """Name each Catalog refresh checkbox; its label adds On or Off.
+
+    Returns:
+        ``{checkbox id: label without its state word}``.
+    """
+    prefixes = {CATALOG_STARTUP_ID: "Refresh on startup"}
+    for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS:
+        provider_id = provider.lower()
+        prefixes[f"settings-mc-auto-{provider_id}"] = (
+            f"{provider_display_name(provider)}: refresh"
+        )
+        prefixes[f"settings-mc-write-{provider_id}"] = "save to config"
+    return prefixes
+
+
+def catalog_toggle_label(checkbox_id: str, value: bool) -> str:
+    """Label a Catalog refresh checkbox with its state as a word (AC#5, AC#9).
+
+    Args:
+        checkbox_id: A key of ``catalog_toggle_prefixes()``.
+        value: Whether the box is ticked.
+
+    Returns:
+        E.g. "OpenAI: refresh On" or "save to config Off".
+    """
+    return f"{catalog_toggle_prefixes()[checkbox_id]} {format_value(value)}"
+
+
+def catalog_toggle(checkbox_id: str, value: bool, **kwargs: object) -> Checkbox:
+    """Build a Catalog refresh checkbox; colour only reinforces its word.
+
+    Args:
+        checkbox_id: A key of ``catalog_toggle_prefixes()``.
+        value: Whether the box starts ticked.
+        **kwargs: Further ``Checkbox`` options, e.g. a tooltip.
+
+    Returns:
+        The checkbox.
+    """
+    return Checkbox(
+        catalog_toggle_label(checkbox_id, value), value=value, id=checkbox_id, **kwargs
+    )
+
+
+def refresh_advanced(screen: SettingsScreen) -> None:
+    """Re-say the Advanced titles and Catalog refresh's state words.
+
+    Runs after anything an Advanced title summarises changes: a draft edit,
+    discovery, a catalog toggle or a custom-endpoint change.
+
+    Args:
+        screen: The Settings screen that owns the card.
+    """
+    # Id lookups and plain walks, not selector queries: this runs on every
+    # keystroke in the card (via the draft-status refresh).
+    try:
+        card = screen.query_one("#settings-providers-models-card")
+        group = card.query_one("#settings-model-catalog-group")
+        startup_off = group.query_one(f"#{CATALOG_STARTUP_OFF_ID}")
+    except QueryError:
+        return
+    for child in card.children:
+        if child.has_class(ADVANCED_DISCLOSURE_CLASS):
+            child.title = advanced_title(screen, str(child.id))
+    for checkbox in group.walk_children(Checkbox):
+        if checkbox.id not in catalog_toggle_prefixes():
+            continue
+        label = catalog_toggle_label(checkbox.id, checkbox.value)
+        if checkbox.label.plain != label:
+            checkbox.label = label
+        if checkbox.id == CATALOG_STARTUP_ID:
+            startup_off.display = not checkbox.value
+
+
 def compose_providers_models_inspector(screen: SettingsScreen) -> ComposeResult:
     """Compose the Inspector's Providers & Models blocks (spec mock (c)).
 
@@ -805,43 +1067,6 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
     )
     provider_card.disabled = screen._vllm_default_recovery() is not None
     with provider_card:
-        with Collapsible(
-            title="Prompt-cache snapshots",
-            collapsed=True,
-            id="settings-snapshot-controls",
-        ):
-            yield Static(
-                "Save processed context to reuse later. Restoring does not change your conversations.",
-                classes="settings-help-copy",
-            )
-            yield Static(
-                "Enable/disable applies on next launch.",
-                id="settings-snapshot-launch-scope",
-                classes="settings-help-copy",
-            )
-            yield Checkbox(
-                "Enable snapshots",
-                value=screen._snapshot_preferences_raw[0],
-                disabled=screen._snapshot_preferences_unavailable,
-                id="settings-snapshot-enabled",
-            )
-            yield Static(
-                "Keep count (1–1000, across all models)",
-                classes="settings-input-label",
-            )
-            yield Input(
-                screen._snapshot_preferences_raw[1],
-                disabled=screen._snapshot_preferences_unavailable,
-                id="settings-snapshot-keep",
-                type="integer",
-            )
-            yield Static(
-                screen._SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY
-                if screen._snapshot_preferences_unavailable
-                else "Draft — use category Save / Revert. Enable/disable applies on next launch.",
-                id="settings-snapshot-result",
-                classes="settings-help-copy",
-            )
         # TASK-33007.2: Connect is one row per fact -- Provider, API key, Env
         # var, Endpoint -- each with a Source word and a one-line help, and it
         # ends in the Key check row. The Test result's labelled rows live in
@@ -1268,125 +1493,141 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             values,
             registry_locked=registry_locked,
         )
-        yield Static("Context capacity", classes="destination-section")
+        # TASK-33007.6: Advanced -- the rarely used controls, each a closed
+        # one-row disclosure whose title says its state (spec mock (c)).
+        # Field search opens the one it lands in.
         yield Static(
-            screen._provider_model_context_window_status(
-                provider,
-                str(values["model"]),
-                values.get("model_context_window"),
-            ),
-            id="settings-model-context-window-status",
-            classes="settings-status-row",
+            "Advanced", id="settings-advanced-title", classes="destination-section"
         )
-        with Horizontal(classes="settings-input-row"):
-            yield Static("Context window", classes="settings-input-label")
-            yield Input(
-                value=screen._profile_input_value(
-                    values.get("model_context_window", "")
+        with advanced_disclosure(screen, CONTEXT_WINDOW_DISCLOSURE_ID):
+            yield Static(
+                screen._provider_model_context_window_status(
+                    provider,
+                    str(values["model"]),
+                    values.get("model_context_window"),
                 ),
-                id="settings-model-context-window",
-                classes="settings-compact-input",
-                placeholder="tokens (required when unknown)",
-                restrict=r"^[0-9]*$",
-                disabled=registry_locked,
+                id="settings-model-context-window-status",
+                classes="settings-status-row",
             )
-        with Horizontal(classes="settings-input-row"):
-            yield Static("", classes="settings-input-label")
-            yield Button(
-                "Reset to detected",
-                id="settings-model-context-window-reset",
-                disabled=(
-                    not context_window_state.has_configured_override
-                    or registry_locked
-                ),
-                tooltip=(
-                    "Remove only the configured context-window override and "
-                    "return to the detected capability value."
-                ),
+            with Horizontal(classes="settings-input-row"):
+                yield Static("Context window", classes="settings-input-label")
+                yield Input(
+                    value=screen._profile_input_value(
+                        values.get("model_context_window", "")
+                    ),
+                    id="settings-model-context-window",
+                    classes="settings-compact-input",
+                    placeholder="tokens (required when unknown)",
+                    restrict=r"^[0-9]*$",
+                    disabled=registry_locked,
+                )
+            with Horizontal(classes="settings-input-row"):
+                yield Static("", classes="settings-input-label")
+                yield Button(
+                    "Reset to detected",
+                    id="settings-model-context-window-reset",
+                    disabled=(
+                        not context_window_state.has_configured_override
+                        or registry_locked
+                    ),
+                    tooltip=(
+                        "Remove only the configured context-window override and "
+                        "return to the detected capability value."
+                    ),
+                )
+            yield Static(
+                "This is the model's total token capacity, not a conversation "
+                "length preference. Repairs update the existing model-capability "
+                "registry used by request safety checks.",
+                id="settings-model-context-window-help",
+                classes="settings-detail-row",
             )
-        yield Static(
-            "This is the model's total token capacity, not a conversation "
-            "length preference. Repairs update the existing model-capability "
-            "registry used by request safety checks.",
-            id="settings-model-context-window-help",
-            classes="settings-detail-row",
-        )
-        yield Static("Model discovery", classes="destination-section")
-        yield Static(
-            screen._model_discovery_status,
-            id="settings-model-discovery-status",
-            classes="settings-status-row",
-        )
-        empty_state = Static(
-            MODEL_DISCOVERY_EMPTY_COPY,
-            id="settings-model-discovery-empty",
-            classes="settings-status-row",
-        )
-        empty_state.display = not screen._model_discovery_models
-        yield empty_state
-        yield Static(
-            MODEL_DISCOVERY_CAPABILITY_WARNING,
-            id="settings-model-discovery-capability-warning",
-            classes="settings-status-row",
-        )
-        with Horizontal(classes="settings-input-row"):
-            yield Button(
-                "Discover models",
-                id="settings-discover-provider-models",
-                disabled=not screen._model_discovery_available(
-                    str(values["provider"])
-                ),
-                tooltip=(
-                    "Query the configured OpenAI-compatible provider endpoint "
-                    "for available models."
-                ),
+        with advanced_disclosure(screen, SAVED_MODELS_DISCLOSURE_ID):
+            yield Static(
+                screen._model_discovery_status,
+                id="settings-model-discovery-status",
+                classes="settings-status-row",
             )
-            yield Button(
-                "Save selected",
-                id="settings-save-discovered-provider-models",
+            empty_state = Static(
+                MODEL_DISCOVERY_EMPTY_COPY,
+                id="settings-model-discovery-empty",
+                classes="settings-status-row",
+            )
+            empty_state.display = not screen._model_discovery_models
+            yield empty_state
+            yield Static(
+                MODEL_DISCOVERY_CAPABILITY_WARNING,
+                id="settings-model-discovery-capability-warning",
+                classes="settings-status-row",
+            )
+            with Horizontal(classes="settings-input-row"):
+                yield Button(
+                    "Discover models",
+                    id="settings-discover-provider-models",
+                    disabled=not screen._model_discovery_available(
+                        str(values["provider"])
+                    ),
+                    tooltip=(
+                        "Query the configured OpenAI-compatible provider endpoint "
+                        "for available models."
+                    ),
+                )
+                yield Button(
+                    "Save selected",
+                    id="settings-save-discovered-provider-models",
+                    disabled=not screen._model_discovery_models,
+                    tooltip="Append selected discovered model IDs to the local provider list.",
+                )
+                yield Button(
+                    "Clear",
+                    id="settings-clear-discovered-provider-models",
+                    disabled=not screen._model_discovery_models,
+                    tooltip="Clear runtime-discovered models for this provider.",
+                )
+            discovered_list = SelectionList(
+                *screen._model_discovery_selection_options(),
+                id="settings-discovered-models-list",
+                classes="settings-discovered-models-list",
                 disabled=not screen._model_discovery_models,
-                tooltip="Append selected discovered model IDs to the local provider list.",
             )
-            yield Button(
-                "Clear",
-                id="settings-clear-discovered-provider-models",
-                disabled=not screen._model_discovery_models,
-                tooltip="Clear runtime-discovered models for this provider.",
-            )
-        yield SelectionList(
-            *screen._model_discovery_selection_options(),
-            id="settings-discovered-models-list",
-            classes="settings-discovered-models-list",
-            disabled=not screen._model_discovery_models,
-        )
+            # Without its box an empty list is zero rows tall; the empty-state
+            # line above stands in for it.
+            discovered_list.display = bool(screen._model_discovery_models)
+            yield discovered_list
         # ADR-020: [model_catalog] auto-refresh toggles. Values initialize
         # inline from the saved config (the Connect block pattern) and
-        # persist immediately on change via the handlers below.
-        # task-1341: instant-apply is the labeled exception to the staged
-        # default; the bordered group and hint line separate these
-        # operational flags visually from the staged Connect fields.
+        # persist immediately on change via the screen's handlers.
+        # task-1341 / ADR-033: instant-apply is the labeled exception to the
+        # staged default; the group and its hint line keep these operational
+        # flags apart from the staged fields (TASK-33007.6: no border, the
+        # pane's is the only frame, and its inputs are one row like the
+        # card's).
         model_catalog_settings = screen._model_catalog_card_settings()
-        # TASK-387: keep the internal decision-record id (ADR-020) out of the
-        # user-facing heading; it survives in the code comment above.
-        with Vertical(
-            id="settings-model-catalog-group",
-            classes="settings-instant-apply-group",
+        with (
+            advanced_disclosure(screen, CATALOG_REFRESH_DISCLOSURE_ID),
+            Vertical(
+                id="settings-model-catalog-group",
+                classes="settings-instant-apply-group",
+            ),
         ):
-            yield Static("Automatic refresh", classes="destination-section")
             yield Static(
                 INSTANT_APPLY_BEHAVIOR_COPY,
                 id="settings-model-catalog-instant-hint",
                 classes="settings-instant-apply-hint",
             )
-            yield Checkbox(
-                "Refresh on startup",
-                value=model_catalog_settings.auto_refresh_enabled,
-                id="settings-model-catalog-auto-refresh",
+            yield catalog_toggle(
+                CATALOG_STARTUP_ID, model_catalog_settings.auto_refresh_enabled
             )
+            startup_off = Static(
+                CATALOG_STARTUP_OFF_COPY,
+                id=CATALOG_STARTUP_OFF_ID,
+                classes="settings-status-row",
+                markup=False,
+            )
+            startup_off.display = not model_catalog_settings.auto_refresh_enabled
+            yield startup_off
             with Horizontal(classes="settings-input-row"):
-                yield Static(
-                    "Refresh after (hours)", classes="settings-input-label"
-                )
+                yield Static("Refresh after (hours)", classes="settings-input-label")
                 yield Input(
                     (
                         str(
@@ -1398,6 +1639,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                         else f"{model_catalog_settings.stale_after_hours:g}"
                     ),
                     id="settings-model-catalog-stale-hours",
+                    classes="settings-compact-input",
                     type="number",
                     tooltip="0 = refetch every launch.",
                 )
@@ -1414,30 +1656,62 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 _provider_key = provider_config_key(_provider)
                 _pid = _provider.lower()
                 with Horizontal(classes="settings-input-row"):
-                    yield Checkbox(
-                        f"{provider_display_name(_provider)}: refresh",
-                        value=(
-                            _provider_key
-                            not in model_catalog_settings.auto_refresh_disabled
-                        ),
-                        id=f"settings-mc-auto-{_pid}",
+                    yield catalog_toggle(
+                        f"settings-mc-auto-{_pid}",
+                        _provider_key
+                        not in model_catalog_settings.auto_refresh_disabled,
                     )
-                    yield Checkbox(
-                        "save to config",
-                        value=_provider_key
-                        in model_catalog_settings.write_to_config,
-                        id=f"settings-mc-write-{_pid}",
+                    yield catalog_toggle(
+                        f"settings-mc-write-{_pid}",
+                        _provider_key in model_catalog_settings.write_to_config,
                         tooltip=(
                             "Append newly discovered models to config.toml — "
-                            "large catalogs like OpenRouter only add newly released "
-                            "models after a first baseline."
+                            "large catalogs like OpenRouter only add newly "
+                            "released models after a first baseline."
                         ),
                     )
         # ADR-146 task-7: named-endpoint management (rename / edit /
         # delete-with-reference-guard / slot conversion). Instant-apply
         # like the catalog block above: threaded config writes, one
         # shared status line, no partial-apply states.
-        yield from compose_custom_endpoints_section(screen)
+        with advanced_disclosure(screen, CUSTOM_ENDPOINTS_DISCLOSURE_ID):
+            yield from compose_custom_endpoints_section(screen)
+        # ADR-119: llama.cpp prompt-cache snapshots, staged with the
+        # category's Save / Revert; enable/disable applies on next launch.
+        with advanced_disclosure(screen, SNAPSHOTS_DISCLOSURE_ID):
+            yield Static(
+                "Save processed context to reuse later. Restoring does not change your conversations.",
+                classes="settings-help-copy",
+            )
+            yield Static(
+                "Enable/disable applies on next launch.",
+                id="settings-snapshot-launch-scope",
+                classes="settings-help-copy",
+            )
+            yield Checkbox(
+                "Enable snapshots",
+                value=screen._snapshot_preferences_raw[0],
+                disabled=screen._snapshot_preferences_unavailable,
+                id="settings-snapshot-enabled",
+            )
+            yield Static(
+                "Keep count (1–1000, across all models)",
+                classes="settings-input-label",
+            )
+            yield Input(
+                screen._snapshot_preferences_raw[1],
+                disabled=screen._snapshot_preferences_unavailable,
+                id="settings-snapshot-keep",
+                classes="settings-compact-input",
+                type="integer",
+            )
+            yield Static(
+                screen._SNAPSHOT_PREFERENCES_UNAVAILABLE_COPY
+                if screen._snapshot_preferences_unavailable
+                else "Draft — use category Save / Revert. Enable/disable applies on next launch.",
+                id="settings-snapshot-result",
+                classes="settings-help-copy",
+            )
         # TASK-33007.4 (AC#5): the catalog, key-policy, manual-entry,
         # sampling-route and endpoint-key rows moved to the Inspector's
         # config-key disclosure (compose_providers_models_inspector).
@@ -1450,9 +1724,9 @@ def compose_custom_endpoints_section(screen: SettingsScreen) -> ComposeResult:
         screen: The Settings screen that owns the section's state.
 
     Yields:
-        The section heading, then the region rebuilt on every refresh.
+        The region rebuilt on every refresh; its Advanced disclosure's title
+        is the section heading (TASK-33007.6).
     """
-    yield Static("Custom endpoints", classes="destination-section")
     # SettingsRegion (task-15475): a plain Vertical yielded inline has no
     # compose() of its own, so a region-scoped refresh(recompose=True)
     # would wipe it instead of rebuilding it.

@@ -759,8 +759,31 @@ async def _wait_for_settings_value(
     )
 
 
+async def _open_enclosing_disclosures(pilot, widget) -> None:
+    """Open any closed disclosure around a control, as a user does first.
+
+    TASK-33007.6, changed on purpose: Providers & Models folds its rarely
+    used controls into closed one-row Advanced disclosures, and a control
+    inside a closed one has no region to click.
+
+    Args:
+        pilot: The running app's pilot.
+        widget: The control about to be clicked.
+    """
+    closed = [
+        node
+        for node in widget.ancestors
+        if isinstance(node, Collapsible) and node.collapsed
+    ]
+    for node in closed:
+        node.collapsed = False
+    if closed:
+        await pilot.pause()
+
+
 async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Button:
     button = screen.query_one(selector, Button)
+    await _open_enclosing_disclosures(pilot, button)
     detail_pane = screen.query_one("#settings-detail-pane-body", VerticalScroll)
     detail_pane.scroll_to_widget(
         button,
@@ -776,6 +799,7 @@ async def _click_scrolled_settings_button(screen, pilot, selector: str) -> Butto
 
 async def _click_scrolled_settings_checkbox(screen, pilot, selector: str) -> Checkbox:
     checkbox = screen.query_one(selector, Checkbox)
+    await _open_enclosing_disclosures(pilot, checkbox)
     detail_pane = screen.query_one("#settings-detail-pane-body", VerticalScroll)
     detail_pane.scroll_to_widget(
         checkbox,
@@ -5659,6 +5683,12 @@ async def test_settings_long_detail_and_inspector_panes_are_scrollable_container
         await _open_settings_category(pilot, "#settings-category-providers-models")
         detail_body = screen.query_one("#settings-detail-pane-body", VerticalScroll)
         test_provider = screen.query_one("#settings-test-provider", Button)
+        # TASK-33007.6, changed on purpose: with Advanced folded the whole
+        # card fits this pane, so open Catalog refresh's 30 provider rows to
+        # make the content long enough to scroll.
+        catalog = screen.query_one("#settings-advanced-catalog-refresh", Collapsible)
+        catalog.collapsed = False
+        await pilot.pause()
 
         assert detail_body.max_scroll_y > 0
         detail_body.scroll_to_widget(

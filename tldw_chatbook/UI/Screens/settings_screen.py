@@ -7,7 +7,7 @@ legacy Chat window are deprecated parallels; new settings belong here.
 
 import asyncio
 import copy
-from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Collection, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field, replace
 import logging
@@ -3363,6 +3363,9 @@ class SettingsScreen(BaseAppScreen):
         # TASK-33007.5: Model defaults opens expanded; Sampling stays closed.
         self._generation_defaults_collapsed = False
         self._sampling_defaults_collapsed = True
+        # TASK-33007.6: the Advanced disclosures the user left open, kept
+        # across a card rebuild; all start closed.
+        self._advanced_disclosures_open: set[str] = set()
         self._syncing_provider_model_value = False
         self._syncing_provider_manual = False
         self._syncing_provider_selection = False
@@ -9465,6 +9468,9 @@ class SettingsScreen(BaseAppScreen):
             # dirty form says its edits wait for s.
             for note in self.query("#settings-provider-next-chat-note"):
                 note.display = has_unsaved_changes
+            # TASK-33007.6: the context window and snapshot drafts re-say
+            # their Advanced titles here.
+            self._refresh_advanced()
             if self.focused is not None and str(self.focused.id or "").startswith(
                 "settings-model-profile-"
             ):
@@ -14646,10 +14652,22 @@ class SettingsScreen(BaseAppScreen):
         self._provider_context_window_suppress_queue.clear()
 
     def _provider_catalog_model_default(self, provider: str) -> str:
+        return next(iter(self._provider_saved_model_ids(provider)), "")
+
+    def _provider_saved_model_ids(self, provider: str) -> tuple[str, ...]:
+        """Return the model ids saved in config for a provider, in order.
+
+        Args:
+            provider: A provider id or alias.
+
+        Returns:
+            The provider's ``providers_models`` ids, de-duplicated.
+        """
         providers_models = getattr(self.app_instance, "providers_models", None)
         if not isinstance(providers_models, Mapping):
-            return ""
+            return ()
         provider_key = provider_config_key(provider)
+        saved: dict[str, None] = {}
         for configured_provider, configured_models in providers_models.items():
             if provider_config_key(str(configured_provider)) != provider_key:
                 continue
@@ -14661,8 +14679,23 @@ class SettingsScreen(BaseAppScreen):
             for configured_model in configured_models:
                 model = str(configured_model or "").strip()
                 if model and model != "None":
-                    return model
-        return ""
+                    saved[model] = None
+        return tuple(saved)
+
+    @staticmethod
+    def _discovered_model_is_saved(model: object, saved_ids: Collection[str]) -> bool:
+        """Say whether a discovered model is already in the saved list.
+
+        Args:
+            model: A discovered model record.
+            saved_ids: The provider's saved model ids.
+
+        Returns:
+            True when discovery marks it persisted or config already lists it,
+            so Save selected would add nothing for it.
+        """
+        model_id = str(getattr(model, "model_id", "") or "").strip()
+        return bool(getattr(model, "persisted", False)) or model_id in saved_ids
 
     def _provider_model_default(self, provider: str) -> str:
         try:
@@ -15436,6 +15469,7 @@ class SettingsScreen(BaseAppScreen):
 
     def _model_discovery_selection_options(self) -> list[tuple[str, str, bool]]:
         options: list[tuple[str, str, bool]] = []
+        saved_ids = set(self._provider_saved_model_ids(self._provider_widget_value()))
         for model in self._model_discovery_models:
             model_id = str(getattr(model, "model_id", "") or "").strip()
             if not model_id:
@@ -15444,8 +15478,14 @@ class SettingsScreen(BaseAppScreen):
             capability = str(getattr(model, "capability_status", "unknown"))
             # TASK-387: humanize the row so a first-run user can read it instead
             # of decoding internal enum names (runtime_discovered / capability=…).
+            # TASK-33007.6 (AC#4): the row says in words whether it is
+            # selected and whether it is already saved; the box's colour only
+            # reinforces the word.
+            selected = model_id in self._model_discovery_selected_model_ids
             saved_label = (
-                "saved" if bool(getattr(model, "persisted", False)) else "session"
+                "saved"
+                if self._discovered_model_is_saved(model, saved_ids)
+                else "not saved"
             )
             source_label = {
                 "runtime_discovered": "discovered",
@@ -15453,14 +15493,11 @@ class SettingsScreen(BaseAppScreen):
                 "saved": "saved",
             }.get(source, source.replace("_", " "))
             capability_label = f"capabilities {capability}"
-            label = f"{model_id} · {saved_label} · {source_label} · {capability_label}"
-            options.append(
-                (
-                    label,
-                    model_id,
-                    model_id in self._model_discovery_selected_model_ids,
-                )
+            label = (
+                f"{'selected' if selected else 'not selected'} · {model_id} · "
+                f"{saved_label} · {source_label} · {capability_label}"
             )
+            options.append((label, model_id, selected))
         return options
 
     def _reset_provider_model_discovery_state(
@@ -15536,8 +15573,10 @@ class SettingsScreen(BaseAppScreen):
                 discovered_list.clear_options()
                 discovered_list.add_options(self._model_discovery_selection_options())
             discovered_list.disabled = not self._model_discovery_models
+            discovered_list.display = bool(self._model_discovery_models)
         except QueryError:
             pass
+        self._refresh_advanced()
 
     def _append_saved_discovered_models(
         self,
@@ -16000,6 +16039,7 @@ class SettingsScreen(BaseAppScreen):
         self._set_static_text(
             "#settings-model-catalog-save-status", self._model_catalog_save_status
         )
+        self._refresh_advanced()
         try:
             retry = self.query_one("#settings-model-catalog-retry", Button)
             if retry.has_focus and not self._model_catalog_save_failed:
@@ -16017,11 +16057,11 @@ class SettingsScreen(BaseAppScreen):
             self._model_catalog_save_status = "Saved. Applies at next startup."
         else:
             self._model_catalog_save_status = (
-                "Automatic refresh changes were not saved. Check that the config "
+                "Catalog refresh changes were not saved. Check that the config "
                 "file is writable, then choose Retry."
             )
             self.app.notify(
-                "Automatic refresh settings were not saved. Retry in Automatic refresh.",
+                "Catalog refresh settings were not saved. Retry in Catalog refresh.",
                 severity="error",
             )
         self._refresh_model_catalog_save_widgets()
@@ -17222,7 +17262,7 @@ class SettingsScreen(BaseAppScreen):
             )
         if field_id in MODEL_CATALOG_FIELD_IDS:
             return (
-                ("Focused setting", "Automatic refresh"),
+                ("Focused setting", "Catalog refresh"),
                 (
                     "Purpose",
                     "Gates the background model-catalog list refresh.",
@@ -17972,6 +18012,15 @@ class SettingsScreen(BaseAppScreen):
                 for label, value in self._overview_ownership_rows():
                     yield self._detail_row(label, value)
 
+    def _refresh_advanced(self) -> None:
+        """Re-say the card's Advanced titles and Catalog refresh words.
+
+        Imported here, as the card module is (ADR-097).
+        """
+        from ..Settings_Modules.providers_models_card import refresh_advanced
+
+        refresh_advanced(self)
+
     def _render_provider_detail(self) -> ComposeResult:
         """Compose the Providers & Models card from its Settings region module.
 
@@ -18041,6 +18090,7 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         region.refresh(recompose=True)
+        self._refresh_advanced()
 
     def _custom_endpoints_status_update(self, message: str) -> None:
         """Set the shared status line without closing any open form."""
@@ -25162,6 +25212,19 @@ class SettingsScreen(BaseAppScreen):
         """
         self._sampling_defaults_collapsed = event.collapsible.collapsed
 
+    @on(Collapsible.Toggled, ".settings-advanced-disclosure")
+    def handle_advanced_disclosure_toggled(self, event: Collapsible.Toggled) -> None:
+        """Keep an Advanced disclosure open or closed across a card rebuild.
+
+        Args:
+            event: The toggle of one of the card's Advanced disclosures.
+        """
+        disclosure_id = str(event.collapsible.id)
+        if event.collapsible.collapsed:
+            self._advanced_disclosures_open.discard(disclosure_id)
+        else:
+            self._advanced_disclosures_open.add(disclosure_id)
+
     @on(Button.Pressed, "#settings-open-appearance")
     def open_appearance_settings(self) -> None:
         self.post_message(
@@ -29870,6 +29933,9 @@ class SettingsScreen(BaseAppScreen):
             region = self.query_one("#settings-custom-endpoints")
         except QueryError:
             return
+        # TASK-33007.6: the editor sits in the Custom endpoints disclosure.
+        for disclosure in self.query("#settings-advanced-custom-endpoints"):
+            disclosure.collapsed = False
         await region.recompose()
         target = region  # The editor lists the on-disk registry.
         try:
@@ -30309,6 +30375,13 @@ class SettingsScreen(BaseAppScreen):
             self._model_discovery_selected_model_ids = {
                 str(model_id) for model_id in current_list.selected
             }
+            # TASK-33007.6 (AC#4): each row says in words whether it is
+            # selected; the options keep their order and values.
+            for index, (label, _value, _selected) in enumerate(
+                self._model_discovery_selection_options()
+            ):
+                current_list.replace_option_prompt_at_index(index, label)
+            self._refresh_advanced()
 
     @on(Button.Pressed, "#settings-clear-discovered-provider-models")
     def handle_clear_discovered_provider_models(self, event: Button.Pressed) -> None:

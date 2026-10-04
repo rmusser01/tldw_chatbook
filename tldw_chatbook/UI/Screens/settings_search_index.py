@@ -578,6 +578,10 @@ def build_field_search_index() -> None:
                 ),
                 ("settings-model-profile-thinking-budget-tokens", "Think budget"),
                 ("settings-model-profile-streaming", "Streaming"),
+                # TASK-33007.6: the Prompt-cache snapshots disclosure's fields
+                # (ADR-119); '/' opens the closed disclosure it lands in.
+                ("settings-snapshot-enabled", "Enable prompt-cache snapshots"),
+                ("settings-snapshot-keep", "Snapshot keep count"),
             ),
             SettingsCategoryId.SPEECH_TTS: (
                 ("settings-speech-default-provider", "Default TTS Provider"),

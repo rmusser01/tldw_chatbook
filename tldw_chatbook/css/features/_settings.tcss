@@ -129,9 +129,10 @@
    TASK-32748 includes the nested Generation defaults rows, where the same
    fixed label otherwise leaves only the final digit of Temperature visible.
    Console Behavior and Storage use the same stacked field contract.
-   Existing controls retain their compact border and focus contracts. */
-.settings-workbench-compact #settings-providers-models-card > .settings-input-row,
-.settings-workbench-compact #settings-generation-defaults .settings-input-row,
+   Existing controls retain their compact border and focus contracts.
+   TASK-33007.6: the card's rows also sit inside its Advanced disclosures,
+   so its selectors match at any depth. */
+.settings-workbench-compact #settings-providers-models-card .settings-input-row,
 .settings-workbench-compact #settings-network-card > .settings-input-row,
 .settings-workbench-compact #settings-console-behavior-card .settings-input-row,
 .settings-workbench-compact #settings-storage-card .settings-input-row {
@@ -141,8 +142,7 @@
     margin-bottom: $ds-space-stack;
 }
 
-.settings-workbench-compact #settings-providers-models-card > .settings-input-row > .settings-input-label,
-.settings-workbench-compact #settings-generation-defaults .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-providers-models-card .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-network-card > .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-console-behavior-card .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-storage-card .settings-input-row > .settings-input-label {
@@ -151,10 +151,8 @@
     min-height: $ds-control-height-compact;
 }
 
-.settings-workbench-compact #settings-providers-models-card > .settings-input-row > Input,
-.settings-workbench-compact #settings-providers-models-card > .settings-input-row > Select,
-.settings-workbench-compact #settings-generation-defaults .settings-input-row > Input,
-.settings-workbench-compact #settings-generation-defaults .settings-input-row > Select,
+.settings-workbench-compact #settings-providers-models-card .settings-input-row > Input,
+.settings-workbench-compact #settings-providers-models-card .settings-input-row > Select,
 .settings-workbench-compact #settings-network-card > .settings-input-row > Input,
 .settings-workbench-compact #settings-network-card > .settings-input-row > Select,
 .settings-workbench-compact #settings-console-behavior-card .settings-input-row > Input,
@@ -577,15 +575,15 @@ Button.settings-category-group-toggle:focus {
     width: $ds-size-16;
 }
 
-/* TASK-33007.5 (spec §6 "a closed disclosure costs 1 row"): Model defaults
-   and its Sampling disclosure drop the global components/_widgets.tcss
-   Collapsible frame (round border, min-height 3, margin) and Textual's
-   padding, as Chat settings does, so each title is a one-row section header
-   and the opened rows line up with Connect's. A title set after mount keeps
-   an auto width's first measure, so it spans its row; the builders keep it
-   to one row and the ellipsis is the narrow-workbench safety net. */
-#settings-generation-defaults,
-#settings-model-sampling {
+/* TASK-33007.5 (spec §6 "a closed disclosure costs 1 row"): the card's
+   disclosures -- Model defaults, its Sampling, and (TASK-33007.6) the five
+   Advanced ones -- drop the global components/_widgets.tcss Collapsible
+   frame (round border, min-height 3, margin) and Textual's padding, as Chat
+   settings does, so each title is a one-row section header and the opened
+   rows line up with Connect's. A title set after mount keeps an auto width's
+   first measure, so it spans its row; the builders keep it to one row and
+   the ellipsis is the narrow-workbench safety net. */
+#settings-providers-models-card Collapsible {
     min-height: $ds-size-0;
     margin: $ds-space-0;
     padding: $ds-space-0;
@@ -593,14 +591,12 @@ Button.settings-category-group-toggle:focus {
     background: $ds-surface-panel;
 }
 
-#settings-generation-defaults > Contents,
-#settings-model-sampling > Contents {
+#settings-providers-models-card Collapsible > Contents {
     padding: $ds-space-0;
     background: $ds-surface-panel;
 }
 
-#settings-generation-defaults > CollapsibleTitle,
-#settings-model-sampling > CollapsibleTitle {
+#settings-providers-models-card Collapsible > CollapsibleTitle {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: $ds-control-height-compact;
@@ -902,12 +898,43 @@ Button.settings-category-group-toggle:focus {
     padding: $ds-space-0 $ds-space-1;
 }
 
+/* TASK-33007.6 (spec §6 "one frame level", AC#8): inside the detail pane
+   the Providers & Models card draws no frame of its own and no bordered
+   group -- the pane border is the only frame, and each section starts with
+   a one-row header. The instant-apply groups keep their class, hint line
+   and place outside the draft (ADR-033); other focus cards keep frames. */
+#settings-providers-models-card,
+#settings-providers-models-card .settings-instant-apply-group {
+    border: none;
+}
+
+#settings-providers-models-card .settings-instant-apply-group {
+    padding: $ds-space-0;
+}
+
+/* The discovered-model list keeps the card's control edge -- thin at rest,
+   thick on focus -- instead of a full-width box around its rows. The global
+   focus outline would then sit on its first and last rows, so the thick
+   edge and the highlighted row are its focus cue. */
+#settings-discovered-models-list {
+    border: none;
+    border-left: solid $ds-control-edge;
+}
+
+#settings-discovered-models-list:focus {
+    border: none;
+    border-left: thick $ds-action-focus;
+    outline: none;
+}
+
 /* Keep refresh controls inside the scrolled group at compact widths. */
 #settings-model-catalog-group .settings-input-row {
     height: auto;
 }
 
-#settings-model-catalog-group Checkbox {
+/* Every checkbox on the card is a one-row control with no box of its own
+   (TASK-33007.6: Prompt-cache snapshots' joins Catalog refresh's). */
+#settings-providers-models-card Checkbox {
     width: auto;
     max-width: $ds-width-full;
     height: $ds-control-height-compact;

@@ -188,7 +188,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33007.5 raised it to 136: test_settings_model_defaults_rows.py (~75 s
 # serial) gates Settings' Model defaults rows, the one-row Select rows on
 # Providers & Models and Console Behavior, and a real save of a blanked field.
-MINIMUM_FILES = 164
+# TASK-33007.6 raised it to 137: test_settings_advanced_disclosures.py (~75 s
+# serial) gates the Advanced fold -- order, one-row titles that say their
+# state, state words on every discovered and catalog row, one frame level,
+# and '/' opening the closed disclosure it lands in.
+MINIMUM_FILES = 165
 
 
 def read_census(path: Path) -> list[str]:

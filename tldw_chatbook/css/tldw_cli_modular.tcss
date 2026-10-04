@@ -11043,8 +11043,7 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 
 .tldw-split-source-header-end { }
 
-.settings-workbench-compact #settings-providers-models-card > .settings-input-row > .settings-input-label,
-.settings-workbench-compact #settings-generation-defaults .settings-input-row > .settings-input-label,
+.settings-workbench-compact #settings-providers-models-card .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-network-card > .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-console-behavior-card .settings-input-row > .settings-input-label,
 .settings-workbench-compact #settings-storage-card .settings-input-row > .settings-input-label {

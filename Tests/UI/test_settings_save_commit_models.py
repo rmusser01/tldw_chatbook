@@ -10,7 +10,8 @@ These tests pin:
 * staged stays the default model for the guided categories;
 * every intentional instant-apply control is labeled inline
   ("applies immediately - no Save needed") and visually separated from
-  staged fields (its own bordered group);
+  staged fields (its own instant-apply group; TASK-33007.6 dropped that
+  group's border, as the pane border is the card's only frame);
 * the focused-field inspector documents the per-field save behavior
   ("Save: staged - press s to save, r to revert" vs
   "Save: applies immediately - no Save needed").
@@ -40,7 +41,8 @@ INSTANT_SAVE_ROW = f"Save: {INSTANT_APPLY_LABEL}"
 @pytest.mark.asyncio
 async def test_model_catalog_controls_are_labeled_and_visually_separated():
     """Providers pane: the auto-refresh block carries the inline instant-apply
-    label and lives in its own bordered group, distinct from staged fields."""
+    label and lives in its own instant-apply group, distinct from staged
+    fields (TASK-33007.6: the group keeps its class, not its border)."""
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 

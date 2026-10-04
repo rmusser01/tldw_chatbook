@@ -1717,6 +1717,10 @@ def test_discovery_row_labels_use_user_vocabulary_not_internal_jargon():
     """TASK-387: the model-discovery selection rows must read in plain language,
     not the internal ``runtime_discovered`` / ``capability=unknown`` enum dump."""
     screen = _bare_settings_screen({})
+    # TASK-33007.6, changed on purpose: each row now also says whether its id
+    # is already saved for the form's provider, which a bare screen has no
+    # widget to read.
+    screen._provider_widget_value = lambda: "llama_cpp"
     screen._model_discovery_selected_model_ids = set()
     screen._model_discovery_models = (
         SimpleNamespace(
