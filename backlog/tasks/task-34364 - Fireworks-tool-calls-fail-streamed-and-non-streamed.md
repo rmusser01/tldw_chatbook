@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-04 18:48'
-updated_date: '2026-10-04 21:23'
+updated_date: '2026-10-04 23:44'
 labels:
   - providers
   - tools
@@ -44,4 +44,6 @@ Independent review round (Qodo was out of credits and CodeRabbit skips dev-targe
 - uncovered_keys now also reports a stream_tool_call level (delta.tool_calls[] keys).
 - Added an Args docstring for normalize_hosted_chat_response; the census test now pins tool_call_allowances (fireworks only); added a test for the allowance subtraction in uncovered_keys; the metadata fallback test covers the 16 KiB serialized and long-key bounds.
 Not changed (nits): a null type/name on a continuation still fails, since no provider has been seen sending that; the fallback still drops a model's whole metadata, so the 7 Vercel models lose the inferred-vision hint (documented trade-off).
+
+Review follow-up (owner rule: fix every finding, minor included): a null type or function.name on a streamed continuation now counts as not sent, like a null id; a different non-null value still fails ('type changed' / 'name changed'). The downstream accumulator (console_provider_gateway._ToolCallAccumulator._merge) reads id, type and name by truthiness, so nulls in the visible frame are ignored. Mutation-checked.
 <!-- SECTION:NOTES:END -->

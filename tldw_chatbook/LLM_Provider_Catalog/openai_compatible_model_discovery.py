@@ -599,6 +599,40 @@ def _safe_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
     return metadata
 
 
+def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a model's safe metadata, dropping only what breaks a bound.
+
+    One model's oversized details must not cost the user the whole list:
+    Vercel's tiered pricing (270 items against a 256-item bound) listed none
+    of its 407 models (TASK-34363). A top-level field that breaks a bound on
+    its own is dropped first; if the rest together still exceed a bound, the
+    largest field goes until they fit. Nothing unbounded is ever kept.
+
+    Args:
+        model_payload: One model object from a ``/models`` response.
+
+    Returns:
+        The model's metadata within every bound; empty when no field fits.
+    """
+    try:
+        return _safe_model_metadata(model_payload)
+    except ValueError:
+        pass
+    kept: dict[str, Any] = {}
+    for key, value in model_payload.items():
+        try:
+            _safe_model_metadata({key: value})
+        except ValueError:
+            continue
+        kept[key] = value
+    while kept:
+        try:
+            return _safe_model_metadata(kept)
+        except ValueError:
+            del kept[max(kept, key=lambda name: len(json.dumps(kept[name])))]
+    return {}
+
+
 def normalize_models_response(
     payload: Mapping[str, Any],
     *,
@@ -630,14 +664,6 @@ def normalize_models_response(
         if model_id in seen_model_ids:
             continue
         seen_model_ids.add(model_id)
-        try:
-            metadata = _safe_model_metadata(item)
-        except ValueError:
-            # One model's oversized details must not cost the user the whole
-            # list: Vercel's tiered pricing (270 items) listed none of its 407
-            # models (TASK-34363). Metadata only feeds the inferred-vision hint,
-            # so this model shows capability "unknown" instead.
-            metadata = {}
         models.append(
             DiscoveredModel(
                 provider=provider,
@@ -647,7 +673,7 @@ def normalize_models_response(
                 source="runtime_discovered",
                 endpoint_fingerprint=endpoint_fingerprint,
                 discovered_at=now_iso,
-                metadata_raw_safe=metadata,
+                metadata_raw_safe=_bounded_model_metadata(item),
             )
         )
 

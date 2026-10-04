@@ -1160,11 +1160,14 @@ def test_normalize_models_rejects_unsafe_or_oversized_model_ids(model_id):
 def test_normalize_models_keeps_a_model_but_none_of_its_unbounded_metadata(metadata):
     """TASK-34363: one model's oversized details used to reject the whole list.
 
+    Only the field that breaks a bound is dropped; the model's other details stay.
+
     Args:
         metadata: Model details that exceed one of the metadata bounds.
     """
     models = normalize_models_response(
-        {"data": [{"id": "safe-model", "metadata": metadata}, {"id": "plain", "owned_by": "x"}]},
+        {"data": [{"id": "safe-model", "owned_by": "kept", "metadata": metadata},
+                  {"id": "plain", "owned_by": "x"}]},
         provider="Custom",
         provider_list_key="Custom",
         endpoint_fingerprint="https://api.example.test/v1",
@@ -1172,8 +1175,28 @@ def test_normalize_models_keeps_a_model_but_none_of_its_unbounded_metadata(metad
     )
 
     assert [model.model_id for model in models] == ["safe-model", "plain"]
-    assert dict(models[0].metadata_raw_safe) == {}
+    assert dict(models[0].metadata_raw_safe) == {"id": "safe-model", "owned_by": "kept"}
     assert models[1].metadata_raw_safe["owned_by"] == "x"
+
+
+def test_fields_that_only_overflow_together_lose_the_largest_and_keep_the_vision_hint():
+    """Vercel's shape: each field fits alone, tiered pricing pushes the total over 256 items."""
+    model = {
+        "id": "openai/gpt-5.6-sol",
+        "architecture": {"input_modalities": ["text", "image"]},
+        "extras": list(range(60)),
+        "pricing": {f"tier_{n}": {"input": n, "output": n} for n in range(68)},
+    }
+    (discovered,) = normalize_models_response(
+        {"data": [model]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    assert set(discovered.metadata_raw_safe) == {"id", "architecture", "extras"}
+    assert tuple(discovered.metadata_raw_safe["architecture"]["input_modalities"]) == ("text", "image")
 
 
 def test_normalize_models_drops_an_oversized_field_but_keeps_the_model():

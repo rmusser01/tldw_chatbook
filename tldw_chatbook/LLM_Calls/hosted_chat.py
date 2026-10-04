@@ -518,17 +518,19 @@ class HostedChatStream(Iterator[dict[str, Any]]):
                 self._tools[index] = state
                 self._reserve_output(len(call_id) + len(name))
             else:
-                # A continuation may repeat ``"id": null`` (Fireworks) instead
-                # of omitting it; null claims no identity (TASK-34364).
+                # A continuation may repeat a field as null (Fireworks sends
+                # ``"id": null``) instead of omitting it. Null claims nothing,
+                # so it counts as not sent; any other value must still match
+                # the call's first delta (TASK-34364).
                 if raw_tool.get("id") is not None and raw_tool["id"] != state.call_id:
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool identity changed."
                     )
-                if "type" in raw_tool and raw_tool.get("type") != "function":
+                if raw_tool.get("type") is not None and raw_tool["type"] != "function":
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool type changed."
                     )
-                if "name" in function and function.get("name") != state.name:
+                if function.get("name") is not None and function["name"] != state.name:
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool name changed."
                     )

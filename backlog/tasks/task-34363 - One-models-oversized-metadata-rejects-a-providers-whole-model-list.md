@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-04 18:27'
-updated_date: '2026-10-04 18:29'
+updated_date: '2026-10-04 23:44'
 labels:
   - providers
   - discovery
@@ -36,4 +36,6 @@ normalize_models_response (LLM_Provider_Catalog/openai_compatible_model_discover
 Live on 2026-10-04 (no key): Vercel AI Gateway went from invalid_response with 0 models (dev) to 407 models, 7 of them kept without details. The other 9 discoverable public listings are unchanged (deepinfra 183, kilo 401, nous 425, novita 121, nvidia 81, ollama_cloud 17, sambanova 6, venice 128, zenmux 201). Command Code and OpenCode Zen report unsupported by design (discovery_route=None).
 
 Tests: test_normalize_models_rejects_unbounded_metadata became test_normalize_models_keeps_a_model_but_none_of_its_unbounded_metadata. It covers depth, item count, an oversized string in a list, a non-finite float and Vercel-shaped tiered pricing, and checks that a sibling model keeps its metadata. Mutation-checked: removing the fallback fails all 5 cases. The no-key evidence test passed for Vercel because its fixture keeps only ids; this is recorded in lessons-live-verification.md.
+
+Review follow-up (owner rule: fix every finding, minor included): the fallback no longer drops a model's whole metadata. _bounded_model_metadata drops a top-level field that breaks a bound on its own, then the largest field until the rest fit, so nothing unbounded is kept and the model's other details stay. Live 2026-10-04 (no key): Vercel lists 407 models, none with empty metadata, 7 without pricing; openai/gpt-5.6-sol keeps its other 20 fields. Mutation-checked (returning {} fails 8 cases). The inferred-vision hint is False for every Vercel model for an unrelated reason, filed as its own task: Vercel gives modalities as a mapping, which the hint does not read.
 <!-- SECTION:NOTES:END -->

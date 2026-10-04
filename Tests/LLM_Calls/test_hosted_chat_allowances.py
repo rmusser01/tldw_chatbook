@@ -638,6 +638,45 @@ def test_stream_continuation_with_a_different_id_still_fails():
         )
 
 
+def _continuation(**call) -> dict:
+    """A continuation delta for call 0 whose call object is exactly ``call``."""
+    return {"choices": [{"index": 0, "finish_reason": None,
+                         "delta": {"tool_calls": [{"index": 0, **call}]}}]}
+
+
+def test_stream_continuation_with_a_null_type_or_name_keeps_the_call():
+    """Null claims nothing, so a null type or name counts as not sent, like a null id."""
+    turn = _stream_turn(
+        _tool_delta("call_1", '{"city": ', name="get_weather"),
+        _continuation(id=None, type=None, function={"name": None, "arguments": '"Tokyo"}'}),
+    )
+    assert turn.tool_calls == (
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": '{"city": "Tokyo"}'},
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("call", "message"),
+    [
+        ({"type": "other", "function": {"arguments": "}"}}, "type changed"),
+        ({"type": "function", "function": {"name": "other", "arguments": "}"}}, "name changed"),
+    ],
+)
+def test_stream_continuation_with_a_different_type_or_name_still_fails(call, message):
+    """A non-null type or name that differs from the call's first delta fails.
+
+    Args:
+        call: The continuation's call object, without its index.
+        message: The protocol error it must raise.
+    """
+    with pytest.raises(HostedChatProtocolError, match=message):
+        _stream_turn(_tool_delta("call_1", '{"city": ', name="get_weather"), _continuation(**call))
+
+
 def test_stream_known_keys_only_frames_pass_through_unchanged():
     # zai/moonshot byte-identity: they carry no allowances and no tolerance,
     # so validation admits known keys only and the filtered frame is the
