@@ -1601,3 +1601,6 @@ Observer checkpoint: eight unchanged original credential ticks pass with complet
 ADR required: no
 ADR path: N/A (existing ADR126 finite ownership applies)
 Reason: test-only passive observation and routine dev merge preserve existing application/service/security contracts.
+
+
+Original whole-probe prerequisite: await the actual `_initial_screen_pushed` completion latch inside its existing run_test before capturing the screen, as already qualified in the cold startup control. Observation/heartbeat remain active and all original900s timeout/phase counts/Send/UI/helper/native-open assertions remain unchanged; wrong completed screen types still fail. Removing only the wait restores the entire prior module AST. ADR required: no; ADR path: N/A; reason: test prerequisite synchronization preserves application boundaries and original performance oracles. Independently reviewed before application; final native whole verification follows.

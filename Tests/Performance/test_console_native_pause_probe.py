@@ -388,6 +388,11 @@ async def test_native_console_pause_probe(monkeypatch, tmp_path, request):
         heartbeat = asyncio.create_task(observed.heartbeat())
         app = TldwCli()
         async with app.run_test(size=(140, 42)) as pilot:
+            # The existing observer and heartbeat include the original initial
+            # task's receipt preparation. Keep this prerequisite inside the
+            # original 900s deadline before asserting the completed screen.
+            while not getattr(app, "_initial_screen_pushed", False):
+                await asyncio.sleep(0.01)
             screen = app.screen
             assert type(screen).__name__ == "ChatScreen"
             composer = screen._console_composer_or_none()

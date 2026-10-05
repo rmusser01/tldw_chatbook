@@ -444,3 +444,6 @@ Implementation Notes: stock admission grouping passes6/6 native controls51.000s 
 
 
 Implementation Notes (accepted observer checkpoint): original-code census preserves stock callback identity; eight original credential ticks pass with628 fully retired spans and unchanged limits. The Windows full census retains its original POSIX helper anti-vacuity failure; no whole-budget acceptance or zero-native-I/O claim follows. QA records the exact ded197 macOS/Linux source-qualified whole helper failures and actual callback partitions. Status remains In Progress; final dev integration and whole/live/platform verification are pending.
+
+
+Original whole-probe prerequisite: await the actual `_initial_screen_pushed` completion latch inside its existing run_test before capturing the screen, as already qualified in the cold startup control. Observation/heartbeat remain active and all original900s timeout/phase counts/Send/UI/helper/native-open assertions remain unchanged; wrong completed screen types still fail. Removing only the wait restores the entire prior module AST. ADR required: no; ADR path: N/A; reason: test prerequisite synchronization preserves application boundaries and original performance oracles. Independently reviewed before application; final native whole verification follows.
