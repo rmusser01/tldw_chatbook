@@ -14,6 +14,7 @@ from textual.css.query import NoMatches
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets.input import Selection
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
@@ -71,21 +72,51 @@ def _count(count: int, noun: str) -> str:
 
 
 class PickerSearchInput(Input):
-    """Combobox input whose focusing click selects its value, as Tab does.
+    """Combobox input whose focus selects its value from the head.
 
-    ``select_on_focus`` selects the committed value, but ``Input._on_mouse_down``
-    then moves the caret to the click point, so click-then-type edited the
-    value instead of replacing it (TASK-33001.7). Same mechanism as the Library
-    rail's ``SelectAllOnFocusingClickInput``, which is off the UI-ready path.
+    Tab, the click that focuses it and the window regaining focus all select
+    the committed value, so the next key replaces it. Compose it with
+    ``select_on_focus=False``: Input's own select-on-focus leaves the caret
+    after the value, and this field selects with the caret at the head
+    (``select_all``).
+
+    ``Input._on_mouse_down`` moves the caret to the click point, so
+    click-then-type edited the value instead of replacing it (TASK-33001.7).
+    Same mechanism as the Library rail's ``SelectAllOnFocusingClickInput``,
+    which is off the UI-ready path.
     """
 
     _select_on_focusing_click = False
+
+    def select_all(self) -> None:
+        """Select the whole value with the caret at its head.
+
+        Input keeps one cell for the caret after the last character and
+        scrolls to it, so a caret at the end pushes the head of a value as
+        wide as the field out of view (TASK-33007.9). Typing still replaces
+        the selection.
+        """
+        self.selection = Selection(len(self.value), 0)
+
+    def _typing(self) -> bool:
+        """Whether the field holds text its user is still typing.
+
+        Returns:
+            False here. A subclass says True while its owner has not put the
+            committed value back, e.g. while its list is open.
+        """
+        return False
 
     def _on_focus(self, event: events.Focus) -> None:
         # Screen focuses a widget before forwarding the click that focused it,
         # so that MouseDown is the next message; the refresh disarms a Tab focus.
         self._select_on_focusing_click = True
         self.call_after_refresh(self._disarm_focusing_click)
+        # Input keeps the caret when the window regains focus. Here the owner
+        # has put the committed value back by then, so that focus selects too,
+        # unless the text is still the user's to finish (TASK-33007.9).
+        if not (event.from_app_focus and self._typing()):
+            self.select_all()
 
     def _disarm_focusing_click(self) -> None:
         self._select_on_focusing_click = False
@@ -105,6 +136,13 @@ class ModelPickerInput(PickerSearchInput):
 
     class EscapePressed(Message):
         """Posted before Input consumes Escape as an edit rollback."""
+
+    def _typing(self) -> bool:
+        # A Custom ID stays as typed; an open list holds a filter until the
+        # picker's blur timer drops it.
+        picker = self.query_ancestor(ModelSearchPicker)
+        results = picker.query_one("#model-search-picker-results", OptionList)
+        return picker.custom_mode or bool(results.display)
 
     async def _on_key(self, event: events.Key) -> None:
         if event.key == "escape":
@@ -250,6 +288,7 @@ class ModelSearchPicker(Widget):
                 id="model-search-picker-input",
                 name="model-search",
                 tooltip="Choose or search the model for this provider.",
+                select_on_focus=False,
             )
             custom_button = Button(
                 "Custom ID",
@@ -686,6 +725,14 @@ class ModelSearchPicker(Widget):
                 input_widget.value = value
         finally:
             self._suppress_input_events = False
+        if not input_widget.has_focus:
+            self._rest_at_head(input_widget)
+
+    @staticmethod
+    def _rest_at_head(input_widget: Input) -> None:
+        # At rest the id reads from its head, wherever the caret was left
+        # (force: Textual does not scroll a disabled widget without it).
+        input_widget.scroll_to(x=0, animate=False, force=True)
 
     def _hide_results(self) -> None:
         if not self.is_mounted:
@@ -852,8 +899,8 @@ class ModelSearchPicker(Widget):
             return
         if self._custom_mode:
             return
-        # TASK-33001.7: keep the committed model painted. Input's own
-        # select_on_focus selects it, so the first keystroke replaces it.
+        # TASK-33001.7: keep the committed model painted. The input selects
+        # it on focus, so the first keystroke replaces it.
         self._render_matches("", show_empty_query=True)
 
     def on_descendant_blur(self, event: events.DescendantBlur) -> None:
@@ -865,12 +912,15 @@ class ModelSearchPicker(Widget):
 
     def _restore_committed_display_after_blur(self) -> None:
         """Keep visible and committed catalog values aligned after an edit."""
-        if self._custom_mode or not self.is_mounted:
+        if not self.is_mounted:
             return
         focused = self.app.focused
         if focused is not None and self in focused.ancestors_with_self:
             return
         input_widget = self.query_one("#model-search-picker-input", Input)
+        self._rest_at_head(input_widget)  # a Custom ID too
+        if self._custom_mode:
+            return
         if input_widget.value != (self._selected_model or "") or self._matches:
             self._set_input_value(self._selected_model or "")
             self._hide_results()

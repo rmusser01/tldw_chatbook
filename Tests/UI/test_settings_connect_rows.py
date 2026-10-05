@@ -11,7 +11,9 @@ which is also checked at 235x52.
 from __future__ import annotations
 
 import pytest
+from textual import events
 from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets.input import Selection
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_destination_shells import _active_destination_screen
@@ -436,6 +438,17 @@ async def _tab_away(pilot, control) -> None:
     await pilot.pause(0.2)  # the control's blur timer
 
 
+async def _window_away_and_back(pilot, host, control) -> None:
+    """The terminal window loses focus for longer than the control's blur
+    timer, then regains it."""
+    host.post_message(events.AppBlur())
+    await _until(pilot, lambda: not control.has_focus)
+    await pilot.pause(0.2)  # the control's blur timer
+    host.post_message(events.AppFocus())
+    await _until(pilot, lambda: control.has_focus)
+    await pilot.pause()
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_provider_control_names_the_choice_never_the_typed_filter(request):
@@ -602,7 +615,8 @@ async def test_a_chosen_name_as_wide_as_the_control_is_painted_from_its_head(req
     the last character and scrolls to it, so a select-all that ends there
     pushed the head of a name as wide as the control out of view ("ext
     Generation WebUI (Oobabooga)"). Chosen, left and Tabbed back into, the
-    control paints the name from its first cell."""
+    control paints the name from its first cell -- and selects it from there
+    when the terminal window regains focus (review round 2)."""
     host = _anthropic_host()
 
     async with host.run_test(size=_SIZE) as pilot:
@@ -632,6 +646,39 @@ async def test_a_chosen_name_as_wide_as_the_control_is_painted_from_its_head(req
         assert not _paints_from_its_head(screen, control, _OOBABOOGA)
         await _tab_away(pilot, control)
         await _expect_the_head(pilot, screen, control, _OOBABOOGA)
+
+        # Review round 2: Input keeps the caret when the window regains focus,
+        # but this control's blur has put the name back by then. So that focus
+        # selects the name from its head like any other -- with the caret left
+        # at the end, where the field otherwise showed no caret at all ...
+        whole_name = Selection(len(_OOBABOOGA), 0)
+        await pilot.press("shift+tab")
+        await _until(pilot, lambda: control.has_focus)
+        await pilot.press("end")
+        await pilot.pause()
+        await _window_away_and_back(pilot, host, control)
+        assert control.has_focus and not picker.display
+        assert control.selection == whole_name
+        await _expect_the_head(pilot, screen, control, _OOBABOOGA)
+
+        # ... and after a filter was left typed, so the next key replaces the
+        # name instead of landing inside it ("Texzt Generation WebUI").
+        await _type_filter(pilot, screen, "oll")
+        await _window_away_and_back(pilot, host, control)
+        assert control.value == _OOBABOOGA and not picker.display
+        assert control.selection == whole_name
+        await pilot.press("z")
+        await _until(pilot, lambda: control.value == "z" and picker.display)
+        assert control.value == "z" and picker.display
+
+        # Away for less than the blur timer (both events queued at once), the
+        # list is still open and the filter is still the user's to finish.
+        host.post_message(events.AppBlur())
+        host.post_message(events.AppFocus())
+        await pilot.pause(0.3)
+        assert control.has_focus and picker.display
+        assert control.value == "z"
+        assert control.selection == Selection.cursor(1)
 
 
 @pytest.mark.asyncio
