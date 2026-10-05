@@ -30,17 +30,20 @@ from tldw_chatbook.Chat.console_provider_support import (
     MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
 )
+from tldw_chatbook.Chat.console_session_settings import (
+    build_default_console_session_settings,
+)
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import (
-    MODEL_PROFILE_INPUT_PLACEHOLDERS,
+    CONSOLE_PIN_BUILT_IN_HINT,
     MODEL_PROFILE_STREAMING_SELECT_OPTIONS,
 )
 from tldw_chatbook.UI.Settings_Modules.settings_field_rows import (
-    NOT_SET_PROMPT,
     UNSET_FALLBACK_HELP,
     sampling_state,
 )
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+    BLANK_CHOICE_PROMPT,
     CORE_FIELDS,
     SAMPLING_FIELDS,
 )
@@ -111,6 +114,15 @@ async def _revert(host, pilot, screen) -> None:
     await pilot.pause()
 
 
+def _guide_row(screen, index: int) -> str:
+    """One painted row of the Inspector's Focused field guide."""
+    return _text(screen, f"#settings-console-behavior-field-guide-{index}")
+
+
+def _sampling_title(screen) -> str:
+    return str(screen.query_one("#settings-console-sampling", Collapsible).title)
+
+
 def _dirty(screen) -> set[str]:
     draft = screen._settings_drafts.get(CONSOLE_BEHAVIOR)
     return set(draft.dirty_keys) if draft is not None else set()
@@ -142,14 +154,19 @@ async def test_fallbacks_use_model_defaults_rows_core_first_then_closed_sampling
         assert (
             children[children.index(note) + 1].id == f"{_cid('reasoning_effort')}-row"
         )
-        # A blank enum's prompt is painted whole in the 16-cell control.
+        # A blank enum shows the word Chat settings shows for the same state
+        # ("default": nothing is sent), painted whole in the 16-cell control.
         for name in _ENUM_FIELDS:
             select = screen.query_one(f"#{_cid(name)}", Select)
             assert select.value is Select.NULL
-            assert select.prompt == NOT_SET_PROMPT
+            assert select.prompt == BLANK_CHOICE_PROMPT == "default"
             shown = select.query_one("SelectCurrent #label", Static)
+            assert _static_text(shown) == BLANK_CHOICE_PROMPT
             assert shown.region.height == 1, (name, shown.region)
-            assert shown.region.width >= cell_len(NOT_SET_PROMPT), (name, shown.region)
+            assert shown.region.width >= cell_len(BLANK_CHOICE_PROMPT), (
+                name,
+                shown.region,
+            )
         for name, row in zip(CORE_FIELDS, rows):
             label, control, source, help_line = row.children
             assert _static_text(label) == MODEL_FIELD_LABELS[name]
@@ -295,6 +312,9 @@ async def test_a_value_chat_defaults_does_not_hold_reads_built_in_like_model_def
         for name in ("streaming", "temperature", "top_p"):
             assert _row_copy(screen, name) == ("built-in", UNSET_FALLBACK_HELP), name
         assert not _dirty(screen)
+        # Review round 2 (3): the built-in Top P is shown, not set, so the
+        # closed title does not count it.
+        assert _sampling_title(screen) == "Sampling · none set"
 
         screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
         await _wait_until(
@@ -332,10 +352,20 @@ async def test_an_unset_streaming_fallback_can_be_pinned_on_and_reverted(request
         streaming = screen.query_one(f"#{_cid('streaming')}", Select)
         assert _row_copy(screen, "streaming")[0] == "built-in"
         assert not _dirty(screen)
+        # Review round 2 (5): while the row reads "built-in" its focused
+        # guide says how to keep the value shown; an edit drops the hint.
+        valid = MODEL_CONFIG_FIELDS["streaming"].valid_range
+        streaming.focus()
+        await pilot.pause()
+        await pilot.pause()
+        assert _guide_row(screen, 2) == (
+            f"Validation: {valid}; {CONSOLE_PIN_BUILT_IN_HINT}"
+        )
 
         await _choose_streaming(pilot, streaming, "false")
         await _choose_streaming(pilot, streaming, "true")
 
+        assert _guide_row(screen, 2) == f"Validation: {valid}"
         assert _dirty(screen) == {"streaming"}
         assert screen._settings_drafts[CONSOLE_BEHAVIOR].values["streaming"] is True
         assert _row_copy(screen, "streaming") == (
@@ -388,21 +418,29 @@ async def test_a_cleared_required_fallback_says_it_needs_a_value_and_save_agrees
 ):
     """Review I2: Temperature and Top P cannot be blank here, so a cleared row
     says so with its range (never "blank = provider default"), Save refuses
-    with the same range, and the Sampling title does not say "inherit"."""
+    with the same range, and the Sampling title does not say "inherit".
+
+    Review round 2 (1): the words are Chat settings' own ("Required: 0.0 to
+    2.0."), and the range is the field table's, so the row and the Focused
+    field guide beside it spell it one way."""
     host = _SettingsCssHarness(_app({"temperature": 0.4, "top_p": 0.9}), "settings")
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open(host, pilot)
         temperature = screen.query_one(f"#{_cid('temperature')}", Input)
         temperature.focus()
+        await pilot.pause()
+        await pilot.pause()
+        # A value [chat_defaults] holds gets no pin hint in its guide.
+        assert _guide_row(screen, 2) == "Validation: 0.0 to 2.0"
         await pilot.press("end", *["backspace"] * 4)
         await pilot.pause()
         assert temperature.value == ""
-        needs = (
-            "needs a value · "
-            + MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_temperature"]
+        assert _row_copy(screen, "temperature") == (
+            "edited *",
+            "Required: 0.0 to 2.0.",
         )
-        assert _row_copy(screen, "temperature") == ("edited *", needs)
+        assert _guide_row(screen, 2) == "Validation: 0.0 to 2.0"
 
         sampling = screen.query_one("#settings-console-sampling", Collapsible)
         sampling.collapsed = False
@@ -413,8 +451,7 @@ async def test_a_cleared_required_fallback_says_it_needs_a_value_and_save_agrees
         await pilot.pause()
         assert _row_copy(screen, "top_p") == (
             "edited *",
-            "needs a value · "
-            + MODEL_PROFILE_INPUT_PLACEHOLDERS["model_profile_top_p"],
+            f"Required: {MODEL_CONFIG_FIELDS['top_p'].valid_range}.",
         )
         assert str(sampling.title) == "Sampling · none set"
         # An optional field keeps the provider-decides line.
@@ -434,6 +471,48 @@ async def test_a_cleared_required_fallback_says_it_needs_a_value_and_save_agrees
             "Temperature must be between 0.0 and 2.0."
         )
         assert _dirty(screen) == {"temperature", "top_p"}
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_hand_edited_fallback_shows_the_value_and_word_a_new_chat_resolves(
+    request,
+):
+    """Review round 2 (4): a row's value is read with the default chain's own
+    coercion, as its Source word is, so a hand-edited value only one of the
+    two used to accept cannot split them.
+
+    ``streaming = 0`` is not a boolean the chain reads: the row shows the
+    built-in On as "built-in" (it read "Off | built-in"). An out-of-range
+    Temperature is what a new chat gets, so the row shows it (it read "0.7 |
+    Console Behavior"). A fractional Top K is unusable, so its row is blank
+    (it read "50 | built-in")."""
+    app = _app({"streaming": 0, "temperature": 3.0, "top_p": 1.5, "top_k": 50.7})
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        # What [chat_defaults] and the built-in values alone resolve to.
+        resolved = build_default_console_session_settings(
+            {"chat_defaults": dict(app.app_config["chat_defaults"])}
+        )
+        assert (resolved.streaming, resolved.temperature) == (True, 3.0)
+        assert (resolved.top_p, resolved.top_k) == (1.5, None)
+
+        assert screen.query_one(f"#{_cid('streaming')}", Select).value == "true"
+        assert _row_copy(screen, "streaming") == ("built-in", UNSET_FALLBACK_HELP)
+        assert screen.query_one(f"#{_cid('temperature')}", Input).value == "3.0"
+        assert _row_copy(screen, "temperature") == (
+            "Console Behavior",
+            MODEL_CONFIG_FIELDS["temperature"].help,
+        )
+        assert screen.query_one(f"#{_cid('top_p')}", Input).value == "1.5"
+        assert _row_copy(screen, "top_p")[0] == "Console Behavior"
+        assert screen.query_one(f"#{_cid('top_k')}", Input).value == ""
+        assert _row_copy(screen, "top_k") == ("provider", "blank = provider default")
+        assert _sampling_title(screen) == "Sampling · Top P 1.5"
+        # Showing an out-of-range value stages nothing.
+        assert not _dirty(screen)
 
 
 @pytest.mark.asyncio
@@ -497,10 +576,11 @@ async def test_the_streaming_key_fact_lives_in_the_inspector_config_key_disclosu
         await pilot.pause()
         await pilot.pause()
         field = MODEL_CONFIG_FIELDS["temperature"]
+        # Nothing is saved for Temperature here, so the guide adds the hint.
         assert guide() == [
             f"Focused setting: {field.label}",
             f"Purpose: {field.help}",
-            f"Validation: {field.valid_range}",
+            f"Validation: {field.valid_range}; {CONSOLE_PIN_BUILT_IN_HINT}",
         ]
         assert [_static_text(widget) for widget in saved_as()] == [
             "Saved as: chat_defaults.temperature"
@@ -617,9 +697,6 @@ async def test_choosing_streaming_on_saves_true_over_a_saved_legacy_or_unset_val
     )
     from Tests.UI.test_destination_shells import _wait_for_selector
     from tldw_chatbook import config as config_module
-    from tldw_chatbook.Chat.console_session_settings import (
-        build_default_console_session_settings,
-    )
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
 
