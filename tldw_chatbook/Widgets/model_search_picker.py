@@ -11,6 +11,7 @@ from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Horizontal
 from textual.css.query import NoMatches
+from textual.geometry import Region
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Input, OptionList, Select, Static
@@ -117,6 +118,12 @@ class PickerSearchInput(Input):
         # unless the text is still the user's to finish (TASK-33007.9).
         if not (event.from_app_focus and self._typing()):
             self.select_all()
+        else:  # back to the caret the blur's rest at the head scrolled away
+            self.scroll_to_region(
+                Region(self._cursor_offset, 0, width=1, height=1),
+                force=True,
+                animate=False,
+            )
 
     def _disarm_focusing_click(self) -> None:
         self._select_on_focusing_click = False
@@ -719,6 +726,7 @@ class ModelSearchPicker(Widget):
         if not self.is_mounted:
             return
         input_widget = self.query_one("#model-search-picker-input", Input)
+        changed = input_widget.value != value
         self._suppress_input_events = True
         try:
             with input_widget.prevent(Input.Changed):
@@ -727,6 +735,10 @@ class ModelSearchPicker(Widget):
             self._suppress_input_events = False
         if not input_widget.has_focus:
             self._rest_at_head(input_widget)
+        elif changed:
+            # As the Provider control: after a choice or Esc the next key
+            # replaces the id, not lands at the filter's caret (TASK-33007.9).
+            input_widget.select_all()
 
     @staticmethod
     def _rest_at_head(input_widget: Input) -> None:
@@ -898,6 +910,11 @@ class ModelSearchPicker(Widget):
             self._preserve_committed_on_next_input_focus = False
             return
         if self._custom_mode:
+            return
+        # An open list on a typed filter is the filter's own: a window refocus
+        # inside the blur timer keeps it (TASK-33007.9).
+        results = self.query_one("#model-search-picker-results", OptionList)
+        if results.display and event.control.value != (self._selected_model or ""):
             return
         # TASK-33001.7: keep the committed model painted. The input selects
         # it on focus, so the first keystroke replaces it.
