@@ -1630,3 +1630,56 @@ unchanged, whitespace clean. Existing ADR120/finite native-operation ownership
 governs this routine correction; no new architectural policy. Fresh clean-head
 full-activity resource comparison remains next; all qualification criteria stay
 open rather than extrapolating fixture cleanup to production shutdown.
+
+### Exact revalidation clean-head comparison — 2026-10-05
+
+Frozen `de7479ccad5c43cad799f9001aa8e586ac04e96d` is rebuilt and measured
+alone using a fresh 10,000-chat/250,000-eligible-message corpus, ready index,
+valid quick-check and digest
+`3460b66c2e7dcf74d00647d274cecaca5294bfe351665b2b7f56785e70afa5e6`.
+All source/corpus guards hold. Standalone Keyword passes 300 exact queries,
+P95 108.510209 ms, loop maximum 12.788625 ms, with no owned handles/descriptors
+after cleanup. Raw root: `/tmp/task31966-revalidation-KL6lMh`, including
+`host-before-measure.log`, `build.log`, `corpus/build-receipt.json`,
+`keyword.log` and `keyword/keyword-receipt.json`.
+
+The normal UI matrix retains every exact search/activation assertion: all
+60 searches and eight OPENED outcomes complete without app exception. Exit1
+still records six activation windows over50 ms (maximum79.397542 ms), plus
+wide preparation57.331583 ms; all busy paints meet100 ms (maximum57.180375 ms).
+Three registered handles sampled at unmount are not a full ownership census.
+Retain `ui.log` and `ui/ui-evidence/ui-latency-evidence.json`; thresholds and
+measured input/paint/readiness boundaries are unchanged.
+
+The separate unchanged full-activity origin observer records585 unique
+registrations, no drops and no untraced retained handle. After physical runner
+join, six native-open handles/25 DB descriptors remain, with zero active
+operations/acquisitions. No worker originates in production revalidation or
+any earlier repaired finite reader. Five handles are main constructor caches.
+The one exited-worker handle, token329, instead originates from the benchmark's
+own `_keyword_evidence` navigation-service constructor authority capture. This
+read can borrow a previously leaked worker cache and become visible only after
+production owners retire; do not turn that shared-worker accident into cleanup
+coverage. Its instrumented timing failures remain diagnostic only. Retain
+`ui-owner.log` and `ui-owner-diagnostic/ui-owner-diagnostic.json`; observer script
+and hash are unchanged from the preceding v2 receipt.
+
+### Benchmark-owned Keyword evidence read — 2026-10-05
+
+Both boot and post-preparation snapshots use one finite benchmark callback.
+Installed exact-file operation ownership now begins before its authority-
+capturing service construction and encloses the original materialized snapshot
+transaction. No production code, status/count/revision/generation assertion,
+maintenance contract, measured event/window, threshold, or global retirement
+policy changes. Three genuine plain-worker REDs cover success, constructor SQL
+failure and snapshot SQL failure; borrower-transaction, memory and subclass
+controls pass before correction. No test adds an ownership wrapper.
+
+Affected measurement/fixture verification passes **56 tests in 11.46s**, exit0,
+no pytest warnings and no DB files in all 56 strict teardown observations. Both
+changed Python files are Ruff/format clean. All eleven artifact guards pass
+(`keyword-owner-preflight.log`), UI census 143/floor 140 unchanged. Independent
+read-only review finds no actionable issue. Raw RED/GREEN logs are
+`keyword-owner-red.log` and `keyword-owner-green.log` in the root above.
+Fresh clean-head full-activity ownership remains next; this test-only correction
+does not waive constructor retirement, latency, native, Windows or participants.

@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 16:33'
+updated_date: '2026-10-05 16:48'
 labels:
   - console
   - performance
@@ -170,6 +170,16 @@ Reason: routine finite Console-reader resource correction within standing resour
 ADR required: no new ADR.
 ADR path: N/A; existing ADR120 and installed finite native callback ownership apply.
 Reason: routine finite materialized-reader correction within standing resource-fix approval, preserving every activation authority and lifetime boundary.
+
+### Benchmark-owned Keyword evidence reader
+
+1. Retain exact de7479ccad normal matrix failures and unchanged full-activity observer:585 unique registrations/zero drops/all retained handles traced. No production revalidation worker remains; the sole exited worker now originates at the benchmark Keyword-evidence constructor authority read. Five constructor caches remain separate.
+2. Add genuine ordinary-worker success and SQL-failure REDs for the shared benchmark callback, with borrower/memory/custom controls. Count after physical runner join and do not supply ownership from the test.
+3. Reuse installed exact-native-file operation_owned_connection inside that shared callback before constructing its authority-capturing navigation service and across its immutable snapshot transaction. Preserve every status/revision/generation/count assertion, both boot/preparation callers, no-maintenance contract and all timing windows/limits. No production/lifetime/GC policy or blanket observer close.
+4. Verify the affected measurement/fixture contracts, strict resource observations, static/derived guards and independent review. Commit clean source, prepare fresh exact-head scale/Keyword evidence and repeat normal latency and separate full-activity ownership checks; retain constructor/native/Windows/participant/latency gaps.
+ADR required: no new ADR.
+ADR path: N/A; existing ADR120 and finite native callback ownership apply.
+Reason: test-only finite measurement-reader ownership correction under the approved scale/resource verification repair; not a fourth production performance remedy.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -216,4 +226,6 @@ Clean 4448cbb210 guarded shutdown records 134 unique registrations/zero drops, s
 Implemented bounded shared current/inventory/historical visual-reader retirement through installed exact-file ownership. Six real Character REDs plus two genuine linked-Persona REDs; nine borrower/memory/custom controls pass before correction. Initial fixture SQL collision and both failed covering runs are retained and excluded from passing evidence. Repair actual caller fixtures with isolated bootstrap profile, existing constructor retirement/exact DB registration, shipping sizing CSS, real Console readiness and current runtime close injection; no gate or assertion bypass. Final six-file run:196 pass in257.02s, exit0, all196 strict observations without DB files, no resource warnings; three installed textual-image0.8.5/Pillow12.1.1 getdata deprecations remain unsuppressed. New tests Ruff/format clean; modified ranges format clean,47 production and27 inherited fixture diagnostics unchanged. All11 artifact guards green, census143/floor140 unchanged. Independent final review has no findings; receipt and authority-capture ownership lesson recorded. Fresh clean-head shutdown remains next. No global lifetime/GC/cache policy, fourth performance remedy or qualification waiver; all AC and native/latency/Windows/participant/application-cache gaps remain open.
 
 Frozen68e57dc67c startup-only quit:180 unique registrations/zero drops, no exited worker handle after runner join, but five constructor caches/26 DB descriptors remain. Fresh normal10k/250k Keyword:300 exact queries pass, P95107.553750ms, loop15.419083ms, zero cleanup DB handles/files. Normal UI fails seven/eight activation loop windows plus one search, maximum80.175542ms; prep43.432792ms and busy58.636792ms meet unchanged limits. Incomplete first full-activity hook retained as invalid origin coverage; corrected pre-import hook records506 registrations, no drops/untraced retained handles and traces five exited workers to shared exact Character-target revalidation. Implemented only that shared finite transaction boundary with installed exact-file operation ownership. Four real typed/raw success/failure REDs, three borrower/memory/custom controls pass beforefix; initial shared-temp cleanup warnings retained, isolated RED warning-free. Final affected four-file run98pass145.00s, exit0/no warnings, all98 strict DB censuses empty. New tests/static range clean,69 inherited diagnostics identical; all11 artifact guards green. Independent read-only review no findings; origin-hook lesson and receipts updated. Fresh clean-head full-activity comparison next; no global app/GC/cache policy or fourth performance remedy. All AC/native/Windows/participant/latency/constructor-lifetime gaps stay open.
+
+Clean de7479ccad scale/Keyword source guards pass:10k/250k corpus,300 exact queries, P95108.510209ms, loop12.788625ms, zero cleanup handles/files. Normal UI preserves60 exact searches/eight OPENED activations but fails six activation windows plus wide preparation; maximum79.397542ms, busy57.180375ms under100ms. Full-activity corrected observer585 unique registrations/zero drops/all retained origins traced: no production revalidation worker; five constructor caches plus one exited worker from benchmark _keyword_evidence constructor authority read,25 DB descriptors. Corrected only this shared benchmark finite snapshot with installed exact-file owner scope before authority capture; no production or measured-boundary/threshold/global-policy change. Three actual success/constructor-failure/snapshot-failure REDs, three borrower/memory/custom controls pass beforefix. Measurement/fixture run56pass11.46s, no warnings, all56 strict DB observations empty; both Python files Ruff/format clean and whitespace clean. Independent read-only review no findings. All source-bound/failed logs retained in QA receipt; fresh clean-head comparison next. All AC/native/Windows/participant/latency/constructor-lifetime gaps remain open.
 <!-- SECTION:NOTES:END -->

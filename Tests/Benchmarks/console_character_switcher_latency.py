@@ -18,6 +18,7 @@ import sqlite3
 import stat
 import subprocess
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -252,33 +253,42 @@ def _keyword_evidence(database: Any) -> dict[str, Any]:
     from tldw_chatbook.Character_Chat.character_conversation_navigation import (
         CharacterConversationNavigationService,
     )
+    from tldw_chatbook.DB.base_db import operation_owned_connection
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
-    service = CharacterConversationNavigationService(database)
-    with database.transaction() as connection:
-        return {
-            "database_path": str(database.db_path),
-            "status": str(service.keyword_index_status()),
-            "revision": connection.execute(
-                "SELECT data_revision FROM character_conversation_search_revision"
-            ).fetchone()[0],
-            "generations": [
-                dict(row)
-                for row in connection.execute(
-                    "SELECT generation_id,data_authority_id,source_revision,status "
-                    "FROM character_conversation_search_generations ORDER BY rowid"
-                )
-            ],
-            "dirty_conversations": connection.execute(
-                "SELECT count(*) FROM character_conversation_search_dirty"
-            ).fetchone()[0],
-            "counts": [
-                connection.execute("SELECT count(*) FROM conversations").fetchone()[0],
-                connection.execute("SELECT count(*) FROM messages").fetchone()[0],
-                connection.execute(
-                    "SELECT count(*) FROM character_conversation_search_documents"
+    with (
+        operation_owned_connection(database)
+        if type(database) is CharactersRAGDB and not database.is_memory_db
+        else nullcontext()
+    ):
+        service = CharacterConversationNavigationService(database)
+        with database.transaction() as connection:
+            return {
+                "database_path": str(database.db_path),
+                "status": str(service.keyword_index_status()),
+                "revision": connection.execute(
+                    "SELECT data_revision FROM character_conversation_search_revision"
                 ).fetchone()[0],
-            ],
-        }
+                "generations": [
+                    dict(row)
+                    for row in connection.execute(
+                        "SELECT generation_id,data_authority_id,source_revision,status "
+                        "FROM character_conversation_search_generations ORDER BY rowid"
+                    )
+                ],
+                "dirty_conversations": connection.execute(
+                    "SELECT count(*) FROM character_conversation_search_dirty"
+                ).fetchone()[0],
+                "counts": [
+                    connection.execute("SELECT count(*) FROM conversations").fetchone()[
+                        0
+                    ],
+                    connection.execute("SELECT count(*) FROM messages").fetchone()[0],
+                    connection.execute(
+                        "SELECT count(*) FROM character_conversation_search_documents"
+                    ).fetchone()[0],
+                ],
+            }
 
 
 def _finalize_evidence(

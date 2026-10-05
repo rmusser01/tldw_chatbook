@@ -1,6 +1,8 @@
 """The opt-in probe must measure refreshed paint, not pending widget state."""
 
 import asyncio
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -219,6 +221,109 @@ def test_keyword_evidence_reports_stale_generation_without_maintaining_it(tmp_pa
         assert stale["dirty_conversations"] == 0
     finally:
         _close_database_instance(database)
+
+
+@pytest.mark.parametrize(
+    "failed_table",
+    [None, "rag_identity_context", "character_conversation_search_dirty"],
+)
+def test_keyword_evidence_retires_new_worker_handle(tmp_path, failed_table):
+    """The benchmark's finite snapshot must not add an exited-worker owner."""
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
+
+    database = CharactersRAGDB(tmp_path / "worker.sqlite", "keyword-worker")
+    caller = database.get_connection()
+    try:
+        if failed_table is not None:
+            caller.execute(
+                f"ALTER TABLE {failed_table} RENAME TO unavailable_evidence_table"
+            )
+
+        async def read():
+            if failed_table is not None:
+                error = (
+                    CharactersRAGDBError
+                    if failed_table == "rag_identity_context"
+                    else sqlite3.OperationalError
+                )
+                with pytest.raises(error):
+                    await asyncio.to_thread(_keyword_evidence, database)
+                return
+            evidence = await asyncio.to_thread(_keyword_evidence, database)
+            assert evidence["status"] == "absent"
+            assert evidence["counts"] == [0, 0, 0]
+            assert evidence["generations"] == []
+            assert evidence["dirty_conversations"] == 0
+
+        for _ in range(2):
+            asyncio.run(read())
+            assert database.registered_connection_count() == 1
+            assert database.get_connection() is caller
+        assert caller.execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        with database.quiesce_connections(timeout_seconds=5):
+            pass
+        assert database.registered_connection_count() == 0
+
+
+@pytest.mark.parametrize("owner", ["borrowed", "memory", "custom"])
+def test_keyword_evidence_preserves_borrowed_and_excluded_owners(tmp_path, owner):
+    """The probe must not settle its caller's transaction or excluded cache."""
+    from Tests.Chat.test_local_marks_read_ownership import _CustomDatabase
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
+
+    database = (
+        CharactersRAGDB(":memory:", "keyword-memory")
+        if owner == "memory"
+        else (CharactersRAGDB if owner == "borrowed" else _CustomDatabase)(
+            tmp_path / "control.sqlite", "keyword-control"
+        )
+    )
+    try:
+        database.add_conversation({"id": "borrowed", "title": "Before"})
+
+        def read():
+            connection = database.get_connection()
+            if owner == "borrowed":
+                try:
+                    with (
+                        pytest.raises(RuntimeError, match="rollback"),
+                        database.transaction(),
+                    ):
+                        connection.execute(
+                            "UPDATE conversations SET title = 'Uncommitted' WHERE id = 'borrowed'"
+                        )
+                        assert _keyword_evidence(database)["counts"] == [1, 0, 0]
+                        assert database.get_connection() is connection
+                        assert connection.in_transaction
+                        assert (
+                            connection.execute(
+                                "SELECT title FROM conversations WHERE id = 'borrowed'"
+                            ).fetchone()[0]
+                            == "Uncommitted"
+                        )
+                        raise RuntimeError("rollback")
+                finally:
+                    database.close_connection()
+            else:
+                if owner == "memory":
+                    with pytest.raises(CharactersRAGDBError):
+                        _keyword_evidence(database)
+                else:
+                    assert _keyword_evidence(database)["counts"] == [1, 0, 0]
+                assert database.get_connection() is connection
+                assert connection.execute("SELECT 1").fetchone()[0] == 1
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(read).result(timeout=5)
+        assert database.registered_connection_count() == (
+            1 if owner == "borrowed" else 2
+        )
+        assert database.get_conversation_by_id("borrowed")["title"] == "Before"
+    finally:
+        with database.quiesce_connections(timeout_seconds=5):
+            pass
+        assert database.registered_connection_count() == 0
 
 
 @pytest.mark.parametrize("prior_failure", [None, RuntimeError("operation failed")])
