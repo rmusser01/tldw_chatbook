@@ -11,14 +11,14 @@ tick. A user who retyped into that gap sent a duplicate they never saw.
 This module owns a view-only acknowledgement per Enter: a USER row marked
 "Sending…" plus the run-active facts the header, tab marker, Run chip and
 Send control derive from. It is pushed to those widgets on the screen pump,
-then the unchanged send is handed to the app pump at once. No wait is added
-before the send: the frame reaches the terminal on the screen's next refresh,
-which lands while the send runs its own awaited steps ahead of admission
-(mounted harness: frame on screen 36-46 ms after Enter, admission at 80-110
-ms). Nothing here writes the store, the runtime or the durable turn; the row
-is released when the store's own echo lands, when the dispatch admits no
-turn, or when the runtime's custody of the admitted turn ends (a refusal
-before the echo).
+and the unchanged send is handed to the app pump once a refresh has laid
+that frame out (live, 80x24 / 160x45 / 235x52, first, warm and new-tab
+sends: the whole acknowledgement on screen 31-78 ms after Enter). The cost
+is a later start for the send: 34-53 ms after Enter in the mounted harness
+against 1-5 ms on dev, and admission 10-20 ms later at the median. Nothing
+here writes the store, the runtime or the durable turn; the row is released
+when the store's own echo lands, when the dispatch admits no turn, or when
+the runtime's custody of the admitted turn ends (a refusal before the echo).
 
 Imported on the first Enter only, so it adds nothing to the ADR-097 boot
 census; boot-time readers go through ``getattr(screen, ACK_ATTRIBUTE)``.
@@ -53,6 +53,9 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import (
 ACK_ATTRIBUTE = "_console_send_ack"
 #: Run chip / hidden mode-bar copy while a send is acknowledged.
 SENDING_RUN_COPY = "Sending…"
+#: Frame-length waits the hand-off may spend on the acknowledgement's layout.
+_PAINT_HOPS = 6
+_PAINT_HOP_SECONDS = 1 / 60
 #: The acknowledged Enter whose send is running in this task. A worker the
 #: send starts (a hook review's continuation) copies it with the context, so
 #: an admission binds to the Enter that dispatched it, never a newer one.
@@ -97,6 +100,10 @@ class ConsoleSendAcknowledgement:
 
     def active_for(self, session_id: str | None) -> bool:
         return session_id in self._pending
+
+    def pending_row_id(self, session_id: str | None) -> str | None:
+        pending = self._pending.get(session_id)
+        return pending.row.id if pending is not None else None
 
     def run_copy(self, session_id: str | None) -> str:
         return SENDING_RUN_COPY if self.active_for(session_id) else ""
@@ -279,16 +286,7 @@ def schedule_acknowledged_send(screen: Any, pending_send: Any) -> None:
 
 
 async def _paint_then(screen: Any, dispatch: Callable[[], None]) -> None:
-    """Push the acknowledgement on this pump, then hand the send off at once.
-
-    Every acknowledged fact is on its widget before the send starts. The
-    frame itself goes out on the screen's next refresh, during the send's
-    own awaited steps before its synchronous admission; the mounted test
-    reads the frame on screen at the instant admission starts. Waiting here
-    for that refresh (TASK-33620.5's first cut: frame-length timer hops)
-    delayed every reply by ~60 ms and no test could tell it apart from not
-    waiting.
-    """
+    """Push the acknowledgement on this pump; send once a frame shows it."""
     try:
         await paint_acknowledgement(screen)
     except Exception as exc:  # noqa: BLE001 -- the send must never depend on its paint
@@ -298,7 +296,56 @@ async def _paint_then(screen: Any, dispatch: Callable[[], None]) -> None:
             type(exc).__name__,
         )
     finally:
-        dispatch()
+        if not screen.call_after_refresh(_dispatch_once_laid_out, screen, dispatch, 0):
+            dispatch()
+
+
+def _dispatch_once_laid_out(
+    screen: Any, dispatch: Callable[[], None], hops: int
+) -> None:
+    """Dispatch once a refresh has laid the row and the Run chip out.
+
+    The send must not start before the frame is out: its first synchronous
+    stretch can be the admission itself, and nothing is drawn during it. The
+    mounted test reads the frame written before the send starts; handing off
+    straight after the paint is red there (nothing drawn yet), and live it
+    left the tab dot off the frame for the whole admission block (80x24,
+    first and warm sends). The mounted row and shown chip update from their
+    own pumps after the first refresh, so after one ``call_after_refresh``
+    each further hop is a frame-length timer until both have a region,
+    bounded by ``_PAINT_HOPS``. The harness cannot tell a single hop from
+    these hops; live it could (a new-tab send drew its dot only after
+    admission with one hop). The tabs are relabelled before the row mounts:
+    relabelled last, a warm 80x24 send still lost the dot with these hops.
+    Final build, live: 9 of 9 sends had the whole acknowledgement on screen
+    before admission.
+    """
+    if hops < _PAINT_HOPS and not _acknowledgement_laid_out(screen):
+        try:
+            screen.set_timer(
+                _PAINT_HOP_SECONDS,
+                partial(_dispatch_once_laid_out, screen, dispatch, hops + 1),
+            )
+            return
+        except Exception:  # noqa: BLE001 -- a closing screen still sends
+            pass
+    dispatch()
+
+
+def _acknowledgement_laid_out(screen: Any) -> bool:
+    ack = getattr(screen, ACK_ATTRIBUTE, None)
+    session_id = screen._console_chat_store.active_session_id
+    row_id = ack.pending_row_id(session_id) if ack is not None else None
+    if row_id is None:
+        return True
+    try:
+        if not screen.query_one(f"#console-message-{row_id}").region.area:
+            return False
+        chips = screen.query_one("#console-status-chips")
+        chip = chips.query_one("#console-run-chip")
+    except NoMatches:
+        return False
+    return bool(chip.region.area) or bool(getattr(chips, "collapsed", False))
 
 
 async def paint_acknowledgement(screen: Any) -> None:
@@ -335,8 +382,11 @@ async def paint_acknowledgement(screen: Any) -> None:
         if header.state is not None:
             # What `build_console_workbench_state` derives while run-active.
             header.sync_state(replace(header.state, status="running", status_label=""))
-    await widget.refresh_messages()
+    # Tabs before the row: a relabelled tab is drawn a frame after the change,
+    # and the hand-off waits only for the mounted row (live warm send, tabs
+    # last: the dot first appeared after admission).
     await screen._sync_console_native_session_tabs()
+    await widget.refresh_messages()
 
 
 def _session_message_ids(screen: Any, session_id: str) -> tuple[str, ...]:
