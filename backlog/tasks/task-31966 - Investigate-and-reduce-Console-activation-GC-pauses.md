@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 14:26'
+updated_date: '2026-10-05 14:51'
 labels:
   - console
   - performance
@@ -130,6 +130,16 @@ Reason: bounded test-only observer allocation reduction, covered by the user's a
 ADR required: no new ADR.
 ADR path: N/A; existing ADR120 and installed operation-owned connection contract apply.
 Reason: routine adoption of the existing finite callback ownership boundary at proven new-handle readers; caller caches and app/process lifetimes are unchanged. The user's standing approval for resource fixes covers this bounded correction.
+
+### Bounded remaining Console read offloads
+
+1. Retain the exact78345fc75e shutdown origin receipt and trace every finite offload in its four worker-read families. Keep constructor caches and writer callbacks separate.
+2. Add real file-backed RED regressions at cached/fresh conversation scope, world-book summary, citation-count discovery and annotation-preview loading. Assert materialized results and zero newly retained worker handles after each completed callback. Reuse existing real controllers/repositories and installed borrowed/memory/custom/cancellation controls.
+3. Replace only those proven finite offloads and the sibling annotation-browser initial read with installed run_owned_db_call. Preserve SQL privacy, fail-soft/fail-closed outcomes, freshness checks, UI publication, callback arguments and cancellation semantics. No new helper, dependency, writer, global close or lifetime/GC/cache policy.
+4. Run targeted caller/helper regressions, strict resource census and artifact/static guards, obtain independent scoped review and freeze source. Repeat the same guarded shutdown diagnostic; retain any remaining owners and all native/latency/Windows/participant gaps.
+ADR required: no new ADR.
+ADR path: N/A; existing ADR120 and the installed finite-operation ownership contract apply.
+Reason: routine reuse of the existing exact-file-owner callback boundary at confirmed worker-cache leaks, covered by the user approval for resource fixes; no fourth performance remedy or app/process retirement policy.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -168,4 +178,6 @@ Implemented bounded finite unread-reader ownership at both shared readers using 
 Final authorized mounted rerun supersedes the prior warning-free limit: all14 cases pass in138.11s (/tmp/task31966-marks-mounted-clean-OFaktB/tests.log), no pytest warnings in parent or any actual child log, zero DB-file observations across14 children. The private runner clears PYTEST_ADDOPTS, so inherited parent cache options had not reached children; normal worktree write authorization fixed the cache warning without code/filter/threshold changes. Source shutdown proof and latest-dev integration remain pending; no qualification waiver or PR-ready claim.
 
 Rebased all20 task-owned commits onto dev74557e202a;18 replay unchanged, two conflicts retain upstream validation/admission/resume wiring and explicit stale-default setup. Independent scoped review has no findings. At clean78345fc75e, combined267 targeted tests pass413.28s without warnings, strict17 census reports/283 observations retain zero DB files; all11 artifact guards pass. Mechanical duplicate bootstrap-marker/import-order cleanup separately passes2 affected controller tests5.78s, no warnings, strict census clean and Ruff/format clean. Fresh guarded quit probe on clean78345fc75e records13 open connections/39 DB descriptors after default-executor join: eight exited-worker owners from world-book2, cached RAG3, annotations2 and citation-count1, plus five constructor caches; none originate from unread readers.131 unique registrations/zero drops, zero remaining storage operations/acquisitions, exact source/corpus guards hold. Upstream changed, so total-count difference is not a controlled causal comparison. Theme executor remains live; no blanket-close or app-lifetime policy change. Raw roots and remaining gates retained in fixture-rebuild-2026-10-04.md.
+
+Bounded remaining Console finite readers: six original to_thread offloads now reuse installed run_owned_db_call for cached/fresh metadata, world-book summary, citation counts, annotation previews and sibling annotation-browser initial read. Twelve real-SQLite success/failure regressions have valid handle-retention REDs, including physical runner join and preserved main owner; invalid initial citation fixture setup failures are retained but excluded from RED. Caller fixture declarations align with extracted session/turn/memory edges and retain the existing isolated bootstrap profile; no authority/assertion bypass. Final targeted batch 129 passed in 32.99s, exit 0, no pytest warnings, all 129 strict terminal observations contain no DB files. Changed tests Ruff/format clean; four production diagnostic multisets add nothing; modified method ranges format clean; eleven artifact guards pass (143 gated UI paths, floor unchanged). Independent scoped reviews found no production or test-integrity issues. Durable evidence appended to Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. Clean-head shutdown probe remains next; no global lifetime/GC/cache policy, fourth performance remedy or qualification waiver. All task criteria remain unchecked.
 <!-- SECTION:NOTES:END -->

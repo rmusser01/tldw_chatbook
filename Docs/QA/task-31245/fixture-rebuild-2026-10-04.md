@@ -1355,3 +1355,54 @@ with the invocation logs alongside. The shutdown observer ran separately from
 latency measurement; another interpreter was running targeted tests, so this is
 resource-identity evidence, not a timing measurement. Native, latency, Windows,
 participant and terminal app-cache qualification remain open.
+
+### Remaining finite Console readers — 2026-10-05
+
+The eight exited-worker origins above are finite, materialized reads. Six
+offloads now reuse installed `run_owned_db_call`: cached/fresh conversation
+metadata, world-book summary, citation counts, annotation previews and the
+annotation browser's sibling initial read. Captured database ownership,
+authority/privacy reads, memory/custom/borrowed routes, physical cancellation
+completion, stale-result fences and fail-soft/closed outcomes are preserved.
+Writers, constructor caches, global GC/cache/lifetime policy and timing limits
+are unchanged. This is resource correction, not a fourth performance remedy.
+
+`Tests/UI/test_console_finite_read_ownership.py` exercises real file-backed SQL
+twice per owner, both with healthy data and with its real query table made
+unavailable. All twelve cases have a valid original-offload RED: materialized
+results are correct but two registered connections remain instead of the
+original main-thread one after the runner physically joins its worker. Initial
+citation fixture errors occurred before the query and are not counted as RED;
+their corrected actual callbacks then reproduce the same handle failure.
+The sibling browser cases additionally prove normal dismissal/failure releases
+its inflight guard. Each fixture quiesces only its own DB after runner join.
+
+The first affected caller batch reports 111 passes and 18 stale-fixture
+failures. Citation shells lacked extracted session hooks, the turn-action and
+memory-banner dependencies; mounted harnesses also switched away from the
+collection-bound isolated profile. Their declared dependencies are repaired,
+the hydration harness reuses the existing shell, and these non-profile-selecting
+tests retain the isolated bootstrap profile. No authority checks or citation
+assertions are removed. Those failed logs remain, not relabelled as green.
+
+The final targeted command includes both changed UI tests, retrieval/review
+controllers, review-notes modal, installed finite-owner contracts, fresh-scope
+identity privacy, cached malformed-scope semantics and the memory routing
+regression. With `PYTEST_PLUGINS=descriptor_census_probe`, a fresh explicit
+`--basetemp`, `-p no:cacheprovider` and
+`TLDW_TEST_REQUIRE_FILE_RETIREMENT=1`, **129 pass in 32.99s**, process exit zero,
+no pytest warnings. All 129 terminal observations contain no database files.
+Both changed tests are Ruff/format clean. Four production-file diagnostic
+multisets have no additions (only embedded line references are normalized for
+an inherited duplicate-handler diagnostic); modified method ranges are format
+clean. All eleven artifact guards pass; the gated UI census now includes the
+new file (143 paths, unchanged floor 140). Independent read-only production and
+fixture reviews find no actionable issue. Whitespace is clean.
+
+Raw RED receipts: `/tmp/switcher-finite-read-red-ko4Po5/tests.log`,
+`citation-session-hooks.log` and `browser-red.log`. Final caller and guard logs:
+`/tmp/switcher-finite-read-verification-LIrtV3/final-tests.log` and
+`preflight.log`; prior fixture-failure receipts remain alongside. A new guarded
+clean-head shutdown probe is next. This checkpoint does not prove terminal
+application-cache retirement, native/Windows/participant qualification or a
+passing latency matrix; all corresponding task criteria remain open.

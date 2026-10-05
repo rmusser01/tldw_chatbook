@@ -17912,6 +17912,8 @@ class ChatScreen(BaseAppScreen):
         repository_token: tuple[str, int, int, int] | None = None,
     ) -> None:
         """Discover citation footer counts off-loop and refresh current rows."""
+        from ...DB.base_db import run_owned_db_call
+
         if repository_token is None:
             repository_token, current_repository = (
                 self._console_citation_repository_readiness()
@@ -17919,7 +17921,8 @@ class ChatScreen(BaseAppScreen):
             if current_repository is not repository:
                 return
         queried = signature[1] if eligible is None else eligible
-        counts = await asyncio.to_thread(
+        counts = await run_owned_db_call(
+            getattr(repository, "db", None),
             self._read_console_citation_counts,
             repository,
             queried,
@@ -22867,7 +22870,10 @@ class ChatScreen(BaseAppScreen):
                 self.notify("No review notes for this message.", severity="warning")
                 return
             try:
-                rows = await asyncio.to_thread(
+                from ...DB.base_db import run_owned_db_call
+
+                rows = await run_owned_db_call(
+                    database,
                     database.get_transcript_annotations,
                     conversation_id,
                     str(persisted_message_id),

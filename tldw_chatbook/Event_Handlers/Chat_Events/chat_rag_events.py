@@ -1043,7 +1043,8 @@ async def resolve_scope_for_session(
                     db, str(conversation_id)
                 )
             else:
-                conv_scope = await asyncio.to_thread(
+                conv_scope = await run_owned_db_call(
+                    db,
                     _read_cached_conversation_scope_sync,
                     db,
                     str(conversation_id),
@@ -1055,7 +1056,8 @@ async def resolve_scope_for_session(
                         db, str(conversation_id)
                     )
                 else:
-                    raw_metadata = await asyncio.to_thread(
+                    raw_metadata = await run_owned_db_call(
+                        db,
                         _read_fresh_conversation_metadata_sync,
                         db,
                         str(conversation_id),
