@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 00:56'
+updated_date: '2026-10-05 01:12'
 labels:
   - console
   - performance
@@ -100,4 +100,6 @@ Implemented and committed bounded recovery-height idempotence at 0ab325187e: mou
 At clean ed124369f1, untimed small-profile heap traversal reached 6,389 of 6,617 unfrozen Strips from widget caches after two actual saved-chat resumes; boot pre-import freezing changes generation membership, so this is not leak or latency proof. Separate real-node observer counted 40 Send-reason, ten voice-status and ten attachment-indicator restyles in five unchanged control refreshes, zero dropped records or app exceptions. Shared Send-reason width/height remove-and-readd is the next bounded candidate; all four callers traced. Await its short design approval before production implementation, preserving budget/copy/voice behavior and existing ADR120/150/161/198. No GC policy change or qualification waiver. Raw source-bound receipts, failed observer setup and causal limits recorded in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
 
 Implemented the approved shared Send-reason atomic size-class correction, preserving budgets, copy safety and voice suppression. Canonical-ID mounted RED repeats without the fix; final new mounted, private-profile Send-disabled and token check passes 25 tests in 164.77s, no warnings, strict zero retained database files at all 25 teardown observations. Independent review found no production blocker. Representative config admission failures, retry-thread warning and unchanged CSS dimension failure reproduce with the fix removed; broader interrupted covering run is not qualified. New regression joins the UI census. Existing ADR120/150/161/198 apply; fresh clean-head restyle/scale measurement and external qualification remain pending, all AC open. Full evidence and failure limits appended to Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
+
+Frozen ca793ee190 measurements: identical small real-node observer eliminates all 40 Send-reason restyles (zero dropped records/app exceptions), while voice/attachment remain ten each, intentionally separate. Fresh full corpus and 300 exact Keyword queries pass: P95 172.685959 ms, loop 17.772709 ms, zero DB descriptors after cleanup. Full UI matrix still fails all eight activation loop intervals (73.400–187.347 ms), both preparation windows, one search window and one busy paint (127.125750 ms); observer max 75.940500 ms retained as limitation. All 60 exact searches/eight exact opened activations complete; post-unmount retained app has 18 registered handles, not terminal retirement. No policy change or qualification waiver. Raw roots /tmp/task31966-send-measure-v0Z4Cs and full failure receipt documented in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. Residual attribution and native/Windows/participant/resource gaps remain, all AC open; no final combined PR or semantic work.
 <!-- SECTION:NOTES:END -->

@@ -553,3 +553,64 @@ Fresh clean-head restyle and full-scale measurements remain to run. No
 qualification pass, native/Windows/participant waiver, semantic work or final
 combined PR follows from this local regression result. TASK31966 remains
 In Progress with all criteria open.
+
+### Frozen Send-reason correction measurements — `ca793ee190`
+
+All runs below were serial at clean exact source
+`ca793ee1900d3d24decea8f363ee8ac3b7896827`. Every finished receipt confirms
+unchanged corpus and clean source at completion. No production edits, concurrent
+tests/benchmarks, real-profile access, forced collection or GC/cache change was
+used; ordinary desktop background load remained. These timings are not an
+idle-machine or universal before/after speed claim. Raw roots are retained under
+`/tmp/task31966-send-measure-v0Z4Cs`; do not delete them during cleanup.
+
+The fresh small corpus digest is
+`504a0dc3e70bde4a8b26ef166b20c0cfbaa5dfd851058bbdb66d0e6ce628711d`.
+The **identical** observer script
+(`5c59222c9aefa33479b82cdc3195db2ca1a9c8ff645205526d14f1d24dfe78db`)
+completed real saved-chat resumes and five unchanged control refreshes with
+zero dropped records or app exceptions. Send-reason restyles fell from **40 to
+zero**; recovery remains zero. Voice and attachment each still restyled ten
+times (inclusive sums 5.028123 and 5.687376 ms); they were deliberately not
+bundled. Refresh durations were 16.730667, 17.208458, 30.525208, 13.646791 and
+17.017416 ms. The structural restyle elimination is proven; observer-perturbed
+timings do not prove an overall activation improvement. Root `control-restyles`,
+receipt `control-steps-diagnostic.json`. This is headless real-owner diagnostics,
+not native GUI input or resource qualification. `native-source` is prepared only.
+
+The new full corpus has 10,000 chats, 250,000 eligible selected-branch messages
+and four excluded canaries; integrity OK, index ready, registered handles zero
+after builder cleanup. Seed took 408.926881s and indexing 8.285102s; the prior
+seed took 196.720125s, another reason not to infer a controlled timing comparison.
+Digest: `d91a0d1b1a08d5a7cc2a9a8256a8a5e5367188ed30002f4a06db4d36fbb8ecf8`.
+Fresh standalone Keyword **passes**: all 300 measured identities correct,
+P95 **172.685959 ms** against 300 ms, maximum loop gap **17.772709 ms** against
+50 ms, zero registered handles and no owned database descriptors after cleanup.
+Roots `scale` and `keyword`, receipts `build-receipt.json` and
+`keyword-receipt.json`. Query IDs named `semantic-*` are historical Keyword
+oracle categories, not enabled local-semantic-search qualification.
+
+The full real-owner UI matrix still **fails** despite completing all 60 exact
+search cases and eight exact `opened` activations without an app exception.
+Both layouts retain 50 fetched results, four visible rows at 52×20 and eleven
+at 120×50. Narrow activation loop gaps were **74.434958, 73.399792, 89.488875,
+85.862250 ms**; wide were **152.296875, 184.211125, 187.347208, 142.758333 ms**.
+All eight exceed the unchanged 50 ms limit. Preparation also fails at 71.162584
+and 63.044042 ms; wide historical `semantic-1` Keyword search fails at 77.674 ms.
+One wide activation busy paint fails at **127.125750 ms** against 100 ms.
+Maximum paint-observer duration was **75.940500 ms**: retain observer overhead
+as a limitation, not exclusive production cost or an excuse to waive failure.
+The retained post-unmount app has 18 registered handles; this is not final
+application-owner retirement proof. Root `ui`, receipt
+`ui-evidence/ui-latency-evidence.json`. Its private qualification log reports
+optional python-frontmatter unavailable; no warnings were suppressed.
+
+Logs: `/tmp/task31966-send-native-source.log`,
+`/tmp/task31966-send-restyle-measure.log`, `/tmp/task31966-send-scale.log`,
+`/tmp/task31966-send-keyword.log` and `/tmp/task31966-send-ui.log`.
+Raw failed timings are preserved, not relabelled or selectively rerun.
+Remaining work is attribution/review of the residual stalls and the separate
+native/Windows/participant/terminal retirement gaps. TASK31966 and TASK31245
+remain In Progress; dependent TASK31246 and the final combined PR remain pending.
+No further voice/attachment fix or global policy remedy is authorized by this
+bounded correction's approval.
