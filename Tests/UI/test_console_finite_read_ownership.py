@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
 
 from Tests.Chat.test_citation_trace_repository import _persist, _repository
+from Tests.Chat.test_local_marks_read_ownership import _CustomDatabase
 from Tests.UI.test_console_citation_sources import _bare_screen, _message
 from Tests.UI.test_console_retrieval_controller import _controller as retrieval_owner
 from Tests.UI.test_console_review_selection_controller import (
     _controller as review_owner,
 )
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
-from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     resolve_scope_for_session,
 )
@@ -176,3 +179,61 @@ def test_console_read_retires_its_worker_handle_after_results_or_sql_failure(
         assert asyncio.run(read()) == expected
         assert database.registered_connection_count() == 1
     assert database.get_connection().execute("SELECT 1").fetchone()[0] == 1
+
+
+def test_projection_read_preserves_borrowed_chat_transaction(database):
+    """Shared projection must not close or settle its caller's transaction."""
+    service = ChatPersistenceService(database)
+
+    def borrow():
+        connection = database.get_connection()
+        try:
+            connection.execute("BEGIN")
+            connection.execute(
+                "UPDATE conversations SET title = 'Borrowed' WHERE id = 'conversation'"
+            )
+            assert service.project_workspace_membership("conversation") is None
+            assert database.get_connection() is connection
+            assert connection.in_transaction
+            assert connection.execute("SELECT title FROM conversations").fetchone()[
+                0
+            ] == ("Borrowed")
+        finally:
+            connection.rollback()
+            database.close_connection()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(borrow).result(timeout=5)
+    assert database.registered_connection_count() == 1
+    assert database.get_conversation_by_id("conversation")["title"] == "Finite readers"
+
+
+@pytest.mark.parametrize("owner", ["memory", "custom"])
+def test_projection_read_preserves_excluded_chat_owner(tmp_path, owner):
+    """Exact-file ownership must not retire memory or subclass caches."""
+    db = (
+        CharactersRAGDB(":memory:", "projection-memory")
+        if owner == "memory"
+        else _CustomDatabase(tmp_path / "projection-custom.sqlite", "projection-custom")
+    )
+    try:
+        db.add_conversation({"id": "conversation", "title": "Excluded owner"})
+        service = ChatPersistenceService(db)
+
+        def read_owned():
+            if owner == "memory":
+                with pytest.raises(CharactersRAGDBError, match="no such table"):
+                    service.project_workspace_membership("conversation")
+            else:
+                assert service.project_workspace_membership("conversation") is None
+            connection = getattr(db._local, "conn", None)
+            assert connection is not None
+            assert connection.execute("SELECT 1").fetchone()[0] == 1
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(read_owned).result(timeout=5)
+        assert db.registered_connection_count() == 2
+    finally:
+        with db.quiesce_connections(timeout_seconds=5):
+            pass
+        assert db.registered_connection_count() == 0

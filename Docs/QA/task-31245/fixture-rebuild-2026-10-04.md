@@ -1406,3 +1406,65 @@ Raw RED receipts: `/tmp/switcher-finite-read-red-ko4Po5/tests.log`,
 clean-head shutdown probe is next. This checkpoint does not prove terminal
 application-cache retirement, native/Windows/participant qualification or a
 passing latency matrix; all corresponding task criteria remain open.
+
+### Finite-reader shutdown and native retry — 2026-10-05
+
+Clean `4448cbb2101914968036a1e6e7f879b7fc8c6ea5` is freshly prepared with
+the guarded 30-chat/60-message/28-card native fixture. Corpus digest:
+`dadd831afc30bb5e01b81c51c6e45563efe86b13ea99b6dcba3ed4ba67ffc936`.
+The unchanged weak-key observer records 134 unique registrations, zero drops,
+actual headless quit and physical default-executor join. Return zero and both
+source/corpus guards hold. After join, six native-open connections and 27 DB
+descriptors remain, with no active operations or pending acquisitions. None
+originates from the six repaired finite-reader offloads. Five are unchanged
+main-thread constructor caches; the sixth is an exited Chat worker at
+`project_workspace_membership`, reached by the actual asynchronous workspace
+projection retry. The separate theme executor remains live. These origin
+observations do not establish global producer shutdown or justify blanket
+cache closure; total counts are not a controlled latency comparison.
+
+CUA permissions are granted and actual native control works in a new dedicated
+Terminal window (ID 121371); original terminal windows and real data are
+untouched. At the observed 244x73 geometry, native Ctrl+K shows distinct CURRENT
+Indigo and selected OTHER OPEN Amber rows; Enter resumes Amber's exact
+`NATIVE_MARKER_AMBER_07` transcript with the same three tabs. Native Ctrl+Q
+exits normally, returning zero with unchanged source/corpus. The post-Enter
+composer contains stray `;2d`; its source is not yet established, so this is
+partial MRU evidence, not clean focus/keyboard qualification. App.run return
+still retains 29 DB descriptors, not terminal owner-retirement proof. Required
+compact/wide viewports and Character journeys, Windows and unfamiliar-user
+qualification remain open.
+
+Raw root: `/tmp/task31966-finite-read-shutdown-CnUfDM`; headless origin and
+return JSON are under `headless`, native source-bound receipts under `native`,
+and `native-start.png`, `native-switcher.png`, `native-mru-enter.png` and
+`native-normal-quit.png` retain actual native frames. No controller kill,
+global GC/cache change or timing-limit waiver was used.
+
+### Shared projection-authority read retirement — 2026-10-05
+
+The existing four two-database tests had added an outer Chat ownership wrapper
+not present in the actual retry entry point, and checked only the registry
+cache. Invoking the real direct service offload and store reconcile produces
+four valid REDs: membership/retry/failure and registry assertions hold, but a
+second Chat connection remains. Three borrowed-transaction, memory and custom
+owner controls already pass before the correction.
+
+The shared materialized authority read now reuses installed
+`operation_owned_connection` only for a captured exact native file-backed Chat
+database. Registry writes, their existing ownership, exceptions/retry behavior,
+all sibling callers, borrowed transactions and memory/custom ownership are
+unchanged. No new helper, global lifetime policy or fourth performance remedy.
+
+The actual caller/finite-owner batch passes **59 tests in 21.44s**, exit zero,
+with no pytest warnings and no DB files in all 59 strict terminal census
+observations. Both changed tests are Ruff/format clean; the production modified
+range is format clean and its 72 inherited diagnostics have no additions. All
+eleven artifact guards and whitespace pass. Independent scoped review finds
+no actionable production or test-integrity issue. Raw RED, pre-fix controls,
+GREEN and guards are `projection-red.log`, `projection-controls-before.log`,
+`projection-green.log` and `projection-preflight.log` in the root above.
+
+Fresh clean-head shutdown is next. Application-cache retirement, native input
+and required geometry, latency, Windows and participant gates remain unwaived;
+all TASK-31966 criteria stay open and the final combined PR is not ready.

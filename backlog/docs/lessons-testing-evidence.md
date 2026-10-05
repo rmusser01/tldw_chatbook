@@ -18460,3 +18460,16 @@ Related, from the same session: on macOS `/bin/bash` 3.2 has no `mapfile`, and
 node ids that contain spaces (`[...-Q3 retro.md]`) split under `$(cat list)`.
 Both produced "no tests ran" on the base arm. Drive node lists through a tiny
 Python `subprocess.run([... *nodes])` runner instead.
+
+## A test-added ownership wrapper can mask the real retry leak
+
+TASK-31966, 2026-10-05: four workspace projection tests wrapped calls in
+`run_owned_db_call` and asserted only the registry cache. The real asynchronous
+store retry used a raw offload; its shared authority read left a Chat connection
+on an exited worker. Removing only the test-added wrapper and invoking the
+actual direct service/store entry points produced four valid handle-retention
+REDs while membership, retry, failure and registry assertions still passed.
+The shared finite-read correction passes the 59-test strict owner batch, with
+borrowed transaction, memory and custom ownership controls intact. Exercise the
+real entry point and assert every participating database owner, not a cleanup
+boundary supplied by the test. Evidence: [source-bound receipt](../../Docs/QA/task-31245/fixture-rebuild-2026-10-04.md).

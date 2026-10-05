@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 14:51'
+updated_date: '2026-10-05 15:12'
 labels:
   - console
   - performance
@@ -140,6 +140,16 @@ Reason: routine adoption of the existing finite callback ownership boundary at p
 ADR required: no new ADR.
 ADR path: N/A; existing ADR120 and the installed finite-operation ownership contract apply.
 Reason: routine reuse of the existing exact-file-owner callback boundary at confirmed worker-cache leaks, covered by the user approval for resource fixes; no fourth performance remedy or app/process retirement policy.
+
+### Remaining projection-authority read
+
+1. Retain clean 4448cbb210 shutdown provenance: the six repaired offloads no longer own retained worker handles; one exited worker remains at ChatPersistenceService.project_workspace_membership via the actual async store retry. Constructor caches remain separate.
+2. Correct the existing four real two-database regression routes to invoke the actual direct service offload and store reconcile entry points without a test-added Chat owner wrapper. Observe genuine Chat handle RED while registry ownership, membership/retry and failure behavior remain unchanged. Add bounded borrowed/memory/custom controls for the shared Chat read.
+3. Retire only the finite materialized Chat authority read in project_workspace_membership with installed operation_owned_connection for exact file-backed native owners. Preserve registry writes and their existing ownership, transactions, exceptions, all sibling callers, and memory/custom/borrowed routes. No new helper or lifetime/GC/cache policy.
+4. Run proportional actual caller/owner tests, guards and independent review, then freeze source and repeat guarded shutdown. Retain native/Windows/participant/latency/application-cache gaps.
+ADR required: no new ADR.
+ADR path: N/A; existing ADR120 and finite native callback ownership apply.
+Reason: this corrects one shared materialized read through the installed resource boundary, not registry writer or global application policy.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -180,4 +190,6 @@ Final authorized mounted rerun supersedes the prior warning-free limit: all14 ca
 Rebased all20 task-owned commits onto dev74557e202a;18 replay unchanged, two conflicts retain upstream validation/admission/resume wiring and explicit stale-default setup. Independent scoped review has no findings. At clean78345fc75e, combined267 targeted tests pass413.28s without warnings, strict17 census reports/283 observations retain zero DB files; all11 artifact guards pass. Mechanical duplicate bootstrap-marker/import-order cleanup separately passes2 affected controller tests5.78s, no warnings, strict census clean and Ruff/format clean. Fresh guarded quit probe on clean78345fc75e records13 open connections/39 DB descriptors after default-executor join: eight exited-worker owners from world-book2, cached RAG3, annotations2 and citation-count1, plus five constructor caches; none originate from unread readers.131 unique registrations/zero drops, zero remaining storage operations/acquisitions, exact source/corpus guards hold. Upstream changed, so total-count difference is not a controlled causal comparison. Theme executor remains live; no blanket-close or app-lifetime policy change. Raw roots and remaining gates retained in fixture-rebuild-2026-10-04.md.
 
 Bounded remaining Console finite readers: six original to_thread offloads now reuse installed run_owned_db_call for cached/fresh metadata, world-book summary, citation counts, annotation previews and sibling annotation-browser initial read. Twelve real-SQLite success/failure regressions have valid handle-retention REDs, including physical runner join and preserved main owner; invalid initial citation fixture setup failures are retained but excluded from RED. Caller fixture declarations align with extracted session/turn/memory edges and retain the existing isolated bootstrap profile; no authority/assertion bypass. Final targeted batch 129 passed in 32.99s, exit 0, no pytest warnings, all 129 strict terminal observations contain no DB files. Changed tests Ruff/format clean; four production diagnostic multisets add nothing; modified method ranges format clean; eleven artifact guards pass (143 gated UI paths, floor unchanged). Independent scoped reviews found no production or test-integrity issues. Durable evidence appended to Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. Clean-head shutdown probe remains next; no global lifetime/GC/cache policy, fourth performance remedy or qualification waiver. All task criteria remain unchecked.
+
+Clean 4448cbb210 guarded shutdown records 134 unique registrations/zero drops, six open connections and 27 DB descriptors after executor join: five constructor caches plus actual async projection Chat read; none from the six corrected finite readers. Native CUA succeeds in dedicated Terminal121371 at244x73: MRU Enter resumes exact Amber transcript without new tab; normal Ctrl+Q returns0/source guards hold,29 descriptors remain. Stray composer ;2d is retained as unresolved native input evidence, not clean qualification. Shared project_workspace_membership finite read now reuses installed exact-file operation_owned_connection. Actual direct service/reconcile tests remove test-added Chat cleanup:4 valid REDs,3 borrower/memory/custom controls pass pre-fix. Final59 targeted tests pass21.44s, no warnings,59 strict observations without DB files. Changed tests Ruff/format clean; production range format clean,72 inherited diagnostics unchanged; all11 artifact guards and whitespace pass. Independent scoped review has no findings. Evidence and testing-wrapper lesson recorded; fresh clean-head shutdown next. No global cache/lifetime/GC policy or fourth performance remedy; all AC and native/Windows/participant/latency/app-cache gaps stay open.
 <!-- SECTION:NOTES:END -->

@@ -3,7 +3,7 @@ import json
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from uuid import UUID
@@ -2576,7 +2576,13 @@ class ChatPersistenceService:
 
     def project_workspace_membership(self, conversation_id: str) -> Any | None:
         """Project durable workspace authority into the registry idempotently."""
-        conversation = self.db.get_conversation_by_id(conversation_id)
+        database = self.db
+        with (
+            operation_owned_connection(database)
+            if type(database) is CharactersRAGDB and not database.is_memory_db
+            else nullcontext()
+        ):
+            conversation = database.get_conversation_by_id(conversation_id)
         if conversation is None:
             raise ValueError(f"Conversation {conversation_id} not found")
         safe_workspace_id = self._require_workspace_scope(

@@ -211,7 +211,6 @@ async def test_workspace_projection_retry_retires_new_registry_worker_handle(
     from Tests.conftest import _close_database_instance
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-    from tldw_chatbook.DB.base_db import run_owned_db_call
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
     from tldw_chatbook.Workspaces.registry_service import LocalWorkspaceRegistryService
@@ -238,6 +237,7 @@ async def test_workspace_projection_retry_retires_new_registry_worker_handle(
             all_nodes=(),
         )
         caller = registry_db._held_connection()
+        chat_caller = chat_db.get_connection()
         assert store.has_pending_workspace_projection(session.id)
         if fails:
 
@@ -246,10 +246,12 @@ async def test_workspace_projection_retry_retires_new_registry_worker_handle(
                 raise RuntimeError("retryable projection failure")
 
             monkeypatch.setattr(registry, "link_membership", reject)
-        # The actual hydration worker already owns its Chat database boundary.
+        # Exercise the actual entry points, without test-added Chat ownership.
         if entry_point == "direct-service":
-            call = run_owned_db_call(
-                chat_db, store.persistence.project_workspace_membership, conversation_id
+            import asyncio
+
+            call = asyncio.to_thread(
+                store.persistence.project_workspace_membership, conversation_id
             )
             if fails:
                 with pytest.raises(RuntimeError, match="retryable projection failure"):
@@ -264,14 +266,15 @@ async def test_workspace_projection_retry_retires_new_registry_worker_handle(
             assert store.has_pending_workspace_projection(session.id)
         else:
             assert (
-                await run_owned_db_call(
-                    chat_db, store.retry_pending_workspace_projection, session.id
-                )
+                await store.reconcile_pending_workspace_projection(session.id)
                 is not fails
             )
             assert store.has_pending_workspace_projection(session.id) is fails
         assert caller.execute("SELECT 1").fetchone()[0] == 1
         assert tuple(registry_db._maintenance_participant.connections) == (caller,)
+        assert chat_db.registered_connection_count() == 1
+        assert chat_db.get_connection() is chat_caller
+        assert chat_caller.execute("SELECT 1").fetchone()[0] == 1
     finally:
         _close_database_instance(chat_db)
         registry_db.close()
