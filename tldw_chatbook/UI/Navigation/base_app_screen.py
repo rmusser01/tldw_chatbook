@@ -15,6 +15,7 @@ from textual.containers import Container
 from textual.widgets import Static
 
 from .main_navigation import MainNavigationBar
+from .surface_swap_guard import ensure_surface_swap_not_self_awaited
 
 if TYPE_CHECKING:
     from textual.widget import Widget
@@ -398,7 +399,26 @@ class BaseAppScreen(Screen):
         doors by construction -- and it reads focus at teardown time rather
         than at ``refresh()``-call time, which is strictly more accurate.
         The two-hop queue order below is unchanged and still load-bearing.
+
+        **Refused, before anything is torn down, when it could never
+        finish (TASK-34000.4).** Awaited on the message pump of a widget
+        this recompose removes, the teardown waits for that pump and that
+        pump waits for the teardown: the Library's Media "Export…" froze
+        the whole app that way, Ctrl+Q included. See
+        ``surface_swap_guard`` for the exact predicate.
+
+        Raises:
+            SurfaceSwapSelfAwaitError: If awaited from a handler, or a
+                ``call_later`` callback, on a widget below one of this
+                screen's children.
         """
+        if self.is_attached and not self._pruning:
+            # The same set ``Widget.recompose`` removes; an unattached or
+            # pruning screen removes nothing and returns at once.
+            ensure_surface_swap_not_self_awaited(
+                self.query_children("*").exclude(".-textual-system"),
+                seam=f"{type(self).__name__}.recompose",
+            )
         try:
             monitor = getattr(self.app_instance, "ui_responsiveness_monitor", None)
             if monitor is not None:
@@ -430,6 +450,30 @@ class BaseAppScreen(Screen):
                 self._queue_focus_restore_after_recompose, focus_identity
             )
         self.post_message(self.ContentsRebuilt(self))
+
+    def children_safe_to_await_removing(self, parent: "Widget") -> "tuple[Widget, ...]":
+        """Return ``parent``'s children for a removal this coroutine will await.
+
+        The region-scoped twin of ``recompose``'s own refusal (TASK-34000.4):
+        a screen that swaps one host's children instead of rebuilding itself
+        asks here first, so the swap cannot be awaited from the pump of a
+        widget inside the children it removes.
+
+        Args:
+            parent: The host whose children are about to be removed.
+
+        Returns:
+            ``parent``'s current children, in order.
+
+        Raises:
+            SurfaceSwapSelfAwaitError: If awaited on the message pump of a
+                widget below one of those children.
+        """
+        outgoing = tuple(parent.children)
+        ensure_surface_swap_not_self_awaited(
+            outgoing, seam=f"{type(self).__name__} child swap of {parent!r}"
+        )
+        return outgoing
 
     def release_mouse_capture_for_teardown(self) -> None:
         """Release any mouse capture before removing widgets.

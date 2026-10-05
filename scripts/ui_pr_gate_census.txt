@@ -166,3 +166,10 @@ Tests/UI/test_console_composer_reason_restyles.py
 # TASK-34100.16: setup's Restore entry (Inspect mode, title, format hint), the
 # settings-file / folder pre-checks, and the reason line above a disabled Create.
 Tests/UI/test_backup_restore_setup_entry.py
+
+# TASK-34000.4: Library Media Export… opens Export instead of freezing the app;
+# real-app, bounded polls (4 tests: mouse/keyboard x default/eager task
+# factory). The guard's real-screen tests are deliberately NOT here
+# (test_library_surface_swap_refused_on_real_screen.py): with them this file
+# measured 58 s, at the lane's 60 s budget.
+Tests/UI/test_library_media_export_no_freeze.py

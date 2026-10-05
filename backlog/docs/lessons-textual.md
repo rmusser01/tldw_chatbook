@@ -1598,3 +1598,68 @@ assertions like `"Session summary" in svg` fail on fully-rendered text.
 **Card modals: fixed width. Screenshot asserts: normalize `&#160;`/`\xa0`
 to spaces first, and pair any screen-popped assertion with a render
 assertion so it cannot pass vacuously.**
+
+## A handler that awaits the removal of its own ancestor never returns -- and `asyncio.wait_for` cannot get you out (TASK-34000.4, 2026-10-04)
+
+**Incident.** Library ▸ Media ▸ "Export…" froze the whole app (review finding
+L-01): no repaint, no key read, Ctrl+Q dead, 0% CPU, no traceback anywhere.
+`LibraryMediaCanvas` owned the `@on` row for the button and was the one
+`async` forwarder of its sixteen, so the press ran on the CANVAS's pump:
+canvas handler → controller → `_open_library_export_canvas` →
+`_apply_library_open_item_surface` → `await self.recompose()` on the screen.
+An await-chain probe of every pump's task on the reproduced freeze showed two
+pumps parked on the same removal, not one: the canvas at `recompose:1713`,
+and the APP pump in `_flush_next_callbacks → AwaitRemove.__call__`, because
+`App._prune` always hands the removal to `app.call_next` as well. The app
+pump reads every key, which is why Ctrl+Q died; `Screen.recompose` also holds
+`App.batch_update` across the removal, which is why nothing painted.
+
+**Why (Textual 8.2.8).** `remove_children` / `recompose` return an
+`AwaitRemove` over the pump tasks of the removed ROOTS, leaving out only the
+current task. Each removed widget, as its loop exits, gathers its CHILDREN's
+pump tasks (`Widget._message_loop_exit`), with no timeout. So code running on
+the pump of a widget BELOW a removed root waits for the root, the root waits
+for its children, and the chain ends at the pump doing the waiting.
+
+**Which awaits hang -- measured, one process per shape, against a plain
+`Screen`.** Never landed: a handler on a descendant awaiting the screen's
+recompose; the same coroutine via the descendant's own `call_later`; a
+widget inside an outgoing child awaiting `host.remove_children`. Completed:
+the removed ROOT awaiting its own removal; `screen.call_next` /
+`screen.call_later` / `screen.call_after_refresh`; the descendant's own
+`call_after_refresh` (Textual runs it on the screen's task);
+`refresh(recompose=True)`; a screen-owned worker. A worker owned by a removed
+widget is a third outcome: it is cancelled when its owner unmounts, between
+the removal and the mount, and leaves the surface empty.
+
+**What to do.** A region widget forwards an event and returns; it never
+awaits the screen or the controller it forwards to. The controller hands a
+surface swap to the screen's pump (`self.call_next(...)`, already bound to
+the screen) or to a screen-owned worker. `BaseAppScreen.recompose` and
+`BaseAppScreen.children_safe_to_await_removing` now refuse the hanging shape
+with `SurfaceSwapSelfAwaitError` before anything is torn down
+(`UI/Navigation/surface_swap_guard.py`), and the Library wires the second at
+every awaited canvas-host child removal (projection, repair loop, snapshot
+reconcile, browse route swap); they do NOT cover the worker shape. A seam
+that already has a safe fallback may take it for a refusal -- the Library's
+open-surface seam logs the refusal at ERROR by widget name and schedules the
+whole-screen refresh on the screen's own pump, so the user still gets the
+surface; letting the error reach the handler instead had Textual close the
+offending canvas's pump, which blanked the Items pane behind the keep-alive
+toast. If you write such a check yourself, compare TASKS (`node._task is
+asyncio.current_task()`), not `textual._context.active_message_pump`: that
+variable names the pump that SCHEDULED the code, and it read "the canvas" on
+two of the shapes that complete.
+
+**The test trap, which cost a ten-minute hung run.** A red freeze test hangs
+the suite in three places unless you plan for each: Pilot's idle wait stops
+on the parked pump; `run_test`'s exit waits for the pump tasks; and
+`asyncio.wait_for` cannot cancel its way out -- `Task.cancel()` cancels the
+awaited future, a `gather` cancels its children, each child is a pump task
+awaiting the next `gather`, and around a wait CYCLE that recursion ends in
+`RecursionError` inside the timeout callback while the await stays parked.
+`Tests/UI/pump_probe.py` has the working recipe: poll on wall clock, read the
+pump tasks' `cr_await` chains to say who is parked and where (the failure
+message then names the handler), cut the cycle at one edge on a red run
+(`unpark`), and keep `@pytest.mark.timeout` as the outer bound -- SIGALRM is
+the only one that holds whatever the loop is doing.

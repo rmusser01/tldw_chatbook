@@ -125,6 +125,7 @@ jobs:
             Tests/Chat/test_console_trace_missing_revision_diagnostic.py \
             Tests/Chat/test_first_reply_failure_copy.py \
             Tests/Chat/test_first_token_window.py \
+            Tests/Architecture/test_surface_swap_guard.py \
             --timeout=180 \
             --tb=short
 

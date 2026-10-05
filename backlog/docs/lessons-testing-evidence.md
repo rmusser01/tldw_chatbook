@@ -18901,3 +18901,24 @@ assumed to receive; nothing pinned what shape the shared seam accepts.
 with a contract test (full body records nothing; extracted dict records
 once) — and make the plan's live end-to-end run part of the evidence
 before shipping a user-visible surface.**
+
+## A finding verified on the review's commit may already be fixed on your base -- diff the two before designing the RED (TASK-34000.4, 2026-10-04)
+
+**Incident.** The task said a regression test for the Library Media "Export…"
+freeze "fails on current dev (by timing out)", and the plan asked for that RED
+on the wave's base, 8c4dfe59a2. The review had run on 2d34cbf80d. Between the
+two, 3cee32b3d0 (task-31249, landed the evening of the review) had already
+moved the Export projection off the press dispatch. On the base the new test
+passed 4/4 and a live click opened Export -- the P0 was gone before the fix
+task started, and a RED "on base" could only have been faked.
+
+**What to do.** Before writing the first test, run `git log
+<review-commit>..<base> -- <the files the task names>` and try the symptom
+live on the base. If it no longer reproduces, say so first in the report, and
+show the test's teeth where the defect still exists: restore the old line
+(Edit-based, restored the same way) and show the bounded failure, and
+reproduce the symptom live on a `git archive` export of the review's commit
+(`APP_WT=<export>`), next to the same clicks on the base and on the branch.
+What is left to do is then usually the part the earlier fix skipped -- here
+the hand-off at the widget, the guard for the class, and a test that fails
+instead of hanging.
