@@ -9216,7 +9216,7 @@ async def test_mounted_provider_handoff_preserves_typed_discovery_outcome(
         assert status_matches, {
             # Every child, not only radio rows: when a different status
             # rendered, this is what says which one is on screen.
-            "rows": [
+            "picker": [
                 (child.id, str(child.render()))
                 for child in model_step.query_one(
                     "#setup-model-choice", RadioSet
