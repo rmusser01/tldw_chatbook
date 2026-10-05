@@ -297,3 +297,176 @@ async def test_a_refused_delete_changes_nothing_and_releases_the_fences(tmp_path
     assert _live(db, ids) == [True] * 6
     assert len(store._nodes_by_session[session_id]) == 6
     assert not _fences_held(store, session_id)
+
+
+# --- App teardown waits for a save, and refuses new ones -----------------------
+#
+# The save holds the store's voice-promotion admission until it is applied,
+# and ``end_app_runtime``'s state swap refuses while one is held. Before the
+# teardown waited, Quit anyway mid-save made dispose skip the whole store
+# teardown (the mounted journey: Tests/UI/test_console_message_delete_quit.py).
+
+
+def _teardown_done(store: Any) -> bool:
+    """Whether the store's executor and trace-settlement teardown ran."""
+    return (
+        store._stream_persistence_executor_closed is True
+        and store._stream_persistence_executor._shutdown is True
+        and store._provider_trace_settlement_registration_closed is True
+    )
+
+
+async def test_app_teardown_waits_for_a_delete_still_saving(tmp_path):
+    from tldw_chatbook.Chat.console_durable_writes import end_store_after_writes
+
+    db = CharactersRAGDB(tmp_path / "off-loop.db", "off-loop")
+    conversation_id, ids = _chain(db, 12)
+    store, session_id, native = _open(db, conversation_id)
+    store._dispatch_recovery_queue_hydration_pending.add("projection")
+    entered, release = _gate(db, "soft_delete_message_subtree")
+
+    loop = asyncio.get_running_loop()
+    delete = loop.create_task(delete_subtree_off_loop(store, native[ids[4]]))
+    try:
+        await _until(entered.is_set, "the durable delete to start")
+        teardown = loop.create_task(
+            end_store_after_writes(store, store.end_app_runtime, 10.0)
+        )
+        await asyncio.sleep(0.2)
+        assert not teardown.done(), "teardown ended the store mid-save"
+        assert _fences_held(store, session_id) and not _teardown_done(store)
+    finally:
+        release.set()
+
+    await asyncio.wait_for(teardown, 10)
+    await delete
+    assert not _fences_held(store, session_id)
+    assert _live(db, ids) == [True] * 4 + [False] * 8
+    assert _teardown_done(store)
+    # The whole teardown ran, state swap included.
+    assert store._dispatch_recovery_queue_hydration_pending == set()
+
+
+async def test_app_teardown_waits_for_an_undo_still_saving(tmp_path):
+    from tldw_chatbook.Chat.console_durable_writes import end_store_after_writes
+
+    db = CharactersRAGDB(tmp_path / "off-loop.db", "off-loop")
+    conversation_id, ids = _chain(db, 12)
+    store, session_id, native = _open(db, conversation_id)
+    deleted, _held = await delete_subtree_off_loop(store, native[ids[4]])
+    store._dispatch_recovery_queue_hydration_pending.add("projection")
+    entered, release = _gate(db, "restore_message_subtree")
+
+    loop = asyncio.get_running_loop()
+    undo = loop.create_task(restore_subtree_off_loop(store, deleted))
+    try:
+        await _until(entered.is_set, "the durable undo to start")
+        teardown = loop.create_task(
+            end_store_after_writes(store, store.end_app_runtime, 10.0)
+        )
+        await asyncio.sleep(0.2)
+        assert not teardown.done(), "teardown ended the store mid-Undo"
+        assert _fences_held(store, session_id) and not _teardown_done(store)
+    finally:
+        release.set()
+
+    await asyncio.wait_for(teardown, 10)
+    await undo
+    assert not _fences_held(store, session_id)
+    assert _live(db, ids) == [True] * 12
+    assert _teardown_done(store)
+    assert store._dispatch_recovery_queue_hydration_pending == set()
+
+
+async def test_a_delete_or_undo_started_once_teardown_began_is_refused(tmp_path):
+    from tldw_chatbook.Chat.console_durable_writes import (
+        ConsoleClosingError,
+        end_store_after_writes,
+    )
+    from tldw_chatbook.Chat.console_message_delete import ConsoleDeleteUndoError
+
+    db = CharactersRAGDB(tmp_path / "off-loop.db", "off-loop")
+    conversation_id, ids = _chain(db, 12)
+    store, session_id, native = _open(db, conversation_id)
+    deleted, _held = await delete_subtree_off_loop(store, native[ids[8]])
+    assert _live(db, ids) == [True] * 8 + [False] * 4
+
+    await end_store_after_writes(store, store.end_app_runtime, 1.0)
+    assert _teardown_done(store)
+
+    with pytest.raises(ConsoleClosingError):
+        await delete_subtree_off_loop(store, native[ids[2]])
+    with pytest.raises(ConsoleDeleteUndoError, match="closing") as refused:
+        await restore_subtree_off_loop(store, deleted)
+    assert refused.value.retryable is False
+    # Refused before anything was taken or written.
+    assert not _fences_held(store, session_id)
+    assert _live(db, ids) == [True] * 8 + [False] * 4
+    assert len(store._nodes_by_session[session_id]) == 8
+
+
+async def test_a_save_past_the_teardown_bound_still_ends_the_store(tmp_path):
+    from loguru import logger
+
+    from tldw_chatbook.Chat.console_durable_writes import end_store_after_writes
+
+    db = CharactersRAGDB(tmp_path / "off-loop.db", "off-loop")
+    conversation_id, ids = _chain(db, 12)
+    store, session_id, native = _open(db, conversation_id)
+    store._dispatch_recovery_queue_hydration_pending.add("projection")
+    entered, release = _gate(db, "soft_delete_message_subtree")
+    warnings: list[str] = []
+    handler = logger.add(
+        lambda m: warnings.append(m.record["message"]), level="WARNING"
+    )
+
+    loop = asyncio.get_running_loop()
+    delete = loop.create_task(delete_subtree_off_loop(store, native[ids[4]]))
+    try:
+        await _until(entered.is_set, "the durable delete to start")
+        await end_store_after_writes(store, store.end_app_runtime, 0.05)
+        # Every step but the voice-fenced state swap ran, with the save held.
+        assert _fences_held(store, session_id)
+        assert _teardown_done(store)
+        assert store._dispatch_recovery_queue_hydration_pending == {"projection"}
+        still = [w for w in warnings if "still saving" in w]
+        assert len(still) == 1, warnings
+        for private in (conversation_id, ids[4], native[ids[4]], "text"):
+            assert private not in still[0], still[0]
+    finally:
+        logger.remove(handler)
+        release.set()
+
+    await delete
+    assert not _fences_held(store, session_id)
+    assert _live(db, ids) == [True] * 4 + [False] * 8
+
+
+async def test_end_app_runtime_without_the_state_swap_runs_under_a_held_admission(
+    tmp_path,
+):
+    """The store API the bound's fallback relies on, without the registry."""
+    db = CharactersRAGDB(tmp_path / "off-loop.db", "off-loop")
+    conversation_id, ids = _chain(db, 4)
+    store, session_id, _native = _open(db, conversation_id)
+    with store._fork_source_transition(session_id):
+        with pytest.raises(RuntimeError, match="prevents store replacement"):
+            store.end_app_runtime()
+        assert not _teardown_done(store)
+        store.end_app_runtime(replace_state=False)
+        assert _teardown_done(store)
+
+
+async def test_a_store_double_without_weak_references_is_ended_as_before():
+    """Runtime tests end SimpleNamespace stores: no registry, no refusal."""
+    from tldw_chatbook.Chat import console_durable_writes as durable_writes
+
+    ended: list[str] = []
+    store = SimpleNamespace(end_app_runtime=lambda: ended.append("ended"))
+    durable_writes.admit(store)
+    settled = asyncio.get_running_loop().create_future()
+    durable_writes.track(store, settled)
+    await durable_writes.end_store_after_writes(store, store.end_app_runtime, 1.0)
+    assert ended == ["ended"]
+    durable_writes.admit(store)  # nothing could be closed for it
+    settled.cancel()

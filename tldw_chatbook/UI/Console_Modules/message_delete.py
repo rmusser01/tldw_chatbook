@@ -262,6 +262,7 @@ async def _finalize(
             getattr(persistence, "db", None),
             functools.partial(release, held_ids),
             _settled_release,
+            store=store,
         )
         warning = getattr(persistence, "recovered_media_cleanup_warning", None)
         if pending and warning:

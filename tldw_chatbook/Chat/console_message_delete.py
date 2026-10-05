@@ -26,7 +26,9 @@ voice-promotion fences are taken on the loop before it starts and released
 there once its result is applied, and the recovered-media hold is opened in
 the thread that tombstones (it is per-thread). The synchronous
 :func:`delete_subtree_for_undo`/:func:`restore_deleted_subtree` remain for
-callers that are not on an event loop.
+callers that are not on an event loop. Each save registers with
+``console_durable_writes``, so app teardown waits for it before it ends the
+store, and a Delete or Undo started once teardown has begun is refused.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ from typing import Any, Callable, Mapping, TypeVar
 from loguru import logger
 
 from ..DB.ChaChaNotes_DB import ConflictError
+from . import console_durable_writes as durable_writes
 from .console_chat_models import ConsoleChatMessage
 
 
@@ -435,6 +438,8 @@ async def run_durable_off_loop(
     database: Any,
     call: Callable[[], _Result],
     settle: Callable[[_Result | None, BaseException | None], _Settled],
+    *,
+    store: Any = None,
 ) -> _Settled:
     """Run ``call`` off the event loop; ``settle`` its outcome on the loop.
 
@@ -454,6 +459,8 @@ async def run_durable_off_loop(
         database: The ChaChaNotes database ``call`` writes, if any.
         call: The durable work; it must read no UI-thread state.
         settle: Receives ``call``'s result or the exception it raised.
+        store: The Console store the work is for; app teardown waits for
+            ``settle`` before it ends that store.
 
     Returns:
         What ``settle`` returned.
@@ -491,6 +498,8 @@ async def run_durable_off_loop(
     )
     work.add_done_callback(finished)
     outcome.add_done_callback(retrieved)
+    if store is not None:
+        durable_writes.track(store, outcome)
     return await asyncio.shield(outcome)
 
 
@@ -514,12 +523,14 @@ async def delete_subtree_off_loop(
         was held back.
 
     Raises:
+        ConsoleClosingError: The app is closing; nothing was started.
         KeyError: The message is no longer in the store.
         ValueError: A reply or a pending dispatch owns the branch.
         Exception: Whatever the durable delete raised; nothing changed.
     """
     from . import console_subtree_delete as subtree
 
+    durable_writes.admit(store)
     fences = ExitStack()
     with ExitStack() as unwind:
         unwind.push(fences)
@@ -556,7 +567,7 @@ async def delete_subtree_off_loop(
         undo = deleted if rows is None else replace(deleted, tombstones=rows)
         return undo, committed or ()
 
-    return await run_durable_off_loop(database, durable, settle)
+    return await run_durable_off_loop(database, durable, settle, store=store)
 
 
 async def restore_subtree_off_loop(store: Any, deleted: ConsoleDeletedSubtree) -> None:
@@ -569,6 +580,12 @@ async def restore_subtree_off_loop(store: Any, deleted: ConsoleDeletedSubtree) -
     Raises:
         ConsoleDeleteUndoError: Undo is unsafe or did not finish.
     """
+    try:
+        durable_writes.admit(store)
+    except durable_writes.ConsoleClosingError as exc:
+        raise ConsoleDeleteUndoError(
+            "Chatbook is closing, so Undo can't run. The messages stay deleted."
+        ) from exc
     _check_restorable(store, deleted)
     session_id = deleted.session_id
     fences = ExitStack()
@@ -608,7 +625,7 @@ async def restore_subtree_off_loop(store: Any, deleted: ConsoleDeletedSubtree) -
             _reinsert(store, deleted)
         _reconcile_restored(store, deleted)
 
-    await run_durable_off_loop(database, durable, settle)
+    await run_durable_off_loop(database, durable, settle, store=store)
 
 
 def _rebind_versions(deleted: ConsoleDeletedSubtree, rows: Any) -> None:

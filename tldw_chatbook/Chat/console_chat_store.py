@@ -10866,37 +10866,15 @@ class ConsoleChatStore:
             self._activate_session(next(iter(self._sessions)))
 
     @_ephemeral_promotion_global_lifecycle
-    def end_app_runtime(self) -> None:
-        """Drop every volatile recovery projection at explicit app teardown."""
+    def end_app_runtime(self, *, replace_state: bool = True) -> None:
+        """Drop every volatile recovery projection at explicit app teardown.
 
-        with self._voice_promotion_state_replacement_scope():
-            self._end_app_runtime_after_voice_fence()
+        ``replace_state=False`` keeps them, so a still-held voice admission
+        cannot stop the other steps (``console_store_teardown``).
+        """
+        from .console_store_teardown import end_store_runtime
 
-    def _end_app_runtime_after_voice_fence(self) -> None:
-        if self.canvas_promotion_participant is not None:
-            self.canvas_promotion_participant.close_runtime()
-        if (
-            self.canvas_turn_controller is not None
-            and self.canvas_turn_controller is not self.canvas_promotion_participant
-        ):
-            self.canvas_turn_controller.close_runtime()
-
-        with self._fence_provider_trace_settlement_registrations(
-            (),
-            permanent=True,
-        ):
-            self._settle_all_provider_trace_settlements()
-            self._drain_retained_provider_trace_settlements_on_teardown()
-            with self._preparation_lock:
-                self._dispatch_recoveries_by_session.clear()
-                self._dispatch_recovery_message_baselines.clear()
-                self._dispatch_recovery_generation_tokens.clear()
-                self._dispatch_recovery_queue_hydration_pending.clear()
-        self._close_provider_trace_settlement_executor()
-        with self._stream_persistence_deferred_lock:
-            self._stream_persistence_executor_closed = True
-        self._stream_persistence_executor.shutdown(wait=True)
-        self._retry_failed_provider_trace_settlements_on_teardown()
+        end_store_runtime(self, replace_state=replace_state)
 
     @staticmethod
     def _set_message_attachments(
