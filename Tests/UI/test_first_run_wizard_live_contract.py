@@ -3944,11 +3944,14 @@ async def test_production_sized_catalog_reaches_the_model_picker(
     # The boundary that used to reject: a production-sized catalog must come
     # back as a success with every model, not as an error the step renders as
     # "Couldn't reach the server".
-    assert len(outcomes) == 1
+    assert len(outcomes) == 1, (
+        f"discovery recorded {len(outcomes)} outcomes; the picker shows {picker}"
+    )
     outcome = next(iter(outcomes.values()))
     assert outcome.status == "success", (
         f"a {catalog_size}-model catalog did not survive discovery: "
-        f"{outcome.status} / {getattr(outcome.error, 'kind', None)}"
+        f"{outcome.status} / {getattr(outcome.error, 'kind', None)}; "
+        f"the picker shows {picker}"
     )
     assert len(outcome.models) == catalog_size
     assert outcome.models[-1].model_id == newest_model, (

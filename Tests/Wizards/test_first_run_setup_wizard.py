@@ -9649,7 +9649,7 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
         model_step = container.steps[model_index]
         assert isinstance(model_step, ModelStep)
         # Wait on the condition, not a fixed 30 x 0.05 s (1.5 s) window, which
-        # flaked under load (TASK-34100.1 review). The failure row mounts
+        # flaked under load (TASK-34100.1 review). The failure line mounts
         # before Retry is unhidden, so wait for both.
         def failure_rendered() -> bool:
             retry_buttons = list(model_step.query("#setup-model-retry"))
@@ -13229,7 +13229,7 @@ async def test_nav_text_total_is_stable_when_a_key_is_entered():
 # ---------------------------------------------------------------------------
 # TASK-21143 (UAT S-1/M-2/M-1/N-7/P-5): the provider trust chain. A failed
 # discovery probe must reach every surface that previously said "✓":
-# the model step's failure row (auth points Back, Retry hidden), the
+# the model step's failure line (auth points Back, Retry hidden), the
 # Next gate (explicit "Continue anyway"), the tracker (attention state),
 # the Provider step on return (pinned notice), and the Summary
 # (row overlay + review_provider primary).
