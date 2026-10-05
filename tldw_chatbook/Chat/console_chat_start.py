@@ -181,7 +181,17 @@ class ConsoleChatStartCoordinator:
                     return task.result()
 
     async def run_provider_worker(self, session_id: str, operation: Any) -> Any:
-        """Retain an exact native worker after cancellation of its awaiter."""
+        """Await an operation and retain accepted provider-task custody.
+
+        Args:
+            session_id: Session whose active start may own the worker.
+            operation: Provider coroutine to await.
+
+        Returns:
+            The operation's result. Without an accepted active item, the coroutine
+            is awaited directly. An accepted item stores a task and shields it
+            from awaiter cancellation; operation errors still propagate.
+        """
         item = self._active.get(session_id)
         if item is None or not item.accepted:
             return await operation

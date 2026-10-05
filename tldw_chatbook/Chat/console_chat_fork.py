@@ -1351,7 +1351,7 @@ def fingerprint_console_fork_video(video: VideoGenerationMetadata) -> str:
     ):
         raise ValueError("Console fork video metadata is unavailable.")
     payload = video.to_json().encode("utf-8")
-    if len(payload) > 64 * 1024:
+    if len(payload) > CONSOLE_FORK_FINGERPRINT_JSON_MAX_BYTES:
         raise ValueError("Console fork video metadata is unavailable.")
     return hashlib.sha256(b"console-fork-video-v1\0" + payload).hexdigest()
 
