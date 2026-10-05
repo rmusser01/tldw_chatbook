@@ -13,8 +13,9 @@ says what it inherits instead ("inherits 1.0 · Console Behavior"); a
 placeholder only states a range or unit.
 
 Console Behavior's global fallbacks (``chat_defaults``) use the same rows and
-orders (TASK-33007.7): a saved one says "Console Behavior", and streaming is
-an On/Off Select from the model default's Inherit/On/Off family.
+orders (TASK-33007.7): a value ``[chat_defaults]`` holds says "Console
+Behavior", one it does not hold says "built-in", and streaming is an On/Off
+Select from the model default's Inherit/On/Off family.
 
 The card module imports this one, and ``settings_screen`` imports both inside
 the functions that use them, so the Settings route's pre-import payload does
@@ -26,6 +27,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+from rich.cells import cell_len
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.css.query import QueryError
@@ -37,6 +39,7 @@ from ...Chat.console_session_settings import (
     CONSOLE_VALUE_SOURCE_WORDS,
     ConsoleValueLayer,
     build_default_console_session_settings,
+    chat_defaults_held_fields,
     resolve_console_value_layers,
 )
 from ...config import coerce_bool_setting
@@ -44,11 +47,14 @@ from ...Widgets.Console.console_settings_field_row import (
     BLANK_FIELD_HELP,
     CORE_FIELDS,
     SAMPLING_FIELDS,
+    SAMPLING_TITLE,
     hidden_fields_line,
     hidden_fields_list,
 )
 from ..Screens.settings_config_models import SettingsCategoryId
 from ..Screens.settings_screen import (
+    CLOSED_ENUM_SELECT_OPTIONS,
+    CONSOLE_BUILT_IN_FALLBACK_FIELDS,
     MODEL_PROFILE_INPUT_PLACEHOLDERS,
     MODEL_PROFILE_SELECT_FIELD_KEYS,
     MODEL_PROFILE_STREAMING_SELECT_OPTIONS,
@@ -81,10 +87,23 @@ _EDITED = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.EDITED_DRAFT]
 _MODEL_DEFAULT = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.MODEL_DEFAULT]
 _PROVIDER = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
 _CONSOLE_BEHAVIOR = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.CHAT_DEFAULTS]
+_BUILT_IN = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.BUILT_IN]
 #: Console Behavior's global fallbacks (TASK-33007.7): their rows' container
 #: and their closed Sampling disclosure.
 CONSOLE_FALLBACKS_ID = "settings-console-fallbacks"
 CONSOLE_SAMPLING_ID = "settings-console-sampling"
+#: A blank global-fallback enum: nothing is saved, so the provider decides.
+#: One short word, because the control column is 16 cells.
+NOT_SET_PROMPT = "Not set"
+#: A fallback ``[chat_defaults]`` does not hold shows tldw's own value, which
+#: a provider's table outranks (the default chain's order).
+UNSET_FALLBACK_HELP = "not set here · a provider's own setting comes first"
+#: A cleared Temperature or Top P: Save refuses a blank, so the row says so
+#: and adds the range its placeholder carries.
+REQUIRED_FALLBACK_HELP = "needs a value"
+#: The global fallbacks' Sampling title when no sampler holds a value;
+#: nothing inherits on this surface, so it is not Model defaults' word.
+NO_SAMPLER_SET = "none set"
 
 
 def draft_key(name: str) -> str:
@@ -277,16 +296,23 @@ def hidden_model_default_fields(
     )
 
 
-def sampling_state(values: Mapping[str, str]) -> str:
+def sampling_state(
+    values: Mapping[str, str], *, cells: int | None = None, unset: str = "all inherit"
+) -> str:
     """Summarise the shown Sampling fields for the closed title.
 
     Args:
         values: ``{name: control text}`` for the Sampling rows the provider
             accepts.
+        cells: The title's one-row budget. Given, every set field is named
+            while "Sampling · <names>" fits it; omitted, at most two are
+            (Model defaults' title also has hidden fields to name).
+        unset: The word for no set field.
 
     Returns:
-        "Top P 0.95" (up to two set fields), "3 set", "all inherit", or
-        ``""`` when the provider accepts none of them.
+        "Top P 0.95 · Seed 7" (the set fields), "3 set" when they do not
+        fit, ``unset`` when none is set, or ``""`` when the provider accepts
+        none of them.
     """
     if not values:
         return ""
@@ -294,10 +320,14 @@ def sampling_state(values: Mapping[str, str]) -> str:
         f"{MODEL_FIELD_LABELS[name]} {text}" for name, text in values.items() if text
     ]
     if not chosen:
-        return "all inherit"
-    if len(chosen) > 2:
-        return f"{len(chosen)} set"
-    return " · ".join(chosen)
+        return unset
+    named = " · ".join(chosen)
+    fits = (
+        len(chosen) <= 2
+        if cells is None
+        else cell_len(f"{SAMPLING_TITLE} · {named}") <= cells
+    )
+    return named if fits else f"{len(chosen)} set"
 
 
 class ModelDefaultsDisclosure(Collapsible):
@@ -542,7 +572,16 @@ def _console_fallback_control(screen: SettingsScreen, name: str) -> Widget:
             compact=True,
         )
     if draft_key(name) in MODEL_PROFILE_SELECT_FIELD_KEYS:
-        return screen._console_default_enum_select(name)
+        options = CLOSED_ENUM_SELECT_OPTIONS[name]
+        return Select(
+            [(option, option) for option in options],
+            value=screen._select_option_value(value, options),
+            id=console_fallback_id(name),
+            classes="settings-compact-select",
+            allow_blank=True,
+            prompt=NOT_SET_PROMPT,
+            compact=True,
+        )
     return Input(
         value=screen._console_input_value(value),
         id=console_fallback_id(name),
@@ -559,12 +598,17 @@ class ConsoleFallbacks(Vertical):
         """Fill the Source words, help lines and the Sampling title."""
         refresh_console_fallbacks(self.screen)
 
+    def on_resize(self) -> None:
+        """Re-fit the Sampling title once the width is known, and when it changes."""
+        refresh_console_fallbacks(self.screen)
+
 
 def compose_console_fallbacks(screen: SettingsScreen) -> ComposeResult:
     """Compose the global fallbacks with Model defaults' rows (TASK-33007.7).
 
-    Core rows first, then the six samplers in one closed one-row Sampling
-    disclosure. The fallbacks apply to every provider, so no row is hidden.
+    Core rows first (the reasoning note heads the reasoning and thinking
+    rows), then the six samplers in one closed one-row Sampling disclosure.
+    The fallbacks apply to every provider, so no row is hidden.
 
     Args:
         screen: The Settings screen that owns the Console Behavior draft.
@@ -588,6 +632,14 @@ def compose_console_fallbacks(screen: SettingsScreen) -> ComposeResult:
     with ConsoleFallbacks(id=CONSOLE_FALLBACKS_ID):
         for name in CORE_FIELDS:
             yield row(name)
+            if name == "streaming":
+                # Heads the reasoning and thinking rows that follow.
+                yield Static(
+                    "Reasoning and thinking controls are sent only to providers "
+                    "that support them.",
+                    id="settings-console-reasoning-help",
+                    classes="settings-detail-row",
+                )
         with Collapsible(
             title=Content(hidden_fields_line("", ())),
             collapsed=True,
@@ -600,9 +652,13 @@ def compose_console_fallbacks(screen: SettingsScreen) -> ComposeResult:
 def refresh_console_fallbacks(screen: SettingsScreen) -> None:
     """Re-say the global fallbacks' Source words, help lines and Sampling title.
 
-    Runs once mounted and after every Console Behavior draft change, save or
-    revert. A saved value reads "Console Behavior", an edited one "edited *",
-    and a blank one leaves the choice to the provider.
+    Runs once mounted, on a resize and after every Console Behavior draft
+    change, save or revert. An edited row reads "edited *". Otherwise a value
+    ``[chat_defaults]`` holds reads "Console Behavior"; one it does not hold
+    (tldw's own Streaming, Temperature or Top P) reads "built-in" and says a
+    provider's own setting comes first, as the default chain orders them; a
+    blank optional row leaves the choice to the provider. A cleared
+    Temperature or Top P says it needs a value, because Save refuses a blank.
 
     Args:
         screen: The Settings screen that owns the card.
@@ -614,6 +670,7 @@ def refresh_console_fallbacks(screen: SettingsScreen) -> None:
         return
     draft = screen._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
     dirty = draft.dirty_keys if draft is not None else frozenset()
+    held = chat_defaults_held_fields(screen._app_config_mapping(), MODEL_DEFAULT_FIELDS)
     names = {console_fallback_id(name): name for name in MODEL_DEFAULT_FIELDS}
     shown_sampling: dict[str, str] = {}
     for row in fallbacks.query(".settings-input-row"):
@@ -623,10 +680,23 @@ def refresh_console_fallbacks(screen: SettingsScreen) -> None:
         if name in SAMPLING_FIELDS:
             shown_sampling[name] = text
         word, help_text = row_copy(
-            name, text, name in dirty, (None, _PROVIDER), saved_word=_CONSOLE_BEHAVIOR
+            name,
+            text,
+            name in dirty,
+            (None, _PROVIDER),
+            saved_word=_CONSOLE_BEHAVIOR if name in held else _BUILT_IN,
         )
+        if not text and name in CONSOLE_BUILT_IN_FALLBACK_FIELDS:
+            valid = MODEL_PROFILE_INPUT_PLACEHOLDERS.get(draft_key(name))
+            help_text = " · ".join(filter(None, (REQUIRED_FALLBACK_HELP, valid)))
+        elif word == _BUILT_IN:
+            help_text = UNSET_FALLBACK_HELP
         source.update(word)
         help_line.update(help_text)
-    sampling.title = Content(
-        hidden_fields_line("", (), state=sampling_state(shown_sampling))
+    width = sampling.size.width - _TITLE_CHROME_CELLS
+    state = sampling_state(
+        shown_sampling,
+        cells=width if width > 0 else SAMPLING_TITLE_CELLS,
+        unset=NO_SAMPLER_SET,
     )
+    sampling.title = Content(hidden_fields_line("", (), state=state))

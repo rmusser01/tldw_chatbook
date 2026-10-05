@@ -147,8 +147,10 @@ async def test_permission_summary_failure_retains_values_and_keyboard_retry(
         await pilot.pause()
         _assert_painted(host.screen, retry)
         assert "Retry" in _painted(host, retry)
+        # TASK-33007.7 (review M6), rewritten on purpose: "Saved as" left the
+        # guide for the "config key" disclosure, so "Applies" is row 2.
         guide = host.screen.query_one(
-            "#settings-console-behavior-field-guide-3", Static
+            "#settings-console-behavior-field-guide-2", Static
         )
         assert "no Save step" in str(guide.render())
         monkeypatch.setattr(
