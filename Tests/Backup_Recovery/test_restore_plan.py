@@ -791,6 +791,7 @@ def test_shipped76_archive_stages_v77_without_changing_source(tmp_path, dictiona
         _checkpoint_state,
         _owner,
         _shipped76,
+        _assert_legacy_queue_quarantine,
     )
     from tldw_chatbook.Backup_Recovery import sqlite_validation as validation
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
@@ -835,6 +836,14 @@ def test_shipped76_archive_stages_v77_without_changing_source(tmp_path, dictiona
     assert all(index in restored_indexes for index in indexes)
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(path, client_id="restored-read")
+    try:
+        _assert_legacy_queue_quarantine(db)
+    finally:
+        db.close_connection()
     assert source.read_bytes() == original
     assert tuple(path.read_bytes() for path in archive_paths) == archive_bytes
     assert not destination.exists()

@@ -6,7 +6,11 @@ from threading import Event
 
 import pytest
 
-from Tests.DB.test_chachanotes_v77_agent_chat_starts_migration import _legacy_native76
+from Tests.DB.test_chachanotes_v77_agent_chat_starts_migration import (
+    _legacy_native76,
+    _seed_legacy_queue_owner,
+    _assert_legacy_queue_quarantine,
+)
 from Tests.ChaChaNotesDB.historical_bootstrap import chachanotes_db_at_version
 from tldw_chatbook.Backup_Recovery import sqlite_validation as validation
 from tldw_chatbook.DB.recovery_core import core_adapters
@@ -21,9 +25,9 @@ def _dump(path):
         return tuple(connection.iterdump())
 
 
-def _shipped76(path, *, dictionary=False):
+def _shipped76(path, *, dictionary=False, version=76):
     """Populate the actual shipped chain with both predecessor receipt origins."""
-    with chachanotes_db_at_version(path, 76) as db:
+    with chachanotes_db_at_version(path, version) as db:
         conversation = db.add_conversation({"title": "shipped recovery"})
         connection = db.get_connection()
         for origin in ("manual", "queued"):
@@ -56,6 +60,9 @@ def _shipped76(path, *, dictionary=False):
                     '{"saved":"reconstructability"}',
                 ),
             )
+        _seed_legacy_queue_owner(db, "queued", None)
+        _seed_legacy_queue_owner(db, "manual", "legacy-queue")
+        db.add_note(title="lossless", content="preserved historical note")
         if dictionary:
             from tldw_chatbook.DB.recovery_core_schema import (
                 _CHAT_DICTIONARIES_UPDATED_TRIGGER,
@@ -287,7 +294,7 @@ def test_shipped76_staged_failure_rolls_back_checkpoint_rebuild(
             assert not restrictions.shipped_checkpoint_migration
             assert connection.execute(
                 "SELECT COUNT(*) FROM console_dispatch_checkpoints"
-            ).fetchone() == (2,)
+            ).fetchone() == (4,)
             final_checks.append(result)
             if failure == "validation":
                 return (("invalid_domain_reference",), None)
@@ -506,3 +513,98 @@ def test_shipped76_malformed_catalog_refuses_before_writing(
     )
     assert not reached
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("dictionary", [False, True], ids=["initial", "updated"])
+@pytest.mark.parametrize("subscriptions", [False, True], ids=["primary", "shared"])
+@pytest.mark.parametrize("version", [75, 76, 77])
+def test_repaired77_catalog_admits_only_its_exact_stamp(
+    tmp_path, dictionary, subscriptions, version
+):
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.DB.recovery_operations import (
+        recovery_adapters,
+        _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS,
+    )
+    from tldw_chatbook.DB.recovery_core_schema import (
+        CHACHANOTES_V77_SCHEMA,
+        CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+        _CHAT_DICTIONARIES_UPDATED_TRIGGER,
+    )
+
+    path = tmp_path / "fresh.sqlite"
+    if subscriptions:
+        from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+
+        other = SubscriptionsDB(path)
+        other.close()
+    db = CharactersRAGDB(path, client_id="repaired-stamp")
+    try:
+        connection = db.get_connection()
+        if dictionary:
+            connection.execute("DROP TRIGGER chat_dictionaries_au")
+            connection.execute(_CHAT_DICTIONARIES_UPDATED_TRIGGER)
+        actual = tuple(
+            row[0]
+            for row in connection.execute(
+                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
+        assert actual == (
+            _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS[int(dictionary)]
+            if subscriptions
+            else CHACHANOTES_DICTIONARY_UPDATE_SCHEMA
+            if dictionary
+            else CHACHANOTES_V77_SCHEMA
+        )
+        connection.execute(
+            "UPDATE db_schema_version SET version=? WHERE schema_name=?",
+            (version, CharactersRAGDB._SCHEMA_NAME),
+        )
+        connection.commit()
+    finally:
+        db.close_connection()
+    owner = (
+        next(a for a in recovery_adapters() if a.owner_id == "db.subscriptions")
+        if subscriptions
+        else _owner()
+    )
+    before = _dump(path)
+    assert validation.validate_candidate(owner, path, Event(), migrate=True) == (
+        () if version == 77 else ("unsupported_schema_version",)
+    )
+    assert _dump(path) == before
+    if subscriptions:
+        assert validation.validate_candidate(
+            _owner(), path, Event(), migrate=False
+        ) == ("unsupported_schema",)
+
+
+@pytest.mark.parametrize("dictionary", [False, True], ids=["initial", "updated"])
+@pytest.mark.parametrize("version", [76, 77])
+def test_strong_primary_catalog_accepts_historical_stamps(
+    tmp_path, dictionary, version
+):
+    path = tmp_path / "strong.sqlite"
+    _legacy_native76(path, dictionary=dictionary)
+    with closing(sqlite3.connect(path)) as connection:
+        catalog = tuple(
+            connection.execute(
+                "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+            )
+        )
+        connection.execute("UPDATE db_schema_version SET version=?", (version,))
+        connection.commit()
+    assert validation.validate_candidate(_owner(), path, Event(), migrate=True) == ()
+    with closing(sqlite3.connect(path)) as connection:
+        assert (
+            tuple(
+                connection.execute(
+                    "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+                )
+            )
+            == catalog
+        )
+        assert connection.execute(
+            "SELECT version FROM db_schema_version"
+        ).fetchone() == (77,)

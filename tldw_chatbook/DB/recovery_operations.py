@@ -1364,6 +1364,7 @@ _SUBSCRIPTIONS_V76_SCHEMA = tuple(
 from .recovery_core_schema import (
     _CHAT_DICTIONARIES_INITIAL_TRIGGER,
     _CHAT_DICTIONARIES_UPDATED_TRIGGER,
+    _CHACHANOTES_V77_QUEUE_CHECK,
 )
 
 _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS = (
@@ -1384,15 +1385,29 @@ _SUBSCRIPTIONS_SHIPPED_CHACHANOTES_SCHEMAS = (
         for sql in _SUBSCRIPTIONS_SCHEMA[1][1]
     ),
 )
+_SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS = tuple(
+    tuple(
+        sql.replace(
+            _CHACHANOTES_V77_QUEUE_CHECK,
+            "CHECK (origin != 'agent_chat_start' OR queue_entry_id IS NULL)",
+        )
+        for sql in schema
+    )
+    for schema in _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS
+)
+_SUBSCRIPTIONS_V77_SCHEMA = _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS[0]
 _SUBSCRIPTIONS_SCHEMA += tuple(
     (2, schema)
-    for schema in _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS
+    for schema in _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS
+    + _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS
     + _SUBSCRIPTIONS_SHIPPED_CHACHANOTES_SCHEMAS[1:]
 )
 
 
 def _subscriptions_chachanotes_stamps(schema):
     """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_REPAIRED_RECEIPT_SCHEMAS:
+        return ((77,),)
     if schema in _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS:
         return ((76,), (77,))
     if schema in _SUBSCRIPTIONS_SHIPPED_CHACHANOTES_SCHEMAS:

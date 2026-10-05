@@ -501,6 +501,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
     from tldw_chatbook.DB.recovery_core_schema import (
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
         CHACHANOTES_V76_SHIPPED_SCHEMAS,
+        CHACHANOTES_V76_NATIVE_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -517,6 +518,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
         installed,
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
         *CHACHANOTES_V76_SHIPPED_SCHEMAS,
+        *CHACHANOTES_V76_NATIVE_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:

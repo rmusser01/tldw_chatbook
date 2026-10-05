@@ -786,27 +786,37 @@ _CHACHANOTES_V76_REPLACEMENTS = {
 CHACHANOTES_V76_SCHEMA = tuple(
     _CHACHANOTES_V76_REPLACEMENTS.get(sql, sql) for sql in CHACHANOTES_V75_SCHEMA
 )
-CORE_SCHEMAS = tuple(
-    (owner, 77, CHACHANOTES_V76_SCHEMA)
-    if owner == "db.chachanotes.primary"
-    else (owner, version, sql)
-    for owner, version, sql in CORE_SCHEMAS
+# Freeze the earlier strong native76/77 catalogs before deriving repaired77.
+CHACHANOTES_V76_NATIVE_SCHEMAS = (
+    CHACHANOTES_V76_SCHEMA,
+    tuple(
+        _CHACHANOTES_V76_REPLACEMENTS.get(sql, sql)
+        for sql in CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA
+    ),
 )
-CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = tuple(
-    _CHACHANOTES_V76_REPLACEMENTS.get(sql, sql)
-    for sql in CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA
-)
-
-
-# Constructor capture proves these complete catalogs; never normalize archive SQL.
 CHACHANOTES_V76_SHIPPED_SCHEMAS = (
     CHACHANOTES_V75_SCHEMA,
     CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA,
 )
-CHACHANOTES_V76_NATIVE_SCHEMAS = (
-    CHACHANOTES_V76_SCHEMA,
-    CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+_CHACHANOTES_V77_QUEUE_CHECK = "CHECK ((origin = 'queued' AND queue_entry_id IS NOT NULL)\n        OR (origin IN ('manual', 'agent_chat_start') AND queue_entry_id IS NULL))"
+CHACHANOTES_V77_SCHEMA, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = (
+    tuple(
+        sql.replace(
+            _CHACHANOTES_V77_QUEUE_CHECK,
+            "CHECK (origin != 'agent_chat_start' OR queue_entry_id IS NULL)",
+        )
+        for sql in schema
+    )
+    for schema in CHACHANOTES_V76_NATIVE_SCHEMAS
 )
+CORE_SCHEMAS = tuple(
+    (owner, 77, CHACHANOTES_V77_SCHEMA)
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+
+
 CHACHANOTES_NATIVE_V76_TO_V77_SQL = (
     "UPDATE db_schema_version SET version = 77 "
     "WHERE schema_name = 'rag_char_chat_schema' AND version = 76",

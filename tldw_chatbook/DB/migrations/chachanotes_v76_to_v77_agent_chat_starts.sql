@@ -26,8 +26,7 @@ CREATE TABLE console_dispatch_checkpoints_v77 (
     reconstructability_json TEXT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CHECK ((origin = 'queued' AND queue_entry_id IS NOT NULL)
-        OR (origin IN ('manual', 'agent_chat_start') AND queue_entry_id IS NULL)),
+    CHECK (origin != 'agent_chat_start' OR queue_entry_id IS NULL),
     CHECK ((origin = 'agent_chat_start' AND agent_chat_start_attempt_id IS NOT NULL
             AND length(agent_chat_start_attempt_id) BETWEEN 1 AND 200)
         OR (origin IN ('manual', 'queued') AND agent_chat_start_attempt_id IS NULL))
