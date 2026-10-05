@@ -41,8 +41,9 @@ case, for example `AZURE` or `OLLAMA_CLOUD`:
 .venv/bin/python Tests/fixtures/cloud_live/capture.py nvidia kilo
 ```
 
-Each provider takes up to four small requests: the model listing, a plain
-chat, a tool call and a stream, at about 200 output tokens each. The script
+Each provider takes up to five small requests: the model listing, a plain
+chat, a tool call, a plain stream and a streamed tool call, at about 200
+output tokens each. The script
 prints the chosen model, the HTTP status of each round, and any response key
 names that the record's allowances do not cover. It never prints response
 text.

@@ -90,6 +90,8 @@ KNOWN_TOP = frozenset({"id", "object", "created", "model", "system_fingerprint",
 KNOWN_CHOICE = frozenset({"index", "message", "finish_reason"})
 KNOWN_STREAM_CHOICE = frozenset({"index", "delta", "finish_reason", "usage"})
 KNOWN_MESSAGE = frozenset({"role", "content", "reasoning_content", "tool_calls"})
+KNOWN_TOOL_CALL = frozenset({"id", "type", "function"})
+KNOWN_STREAM_TOOL_CALL = frozenset({"index", "id", "type", "function"})
 
 PLAIN_MESSAGES = [{"role": "user", "content": "Say ok."}]
 TOOL_MESSAGES = [
@@ -409,20 +411,31 @@ def choose_model(target: Target, listing: Any) -> str | None:
     return seeds[0] if seeds else None
 
 
+def _as_list(value: Any) -> list[Any]:
+    """``value`` when it is a list, else empty: a malformed reply must not crash the report."""
+    return value if isinstance(value, list) else []
+
+
 def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str, list[str]]:
     """Response key NAMES outside the strict shape AND the record's allowances.
 
     Args:
         record: The preset whose allowances are subtracted.
         fixture: A capture with ``chat_response``/``tool_call_response`` bodies
-            and ``stream_events``.
+            and ``stream_events``/``tool_stream_events``.
 
     Returns:
-        Uncovered key names per level (``top``, ``choice``, ``message``), sorted.
+        Uncovered key names per level (``top``, ``choice``, ``message``,
+        ``tool_call``, ``stream_tool_call``), sorted. ``tool_call`` covers
+        non-streamed call objects, minus the record's tool-call allowance;
+        ``stream_tool_call`` covers ``delta.tool_calls[]`` objects, which the
+        stream parser never allows extras on for a strict record.
     """
     top: set[str] = set()
     choice: set[str] = set()
     message: set[str] = set()
+    tool_call: set[str] = set()
+    stream_tool_call: set[str] = set()
     for field in ("chat_response", "tool_call_response"):
         body = fixture.get(field)
         if not isinstance(body, dict) or "choices" not in body:
@@ -433,7 +446,10 @@ def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str,
                 choice |= set(item) - KNOWN_CHOICE
                 if isinstance(item.get("message"), dict):
                     message |= set(item["message"]) - KNOWN_MESSAGE
-    for payload in fixture.get("stream_events") or []:
+                    for call in _as_list(item["message"].get("tool_calls")):
+                        if isinstance(call, dict):
+                            tool_call |= set(call) - KNOWN_TOOL_CALL
+    for payload in [*(fixture.get("stream_events") or []), *(fixture.get("tool_stream_events") or [])]:
         try:
             event = json.loads(payload)
         except (TypeError, json.JSONDecodeError):
@@ -446,10 +462,15 @@ def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str,
                 choice |= set(item) - KNOWN_STREAM_CHOICE
                 if isinstance(item.get("delta"), dict):
                     message |= set(item["delta"]) - KNOWN_MESSAGE
+                    for call in _as_list(item["delta"].get("tool_calls")):
+                        if isinstance(call, dict):
+                            stream_tool_call |= set(call) - KNOWN_STREAM_TOOL_CALL
     return {
         "top": sorted(top - record.response_allowances),
         "choice": sorted(choice - record.choice_allowances),
         "message": sorted(message - record.message_allowances),
+        "tool_call": sorted(tool_call - record.tool_call_allowances),
+        "stream_tool_call": sorted(stream_tool_call),
     }
 
 
@@ -481,22 +502,33 @@ def capture(target: Target) -> Path | None:
         tool_status, tool_body = _request(target, url, target.payload(model, TOOL_MESSAGES, stream=False, tools=True))
     stream_status, events = _stream(target, url, target.payload(model, PLAIN_MESSAGES, stream=True, tools=False))
     stream_complete = stream_status == 200 and bool(events) and events[-1] == "[DONE]"
+    tool_stream_status, tool_events = (None, [])
+    if record.native_tools:
+        tool_stream_status, tool_events = _stream(
+            target, url, target.payload(model, TOOL_MESSAGES, stream=True, tools=True))
+    tool_stream_complete = (
+        tool_stream_status == 200 and bool(tool_events) and tool_events[-1] == "[DONE]")
     print(f"  plain HTTP {chat_status}  tool HTTP {tool_status}  stream HTTP {stream_status}"
-          f" ({len(events)} events, complete: {stream_complete})")
-    if chat_status != 200 and tool_status != 200 and not stream_complete:
+          f" ({len(events)} events, complete: {stream_complete})  tool stream HTTP {tool_stream_status}"
+          f" (complete: {tool_stream_complete})")
+    if chat_status != 200 and tool_status != 200 and not stream_complete and not tool_stream_complete:
         print("  FAILED: no round succeeded -- no fixture written (check the key, model and URL)")
         return None
     if stream_status == 200 and not stream_complete:
         print("  ! the stream was cut off before [DONE]; its replay will fail until recaptured")
+    if tool_stream_status == 200 and not tool_stream_complete:
+        print("  ! the tool stream was cut off before [DONE]; its replay will fail until recaptured")
     listed = _listed(listing)
     fixture = {
         "server": record.key,
         "base_url": target.base_url_display,
         "model": model,
-        "statuses": {"plain": chat_status, "tool": tool_status, "stream": stream_status},
+        "statuses": {"plain": chat_status, "tool": tool_status, "stream": stream_status,
+                     "tool_stream": tool_stream_status},
         "chat_response": chat_body,
         "tool_call_response": tool_body,
         "stream_events": events,
+        "tool_stream_events": tool_events,
         "models_response": (
             None if listed is None
             else {"count": len(listed), "envelope": isinstance(listing, dict),

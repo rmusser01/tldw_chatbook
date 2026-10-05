@@ -84,18 +84,20 @@ def _replay(
     )
 
 
-def stream_verdict(capture: dict[str, Any]) -> str:
+def stream_verdict(capture: dict[str, Any], round_name: str = "stream") -> str:
     """Classify a capture's stream round.
 
     Args:
         capture: One captured fixture.
+        round_name: ``stream`` (the plain stream) or ``tool_stream`` (the
+            streamed tool call); its events are ``<round_name>_events``.
 
     Returns:
-        ``refused`` (non-200: not replayed), ``incomplete`` (200 but empty or
-        without ``[DONE]``: a degraded capture), or ``complete``.
+        ``refused`` (non-200 or never captured: not replayed), ``incomplete``
+        (200 but empty or without ``[DONE]``: a degraded capture), or ``complete``.
     """
-    events = capture.get("stream_events") or []
-    if capture["statuses"].get("stream") != 200:
+    events = capture.get(f"{round_name}_events") or []
+    if capture["statuses"].get(round_name) != 200:
         return "refused"
     return "complete" if events and events[-1] == "[DONE]" else "incomplete"
 
@@ -107,10 +109,12 @@ def has_usable_round(capture: dict[str, Any]) -> bool:
         capture: One captured fixture.
 
     Returns:
-        True when a body round answered 200 with an object, or the stream is complete.
+        True when a body round answered 200 with an object, or either stream
+        (plain or tool) is complete.
     """
     bodies = (("plain", "chat_response"), ("tool", "tool_call_response"))
-    return stream_verdict(capture) == "complete" or any(
+    streams = ("stream", "tool_stream")
+    return any(stream_verdict(capture, name) == "complete" for name in streams) or any(
         capture["statuses"].get(name) == 200 and isinstance(capture.get(field), dict)
         for name, field in bodies
     )
@@ -184,6 +188,29 @@ def test_captured_stream_parses_under_its_record(
     assert stream.terminal_turn.finish_reason is not None
 
 
+def test_captured_tool_stream_replays_to_a_tool_call(
+    capture: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A captured streamed tool call replays to a terminal turn that holds the call.
+
+    Args:
+        capture: One captured fixture.
+        monkeypatch: Replaces resolution and transport with the capture.
+    """
+    verdict = stream_verdict(capture, "tool_stream")
+    if verdict == "refused":
+        pytest.skip("no streamed tool round captured, or the provider refused it")
+    assert verdict == "complete", f"{capture['server']}: tool stream cut off before [DONE] -- recapture"
+    record = RECORDS_BY_KEY[capture["server"]]
+    stream = _replay(monkeypatch, record, stream_events=list(capture["tool_stream_events"]))
+    try:
+        list(stream)
+    except (HostedChatProtocolError, ChatProviderError) as error:
+        pytest.fail(f"{type(error).__name__}: {error} -- {_evidence(record, capture)}")
+    assert stream.terminal_turn.finish_reason == "tool_calls"
+    assert [call["function"]["name"] for call in stream.terminal_turn.tool_calls] == ["get_weather"]
+
+
 @pytest.mark.asyncio
 async def test_captured_listing_discovers_in_its_recorded_shape(capture: dict[str, Any]) -> None:
     """The listing sample, served in the shape the provider sent, discovers every id.
@@ -243,4 +270,7 @@ def test_a_capture_with_no_successful_round_is_not_usable() -> None:
               "chat_response": {"error": "x"}, "tool_call_response": {"error": "x"}, "stream_events": ["x"]}
     assert has_usable_round(failed) is False
     assert has_usable_round({**failed, "statuses": {"plain": 200, "tool": 401, "stream": 401}}) is True
+    tool_stream_only = {**failed, "statuses": {**failed["statuses"], "tool_stream": 200},
+                        "tool_stream_events": ['{"choices": []}', "[DONE]"]}
+    assert has_usable_round(tool_stream_only) is True
 

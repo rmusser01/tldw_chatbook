@@ -72,6 +72,10 @@ async def observe(args, result):
         app = TldwCli()
         stage("mount_until_first_input")
         async with app.run_test(size=(140, 42)) as pilot:
+            # Initial receipt I/O may outlive run_test entry. Keep waiting
+            # inside the unchanged measured mount stage and 240s bound.
+            while not getattr(app, "_initial_screen_pushed", False):
+                await asyncio.sleep(0.01)
             screen = app.screen
             assert type(screen).__name__ == "ChatScreen"
             composer = screen._console_composer_or_none()

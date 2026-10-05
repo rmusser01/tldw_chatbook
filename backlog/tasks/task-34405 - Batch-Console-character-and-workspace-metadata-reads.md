@@ -24,6 +24,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [ ] #6 Every real repository source boundary performs its fresh path proof outside the shared coordinator and rechecks exact issued owner path lease and native hold before acceptance; counted same-owner work may finish during pause while new independent owners and revoked or retargeted proofs refuse
 - [ ] #7 A full Console agent worker independently admits its installed config, Runs and workspace sources and reaches the provider while retaining native cleanup and cancellation/drain guarantees; the finite Notes interval is limited to database callbacks.
 - [ ] #8 Real Console settings generation and context-policy persistence callbacks retain one exact captured file-backed Notes interval through all native work and repeated cancellation, retire only worker-created connections after interval exit, preserve committed CAS and caller-owned/custom/memory behavior, and refuse changed persistence/database/repository bindings without stale publication.
+- [ ] #9 A cold exact-stock flat browser performs its two unchanged global/Default queries within one physically retired native connection, preserves custom/borrowed/error semantics, and refuses changed stock owners/readers before accepting a result.
 <!-- AC:END -->
 
 ## Implementation Plan

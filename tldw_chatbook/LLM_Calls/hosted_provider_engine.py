@@ -1673,6 +1673,7 @@ def normalize_hosted_provider_response(
             allowed_choice_keys=record.choice_allowances,
             allowed_message_keys=record.message_allowances,
             tolerant_top_level_extras=record.tolerant_response_extras,
+            allowed_tool_call_keys=record.tool_call_allowances,
         )
     except ChatProviderError:
         raise

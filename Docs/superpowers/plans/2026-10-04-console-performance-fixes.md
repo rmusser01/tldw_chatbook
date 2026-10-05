@@ -1604,3 +1604,65 @@ Reason: test-only passive observation and routine dev merge preserve existing ap
 
 
 Original whole-probe prerequisite: await the actual `_initial_screen_pushed` completion latch inside its existing run_test before capturing the screen, as already qualified in the cold startup control. Observation/heartbeat remain active and all original900s timeout/phase counts/Send/UI/helper/native-open assertions remain unchanged; wrong completed screen types still fail. Removing only the wait restores the entire prior module AST. ADR required: no; ADR path: N/A; reason: test prerequisite synchronization preserves application boundaries and original performance oracles. Independently reviewed before application; final native whole verification follows.
+
+
+## TASK-34405 AC9 stock browser two-scope investigation
+
+# Stock browser two-scope finite read implementation plan
+
+> For agentic workers: use the existing root-controlled serial TDD workflow. This is an Evidence-only draft; the root installs tests and launches Native. No production patch is authorized before genuine RED and ADR registration.
+
+**Goal:** One cold, exact-stock flat-browser body performs its original global and Default queries with at most one newly opened physical Notes connection, preserving both fresh query bodies, results and cleanup.
+
+**Architecture:** Capture the original local service and exact DB once. Only the qualified stock path may perform the two original reads inside one supported synchronous owned connection/counting interval. Custom, subclass, memory and asynchronous paths retain their preceding ABI and lifetime; no connection or authority result is reused across browser invocations or a GUI await.
+
+**Tech stack:** Python3.12+, real SQLite, existing ConsoleWorkspaceController and ordinary-owner private-child harness.
+
+**Spec:** `Docs/superpowers/specs/2026-10-04-console-performance-fixes-design.md`; scope limited to `_persisted_console_browser_rows`'s two default scopes. No archive/history/helper-total claim.
+
+ADR required: yes, amendment of `backlog/decisions/126-complete-local-backup-and-recovery.md` before production if the stock source-token interface crosses modules. Reason: finite callback custody/source qualification across the Console service/DB boundary. Existing ADR126 forbids adopting borrowers, mutable replacement caches, source drift or cached authority. No new ADR or generic guard narrowing is proposed.
+
+Proposed task outcome (root to register before production): an exact standard cold flat-browser refresh executes both unchanged global/Default list queries within one physically retired native connection; custom/borrowed/error paths preserve declared semantics, and source/owner drift cannot invoke a changed reader or publish a stock result under the wrong owner. Fresh subsequent bodies and all archive/action reads remain independent.
+
+## Constraints and review focus
+
+* Original query `Native`, offset0, generic-character filter and global-before-Default order remain. Original result totals/rows and source labels remain.
+* No public getter/admission/config/transaction replacement and no fake SQLite. The admitted native subclass is positively qualified through the original getter-body/registration path.
+* Definition-time function/code/globals/default/keyword-default/closure and static owner lookup eligibility must precede optional grouping; captured service/DB and installed sources are checked before every original reader and after retirement.
+* A borrowed native transaction remains live with its uncommitted update until the test's original owner exits it. A custom subclass's preceding persistent worker cache is not adopted by optional grouping.
+* Refusal after qualified midpoint retarget must occur before foreign DB or changed body execution. Ordinary custom reader errors retain the original partial-row/error behavior.
+* One body remains fresh; a second body queries again. No TTL, permission value, archive action, history cache or whole performance cap changes.
+
+## TDD handoff
+
+Files to install only after review:
+
+* Evidence draft `test_console_browser_two_scope_finite_draft.py` → proposed `Tests/Backup_Recovery/test_console_browser_two_scope_finite.py`.
+* Root's native launcher uses the existing actual `_run(tmp_path, route, outcome, script=...)` signature, all three arguments. Tests retain its45s outer process limit.
+
+- [ ] Static-qualify outer and embedded ASTs, exact harness signature and original decorator/closure assumptions before launch. This proves mechanics only.
+- [ ] Root runs all controls on unchanged production, preserves source/hash/owner receipts and classifies assertion failures only after query/native/cleanup prerequisites. `cold` must fail solely the one-handle assertion with two original query handles. Midpoint owner/body controls may reveal an existing refusal gap; record their actual results separately, not as a batching regression. Compatibility/error/borrower outcomes are not assumed before Native.
+- [ ] Register actual task/ADR outcome and genuine RED before drafting production. Root reviews the stock eligibility, exact captured-resource retirement and every custom fallback.
+- [ ] Implement only the two-scope stock synchronous callback. Retain original `_persisted_console_browser_rows` normalization/pagination/ordinary error handling outside the finite worker where appropriate; check captured owner/source before each stock read and after native retirement. No broad service rewrite.
+- [ ] Root reruns unchanged controls plus appropriate existing `test_console_read_retirement.py` and flat-browser query/publication tests. Current original modules remain independently required.
+- [ ] Only after those gates pass: original whole-source POSIX/Windows budgets. A one-handle leaf pass establishes no entire Send helper acceptance.
+
+## What this test does and does not prove
+
+The real unmounted controller fixture is the existing `_workspace_controller`; it exercises the original production browser coroutine without an App/message pump. The worker uses an actual one-thread executor, ordinary private-profile config, real seeded global/Default Notes rows, original getters/transactions and source-qualified local START/RETURN observations. No timing claim is made. The successful cold count assertion follows source/query/result proof, original physical close, zero worker leases/registrations/operations and observer/thread retirement. All controls emit bounded content-free receipts before their final behavior assertions. No App is imported intentionally by this draft; fixture/module imports may still load application modules as part of original source closure.
+
+The borrower context is entered and exited on the same original worker thread using the actual Notes transaction context; it deliberately stays entered while the original browser executor jobs run on that thread. The original managed transaction guard must keep its connection despite the browser's explicit close request. This is not a foreign-thread close or a fabricated lease.
+
+The preinstalled instance/subclass/body controls customize only the unguarded `ChatConversationService.list_conversations` surface, while delegating real SQL to its original body. One exact-class preinstalled lookup control preserves the declared B database source and its original two-read route rather than grouping the A field visible through `vars(service)`. Source-body/lookup mutation is restored unconditionally. Midpoint retarget controls use an original method RETURN observation after the first actual SQL result, before the second query; the admission-body control changes only the unguarded list body at original native registration RETURN. Guard/config/getter/transaction/native callbacks are never replaced. Successful child output uses the harness's literal `retired and reopened` marker; no assertion is weakened to obtain that marker. There are13 nodes; none has run Native yet.
+### Provider reconciliation merge contract (incoming PR3019)
+
+ADR required: no new ADR; clarify existing contracts.
+ADR paths: backlog/decisions/179-generic-hosted-provider-engine-and-preset-registry.md; backlog/decisions/002-openai-compatible-model-discovery.md; backlog/decisions/020-automatic-model-catalog-refresh.md.
+Reason: record-scoped tool-call extras and established-null stream continuations preserve the hosted boundary; bounded metadata field drops preserve discovery identity, privacy and persistence policy. Preserve documented response normalizers, strict generic refusals and trace identity, then qualify the merged parser/record/capture replay/discovery bundle. Live final-source UAT and original whole performance remain separate acceptance gates.
+
+
+### Complete-startup initial-screen prerequisite and current merge checkpoint
+
+ADR required: no. ADR path: N/A; the test-only wait implements the existing ADR085/126 asynchronous startup contract. Actual651 startup artifacts on Ubuntu/macOS/Windows fail the same premature screen assertion before budget evaluation. Wait only for the original initial push completion flag within the unchanged measured mount phase/full240s timeout; retain the exact ChatScreen/composer/key assertions and all cold/warm/heartbeat/key budgets. Removing only the wait restores the entire original module AST. The startup performance gate remains unverified on this new source.
+
+Incoming dev54ac provider reconciliation retains both wire_normalizer and tool_call_allowances, the existing strict bounds/provider-owned normalization, Fireworks established-null tool continuations and per-field bounded model discovery. The isolated ordinary-owner/private3.12 targeted six-module bundle passes427 tests in19.32s (25.063s full runner), with before/after production/test/core source bytes unchanged. This is parser/registry/replay/discovery validation, not live-provider or whole performance acceptance. The younger incoming vision task ID was administratively renumbered34410 after a fresh all-ref/37-worktree sweep; the older Console34402 and every Console reference remain. Backlog ID/path guard passes5028 tasks.

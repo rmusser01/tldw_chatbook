@@ -74,3 +74,18 @@ the neutral parser provider names or loosening its default terminal contract.
 Alternatives rejected: dropping all x_groq metadata loses accounting and hides
 errors; universal extra fields or repeat-terminal tolerance weakens unrelated
 providers; duplicated transports would bypass the shared resource/SSE guards.
+
+## Tool-call shape clarification (2026-10-05, TASK-34364)
+
+`ProviderRecord.tool_call_allowances` extends the existing record-owned
+extra-field contract to non-streamed tool-call objects. Required id/type/function
+fields and their validation remain strict; named extras pass the existing value
+rule and are dropped. Fireworks allows only index/name, qualified by its retained
+live tool fixture. No other record inherits this allowance. Provider-owned wire
+normalization still runs between bounded JSON and closed shape validation.
+
+For an established streamed call index, a null repeated id/type/function.name
+claims no new value and is treated as omitted. A first delta must establish its
+required identity; a changed non-null identity/type/name still refuses. This
+shared continuation rule does not tolerate arbitrary extra keys or relax finish,
+usage, argument, transport or resource limits.

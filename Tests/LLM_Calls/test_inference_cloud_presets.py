@@ -81,6 +81,24 @@ def test_settings_defaults_carry_no_model_key(key: str) -> None:
     }
 
 
+# --- tool-call extras: record-scoped live-capture contract ---
+
+
+# Other preset response levels keep their documented contracts; this field is
+# qualified by the actual Fireworks tool fixture (TASK-34364).
+_CAPTURED_TOOL_CALL_ALLOWANCES = {
+    "fireworks": frozenset({"index", "name"}),  # cloud_live/fireworks.json
+}
+
+
+@pytest.mark.parametrize("key", PRESET_KEYS)
+def test_tool_call_allowances_match_the_captured_contract(key: str) -> None:
+    """Only the captured preset accepts these non-streamed tool-call extras."""
+    assert RECORDS_BY_KEY[key].tool_call_allowances == (
+        _CAPTURED_TOOL_CALL_ALLOWANCES.get(key, frozenset())
+    )
+
+
 # --- fireworks: proprietary reasoning ---
 
 

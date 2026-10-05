@@ -599,6 +599,46 @@ def _safe_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
     return metadata
 
 
+def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a model's safe metadata, dropping only what breaks a bound.
+
+    One model's oversized details must not cost the user the whole list:
+    Vercel's tiered pricing (270 items against a 256-item bound) listed none
+    of its 407 models (TASK-34363). A top-level field that breaks a bound on
+    its own is dropped first; if the rest together still exceed a bound, the
+    largest fields go, biggest first, until they fit. Nothing unbounded is
+    ever kept. The work is bounded: a model with more top-level fields than
+    the item bound cannot fit and gets no metadata, and each surviving field
+    is measured once.
+
+    Args:
+        model_payload: One model object from a ``/models`` response.
+
+    Returns:
+        The model's metadata within every bound; empty when no field fits.
+    """
+    try:
+        return _safe_model_metadata(model_payload)
+    except ValueError:
+        pass
+    if len(model_payload) > MODEL_METADATA_MAX_ITEMS:
+        return {}
+    kept: dict[str, Any] = {}
+    for key, value in model_payload.items():
+        try:
+            _safe_model_metadata({key: value})
+        except ValueError:
+            continue
+        kept[key] = value
+    largest_first = sorted(kept, key=lambda name: len(json.dumps(kept[name])), reverse=True)
+    for name in largest_first:
+        try:
+            return _safe_model_metadata(kept)
+        except ValueError:
+            del kept[name]
+    return {}
+
+
 def normalize_models_response(
     payload: Mapping[str, Any],
     *,
@@ -639,7 +679,7 @@ def normalize_models_response(
                 source="runtime_discovered",
                 endpoint_fingerprint=endpoint_fingerprint,
                 discovered_at=now_iso,
-                metadata_raw_safe=_safe_model_metadata(item),
+                metadata_raw_safe=_bounded_model_metadata(item),
             )
         )
 
