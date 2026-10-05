@@ -17308,7 +17308,10 @@ class SettingsScreen(BaseAppScreen):
                 ("Focused setting", "API key"),
                 (
                     "Purpose",
-                    "Stores a provider API key in local config for Console generation.",
+                    # Precedence sits here, not on a row of its own: the rows
+                    # refresh in place by index, so a fifth drops Validation.
+                    "Stores a provider API key in local config for Console "
+                    "generation. A saved key is used before the env var.",
                 ),
                 ("Saved as", f"{provider_config_prefix}.api_key"),
                 ("Validation", "single-line secret value; visible UI stays masked"),

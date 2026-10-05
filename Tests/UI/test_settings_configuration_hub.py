@@ -10281,6 +10281,10 @@ async def test_settings_provider_category_renders_local_api_key_setup_without_re
 
 @pytest.mark.asyncio
 async def test_settings_provider_category_saves_and_clears_local_api_key(monkeypatch):
+    from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+        API_KEY_CLEAR_KEY,
+    )
+
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -10312,10 +10316,11 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
         clear_button = screen.query_one("#settings-provider-api-key-clear", Button)
         assert clear_button.disabled is False
         # TASK-33007.2 (owner ruling 2026-10-04), rewritten on purpose: Clear
-        # is not a Tab stop; ctrl+l on the API key field presses it.
+        # is not a Tab stop; its key on the API key field presses it. Which
+        # key is test_settings_connect_rows.py's to pin.
         screen.query_one("#settings-provider-api-key", Input).focus()
         await pilot.pause()
-        await pilot.press("ctrl+l")
+        await pilot.press(API_KEY_CLEAR_KEY)
         await pilot.pause()
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
         assert draft.values["api_key"] == ""

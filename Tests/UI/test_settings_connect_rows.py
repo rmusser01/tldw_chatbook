@@ -170,6 +170,25 @@ async def test_api_key_row_says_where_the_key_comes_from(
             "blank uses the provider default"
         )
 
+        # Which key is sent when both exist: the row's help has no room for it
+        # beside the two keys, so the Inspector's guide for the field says.
+        api_key.focus()
+        await pilot.pause()
+        guide = " ".join(
+            _text(screen, f"#settings-provider-field-guide-{index}")
+            for index in range(4)
+        )
+        assert "Focused setting: API key" in guide
+        assert "A saved key is used before the env var." in guide
+        # ADR-031 rule 4 rests on this: while Clear is disabled its key does
+        # nothing, so the row names the key only for a saved one. Clear is
+        # live beside a saved key, so that case disables it by hand.
+        clear.disabled = True
+        await pilot.press(_CLEAR_KEY)
+        await pilot.pause()
+        assert not screen._settings_drafts
+        assert str(status.renderable) == word
+
 
 @pytest.mark.asyncio
 @private_profile_test
@@ -303,6 +322,27 @@ async def _tab_stops_to_model(host, pilot, screen) -> list[str | None]:
     return stops
 
 
+def _focus_chain_stops_to_model(screen) -> list[str | None]:
+    """Read the stops Tab makes from the Provider control to the Model field.
+
+    Tab walks ``Screen.focus_chain`` here (Settings takes Tab over only from
+    the nav bar or with nothing focused), and the six pinned cases below press
+    real keys along it. Measured over the 44 Cloud providers with and without
+    a saved key: this slice and ``_tab_stops_to_model`` agree in all 88.
+
+    Args:
+        screen: The Settings screen showing Providers & Models.
+
+    Returns:
+        The id of each stop after the Provider control; the last is the Model
+        field's. Empty if Model does not follow Provider.
+    """
+    chain = screen.focus_chain
+    start = chain.index(screen.query_one("#settings-provider-search", Input))
+    end = chain.index(screen.query_one("#model-search-picker-input", Input))
+    return [widget.id for widget in chain[start + 1 : end + 1]]
+
+
 @pytest.mark.asyncio
 @private_profile_test
 @pytest.mark.parametrize(
@@ -375,7 +415,8 @@ async def test_every_cloud_provider_reaches_model_within_five_tab_presses(
     request, keyed
 ):
     """Parent AC#2 over the whole catalog: every Cloud provider, with and
-    without a saved key, chosen in turn on one mounted card."""
+    without a saved key, chosen in turn on one mounted card. The stops are
+    read from the focus chain; 88 walks of real presses cost about 100 s."""
     providers = _cloud_provider_ids()
     assert len(providers) >= 40, providers
     app = _build_test_app()
@@ -401,19 +442,22 @@ async def test_every_cloud_provider_reaches_model_within_five_tab_presses(
                 if screen._provider_setting_values_mapping()["provider"] == provider:
                     break
             assert screen._provider_setting_values_mapping()["provider"] == provider
+            await pilot.pause()
             if not clear.disabled:
                 clearable.append(provider)
-            stops = await _tab_stops_to_model(host, pilot, screen)
-            if (
-                stops[-1] != "model-search-picker-input"
-                or len(stops) > 5
-                or clear.id in stops
-            ):
+            stops = _focus_chain_stops_to_model(screen)
+            if not 1 <= len(stops) <= 5 or clear.id in stops:
                 over_budget[provider] = stops
 
         assert not over_budget, over_budget
-        # The saved-key walk means something only while Clear is live in it.
-        assert bool(clearable) is keyed, clearable
+        # The saved-key walk means something only while Clear is still live
+        # after each provider switch, not just on the provider mounted first.
+        # Measured 41 of 44: Azure, Cloudflare and Databricks read as keyless
+        # until their endpoint is set.
+        if keyed:
+            assert len(clearable) > len(providers) // 2, clearable
+        else:
+            assert clearable == []
 
 
 @pytest.mark.asyncio
@@ -489,6 +533,8 @@ async def test_clear_is_not_a_tab_stop_stays_clickable_and_the_row_names_its_key
         row = screen.query_one("#settings-provider-api-key-row")
 
         assert clear.display and not clear.disabled and not clear.can_focus
+        # Test carries its key in its label; Clear's is in its tooltip.
+        assert f"({_CLEAR_KEY} in the API key field)" in str(clear.tooltip)
         assert _text(screen, "#settings-provider-api-key-help") == (
             f"masked · {_CLEAR_HINT}"
         )
