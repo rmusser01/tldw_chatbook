@@ -183,7 +183,7 @@ the owned loop. Two postdispatch injections now invoke the real
 `before_provider_dispatch` checkpoint callback; every original generation,
 unknown-delivery and exact-owner assertion remains.
 
-That corrected readiness revealed TASK-34402: permanent emergency detachment
+That corrected readiness revealed TASK-34412: permanent emergency detachment
 removed a closed task from the submit ledger but retained it in maintenance
 admission, whose coroutine finalizer can never run on that closed loop. The
 production fix is one exact-task removal inside the existing proven-closed
@@ -307,7 +307,7 @@ complete affected resource batch, native/Windows/participant/scale qualification
 and current-head Qodo review remain open; exhausted Qodo credits are not a
 review waiver.
 
-### Broader resource recheck and emergency fixture context — TASK-34402
+### Broader resource recheck and emergency fixture context — TASK-34412
 
 The original seven-file selection plus four empty-authority controls at
 `1b79a6ac0c8918c990c6e4e69904d94fdfba3bf7` finishes **349 passed, 2 warnings
@@ -525,3 +525,69 @@ no files to review because organization path filters exclude all 72 changed
 files. Neither skipped review is a clean external review. Review-configuration
 direction remains pending; no organization settings or PR-local override was
 changed.
+
+### Latest-dev integration and selected rename waits — 2026-10-05
+
+Rebased onto dev `54ac2758af81730b3e8b9effdabde2cbf898275c` without conflicts;
+all 42 replayed patches are identical by range-diff. Upstream changes hosted
+provider normalization and model discovery, not the finite ownership helper or
+its regression. All five affected provider contract files pass **263 tests in
+6.94s**, with no pytest warnings or live API calls.
+
+The initial native-retirement/rename smoke records **29 passed, 1 failed in
+126.99s**, no pytest warnings and zero database files at all 30 teardowns. The
+exception-tab refusal completes its actual write/error feedback, then passes an
+empty selected worker list to Textual's `wait_for_complete`. Installed Textual
+uses `(workers or self)`, so this admits unrelated cancelled background work.
+The strengthened real-worker control reproduces **1 failure in 10.10s**, with
+zero database files. No production rename failure is established by that wait.
+
+Three test waits now use stdlib `asyncio.gather` over only the rename workers:
+empty selections finish immediately, while selected-worker failures still
+propagate. Refusal controls require actual error feedback and worker settlement,
+cancel a distinct unrelated worker and verify its native `WorkerCancelled`
+behavior separately. Saved/live title and toast assertions, blank-input controls
+and deliberately cancelled rename controls remain unchanged. **30 affected
+tests pass in 129.73s**, no pytest warnings, strict exit 0 and zero database files
+at all 30 teardowns. Changed tests are Ruff/formatter clean; independent scoped
+review found no actionable findings. Existing ADR-085 applies; no new ADR or
+production policy change.
+
+After the import-order-only formatting correction, all four deterministic
+refusal cases also pass **4 tests in 20.37s**, no pytest warnings, strict exit 0
+and zero database files at each teardown. Receipt
+`/tmp/pr3024-rename-empty-wait-final.log`, SHA256
+`a4195643845a82a3d2cd3bcf8598569f1097a3c1daae55744190e0a31e1bda1c`.
+
+The initial latest-dev artifact pass attempt fails only the duplicate task-ID
+guard: dev's Vercel vision TASK-34402 was created before our Console emergency
+task. The younger Console record is now TASK-34412, with add-commit/creation
+provenance and all current inbound references updated. The older upstream file
+is byte-identical to dev; its scope and status are untouched. The failed artifact
+receipt `/tmp/pr3024-rebase-54ac-preflight.log` is retained, SHA256
+`4e06f11384d1bfe5d4287027c9375dadfbe61bef9a8afdb7bd931d16eef342f1`.
+
+After task-ID reconciliation, all eleven derived-artifact guards pass; whitespace
+is clean. Receipt `/tmp/pr3024-rebase-54ac-corrected-preflight.log`, SHA256
+`4652125092d82f67edcfc15a51476afdd002998ec9f2cebc1ed69627a585eeb9`.
+This clears scoped draft publication only, not the qualification HOLD.
+
+Separately, the first retaining startup-app case runs without the new regression:
+its body passes in **12.40s**, but strict exit 1 still observes Library, Workspace,
+Evals and Chacha database handles under an explicit fresh temporary root. This
+confirms retention independently of executing the new regression, not its full
+cause or a repair. Application-owner qualification remains HOLD.
+
+Receipts: `/tmp/pr3024-rebase-54ac-provider.log` SHA256
+`110e416606b62f92d959d1c64e3a855b63b697f57ba97d4cfedd4bb1948022b3`;
+initial smoke `/tmp/pr3024-rebase-54ac-retirement.log`
+`8be912b7f0acef6b005d6fd44f4f6ce6dae86f136693467a3ddb6ee899003752`;
+deterministic RED `/tmp/pr3024-rename-empty-wait-red.log`
+`405baa26f1a32a08c9129db9ea223b8971b0d8e2fb663f1da55d876d42ab4b56`;
+GREEN `/tmp/pr3024-rename-empty-wait-green.log`
+`7605cb8d0f5c59f8e38d43115edaba53de32cf48e4078541a308f39085f2a508`;
+isolated startup `/tmp/pr3024-rebase-54ac-startup.log`
+`2fe6d9b55f9b366c917c49644722cbeb83d34eba79fbf19488f41526453fcab9`.
+These local receipts are not portable qualification archives. Native, Windows,
+actual participant, measured latency, application-owner and external-review
+gates remain HOLD.

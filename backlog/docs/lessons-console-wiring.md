@@ -354,13 +354,27 @@ Test both event orders and the shared successful-send publication helper, not
 only cancellation inside the rename worker. Also recheck sanitized title input
 before writing: a raw nonblank control byte can become blank during sanitization
 and otherwise erase the saved title before live publication rejects it.
+
+## An empty selected-worker wait is not an empty Textual wait
+
+**TASK-33620.9, PR3024, 2026-10-05.** A real rename refusal finished and
+reported its error, but its test failed in `WorkerCancelled`: its selected
+rename-worker list was already empty, and installed Textual's
+`wait_for_complete` uses `(workers or self)`. It therefore waited for unrelated
+cancelled background work. A completed real refusal plus a separately cancelled
+worker reproduces the failure deterministically; stdlib `asyncio.gather` over
+only selected `worker.wait()` calls repairs all 30 affected controls without
+catching genuine selected-worker failures or changing production behavior.
+Guard empty selections or gather their exact waits; never silently broaden a
+settled operation to every app worker.
+
 ## Closed-loop submit retirement includes maintenance admission
 
 During PR3024 qualification, the closed-loop fixture initially assumed 20
 zero-delay ticks reached COMMITTING despite real off-thread hook admission.
 Waiting for the actual history event exposed a real ownership leak: permanent
 shutdown removed the Task from submit/preparation maps but maintenance admission
-still retained it until an impossible closed-loop finalizer. TASK-34402's two
+still retained it until an impossible closed-loop finalizer. TASK-34412's two
 RED controls prove that path; one exact-key removal under the existing closed
 loop guard preserves the live-loop peer. Check every admission ledger when
 retiring an unreachable owner, not only its ticket's original registry. The
@@ -385,7 +399,7 @@ close only the regression's own database handles.
 
 ## Abandoned test Tasks still own their ContextVar reset context
 
-**TASK-34402, PR3024, 2026-10-05.** The emergency fixture correctly dropped
+**TASK-34412, PR3024, 2026-10-05.** The emergency fixture correctly dropped
 its closed-loop Task but collected it outside the Task's copied Context. Its
 diagnostic/manual-authority finalizers raised two genuine token-reset errors.
 The warning-as-error control fails. Merely collecting inside the exact public

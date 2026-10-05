@@ -7,6 +7,7 @@ import threading
 
 import pytest
 from textual.widgets import Button, Input, Static
+from textual.worker import WorkerCancelled
 
 from Tests.UI.test_console_character_activation_presentation import (
     _until,
@@ -381,12 +382,12 @@ async def test_rail_rename_publishes_saved_title_to_open_tab_before_confirmation
         ).value = "Renamed Alpha"
         await pilot.press("enter")
         await pilot.pause()
-        await chat.workers.wait_for_complete(
-            [
-                worker
+        await asyncio.gather(
+            *(
+                worker.wait()
                 for worker in chat.workers
                 if worker.group == "console-conversation-rename"
-            ]
+            )
         )
         await pilot.pause()
 
@@ -490,12 +491,12 @@ async def test_filtered_workspace_tree_publishes_the_committed_title(
 
         owner.notify = observe
         chat._workspace._rename_console_conversation("exact", "Inspection Renamed")
-        await chat.workers.wait_for_complete(
-            [
-                worker
+        await asyncio.gather(
+            *(
+                worker.wait()
                 for worker in chat.workers
                 if worker.group == "console-conversation-rename"
-            ]
+            )
         )
         assert confirmed
         assert confirmed[0][0] == ("Inspection Renamed",)
@@ -555,13 +556,32 @@ async def test_failed_rename_preserves_both_saved_and_live_title(
             ).value = "Not saved"
             await pilot.press("enter")
             await pilot.pause()
-        await chat.workers.wait_for_complete(
-            [
-                worker
+        await _until(lambda: any("Could not rename" in note for note in notes))
+        await _until(
+            lambda: (
+                not any(
+                    worker.group == "console-conversation-rename"
+                    for worker in chat.workers
+                )
+            )
+        )
+
+        async def unrelated_work() -> None:
+            await asyncio.Event().wait()
+
+        unrelated = chat.run_worker(
+            unrelated_work, group="not-rename", exit_on_error=False
+        )
+        unrelated.cancel()
+        await asyncio.gather(
+            *(
+                worker.wait()
                 for worker in chat.workers
                 if worker.group == "console-conversation-rename"
-            ]
+            )
         )
+        with pytest.raises(WorkerCancelled):
+            await unrelated.wait()
         assert db.get_conversation_by_id("exact")["title"] == old_title
         assert target.title == old_title
         assert not any(note.startswith("Renamed to") for note in notes)
