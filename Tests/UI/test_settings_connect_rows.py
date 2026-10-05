@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 from textual import events
-from textual.widgets import Button, Input, OptionList, Static
+from textual.widgets import Button, Input, OptionList, Select, Static
 from textual.widgets.input import Selection
 
 from Tests.private_profile import private_profile_test
@@ -26,6 +26,9 @@ from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarne
 
 _SIZE = (211, 44)
 _FAKE_KEY = "sk-proj-abcdefghijklmnop1234"
+#: Owner ruling 2026-10-04: Clear is this key on the API key field.
+_CLEAR_KEY = "ctrl+l"
+_CLEAR_HINT = f"(t) test · ({_CLEAR_KEY}) clear"
 
 
 async def _open_providers(app, pilot):
@@ -150,6 +153,10 @@ async def test_api_key_row_says_where_the_key_comes_from(
         assert clear.parent is row
         assert clear.disabled is (setup != "config")
         assert _FAKE_KEY not in "\n".join(_region_rows(screen, row))
+        # ADR-031 rule 4: the row names Clear's key only while it clears.
+        assert (_CLEAR_HINT in _text(screen, "#settings-provider-api-key-help")) is (
+            setup == "config"
+        )
 
         env_row = screen.query_one("#settings-provider-env-var-row")
         endpoint_row = screen.query_one("#settings-provider-endpoint-row")
@@ -257,88 +264,247 @@ async def test_a_held_mouse_press_on_the_open_list_still_chooses(request, hold):
         assert not picker.display
 
 
-# Parent AC#2 held in 86 of the 88 resting cloud cases (44 providers, key
-# saved or not; measured in review fix round 2). The keyed cases below are 6:
-# Clear is a stop, plus one conditional Connect stop. Every lever breaks
-# another AC, so they wait on the owner. Anthropic joined them when the branch
-# was rebased onto TASK-34201's Sign in with row (a provider-only Select, like
-# QwenCloud's API mode). They are pinned at 6, not marked xfail: the
-# private-profile child reports an xfail to the parent as a skip, so a strict
-# xfail could never turn red when the budget is met.
-_KEYED_STOPS = (
+# Parent AC#2. Owner ruling 2026-10-04: Clear left the Tab chain (it is a key
+# on the API key field), so a saved key adds no stop. These three providers
+# each carry one conditional Connect stop and are pinned at their exact
+# chains: a sixth stop, or a lost one, turns them red.
+_CONNECT_STOPS = (
     "settings-provider-api-key",
-    "settings-provider-api-key-clear",
     "settings-provider-credential-env-var",
     "settings-provider-endpoint-value",
 )
+_ANTHROPIC_STOPS = ("settings-provider-auth-source", *_CONNECT_STOPS)
+_OPENAI_STOPS = (*_CONNECT_STOPS, "settings-openai-reconnect-review")
+_QWENCLOUD_STOPS = (*_CONNECT_STOPS, "settings-provider-api-mode")
+_SAVED_KEY = {"api_key": _FAKE_KEY}
+
+
+async def _tab_stops_to_model(host, pilot, screen) -> list[str | None]:
+    """Tab from the Provider control until the Model field holds focus.
+
+    Args:
+        host: The app under test.
+        pilot: Its pilot.
+        screen: The Settings screen showing Providers & Models.
+
+    Returns:
+        The id focused after each press; the last is the Model field's.
+    """
+    # TASK-33007.3: the Model stop is the Default model picker's field (the
+    # Input behind it is a hidden adapter).
+    model = screen.query_one("#model-search-picker-input", Input)
+    screen.query_one("#settings-provider-search", Input).focus()
+    await pilot.pause()
+    stops: list[str | None] = []
+    while host.focused is not model and len(stops) < 10:
+        await pilot.press("tab")
+        await pilot.pause()
+        stops.append(getattr(host.focused, "id", None))
+    return stops
 
 
 @pytest.mark.asyncio
 @private_profile_test
 @pytest.mark.parametrize(
-    ("provider", "settings", "owner_pending_stops"),
+    ("provider", "settings", "stops_before_model"),
     [
-        pytest.param("anthropic", {}, None, id="anthropic-no-key"),
-        pytest.param("openai", {}, None, id="openai-no-key"),
-        pytest.param("qwencloud", {}, None, id="qwencloud-no-key"),
+        pytest.param("anthropic", {}, _ANTHROPIC_STOPS, id="anthropic-no-key"),
+        pytest.param("openai", {}, _OPENAI_STOPS, id="openai-no-key"),
+        pytest.param("qwencloud", {}, _QWENCLOUD_STOPS, id="qwencloud-no-key"),
         pytest.param(
-            "anthropic",
-            {"api_key": _FAKE_KEY},
-            ("settings-provider-auth-source", *_KEYED_STOPS),
-            id="anthropic-key-saved-owner-pending",
+            "anthropic", _SAVED_KEY, _ANTHROPIC_STOPS, id="anthropic-key-saved"
         ),
+        pytest.param("openai", _SAVED_KEY, _OPENAI_STOPS, id="openai-key-saved"),
         pytest.param(
-            "openai",
-            {"api_key": _FAKE_KEY},
-            (*_KEYED_STOPS, "settings-openai-reconnect-review"),
-            id="openai-key-saved-owner-pending",
-        ),
-        pytest.param(
-            "qwencloud",
-            {"api_key": _FAKE_KEY},
-            (*_KEYED_STOPS, "settings-provider-api-mode"),
-            id="qwencloud-key-saved-owner-pending",
+            "qwencloud", _SAVED_KEY, _QWENCLOUD_STOPS, id="qwencloud-key-saved"
         ),
     ],
 )
 async def test_model_is_at_most_five_tab_presses_from_provider(
-    request, monkeypatch, provider, settings, owner_pending_stops
+    request, monkeypatch, provider, settings, stops_before_model
 ):
-    """Parent AC#2 (review I3): Test (t) is not a Tab stop -- 't' runs it --
-    so Model stays within five presses of the Provider control.
-
-    With a saved key, OpenAI's "Review restored OpenAI connection" (AC#9),
-    QwenCloud's API mode Select and Anthropic's Sign in with Select
-    (TASK-34201) make it 6; the owner decides those three."""
+    """Parent AC#2: neither Test (t) nor Clear is a Tab stop -- a key runs
+    each -- so Model stays within five presses of the Provider control, with
+    OpenAI's "Review restored OpenAI connection" (AC#9), QwenCloud's API mode
+    Select or Anthropic's Sign in with Select (TASK-34201) in the chain."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": provider, "model": "m-1"}
-    app.app_config["api_settings"] = {provider: settings}
+    app.app_config["api_settings"] = {provider: dict(settings)}
     host = _SettingsCssHarness(app, "settings")
 
     async with host.run_test(size=_SIZE) as pilot:
         screen = await _open_providers(host, pilot)
-        # TASK-33007.3, rewritten on purpose: the Model stop is the Default
-        # model picker's field (the Input behind it is a hidden adapter).
-        model = screen.query_one("#model-search-picker-input", Input)
         test_button = screen.query_one("#settings-test-provider", Button)
-        screen.query_one("#settings-provider-search", Input).focus()
+        clear = screen.query_one("#settings-provider-api-key-clear", Button)
+
+        stops = await _tab_stops_to_model(host, pilot, screen)
+
+        assert stops == [*stops_before_model, "model-search-picker-input"]
+        assert len(stops) <= 5
+        assert test_button.display and not test_button.disabled
+        assert clear.display and clear.disabled == (not settings)
+
+
+def _cloud_provider_ids() -> list[str]:
+    """List the providers the Settings picker groups under Cloud.
+
+    Returns:
+        The readiness key of every catalog provider that needs an API key and
+        is not a custom slot or legacy alias.
+    """
+    from tldw_chatbook.Chat.console_session_settings import settings_provider_catalog
+    from tldw_chatbook.UI.Screens.settings_provider_view_model import (
+        build_provider_picker_groups,
+    )
+
+    groups = build_provider_picker_groups(settings_provider_catalog(), "", "")
+    return [
+        str(option.provider_id)
+        for group in groups
+        if group.group_id == "cloud"
+        for option in group.options
+    ]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("keyed", [False, True], ids=["no-key", "key-saved"])
+async def test_every_cloud_provider_reaches_model_within_five_tab_presses(
+    request, keyed
+):
+    """Parent AC#2 over the whole catalog: every Cloud provider, with and
+    without a saved key, chosen in turn on one mounted card."""
+    providers = _cloud_provider_ids()
+    assert len(providers) >= 40, providers
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": providers[0], "model": "m-1"}
+    app.app_config["api_settings"] = {
+        provider: dict(_SAVED_KEY) if keyed else {} for provider in providers
+    }
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        # The hidden Select is the adapter the Provider control chooses through.
+        adapter = screen.query_one("#settings-provider-value", Select)
+        clear = screen.query_one("#settings-provider-api-key-clear", Button)
+        over_budget: dict[str, list[str | None]] = {}
+        clearable: list[str] = []
+        for provider in providers:
+            adapter.value = screen._provider_select_value_for_provider(provider)
+            # Select.Changed and the staging it drives can outlast one pause
+            # under xdist load.
+            for _ in range(100):
+                await pilot.pause(0.05)
+                if screen._provider_setting_values_mapping()["provider"] == provider:
+                    break
+            assert screen._provider_setting_values_mapping()["provider"] == provider
+            if not clear.disabled:
+                clearable.append(provider)
+            stops = await _tab_stops_to_model(host, pilot, screen)
+            if (
+                stops[-1] != "model-search-picker-input"
+                or len(stops) > 5
+                or clear.id in stops
+            ):
+                over_budget[provider] = stops
+
+        assert not over_budget, over_budget
+        # The saved-key walk means something only while Clear is live in it.
+        assert bool(clearable) is keyed, clearable
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_ctrl_l_on_the_api_key_field_clears_the_saved_key_until_revert_or_save(
+    request, monkeypatch
+):
+    """Owner ruling 2026-10-04: Clear is a key on the API key field. It
+    stages the removal as the button does: a confirmed r undoes it, s saves."""
+    from Tests.UI.test_settings_configuration_hub import (
+        _capture_provider_settings_mutations,
+    )
+    from Tests.UI.test_settings_provider_keyboard_journeys import _revert, _settle
+    from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
+
+    category = SettingsCategoryId.PROVIDERS_MODELS
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    mutations = _capture_provider_settings_mutations(monkeypatch)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": dict(_SAVED_KEY)}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        api_key.focus()
+        await pilot.pause()
+        await pilot.press(_CLEAR_KEY)
         await pilot.pause()
 
-        stops: list[str | None] = []
-        while host.focused is not model and len(stops) < 10:
-            await pilot.press("tab")
-            await pilot.pause()
-            stops.append(getattr(host.focused, "id", None))
-            assert host.focused is not test_button
+        assert host.focused is api_key
+        assert _text(screen, "#settings-provider-key-status") == "cleared *"
+        assert _text(screen, "#settings-provider-api-key-help") == (
+            "s removes the saved key"
+        )
+        assert screen._settings_drafts[category].values["api_key"] == ""
+        assert mutations == []
+        assert app.app_config["api_settings"]["openai"]["api_key"] == _FAKE_KEY
 
-        assert host.focused is model
-        if owner_pending_stops is None:
-            assert len(stops) <= 5, stops
-        else:
-            assert stops == [*owner_pending_stops, "model-search-picker-input"]
-        assert test_button.display and not test_button.disabled
+        await _revert(host, pilot, discard=True)
+        assert _text(screen, "#settings-provider-key-status") == "saved in config"
+        assert not screen._category_has_unsaved_changes(category)
+        assert mutations == []
+
+        screen.query_one("#settings-provider-api-key", Input).focus()
+        await pilot.pause()
+        await pilot.press(_CLEAR_KEY, "escape", "s")
+        await _settle(host, pilot)
+
+        assert len(mutations) == 1
+        assert "api_key" in mutations[0][1]["api_settings.openai"]
+        assert "api_key" not in app.app_config["api_settings"]["openai"]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_clear_is_not_a_tab_stop_stays_clickable_and_the_row_names_its_key(
+    request, monkeypatch
+):
+    """Owner ruling 2026-10-04: like Test (t), Clear is a visible action that
+    Tab skips; the API key row's help names both keys in full at 211x44."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "openai", "model": "gpt-4.1"}
+    app.app_config["api_settings"] = {"openai": dict(_SAVED_KEY)}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        api_key = screen.query_one("#settings-provider-api-key", Input)
+        clear = screen.query_one("#settings-provider-api-key-clear", Button)
+        row = screen.query_one("#settings-provider-api-key-row")
+
+        assert clear.display and not clear.disabled and not clear.can_focus
+        assert _text(screen, "#settings-provider-api-key-help") == (
+            f"masked · {_CLEAR_HINT}"
+        )
+        assert row.region.height == 1
+        assert _CLEAR_HINT in "\n".join(_region_rows(screen, row))
+
+        api_key.focus()
+        await pilot.pause()
+        await pilot.press("tab")
+        await pilot.pause()
+        assert host.focused is screen.query_one("#settings-provider-credential-env-var")
+
+        await pilot.click("#settings-provider-api-key-clear")
+        await pilot.pause()
+        assert _text(screen, "#settings-provider-key-status") == "cleared *"
+        assert host.focused is not clear
 
 
 @pytest.mark.asyncio

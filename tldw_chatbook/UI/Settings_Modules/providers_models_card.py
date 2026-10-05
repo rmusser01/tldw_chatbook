@@ -104,6 +104,13 @@ SELECTION_SOURCE_WORDS = {
 }
 #: The Key check row's action, labelled with the key that runs it (AC#6).
 KEY_CHECK_ACTION_LABEL = "Test (t)"
+#: Owner ruling 2026-10-04: Clear is a key on the API key field, not a Tab
+#: stop. Not ctrl+d: Textual's Input binds it (delete right) and ADR-031
+#: rule 2 reserves it. ctrl+l is unbound in Settings, the app and Input, and
+#: the Speech playground already clears with it.
+API_KEY_CLEAR_KEY = "ctrl+l"
+#: The API key row's help names both keys while a saved key can be cleared.
+API_KEY_KEYS_HINT = f"(t) test · ({API_KEY_CLEAR_KEY}) clear"
 #: ADR-012:29: the env var is the safer path, and the field holds a name.
 ENV_VAR_HELP_COPY = "safer: keeps keys out of config.toml"
 #: TASK-33007.3: the Default model row's help; Custom ID shows while the
@@ -230,6 +237,22 @@ class ProviderFilterInput(PickerSearchInput):
         except (QueryError, NoWidget):  # e.g. the card unmounted meanwhile
             return False
         return picker in under.ancestors_with_self
+
+
+class ApiKeyInput(Input):
+    """The API key field, whose Clear key presses the row's Clear button.
+
+    A saved key is never loaded into the field, and Clear is not a Tab stop
+    (parent AC#2), so this key is the keyboard's way to clear one.
+    """
+
+    BINDINGS = [
+        Binding(API_KEY_CLEAR_KEY, "clear_saved_key", "Clear saved key", show=False)
+    ]
+
+    def action_clear_saved_key(self) -> None:
+        """Press Clear; a disabled Clear ignores it, as it ignores a click."""
+        self.screen.query_one("#settings-provider-api-key-clear", Button).press()
 
 
 class DefaultModelPicker(ModelSearchPicker):
@@ -441,7 +464,7 @@ def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
             return "edited *", "masked · s saves it to config"
         return "cleared *", "s removes the saved key"
     if screen._provider_saved_api_key_present(provider):
-        return "saved in config", "masked · used before the env var"
+        return "saved in config", f"masked · {API_KEY_KEYS_HINT}"
     if (readiness.api_key_source or "").startswith("env:"):
         return "from env var", f"{readiness.env_var} in your shell"
     if not readiness.requires_api_key:
@@ -1216,7 +1239,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         key_word, key_help = api_key_row_copy(screen, provider)
         with Horizontal(id="settings-provider-api-key-row", classes="settings-input-row"):
             yield Static("API key", classes="settings-input-label")
-            yield Input(
+            yield ApiKeyInput(
                 value=str(values.get("api_key") or ""),
                 id="settings-provider-api-key",
                 classes="settings-compact-input",
@@ -1224,7 +1247,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 password=True,
                 disabled=registry_locked or subscription_selected,
             )
-            yield Button(
+            clear_button = Button(
                 "Clear",
                 id="settings-provider-api-key-clear",
                 compact=True,
@@ -1234,6 +1257,10 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 ),
                 tooltip="Clear the API key saved in local config for this provider.",
             )
+            # Parent AC#2: like Test (t), a key runs it (ApiKeyInput), so it
+            # is not a Tab stop between API key and Env var; a click still does.
+            clear_button.can_focus = False
+            yield clear_button
             yield Static(
                 key_word,
                 id="settings-provider-key-status",
