@@ -436,3 +436,62 @@ cleanup; paths alone are not portable evidence. TASK-31966 remains In Progress;
 native macOS/Windows, unfamiliar-participant, remaining stall attribution and
 terminal application-owner qualification remain unwaived. TASK-31246 remains
 dependent on TASK-31245 qualification; no final combined PR was created.
+
+### Untimed heap and stable-restyle attribution — `ed124369f1`
+
+This documentation-only successor has byte-identical production, test, script
+and package inputs to `0ab325187e`. A fresh small native-source corpus was
+prepared at the exact clean head; it is **prepared, not native-qualified**.
+Digest: `28d2600c9d91877d5057ff6028f2d0f038d394063481ff0eee0efe7dc5f7e39f`.
+Both following observers use real offline Console owners and retain their
+throwaway scripts, source digests and limitations. Neither is a latency pass.
+
+The untimed heap census completed two saved-chat resumes, three cold Character
+activations and one warm reuse through actual Enter dispatch and exact-ready
+proof, without an app exception or source mutation. Before saved-chat resume,
+it found 131,104 unfrozen tracked objects, including 3,439 Strips and 24,173 FIFO
+caches (23,359 empty). After two resumes: 213,012 objects, 6,617 Strips and
+46,473 FIFO caches (45,201 empty). Partial traversal from widget render/style
+caches reached 6,389 of those 6,617 unfrozen Strips, principally in mounted
+Console widgets. This supports render-cache attribution, not a leak diagnosis.
+
+After four Character activations, the unfrozen count was 75,500 and the frozen
+count 655,991, versus 478,105 frozen at the preceding snapshot. Existing boot
+pre-import freezes can run after UI ready; these censuses are not equivalent
+steady-state heap samples and do not prove reclaimed memory. The census itself
+allocates and holds tracked objects, may include unreachable cyclic garbage,
+and deliberately runs outside timed windows. Its partial cache traversal does
+not classify all compositor/global roots or already collected objects. After
+unmount the app remains retained: no terminal-owner retirement claim follows.
+Receipt: `heap-owners-ed124/heap-owner-diagnostic.json` in the retained container;
+SHA256 `8d16fff13755c257899fa05e427b67132e28303afdf05e7821ebfe07bcdee1ae`.
+
+A separate bounded observer around real `DOMNode.update_node_styles` found
+**40 Send-reason, ten voice-status and ten attachment-indicator restyles during
+five unchanged control refreshes**. Send-reason restyles took 17.116916 ms summed
+(inclusive, observer-perturbed). The recovery bar no longer restyled. No records
+dropped, no app exception, and the source corpus stayed unchanged. Complete
+refresh durations were 29.549916, 31.471792, 25.107958, 17.340750 and 17.875959 ms;
+these small diagnostic windows do not substitute for the failing scale matrix.
+The first observer attempt used the wrong framework class for the method and
+failed before app construction; it is a diagnostic setup failure, not a
+production regression. Corrected receipt:
+`control-restyles-ed124-attempt2/control-steps-diagnostic.json`, SHA256
+`f18fc73189df2d756f699eaeb5098c86acf9aa8153c1badd7f3334a6ce264955`;
+script `diagnose_control_restyles_ed124.py`, SHA256
+`5c59222c9aefa33479b82cdc3195db2ca1a9c8ff645205526d14f1d24dfe78db`.
+
+All four production callers of `_sync_send_disabled_reason` reach its same
+remove/re-add width/height logic: action refresh, resize and two voice repaint
+paths. The proposed next bounded correction is atomic replacement of that
+owner's actual size classes, preserving unrelated classes, inline reset, live
+width budget, advisory copy/link safety and voice-preparation behavior. Mounted
+RED/GREEN should cover unchanged visible/hidden/empty states, transitions,
+resize, conflicting inline/classes and existing voice/disabled-state contracts.
+**Await design approval before implementation**, per the brainstorming skill.
+No global GC/cache change, framework patch or new dependency is proposed;
+existing ADR-120/150/161/198 apply. The voice and attachment observations remain
+separate candidates, not silently bundled fixes. All qualification gaps remain
+open. Logs: `/tmp/task31966-heap-source.log`, `/tmp/task31966-heap-owners.log`,
+`/tmp/task31966-control-restyles.log` and
+`/tmp/task31966-control-restyles-attempt2.log`.
