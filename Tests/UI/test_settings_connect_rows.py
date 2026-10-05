@@ -2,6 +2,9 @@
 
 Mounted with the real application stylesheet at 211x44, the size the spec's
 mockup (c) is drawn at, and driven by real keypresses.
+
+TASK-33007.9 adds what the Provider control shows after a choice or a
+Revert, and that its open list is drawn whole inside the card.
 """
 
 from __future__ import annotations
@@ -365,3 +368,175 @@ async def test_provider_help_names_a_provider_once_its_save_configures_it(
         assert "configured: llama.cpp" in _text(
             screen, "#settings-provider-search-status"
         )
+
+
+# --- TASK-33007.9: the control after a choice or Revert; the list's box ---
+
+
+def _anthropic_host():
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "anthropic", "model": "claude-x"}
+    app.app_config["api_settings"] = {"anthropic": {"api_key": _FAKE_KEY}}
+    return _SettingsCssHarness(app, "settings")
+
+
+async def _until(pilot, condition) -> None:
+    """Pause until ``condition()`` holds; a chain of posted messages can
+    outlast one pause under xdist load."""
+    for _ in range(100):
+        if condition():
+            return
+        await pilot.pause(0.05)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_provider_control_names_the_choice_never_the_typed_filter(request):
+    """TASK-33007.9 AC#1: whatever was typed to find it, the control then
+    shows the chosen provider's display name -- for a legacy alias, for the
+    provider it already holds (nothing is staged, so only closing the list
+    can put the name back) and for "Enter provider ID"."""
+    host = _anthropic_host()
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        control = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        legacy_name = "llama.cpp (legacy alias)"
+
+        def held() -> str:
+            return screen._provider_setting_values_mapping()["provider"]
+
+        async def type_filter(typed: str) -> None:
+            control.focus()
+            await pilot.pause()
+            await pilot.press(*typed)
+            await _until(pilot, lambda: picker.display and control.value == typed)
+            assert picker.display and control.value == typed
+
+        await type_filter("legacy")
+        await pilot.press("enter")
+        await _until(pilot, lambda: held() == "local_llamacpp")
+        assert held() == "local_llamacpp"
+        assert control.value == legacy_name
+        assert not picker.display
+
+        await type_filter("llama")
+        highlighted = picker.get_option_at_index(picker.highlighted)
+        assert getattr(highlighted, "provider_id", None) == "local_llamacpp"
+        await pilot.press("enter")
+        await _until(pilot, lambda: not picker.display)
+        assert held() == "local_llamacpp"
+        assert control.value == legacy_name
+        assert not picker.display
+
+        await type_filter("zzzz")  # only "Enter provider ID" is left to choose
+        await pilot.press("enter")
+        manual = screen.query_one("#settings-provider-manual-value", Input)
+        await _until(pilot, lambda: host.focused is manual)
+        assert host.focused is manual
+        assert control.value == legacy_name
+        assert not picker.display
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("revert_with", ["r", "button"])
+async def test_discard_changes_shows_the_saved_provider_and_no_filtered_list(
+    request, revert_with
+):
+    """TASK-33007.9 AC#2: r, Discard changes puts the saved provider's name
+    back and leaves no filtered list open -- also when the Inspector's
+    Revert (r) is clicked while the list is still open on a filter."""
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    host = _anthropic_host()
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        control = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        whole_list = picker.option_count
+
+        def held() -> str:
+            return screen._provider_setting_values_mapping()["provider"]
+
+        control.focus()
+        await pilot.pause()
+        await pilot.press(*"llamaf", "enter")
+        await _until(pilot, lambda: held() == "local_llamafile")
+        assert control.value == "Llamafile"
+        # A second, unfinished filter over the staged choice.
+        await pilot.press(*"oll")
+        await _until(pilot, lambda: picker.display and control.value == "oll")
+        assert picker.display and picker.option_count < whole_list
+
+        if revert_with == "r":
+            await pilot.press("escape", "r")
+        else:
+            await pilot.click("#settings-revert-category")
+        await _until(pilot, lambda: isinstance(host.screen, ConfirmationDialog))
+        assert isinstance(host.screen, ConfirmationDialog)
+        if revert_with == "r":
+            await pilot.press("tab", "enter")  # Keep editing holds focus first
+        else:
+            await pilot.click("#confirm-button")
+        await _until(pilot, lambda: host.screen is screen and held() == "anthropic")
+
+        assert held() == "anthropic"
+        assert control.value == "Anthropic"
+        assert not picker.display
+        assert _text(screen, "#settings-provider-source") == "new-chat default"
+        assert "configured: Anthropic ·" in _text(
+            screen, "#settings-provider-search-status"
+        )
+
+        # Opened again, the list is whole and rests on the saved provider.
+        control.focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await _until(pilot, lambda: picker.display)
+        assert picker.display and picker.option_count == whole_list
+        highlighted = picker.get_option_at_index(picker.highlighted)
+        assert getattr(highlighted, "provider_id", None) == "anthropic"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+async def test_open_provider_list_is_drawn_whole_inside_the_card(request, size):
+    """TASK-33007.9 AC#3: the open list's whole box, its scrollbar at the
+    right edge included, lies inside the card and nothing clips it. The list
+    draws no border of its own (spec: one frame level), so the box is all
+    there is to clip."""
+    host = _anthropic_host()
+
+    async with host.run_test(size=size) as pilot:
+        screen = await _open_providers(host, pilot)
+        control = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+        card = screen.query_one("#settings-providers-models-card")
+        control.focus()
+        await pilot.pause()
+
+        def drawn_whole(*parts) -> None:
+            for part in parts:
+                box = part.region
+                assert box.area > 0, part
+                assert card.content_region.contains_region(box), (part, box)
+                assert screen.find_widget(part).visible_region == box, part
+
+        await pilot.press("down")  # every provider: the list scrolls
+        await _until(pilot, lambda: picker.display and picker.max_scroll_y > 0)
+        await pilot.pause()
+        assert picker.display and picker.max_scroll_y > 0
+        drawn_whole(picker, picker.vertical_scrollbar)
+
+        await pilot.press(*"anthro")  # a short list: no scrollbar
+        await _until(
+            pilot, lambda: control.value == "anthro" and picker.max_scroll_y == 0
+        )
+        await pilot.pause()
+        assert picker.display and control.value == "anthro"
+        assert picker.max_scroll_y == 0
+        drawn_whole(picker)
