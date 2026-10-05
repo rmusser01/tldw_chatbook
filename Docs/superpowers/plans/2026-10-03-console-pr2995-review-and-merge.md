@@ -822,3 +822,49 @@ Reason: the actual existing screen-tree selector fails before hydration in raw_s
 Task23 completion:9c8a42ff64/f42fcebe5a independently Spec Compliant/Quality Approved with no Critical/Important findings. Ten requested cases qualified: nine on final source bytes and first through exact nonanonymous helper/test/import-format AST carry. Fixed store22334/22344/slack50, original197final/67checkpointpins/3sources/allpreexistingAST/30733unownedoriginalBASE paths/12582QA across both prefixes verified. Evidence snippet/runner failures99/100 retained with exact original runner restored; inherited captured logs disclosed. All8source-phase boxes checked; fresh bounded publication and current-head Qodo/PR/UI1/UI2/UI3/Derived/actualPerf/freshdev/normalmerge remain open, AC8/status unchanged.
 
 Final safe publication: Docs/superpowers/qa/2026-10-05-console-pr2995-final-corrections contains686explicit ZIP entries,21080773archivebytes, zero known/recognizable credential findings and12582priorQA blob/mode/path preservation across both prefixes. All100orderedrulings and completeledger remain visible and archived; raw115186386byte recoverybundle excluded/pinned/private. Projected actual2840changed paths remain below3000. All scoped approvals carried; publication followed by fresh current-head Qodo/all3UI/PR/Derived/actualPerf/freshdev/normalmerge is required. AC8 remainsopen.
+
+
+### Task 24: Complete start method and opening prompt documentation
+
+ADR required: no
+ADR path: backlog/decisions/219-console-agent-created-chat-starts.md (existing contract; prose only).
+Reason: document the existing request/outcome and both tool modes without changing behavior.
+
+Fresh sole source/index/HEAD writer after Task23 approval; no children. Exactly two owners: tldw_chatbook/Chat/console_chat_start.py and tldw_chatbook/Agents/tool_catalog.py. Read task-24-initial-feedback.json for current9d8 Qodo review5411125310, inline4181532123 and summary finding8c5ee8dc-6465-4b8a-ac0e-9e7372968c5c. Task25 legacy-storage repair is separate and remains open. Global no-install/no-suite/no-cohort-replay/fixed-cap/preserve-QA/shared-dirty-checkout rules apply. Use shared .venv/bin/python3.12 for AST/Ruff; all mutations in this managed worktree need require_escalated. No Git cleanup/gc/prune or remote writes.
+
+- [ ] Replace only ConsoleChatStartCoordinator.start docstring with the exact code below. Keep the entire executable AST and every other owner node unchanged. Confirm accuracy against the method and its existing refusal/outcome/cancellation helpers; if the supplied text contradicts code, stop with NEEDS_CONTEXT rather than widening source scope.
+
+```python
+        """Return at refusal or both acceptance fences while owning the target task.
+
+        Args:
+            request: Frozen source and target identities and incarnations, target
+                draft and context revisions, literal opening prompt, configuration,
+                and destination workspace for this one start attempt.
+
+        Returns:
+            An outcome with launch_status and an optional reason: not_started for
+            refusal, started after native acceptance and the automatic-work receipt
+            with completion still pending, or review_required when acceptance,
+            receipt, settlement, or outcome publication cannot be confirmed. The
+            coordinator retains ownership of target work through cleanup.
+
+        Raises:
+            asyncio.CancelledError: If the caller is cancelled. A still-prepared
+                target is asked to withdraw; owned work retains its drain custody.
+        """
+```
+
+- [ ] Replace only NEW_CHAT_TOOL_SCHEMA opening_prompt property description with the exact adjacent string literals below. Retain type/default/enums/required/top-level description/every other schema and executable statement unchanged. No new aliases/constants/framework or behavior test mirroring this copy.
+
+```python
+                "description": (
+                    "First message for the new chat. With mode=draft (default), "
+                    "it is saved in the input box for review. With mode=start, "
+                    "it must be nonblank and is submitted as one bounded background "
+                    "agent turn after confirmation and runtime admission. Text is "
+                    "literal; slash commands and @ references are not expanded."
+                ),
+```
+
+- [ ] Do not replay passing tests for these prose-only changes. Capture actual separate source-bound fatal Ruff (E9,F63,F7,F82), added-hunk formatting and whitespace receipts with argv/exits/stdout/stderr/source hashes, and whole-owner Python3.12 AST reversal: restore only original start docstring and opening_prompt description constant to reproduce both complete BASE owner ASTs. Formatter inherited whole-file debt must be distinguished from added-hunk results; preserve an actual unexpected failure before asking for scope. Pin every newly created task artifact and two source owners in task-24-safe-evidence/manifest.json; verify all12582 historical QA mode/blob/path entries and all unowned BASE source paths unchanged, without rewriting historical receipts. Self-review, commit only these two owners, return clean closed-process source/index/HEAD custody with task-24-report.md. One independent scoped review spans recorded dispatchBASE through finalsource, before source Task25/publication/new Qodo/normal merge gates.
