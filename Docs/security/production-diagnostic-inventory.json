@@ -443,7 +443,7 @@
     },
     {
       "call_count": 1,
-      "diagnostic_digest": "d2bb7fbfd9411d90b113",
+      "diagnostic_digest": "524831d84ebe6f171a4b",
       "owner": "TASK-492",
       "path": "tldw_chatbook/Chat/console_durable_writes.py",
       "reason": "high-risk Chat/provider/summarization/tool/MCP diagnostic owner"

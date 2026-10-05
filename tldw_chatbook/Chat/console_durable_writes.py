@@ -124,8 +124,9 @@ async def end_store_after_writes(
         # Their fences are still held, so the voice-fenced state swap would
         # refuse; every other step does not depend on it.
         logger.warning(
-            "Console runtime: {} message delete or Undo still saving after "
-            "{:.1f} s at dispose; ending the store without replacing its state.",
+            "Console runtime: {} message write(s) from Delete, Undo or Done "
+            "still saving after {:.1f} s at dispose; ending the store without "
+            "replacing its state.",
             running,
             timeout,
         )
