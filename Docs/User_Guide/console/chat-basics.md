@@ -392,8 +392,8 @@ statistics tools.
   clears; if the turn is refused before that, the **Sending…** row disappears
   and the draft is kept, or offered back on the shelf as `Not sent: <reason>`
   with **Restore**.
-  Slash commands, `! ` commands and Enter during a run (which queues) skip this
-  step.
+  Slash commands, typed `! ` commands, Enter during a run (which queues) and
+  a send behind a **Blocked** turn (which is refused) skip this step.
 - The reply row then appears with a dim "Generating…" placeholder and streams
   in with a "[streaming]" suffix until it completes.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's
