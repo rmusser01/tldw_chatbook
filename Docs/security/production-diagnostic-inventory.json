@@ -3704,17 +3704,10 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 4,
-      "diagnostic_digest": "b24e8879430da4d76743",
+      "call_count": 6,
+      "diagnostic_digest": "6a2fba384dfad6e3c7a1",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Wizards/first_run_voice_omnivoice.py",
-      "reason": "remaining Chatbook production diagnostic owner"
-    },
-    {
-      "call_count": 2,
-      "diagnostic_digest": "84503b17ab814c12b440",
-      "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/Wizards/first_run_voice_step.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
