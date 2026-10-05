@@ -1467,3 +1467,75 @@ render the tooltip text through `Static.update` the way the tooltip timer does),
 assert the literal type (`Text`/`Content`) when the surface cannot be painted in the
 test, and prove the test red on the unfixed code. Tests:
 `Tests/UI/test_roleplay_hostile_names.py`, `Tests/UI/test_roleplay_hostile_text_surfaces.py`.
+
+## A coroutine handed to `app.call_later` is awaited on the app pump: Enter froze every key, a click did not (TASK-33622.16, 2026-10-03)
+
+**Incident.** Found live during TASK-33622.15: after **Enter** sent
+`/generate-video` to MiniMax, the "Generate video?" confirm ignored Escape, F1
+and Ctrl+Q, and so did the storage choice after it, until the paid generation
+resolved; a click on **Send** did not freeze. An await-chain probe of each
+pump's task in a mounted test on dev (`01a2020981`) showed the APP pump parked in
+`MessagePump.on_callback` → `_send_console_message_from_visible_action` →
+`_dispatch_console_command` → `_console_command_generate_video` →
+`Worker.wait()` (the confirm's `push_screen_wait` worker). On the Send route
+the app pump was idle and the Console's own pump was parked in
+`on_button_pressed`, so the composer's Stop button was dead for the whole paid
+run. TASK-33621.28 had fixed this exact freeze for the send's hook review
+only. The same send also awaited every slash command inline, so the freeze came
+back through `/generate-video`.
+
+**Why (Textual 8.2.8).** Enter schedules the send with
+`app.call_later(coroutine_function)`, and `MessagePump.on_callback` AWAITS a
+coroutine callback on the pump it was posted to. That is the app pump, which
+dispatches every key. A `Button.Pressed` handler is awaited on the screen's
+pump instead. So "click works, Enter freezes" means the send awaited
+something user-paced.
+
+**What to do.** A send path reached from a key must not await anything with a
+user-paced lifetime (a modal, a remote job). Hand it to a worker, as
+`UI/Console_Modules/command_handoff.py` does for every slash command. When you
+fix "pump parked by awaiting X", list everything else that path awaits. Second
+trap, found live on the fix build: Ctrl+Q under the confirm quit the app, and
+shutdown cancelled the confirm's waiting worker. `Worker.wait()` then raised
+`WorkerCancelled` through the command's own worker, and that showed up as an
+`unhandled_exception` on the way out. A worker that waits on a modal must
+treat `WorkerCancelled` as "over", not "broken". Test it with keys delivered
+the way the driver does (`_key`), and use a bounded `_pump_runs` poll on BOTH
+pumps (`Tests/UI/test_console_video_send_freeze.py`). Do not use Pilot here:
+its idle wait never returns while a pump is parked.
+
+**Third trap: unfreezing a flow makes its "nobody can act now" code
+reachable (checkpoint review of the same fix).** Once the hand-off kept the
+Console live during a generation, the user could type, switch chats or press
+Stop -- and `/generate-video`'s failure path, written when none of that was
+possible, ran `composer.clear_draft()` then pasted the saved command back. A
+review repro on the fix build (Enter the command → Generate → type "what about
+a sailboat?" → Stop) wiped the typed text with no undo, and after a chat switch
+it wiped the OTHER chat's draft, because every Console chat shares one
+composer. The pasted-back command was also unusable: a draft holding a paste is
+never parsed as a command, so Enter sent it to the model as chat. Five mounted
+tests went red on exactly that. `/generate-image` had the same code. The fix
+(`UI/Console_Modules/command_draft.py`): take only the revision the send
+captured (`commit_captured_draft`), and put it back only into the same draft
+scope while that is still empty. A chat switch, a load or another send always
+advances the composer's draft generation; typing does not. Restore with
+`restore_stashed_draft`, which brings back the original segments, so the draft
+is not marked as a paste. **When a fix lets the user act during something that
+used to block them, grep that flow for every save/clear/restore of shared UI
+state and ask what happens if they typed in between.**
+
+**Fourth trap: the same holds for "the active chat", in every handler, not
+just the one you fixed (PR #3006 review).** Handing every slash command to a
+worker made all of them run with the Console live, and most handlers resolve
+"the active session" or clear "the composer" after an await -- written when
+the send parked the pump, so nothing could change in between. A mounted repro:
+`/system Terse`, prompt search parked, switch to a new chat, release -- the
+prompt applied to the NEW chat and wiped its typed draft. An audit of all 17
+handlers found four more that answered after an await (`/doctor`, `/skills`,
+`/fewer-permission-prompts`, `/stream-video`), and live, `/stream-video`
+against a loopback server holding the request posted its error into the chat
+switched to. The fix binds the command to its origin in the worker
+(`command_handoff.COMMAND_ORIGIN`): refuse at start and after an await when
+that chat no longer shows, and post awaited answers with an explicit
+`session_id`. **Making a call asynchronous changes the contract of everything
+it calls: list each handler's awaits and what it re-reads after them.**

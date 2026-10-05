@@ -2710,6 +2710,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 3,
+      "diagnostic_digest": "9cf00a2c9afc387b0ba0",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "af49e52f732a07b8f946",
       "owner": "TASK-494",

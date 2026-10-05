@@ -29,6 +29,16 @@ writing them into your chat database.
 - **Paid backends ask first.** When `[video_generation]
   confirm_cost_estimate` is on (default), cloud backends show the
   billing shape (per generated second) and wait for confirmation.
+  **Escape** (or **Cancel**) starts nothing and keeps your draft.
+- The Console stays responsive while a video generates, whether you sent
+  with **Enter** or the **Send** button: **Stop**, **F1** help, **Ctrl+Q**
+  and other commands (`/stop`, `/help`, …) keep working. Sending the same
+  unchanged draft again while its first run is still going does nothing.
+- If a generation fails or you stop it, the `/generate-video` command
+  comes back into the composer so **Enter** runs it again. If you have
+  typed something new or switched chats in the meantime, your new text is
+  left alone and the failure message shows the command to send again.
+  `/generate-image` works the same way.
 
 ### Backends
 

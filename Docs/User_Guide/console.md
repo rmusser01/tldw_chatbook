@@ -1023,6 +1023,17 @@ gains "Console: …" entries for these same actions. Slash commands
 (`/prompt`, `/system`, `/skills`, `/prefill`, `/generate-image`, `/steer`,
 `/redirect`, `/stop`, `/emergency-stop`, `/rewind`) are covered on the child pages, chiefly [Context & RAG](console/context-and-rag.md) and [Branching & rewind](console/branching-and-rewind.md).
 
+**A slash command stays with its chat.** Commands run in the background, so
+the Console keeps answering while one works — looking up a saved prompt,
+running `/doctor`'s checks, checking a `/stream-video` URL. A command belongs
+to the chat you sent it from. If you switch chats before it finishes, a
+command that would change a chat (`/system <name>`, `/prompt <name>`) does
+nothing and says so in a warning; send it again from the chat you meant. A
+command that only reports (`/doctor`, `/skills`,
+`/fewer-permission-prompts`, a failed `/stream-video`) posts its answer in
+the chat you sent it from. Anything you type while a command runs stays in
+the composer.
+
 **Steering a running turn.** `/steer <guidance>` delivers text into the
 *currently running* agent turn — it is read before the next model call, after
 the in-flight tool batch finishes, so it never interrupts a tool mid-write.

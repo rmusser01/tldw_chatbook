@@ -121,8 +121,13 @@ class ConsoleSkillController:
         if not args:
             context = await self._fetch_console_skill_context()
             candidates = self._console_skill_trusted_candidates_from_context(context)
-            await self._append_native_console_system_message(
-                format_skills_list(candidates)
+            # Lazy: keeps command_handoff off the boot path (ADR-097). After
+            # the fetch, answer in the chat /skills came from (TASK-33622.16).
+            from .command_handoff import append_command_output
+
+            await append_command_output(
+                self._append_native_console_system_message,
+                format_skills_list(candidates),
             )
             return
         name, _rest = self._split_console_skill_name_args(args)

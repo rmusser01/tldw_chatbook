@@ -19205,10 +19205,10 @@ class ChatScreen(BaseAppScreen):
                     self._clear_console_composer_draft()
             return False
 
-        if parse.kind == KIND_COMMAND:
-            # Captured drafts remain in the composer until runtime custody.
+        if parse.kind == KIND_COMMAND:  # Never on this pump (TASK-33622.16).
             self._console_unknown_send_armed = None
-            await self._dispatch_console_command(parse)
+            from ..Console_Modules.command_handoff import run_console_command
+            run_console_command(self, parse, session_id, stash or draft)
             return False
 
         if parse.kind == KIND_UNKNOWN:
@@ -19473,6 +19473,7 @@ class ChatScreen(BaseAppScreen):
         import asyncio as _asyncio
 
         from ...Utils.doctor import run_doctor, format_doctor_report
+        from ..Console_Modules.command_handoff import append_command_output
 
         include_network = "network" in (parse.args or "").lower()
         try:
@@ -19482,7 +19483,7 @@ class ChatScreen(BaseAppScreen):
             report = format_doctor_report(checks)
         except Exception as exc:  # noqa: BLE001 - a command must not crash the screen
             report = f"Doctor could not complete: {exc}"
-        await self._append_native_console_system_message(report)
+        await append_command_output(self._append_native_console_system_message, report)
 
     async def _console_command_run_action(self, parse: CommandParse) -> None:
         """TASK-25909: dispatch a typed action command to the existing screen
@@ -20242,13 +20243,12 @@ class ChatScreen(BaseAppScreen):
                 "MCP prompt recommendations command failed (exception_type={})",
                 type(exc).__name__,
             )
-            await self._append_native_console_system_message(
-                "MCP prompt recommendations unavailable - local analysis failed."
-            )
-            return
-        await self._append_native_console_system_message(
-            format_permission_prompt_report(report)
-        )
+            text = "MCP prompt recommendations unavailable - local analysis failed."
+        else:
+            text = format_permission_prompt_report(report)
+        # Into the chat it was sent from, not the one showing now (TASK-33622.16).
+        from ..Console_Modules.command_handoff import append_command_output
+        await append_command_output(self._append_native_console_system_message, text)
 
     @on(Input.Changed, "#console-command-input")
     def _on_console_composer_draft_changed(self, event: Input.Changed) -> None:
@@ -22836,10 +22836,10 @@ class ChatScreen(BaseAppScreen):
                 )
                 self._console_pending_send = None
                 return
-            # Enter and Send converge on the same visible-action handler.
-            # Scheduling it on the app pump preserves the keypress snapshot;
-            # app-owned runtime custody owns accepted work, except that a Send
-            # held for hook review goes on in a ChatScreen worker (TASK-33621.28).
+            # Enter and Send converge on the same visible-action handler, run
+            # here on the APP pump to keep the keypress snapshot; nothing may
+            # park it: runtime custody owns accepted work, and a hook review
+            # or slash command goes on in a worker (TASK-33621.28, -33622.16).
             self.app.call_later(
                 partial(
                     self._send_console_message_from_visible_action,
