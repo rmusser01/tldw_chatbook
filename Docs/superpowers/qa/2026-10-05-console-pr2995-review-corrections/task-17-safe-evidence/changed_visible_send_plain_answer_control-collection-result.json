@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:randomly",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pr2995-task17-collection-j_0htavz/pytest",
+    "Tests/UI/test_console_ask_user_typed_answers.py::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer",
+    "--collect-only"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 2.993719125,
+  "stdout": "changed_visible_send_plain_answer_control-collection.stdout",
+  "stderr": "changed_visible_send_plain_answer_control-collection.stderr",
+  "log": "changed_visible_send_plain_answer_control-collection.log",
+  "complete_outputs": true,
+  "pid": 46150,
+  "closed_process": true,
+  "head_after": "54a18180211ed2ecbf450db78202d28d97a7b995",
+  "source_after_unchanged": true,
+  "collected_nodes": [
+    "Tests/UI/test_console_ask_user_typed_answers.py::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer"
+  ],
+  "exact_selection_equal": true,
+  "collected_count": 1
+}

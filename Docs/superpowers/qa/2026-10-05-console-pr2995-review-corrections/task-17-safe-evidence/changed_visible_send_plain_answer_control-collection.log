@@ -1,0 +1,5 @@
+Tests/UI/test_console_ask_user_typed_answers.py::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer
+
+1 test collected in 1.16s
+
+--- STDERR ---

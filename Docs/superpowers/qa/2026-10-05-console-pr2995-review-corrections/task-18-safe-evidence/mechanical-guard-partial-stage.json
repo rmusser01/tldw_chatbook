@@ -1,0 +1,10 @@
+{
+  "base": "3238094c92e77248483ac95254b877639c842c9b",
+  "exception": "AssertionError: eight-space read_global_Any declaration expected2, actual1",
+  "source_sha256": {
+    "Tests/Chat/test_console_decision_clock.py": "0060c5d755e54b9cc6d6c452b4a8fbb3f7e513bd7b3c95d6896b9211afb72d96",
+    "Tests/UI/test_buddy_speech.py": "519fd42b88940aeb143389b34aaad728e5869a7e3a8949ce766a1145ce70fe4b",
+    "tldw_chatbook/Chat/console_chat_start.py": "e52f7c2c120d4bb84927ed872366d654829c63888f73640906a6129eb857878f",
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": "ff1d9d0ab817cad2256e9b1e01ca7d7f5bf4d6ce663dce5f9158b5d65a429744"
+  }
+}

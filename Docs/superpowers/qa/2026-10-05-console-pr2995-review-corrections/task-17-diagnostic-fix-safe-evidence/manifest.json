@@ -1,0 +1,114 @@
+{
+  "status": "DONE",
+  "root_metadata_base": "408453025fc58383b81cb018b01134579cb3141a",
+  "final_head": "9ceacaa9fd9d4eb37c68a137fa8975488da5ca40",
+  "source_commit": {
+    "sha": "9ceacaa9fd9d4eb37c68a137fa8975488da5ca40",
+    "subject": "docs: record reviewed chat-start cleanup diagnostics"
+  },
+  "original64_artifact_manifest_unchanged_sha256": "588e765fcf4cb2b4876094037e55053b4874690e94e6b385b045f837017b8d30",
+  "initial_report_alias": {
+    "manifest_path": "task-17-safe-evidence/manifest.json",
+    "original_report_path": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-17-report.md",
+    "frozen_report_path": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-17-report-before-inventory-fix.md",
+    "report_bytes": 55732,
+    "report_sha256": "0e043919896b80a74adcaa70432746a23b3b342f31642c2cf33ac19e33af3ce2",
+    "original_manifest_sha256": "588e765fcf4cb2b4876094037e55053b4874690e94e6b385b045f837017b8d30"
+  },
+  "appended_report": {
+    "path": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-17-report.md",
+    "bytes": 64709,
+    "sha256": "ef8ba2f2a547fac94801a08a34f9ac779123c96da636be9cd3b2c60f00fa95d1",
+    "initial_prefix_bytes": 55732,
+    "initial_prefix_sha256": "0e043919896b80a74adcaa70432746a23b3b342f31642c2cf33ac19e33af3ce2"
+  },
+  "selected_requalification": {
+    "cases": 1,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "original21_cases_unreplayed": true
+  },
+  "files": {
+    "commit-receipt.json": {
+      "bytes": 2335,
+      "sha256": "65792301b27080e05cf3d018ebce47ccac3242558836f36041ec0f726e4a8456"
+    },
+    "diagnostic-node-argv.json": {
+      "bytes": 6518,
+      "sha256": "1d07e569677eacff8d30052127c5fbe926e5c8c9810cc9219af7c0a4c00abcde"
+    },
+    "diagnostic-node-driver.py": {
+      "bytes": 3572,
+      "sha256": "a49bef5cc78e0c4bbf5eb0e6a4f31f4cc3a3761cfe56619b93fc62209b1bb49e"
+    },
+    "diagnostic-node-result.json": {
+      "bytes": 1068,
+      "sha256": "5b01f22a0f43cff42c72ca1382f4fec90aec8c2183c337afb48876b7f18c52e5"
+    },
+    "diagnostic-node.log": {
+      "bytes": 1521,
+      "sha256": "03a6119a53c5f3801b165ddaf46b2a08644ddc7be13b06b775013fe1de8a340f"
+    },
+    "diagnostic-node.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "diagnostic-node.stdout": {
+      "bytes": 1505,
+      "sha256": "f9b023adf1af10f46c3a803259ff63f5c28fa752bc3e4e4c1f49b50ced3ebc3b"
+    },
+    "diagnostic-node.xml": {
+      "bytes": 434,
+      "sha256": "954fb43601bb2bd616de9990da0c1cccee4503c9eda073fd948a0883f43df197"
+    },
+    "diagnostic-statements-verify.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "diagnostic-statements-verify.stdout": {
+      "bytes": 1142,
+      "sha256": "5147d92fa4f8cdd282454dd9910a2224cbf66db381225636d36c085d4b8fdd5b"
+    },
+    "inventory-diff.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "inventory-diff.stdout": {
+      "bytes": 708,
+      "sha256": "dd8f11508215fac274161122daf652d9837aeb03ad132aa818b62335ce2e3ebe"
+    },
+    "inventory-extension-driver.py": {
+      "bytes": 4180,
+      "sha256": "5e2c49adf2c06d4282d05eb57315cb76f52696084ab74eae5bfea06ef80926a1"
+    },
+    "inventory-only-carry.json": {
+      "bytes": 1495,
+      "sha256": "f3fbbb80aaf22403e9b8c8d453ce426fdbb5e90ebe2c0377c5005ca59b513d01"
+    },
+    "inventory-whitespace.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "inventory-whitespace.stdout": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "inventory-write.stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "inventory-write.stdout": {
+      "bytes": 57,
+      "sha256": "fad5e29ffbcb6819c411fe06355b14673a062bc73c7453859ba154638f1eeddb"
+    },
+    "mutation-receipt.json": {
+      "bytes": 1376,
+      "sha256": "fc433ad2c4938749fc60ead119b4d46aca7cc5418cd7c7bb08ae7ea7953b7b01"
+    },
+    "source-qa-closed-handoff.json": {
+      "bytes": 7424,
+      "sha256": "38853ff7659b2b254df7d5876d49d768bd11c8e24633efb25d2339a1b3e03939"
+    }
+  }
+}

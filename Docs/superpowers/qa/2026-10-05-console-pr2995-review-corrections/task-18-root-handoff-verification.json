@@ -1,0 +1,22 @@
+{
+  "head": "d94791f244e81ae370fe674d5e333fb6af94fd39",
+  "source_base": "3238094c92e77248483ac95254b877639c842c9b",
+  "original_dispatch_base": "7602257552749336e5d22d152026381f8609c147",
+  "owned_source_hashes_verified": 8,
+  "new_artifacts_hashes_verified": 31,
+  "historical_aliases_verified": 8,
+  "current_report_hash_and_original_prefix_verified": true,
+  "all_other_tracked_source_unchanged": true,
+  "all_historical_public_qa_unchanged": true,
+  "actual_green": {
+    "owners": 44,
+    "live_bindings": 8,
+    "mounted_Stop": 1
+  },
+  "host_required_keywords": 120,
+  "no_test_replay": true,
+  "lowered_cap_rows": {
+    "controller": 29299,
+    "interrupt": 6471
+  }
+}
