@@ -104,7 +104,6 @@ from tldw_chatbook.Agents.agent_runtime import (
     render_tool_protocol,
     split_visible_text_and_tool_call,
 )
-from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionPromotionSnapshot,
     InstructionSnapshot,
@@ -5057,6 +5056,9 @@ def build_console_first_request_plan(
     messages = agent_messages
     if turn_bundle_block:
         messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
+    # Lazy (ADR-097 UI-ready census): only a send plans its first request.
+    from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
+
     schemas = build_first_request_schema_plan(
         registry,
         allowed_tools,

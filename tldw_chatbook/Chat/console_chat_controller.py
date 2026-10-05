@@ -24232,10 +24232,11 @@ class ConsoleChatController:
         assistant_message_id: str,
         visible_copy: str,
     ) -> ConsoleSubmitResult:
-        from tldw_chatbook.Chat.console_capacity_refusal import is_repeat_of_last_row
+        from tldw_chatbook.Chat import console_predispatch_block as predispatch
 
         # TASK-33621.3: copy first; a durable accepted turn fails closed below.
-        if not is_repeat_of_last_row(self.store, session_id, visible_copy):
+        predispatch.note_if_overflow_alert(assistant_message_id, visible_copy)
+        if not predispatch.is_repeat_of_last_row(self.store, session_id, visible_copy):
             self._append_failure_system_row(session_id, visible_copy)
         self._set_run_state(
             ConsoleRunState.blocked(visible_copy), session_id=session_id
@@ -24257,9 +24258,11 @@ class ConsoleChatController:
         resolution: ConsoleProviderResolution,
     ) -> str | None:
         """Forward to the documented compaction preflight implementation."""
-        return self._compaction_preflight._context_overflow_alert(
+        from tldw_chatbook.Chat.console_predispatch_block import remember_overflow_alert
+
+        return remember_overflow_alert(self._compaction_preflight._context_overflow_alert(
             decision, resolved, capacity, prepared_before, resolution
-        )
+        ))
 
     def _assess_request_capacity_only(
         self,

@@ -21,6 +21,13 @@ budget). The card's presentation (``derive_dispatch_recovery_presentation``)
 and the controller's Retry both read it, so Retry is refused for any caller,
 not just on the card (F13). The record is in memory: after a restart the owner
 presents as an ordinary accepted turn again, as before.
+
+The overflow refusal itself is decided in ``ConsoleCompactionPreflight``
+(``console_context_compaction``), which reaches the controller only through
+``_context_overflow_alert`` and ``_block_context_preflight``. The controller
+remembers each alert copy the first returns and notes a block when the second
+receives one of them, so that module stays line-for-line as dev has it (it is
+at its size budget).
 """
 
 from __future__ import annotations
@@ -64,7 +71,6 @@ def present_predispatch_block(
     return replace(recovery, visible_copy=NOT_SENT_COPY, warning="", actions=actions)
 
 
-
 #: How many refused turns are remembered; the oldest is forgotten first, so
 #: the record cannot grow with a long session (review round 1, F13).
 MAX_NOTED_BLOCKS = 256
@@ -83,6 +89,48 @@ def note_predispatch_block(message_id: str) -> None:
 def is_predispatch_block(message_id: str) -> bool:
     """Whether ``message_id``'s turn was refused before dispatch."""
     return message_id in _NOTED
+
+
+#: Recent context-overflow alert copies, bounded like the block record.
+_ALERTS: "OrderedDict[str, None]" = OrderedDict()
+
+
+def remember_overflow_alert(alert: str | None) -> str | None:
+    """Record a context-overflow alert's copy and return it unchanged."""
+    if alert:
+        _ALERTS.pop(alert, None)
+        _ALERTS[alert] = None
+        while len(_ALERTS) > MAX_NOTED_BLOCKS:
+            _ALERTS.popitem(last=False)
+    return alert
+
+
+def note_if_overflow_alert(message_id: str, copy: str) -> None:
+    """Note ``message_id``'s turn as refused when ``copy`` is an overflow alert.
+
+    Other preflight refusals (a compaction threshold, a changed character, a
+    continuation conflict) keep the ordinary recovery card.
+    """
+    if copy in _ALERTS:
+        note_predispatch_block(message_id)
+
+
+def is_repeat_of_last_row(store: Any, session_id: str, copy: str) -> bool:
+    """Whether the session already ends with this exact refusal row.
+
+    A retried turn the preflight refuses again for the same reason must not
+    append a second copy of the row it is already showing.
+    """
+    try:
+        messages = store.messages_for_session(session_id)
+    except Exception:  # noqa: BLE001 -- an unknown session appends as before
+        return False
+    for message in reversed(tuple(messages)):
+        role = getattr(getattr(message, "role", None), "value", None)
+        if role == "assistant" and getattr(message, "status", "") == "failed":
+            continue  # the refused turn's own empty assistant row
+        return role == "system" and getattr(message, "content", None) == copy
+    return False
 
 
 def presented_owner(

@@ -249,7 +249,7 @@ def test_the_store_carries_no_predispatch_side_table() -> None:
 def test_a_repeated_preflight_refusal_row_is_recognised() -> None:
     """A retried turn the preflight refuses again for the same reason must
     not append a second copy of the row the session already ends with."""
-    from tldw_chatbook.Chat.console_capacity_refusal import is_repeat_of_last_row
+    from tldw_chatbook.Chat.console_predispatch_block import is_repeat_of_last_row
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 
@@ -262,3 +262,20 @@ def test_a_repeated_preflight_refusal_row_is_recognised() -> None:
     store.append_message("s", role=ConsoleMessageRole.USER, content="again")
     assert not is_repeat_of_last_row(store, "s", "Refused.")
     assert not is_repeat_of_last_row(store, "no-such-session", "Refused.")
+
+
+def test_only_an_overflow_alert_marks_a_turn_not_sent() -> None:
+    """Other preflight refusals (a compaction threshold, a changed character)
+    keep the ordinary recovery card; only the copy the overflow alert
+    produced marks the turn refused before dispatch."""
+    from tldw_chatbook.Chat import console_predispatch_block as blocks
+
+    alert = "Your message was not sent: it does not fit (overflow-unit-test)."
+    assert blocks.remember_overflow_alert(alert) == alert
+    assert blocks.remember_overflow_alert(None) is None
+
+    blocks.note_if_overflow_alert("assistant-other-refusal", "Character changed.")
+    blocks.note_if_overflow_alert("assistant-overflow-refusal", alert)
+
+    assert not blocks.is_predispatch_block("assistant-other-refusal")
+    assert blocks.is_predispatch_block("assistant-overflow-refusal")
