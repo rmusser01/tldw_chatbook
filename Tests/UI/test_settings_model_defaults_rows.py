@@ -23,10 +23,14 @@ from Tests.UI.test_settings_category_sweep import (
     _click_settings_category,
     _settle_settings,
 )
+from Tests.UI.test_settings_console_fallback_rows import _revert, _wait_until
 from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness
 from tldw_chatbook.Chat.console_provider_support import (
     MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
+)
+from tldw_chatbook.Chat.console_session_settings import (
+    build_default_console_session_settings,
 )
 from tldw_chatbook.UI.Screens.settings_config_models import SettingsCategoryId
 from tldw_chatbook.UI.Screens.settings_screen import MODEL_PROFILE_INPUT_PLACEHOLDERS
@@ -438,3 +442,164 @@ async def test_saving_an_edit_and_a_blank_changes_exactly_those_config_keys(requ
         "seed": 7,
     }
     assert after == expected
+
+
+def _dirty(screen) -> set[str]:
+    draft = screen._provider_draft()
+    return set(draft.dirty_keys) if draft is not None else set()
+
+
+def _row(screen, name: str) -> tuple[str, str]:
+    return _text(screen, f"#{_cid(name)}-source"), _text(screen, f"#{_cid(name)}-help")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_hand_edited_choice_with_no_option_reads_saved_like_the_fallbacks(
+    request,
+):
+    """Task 7 review round 4 (1): Model defaults reads a choice as a new chat
+    does, without folding case, as Console Behavior's fallbacks do. A saved
+    "High" is no option, so the Select stays blank (it showed "high", which a
+    new chat never gets) and the row says "model default" and names the
+    value, as "extreme" does (it read "provider"). Choosing an option is an
+    edit; Revert brings back the blank row with nothing staged."""
+    app = _app("openai", "gpt-4.1")
+    app.app_config["api_settings"]["openai"] = {
+        "model_defaults": {
+            "gpt-4.1": {"reasoning_effort": "High", "verbosity": "extreme"}
+        }
+    }
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        resolved = build_default_console_session_settings(
+            app.app_config, "openai", "gpt-4.1"
+        )
+        assert (resolved.reasoning_effort, resolved.verbosity) == ("High", "extreme")
+        effort = screen.query_one(f"#{_cid('reasoning_effort')}", Select)
+        assert effort.value is Select.NULL
+        assert screen.query_one(f"#{_cid('verbosity')}", Select).value is Select.NULL
+        assert _row(screen, "reasoning_effort") == (
+            "model default",
+            "saved 'High' is not a choice",
+        )
+        assert _row(screen, "verbosity") == (
+            "model default",
+            "saved 'extreme' is not a choice",
+        )
+        assert _row(screen, "reasoning_summary") == (
+            "provider",
+            "blank = provider default",
+        )
+        assert not _dirty(screen)
+
+        effort.value = "high"
+        await _wait_until(pilot, lambda: bool(_dirty(screen)), "the staged choice")
+        await pilot.pause()
+        assert _dirty(screen) == {"model_profile_reasoning_effort"}
+        assert _row(screen, "reasoning_effort")[0] == "edited *"
+
+        await _revert(host, pilot, screen)
+        await _wait_until(pilot, lambda: effort.value is Select.NULL, "the revert")
+        await pilot.pause()
+        await pilot.pause()
+        assert _row(screen, "reasoning_effort") == (
+            "model default",
+            "saved 'High' is not a choice",
+        )
+        assert not _dirty(screen)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_saving_another_field_keeps_a_choice_the_select_cannot_show(request):
+    """Task 7 review round 4 (1): Save reads Model defaults from its widgets,
+    so a blank Select over a saved "High" would have deleted it on any other
+    edit's save. The real save path on a private profile keeps it exactly, as
+    Console Behavior's fallbacks keep theirs."""
+    config_path = Path(os.environ["TLDW_CONFIG_PATH"])
+    on_disk = toml.loads(config_path.read_text())
+    on_disk.setdefault("chat_defaults", {}).update(
+        {"provider": "llama_cpp", "model": "qwen"}
+    )
+    llama = on_disk.setdefault("api_settings", {}).setdefault("llama_cpp", {})
+    llama["api_url"] = "http://127.0.0.1:9099"
+    llama["model_defaults"] = {
+        "qwen": {"temperature": 0.5, "reasoning_effort": "High"},
+    }
+    config_path.write_text(toml.dumps(on_disk))
+    before = toml.loads(config_path.read_text())
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = dict(before["chat_defaults"])
+    app.app_config["api_settings"] = {
+        "llama_cpp": dict(before["api_settings"]["llama_cpp"])
+    }
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        assert (
+            screen.query_one(f"#{_cid('reasoning_effort')}", Select).value
+            is Select.NULL
+        )
+        temperature = screen.query_one(f"#{_cid('temperature')}", Input)
+        temperature.focus()
+        await pilot.press("end", *["backspace"] * 8, *"0.8", "escape", "s")
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if not screen._category_has_unsaved_changes(
+                SettingsCategoryId.PROVIDERS_MODELS
+            ):
+                break
+        await host.workers.wait_for_complete()
+        await pilot.pause()
+        assert not screen._category_has_unsaved_changes(
+            SettingsCategoryId.PROVIDERS_MODELS
+        )
+
+    after = toml.loads(config_path.read_text())
+    expected = toml.loads(toml.dumps(before))
+    expected["api_settings"]["llama_cpp"]["model_defaults"]["qwen"] = {
+        "temperature": 0.8,
+        "reasoning_effort": "High",
+    }
+    assert after == expected
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_shown_negative_integer_can_be_backspaced_away(request):
+    """Task 7 review round 4 (2): a hand-edited ``seed = -1`` is shown as a
+    new chat reads it, so its Input must take the edit that clears it, as the
+    global fallbacks' Input does. Backspace from the end leaves "-" (a
+    digits-only restrict refused that, so nothing happened), then blank.
+    At rest it, and a refused ``temperature = 3.0``, read "model default"
+    with nothing staged (the mount's own Changed staged both as edits)."""
+    app = _app("llama_cpp", "qwen", profiles={"qwen": {"seed": -1, "temperature": 3.0}})
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        resolved = build_default_console_session_settings(
+            app.app_config, "llama_cpp", "qwen"
+        )
+        assert (resolved.seed, resolved.temperature) == (-1, 3.0)
+        screen.query_one("#settings-model-sampling", Collapsible).collapsed = False
+        await pilot.pause()
+        seed = screen.query_one(f"#{_cid('seed')}", Input)
+        assert seed.value == "-1"
+        assert screen.query_one(f"#{_cid('temperature')}", Input).value == "3.0"
+        assert _row(screen, "seed")[0] == "model default"
+        assert _row(screen, "temperature")[0] == "model default"
+        assert not _dirty(screen)
+
+        seed.focus()
+        await pilot.press("end", "backspace")
+        await pilot.pause()
+        assert seed.value == "-"
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert seed.value == ""
+        assert _row(screen, "seed") == ("edited *", "blank = provider default")
