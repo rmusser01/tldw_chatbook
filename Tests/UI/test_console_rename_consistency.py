@@ -431,7 +431,30 @@ async def test_rail_rename_publishes_saved_title_to_open_tab_before_confirmation
         assert entries[0].title == "Renamed Alpha"
         await pilot.press("escape")
         if not active:
-            await chat._session._activate_native_console_session(target.id)
+            # Tab activation may coalesce into this already-running pass.
+            # Join its actual publication, not merely the activation request.
+            await _until(lambda: not chat._console_sync_in_progress)
+            entered, release = asyncio.Event(), asyncio.Event()
+            original_warm = chat._retrieval._warm_console_effective_scope_cache_if_stale
+
+            async def held_warm() -> None:
+                entered.set()
+                await release.wait()
+                await original_warm()
+
+            monkeypatch.setattr(
+                chat._retrieval,
+                "_warm_console_effective_scope_cache_if_stale",
+                held_warm,
+            )
+            sync = asyncio.create_task(chat._sync_native_console_chat_ui())
+            try:
+                await _until(entered.is_set)
+                await chat._session._activate_native_console_session(target.id)
+                assert store.active_session_id == target.id
+            finally:
+                release.set()
+                await asyncio.wait_for(sync, 5)
             assert "Renamed Alpha" in _static_plain_text(
                 chat.query_one("#console-transcript-title", Static)
             )

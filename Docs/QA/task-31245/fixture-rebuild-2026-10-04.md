@@ -2011,3 +2011,62 @@ These OS-temporary artifacts are local retained evidence, not portable archives.
 PR3024 remains draft/HOLD. TASK31245/TASK31966 remain In Progress; no new ADR
 or qualification waiver. Existing ADR120/198 and the approved bounded plan
 remain controlling.
+
+### Current PR-head qualification — `d60adb9ff6`
+
+Clean source `d60adb9ff616609a14028990e01a9acfb2e682d9`, based on dev
+`54ac2758af81730b3e8b9effdabde2cbf898275c`, is measured sequentially with the
+unchanged guarded CLI and oracle. No competing local pytest/benchmark process
+was observed before scale construction. Tiny build/Keyword smoke passes first;
+it is not scale evidence. The fresh production-API corpus has
+10,000/250,004/10,000 chats/messages/documents, ready index, valid integrity and
+zero registered build handles after cleanup. Corpus SHA256:
+`97d726eab2feb3f2f132688dc9807bb40c31c2fab59f66b225d6cec565d34c71`.
+
+Standalone Keyword passes all 300 exact measurements, with five warmups and ten
+samples per each of 30 queries. P95 is **105.393416ms**, maximum loop gap
+**8.581375ms**; owned database descriptors and registered handles are zero after
+cleanup. Exact clean source and unchanged-corpus fences pass.
+
+Normal 52x20/120x50 UI completes 60 exact searches and eight exact OPENED
+activations but exits **1**. Six activation gaps exceed the unchanged 50ms gate:
+narrow 96.614958/69.117125/52.945917ms and wide
+123.592167/124.045959/81.577916ms. Wide preparation also fails at 53.831750ms.
+Search maximum 44.711291ms and all busy paints, maximum 36.212958ms, pass their
+unchanged limits. Maximum capture observer duration 4.964833ms is retained, not
+subtracted or treated as all observer/heap cost. Four/eleven rows out of 50,
+source/corpus fences and no app exception remain verified. At headless unmount,
+two registered Chat handles and 24 DB descriptors are observed; this is not
+physical runner-join or native/application retirement evidence.
+
+A separate same-head/corpus process reuses the unchanged pre-import v2 owner
+tracer (`7b3437928708b597648892b686fd5ba002b46c05842d41f2ca11892ac55a9402`)
+and census (`c31e69b6519d76c56d144e4f891ad62305ccdd1f3ccc5de480dbd4bfa3652fc7`).
+It records 633 unique registrations, zero drops and no untraced open handle.
+Both after Textual shutdown and physical default-executor join, five native-open
+main-thread constructor-origin handles and 24 DB descriptors remain; no
+exited-worker handle, storage operation or pending acquisition remains. Origins
+are shared Chat/config, evaluation, Library, Subscriptions and Workspace wiring.
+After runner join the observed threads are MainThread and the daemon storage
+admission thread. The observer retains the app; this is neither leak proof nor
+application retirement. It does not causally classify the uninstrumented run's
+extra unmount handle or the older intermittent retention. Instrumented timing
+failures remain diagnostic-only exit 1, not replacement latency evidence. No
+owner closure, collector, GC/cache/lifetime policy or production change occurred.
+
+Local retained root: `/tmp/pr3024-d60adb9-qualification-xGU5oj`; preserve tiny,
+scale, Keyword, normal UI and owner-diagnostic logs and receipts. Build/Keyword/UI
+receipt SHA256s respectively:
+`b53dc78cb4dd65efe7040438ad744e67a4a15c5895df4cda6e0ab5e5e889c46c`,
+`c86610c5cc17171d87519673547f735ae44b3c47fc303acd9a4b92d045eda2fc`,
+`c7876d619dcc70de2175998d205568d3138679e6e62fa85d61c119d6671ee38b`.
+Owner receipt SHA256:
+`8ea0849a1dc7e199590f598a6e645691ccaaf0c271282a282277c38151a4082a`.
+UI/owner log SHA256s:
+`0177e78101a45368bc864fa1acee3494c9dd753733f0c65cc32a9a141bc21fc8`,
+`fd6468648a957cb8d34fd7de9e9a5597eff0bf668eac49b32db1c92f03cba141`.
+These OS-temporary artifacts are not portable qualification archives. Earlier
+failures remain retained; cross-head variation is not causal improvement.
+PR3024 remains draft/HOLD for full latency, native, Windows, actual participants,
+application owners and actual external review. All TASK-31966 criteria stay unchecked.
+Existing ADR120/198 apply; no fourth production remedy or new policy is inferred.

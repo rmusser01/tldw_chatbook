@@ -591,3 +591,62 @@ isolated startup `/tmp/pr3024-rebase-54ac-startup.log`
 These local receipts are not portable qualification archives. Native, Windows,
 actual participant, measured latency, application-owner and external-review
 gates remain HOLD.
+
+### Current-head CI inactive-header settlement — 2026-10-05
+
+Published `d60adb9ff616609a14028990e01a9acfb2e682d9` UI Fast Lane shard 3
+records **1 failed, 552 passed, 1 warning in 846.71s**. Only the final
+`tab-inactive` header assertion fails: immediately after generic activation,
+the header still reads `Conversation | Other chat`. All preceding saved/live
+title, switcher and confirmation-order assertions pass. Generic activation
+requests the incumbent broad UI sync; an already-running pass coalesces that
+request and returns before header publication. This differs from the strict
+Character exact-ready boundary, which already awaits its renderer.
+
+The unchanged isolated case passes in 7.25s, with unrelated pytest cleanup
+warnings for older temporary garbage directories. A test-only hold before the
+real sync's tab/header publication deterministically reproduces the same
+premature assertion: **1 failed in 9.57s**, no pytest warnings and zero database
+files at teardown. This is a scheduling/observer RED, not a production rename
+fault. Both inactive variants now release and join that exact real sync before
+the unchanged header assertion; no production activation, confirmation ordering,
+warning filter, GC/lifetime policy or existing timing limit changes.
+
+All four active/inactive rail/tab cases pass **4 in 21.97s**. The complete
+affected file passes **16 in 67.91s**. Both have no pytest warnings, strict
+process exit 0 and zero database files at every observed teardown. Independent
+scoped review finds no actionable issue. Task status and broader qualification
+HOLD remain unchanged. These narrow green results do not replace current-head
+CI or the failed full latency/native/application-owner gates.
+
+The formatter-final four cases separately pass **4 in 27.87s**, with no pytest
+warnings, strict exit 0 and zero database files. Changed-test Ruff/format,
+whitespace and all eleven publication artifact guards pass. Production,
+package, scripts and workflows are unchanged by this checkpoint.
+
+The CI warning is separate: the unchanged first-run cancellation test harness
+records `run_worker` but discards its navigation coroutine. Its test file is
+byte-identical to dev. It remains recorded, not suppressed or classified as
+warning-free production shutdown. The required Derived Artifacts job fails its
+UI-lane dependency even though all eleven source-reproduction guards pass;
+the same-head Perf Guard succeeds with its separately recorded headroom warnings.
+
+Local receipts and SHA256s:
+
+- CI shard log `/tmp/pr3024-d60adb9-ui-shard3.log`:
+  `76064240352c57e9ff72c2e9161067e0556a756c7f64f9fdd41500799e4fde38`.
+- Deterministic RED `/tmp/pr3024-rename-header-red.log`:
+  `a04d5d61e062df02e130509cbec9c5d3c80265bc02002b7893a7912145c89d35`.
+- Four-case GREEN `/tmp/pr3024-rename-header-green.log`:
+  `cb6cea54c64e11c1b114864fb90192bcfb95c670f5b66ebc5c37a2e3979ba6fb`.
+- Complete-file GREEN `/tmp/pr3024-rename-header-module.log`:
+  `7528bbf8536373225e0548c35e1d13de361a1e8b04488268efc1929b45568dd0`.
+- Formatter-final GREEN `/tmp/pr3024-rename-header-final.log`:
+  `88b01bed20c46950d38383edb07bd7611b45d3f33d34a3a3a21a9e919b65bc91`.
+- Publication guards `/tmp/pr3024-rename-header-preflight.log`:
+  `4652125092d82f67edcfc15a51476afdd002998ec9f2cebc1ed69627a585eeb9`.
+
+These temporary logs are not portable qualification archives. Existing
+ADR085/120 apply; this corrects a test settlement boundary, not an architectural
+decision. Reproduce the affected behavior with
+`python -m pytest Tests/UI/test_console_rename_consistency.py -p no:cacheprovider --tb=short`.

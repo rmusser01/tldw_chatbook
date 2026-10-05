@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 21:14'
+updated_date: '2026-10-05 23:31'
 labels:
   - console
   - performance
@@ -259,4 +259,20 @@ Independent scoped read-only review found no critical, important or minor findin
 Frozen b738054edf fresh10k/250k Keyword300passes,P95105.448875ms,loop9.916375ms,zero owned cleanup resources. NormalUI60exact searches/eightOPENED but sixactivation windows(max89.041708ms) andonebodysearch51.097ms fail50ms; preparation/busy gates pass. Source/corpus guards hold, observer max46.2925ms retained as limit. NativeQA window121584 verifiesCtrlK/MRU Enter exactAmber07,three tabs unchanged only244x73. Inspector sizing does not commit. IntegratedCUA explicitly denies Terminal safety; allTerminalUI stops, no alternate path. ExactdisposablePythonPID80035 controllerSIGINT-stopped; nullnative-return code,sourceguards true,26DBdescriptors,not normalquit or retirement. DraftPR preparation does not waive remaining performance/native/Windows/participant gates. Full receipt Docs/QA/task-31245/fixture-rebuild-2026-10-04.md; task remains InProgress.
 
 Published51860b4558 fresh sequential scale checkpoint: clean exact source/dev74557; tiny smoke passes; fresh10k/250004/10k corpus ready/integrityOK. Keyword300 exact samples pass,P95117.040458ms,loop12.584750ms,zero owned cleanup handles/files. Normal52x20/120x50 UI60exact searches/eightOPENED completes but sixactivation gaps fail50ms,maximum76.516625ms; search31.707708ms,preparation41.390375/41.612625ms,busy maximum29.436375ms all pass unchanged gates. Observer max1.371375ms retained, not subtracted or exclusive-cost proof. Source/corpus fences hold; one registered Chat handle/24 DB descriptors at run_test unmount are not whole-app/native retirement. Raw root /tmp/task31966-burndown-head-OEkfa7; receipt hashes and full limitations in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. Cross-head variation is not causal improvement. PR3024 draft/HOLD; native/Windows/actual participants, intermittent replacement-profile retirement, remaining latency and external review remain unwaived. No fourth production remedy/global lifetime/GC/cache policy or new ADR; existingADR120/198. Keep all criteria unchecked and task InProgress.
+Fresh current PR-head d60adb9ff6 qualification: unchanged guarded tooling/oracle,
+new private corpus 10000/250004/10000 and tiny smoke pass. Keyword300 exact
+measurements pass, P95105.393416ms/loop8.581375ms/zero owned cleanup resources.
+Normal UI completes60 exact searches/eightOPENED but strict exit1 retains six
+activation gaps (maximum124.045959ms) and wide preparation53.831750ms over50ms;
+search/busy limits pass. Source/corpus fences hold; unmount2 Chat handles/24 DB
+descriptors are not final retirement. Separate unchanged read-only owner trace
+records633 unique registrations/no drops/untraced open handles, zero exited
+worker handles/operations/acquisitions after physical runner join, but five main
+constructor-origin handles/24 DB descriptors remain in the observer-retained app.
+This does not attribute the normal extra handle, old intermittent failure or
+latency cause, prove a leak, or authorize an app/process lifetime policy. All raw
+failures/hashes and causal limits are retained in the current-head section of
+Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. No production/threshold/GC/cache/
+ownership change; existing ADR120/198 apply. Keep In Progress, every AC unchecked
+and native/Windows/actual participant/full latency/application-owner/review HOLD.
 <!-- SECTION:NOTES:END -->

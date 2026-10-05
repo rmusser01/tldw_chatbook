@@ -12217,6 +12217,16 @@ readiness from a production selection or database fault; do not treat a missing
 receipt alone as a crash diagnosis. Exact evidence and restored throwaway patch:
 `Docs/superpowers/reviews/2026-09-08-canvas-card-readiness-spike.md`.
 
+**Recurrence — PR3024 / TASK-33620.9, 2026-10-05.** CI's inactive renamed-tab
+check passed every durable/title/confirmation assertion, then observed the old
+header immediately after generic activation. A held real broad-sync pass
+reproduced the exact failure: activation coalesces its request, not a publication
+receipt. Release and join that exact owner before checking the inactive header;
+retain the rename confirmation's immediate assertions. All16 affected controls
+then pass strict retirement without warnings. Do not change production activation
+or add a sleep to satisfy an observer's premature assertion. Receipt:
+`Docs/QA/task-33620.9/README.md`.
+
 ## Page timeouts do not set Playwright assertion budgets (TASK-32160, 2026-09-08)
 
 **Incident.** The actual Canvas-child test configured a 45-second page timeout,
