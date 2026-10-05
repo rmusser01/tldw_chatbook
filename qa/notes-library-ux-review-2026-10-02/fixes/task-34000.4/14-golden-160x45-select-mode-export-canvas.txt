@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Navigation        Collapse     ││ Export bundle (.zip)                                                                                                   │ │
+│ │     Import…                    ││ Selected media · 20 items                                                                                              │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │ │
+│ │ ▊ Search Library…         ▎▊x▎ ││ ▊ Library export 2026-10-05                                                                                         ▎  │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │ │
+│ │                                ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │ │
+│ │ Browse                     ▾   ││ ▊ Description (optional)                                                                                            ▎  │ │
+│ │    Media (23) — your files     ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │ │
+│ │    Conversations (12)          ││                                                                                                                        │ │
+│ │    Notes (122)                 ││   quality: original                                                                                                    │ │
+│ │    Prompts (10) — reuse        ││ copies full media files into the zip                                                                                   │ │
+│ │    Skills (4) — AI add-ons     ││                                                                                                                        │ │
+│ │    Collections (6)             ││   Choose destination…                                                                                                  │ │
+│ │    Search / RAG — find all     ││ No destination chosen                                                                                                  │ │
+│ │ ────────────────────────────── ││ Bundle: 20 media items · text only · about 107 KB before compression                                                   │ │
+│ │ Artifacts                  ▾   ││                                                                                                                        │ │
+│ │    All artifacts               ││ Q3 planning memo                                                                                                       │ │
+│ │    Chatbooks                   ││ API design guidelines                                                                                                  │ │
+│ │    Reports                     ││ How SQLite FTS5 ranks results                                                                                          │ │
+│ │ ────────────────────────────── ││ The case for local-first software                                                                                      │ │
+│ │ Create                     ▾   ││ Spaced repetition, explained                                                                                           │ │
+│ │    New note                    ││ Why your sourdough is flat                                                                                             │ │
+│ │    New prompt                  ││ A field guide to Markdown tables                                                                                       │ │
+│ │    New skill                   ││ Podcast: Deep Work revisited (ep. 112) — transcript                                                                    │ │
+│ │ ────────────────────────────── ││ Podcast: Learning languages as an adult — transcript                                                                   │ │
+│ │ Study                      ▾   ││ Voice memo 2026-09-29                                                                                                  │ │
+│ │    Study decks (0)             ││ Lecture 4 — Transformers (transcript)                                                                                  │ │
+│ │    Flashcards due: 0           ││ Conference talk: Search UX in 2026                                                                                     │ │
+│ │    Quizzes (0)                 ││ Tutorial: Textual layouts in 20 minutes                                                                                │ │
+│ │ ────────────────────────────── ││ Lewis et al. 2020 — Retrieval-Augmented Generation (PDF)                                                               │ │
+│ │ Import / Export            ▾   ││ Make It Stick — chapter 2 (PDF excerpt)                                                                              ▃ │ │
+│ │    Import…                     ││ The Dispossessed — sample chapter                                                                                      │ │
+│ │  ▸ Export                      ││ Server logs excerpt 2026-09-27                                                                                         │ │
+│ │ ────────────────────────────── ││ Grocery receipt (OCR text)                                                                                             │ │
+│ │ Details                    ▸   ││ 学習メモ — 日本語の文法                                                                                                │ │
+│ └────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc back to Media | F1 help · Ctrl+P palette · Ctrl+Q quit

@@ -1,0 +1,31 @@
+AC#4 regression test vs. the defect, 2026-10-05 (rerun by the finishing implementer on the final branch code).
+Test file: Tests/UI/test_library_media_export_no_freeze.py (4 parametrizations: mouse/keyboard x default/eager task factory).
+It imports no fix-side module, so it was copied unmodified (with Tests/UI/pump_probe.py) into 'git archive' exports
+of each commit under the scratchpad and run from there (import provenance confirmed per tree).
+Command: .venv/bin/python -m pytest Tests/UI/test_library_media_export_no_freeze.py -q -p no:randomly --durations=0
+
+== A. wave base 8c4dfe59a2, unmodified: GREEN -- the freeze was already fixed there by 3cee32b3d0 (task-31249)
+8.25s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[mouse-default]
+6.32s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[keyboard-eager]
+5.30s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[mouse-eager]
+5.25s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[keyboard-default]
+4 passed, 3 warnings in 41.77s
+
+== B. wave base 8c4dfe59a2 + the review-era inline await put back in _open_library_export_canvas
+      (call_after_refresh(...) -> await self._project_library_export_canvas()): RED, bounded, names the parked pumps
+17.24s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[mouse-default]
+15.42s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[mouse-eager]
+15.00s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[keyboard-eager]
+14.74s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[keyboard-default]
+4 failed, 3 warnings in 68.57s (0:01:08)
+E                   AssertionError: mouse/default: Export… never opened the Export canvas within 10s (selected row: 'ingest-export'); parked pumps: ["LibraryHarness(title='LibraryHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'}) parked at _flush_next_callbacks:702 > invoke:96 > _invoke:58 > __call__:35", "LibraryMediaCanvas(id='library-media-canvas', classes='w-fill') parked at _dispatch_message:739 > _on_message:829 > invoke:96 > _invoke:58 > handle_library_media_export:548 > handle_library_media_export:3189 > _open_library_export_canvas:19847 > _open_library_export_canvas:781 > _project_library_export_canvas:785 > _project_library_export_canvas:19875 > _apply_library_open_item_surface:12552 > recompose:412 > recompose:1713"]
+
+== C. the commit the review ran against, 2d34cbf80d, unmodified: RED, bounded (the real defect, no mutation)
+14.80s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[mouse-default]
+14.24s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[mouse-eager]
+13.60s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[keyboard-default]
+13.56s call     Tests/UI/test_library_media_export_no_freeze.py::test_toolbar_export_opens_the_export_canvas_and_escape_is_processed[keyboard-eager]
+4 failed, 3 warnings in 67.25s (0:01:07)
+E                   AssertionError: mouse/default: Export… never opened the Export canvas within 10s (selected row: 'ingest-export'); parked pumps: ["LibraryHarness(title='LibraryHarness', classes={'-dark-mode'}, pseudo_classes={'dark', 'focus'}) parked at _flush_next_callbacks:702 > invoke:96 > _invoke:58 > __call__:35", "LibraryMediaCanvas(id='library-media-canvas', classes='w-fill') parked at _dispatch_message:739 > _on_message:829 > invoke:96 > _invoke:58 > handle_library_media_export:547 > handle_library_media_export:3189 > _open_library_export_canvas:19546 > _open_library_export_canvas:779 > _apply_library_open_item_surface:12405 > recompose:313 > recompose:1713"]
+
+== D. this branch: GREEN (see 83 for the solo timing of the gated file)
