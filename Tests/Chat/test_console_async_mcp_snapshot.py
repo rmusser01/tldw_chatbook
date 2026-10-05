@@ -1233,3 +1233,191 @@ async def test_class_custom_audit_keeps_original_caller_loop_contract(
     assert observed and all(item is thread for item in observed)
     assert not standard_console_sources(case.service)
     assert case.permissions.get_tool_entry("local:one", "first")["config_changed"]
+
+
+@pytest.fixture
+def wired_composer_case(wired_case):
+    """Add a real composer through Textual's declared test-only DOM helper."""
+    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBar
+
+    case = wired_case
+    composer = ConsoleComposerBar(id="console-native-composer")
+    case.screen._add_children(composer)
+    assert case.screen._console_composer_or_none() is composer
+    assert case.screen._session._console_composer_or_none() is composer
+    case.composer = composer
+    return case
+
+
+async def _retire_wired_preparation(case, task, probe):
+    """Retire a held read and any actually accepted test turn before disposal."""
+    await catalog_controls._settle(task, probe)
+    runtime = case.screen._console_runtime()
+    tasks = tuple(
+        record.task for record in runtime._turn_custody.values() if record.task
+    )
+    for accepted in tasks:
+        accepted.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+    await runtime.dispose(timeout_seconds=3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stored_text", ["", "previous draft", "unchanged input"])
+async def test_actual_wired_preparation_accepts_only_mirroring_of_unchanged_composer(
+    wired_composer_case, stored_text
+):
+    """A delayed original mirror must not turn an unchanged Send into drift."""
+    from tldw_chatbook.UI.Console_Modules import wiring
+
+    case = wired_composer_case
+    _loop_projection(case)
+    runtime = case.screen._console_runtime()
+    draft = "unchanged input"
+    case.composer.load_draft(draft)
+    case.store.set_session_draft(case.session.id, stored_text)
+    stash = case.composer.capture_draft_for_send()
+    snapshot = case.composer.capture_draft_snapshot()
+    settings_revision = case.store.session_settings_revision(case.session.id)
+    probe = _PermissionProbe(case.source, case.permissions)
+    with probe.installed():
+        task = asyncio.create_task(
+            case.screen._prompt_queue._launch_chain_async(
+                draft, case.session.id, stash, case.controller
+            )
+        )
+        try:
+            await catalog_controls._worker_entered(probe, task)
+            assert not runtime.has_custodied_turns()
+            assert (
+                task.get_coro().cr_code
+                is wiring._prepare_console_turn_to_runtime.__code__
+            )
+            frame = task.get_coro().cr_frame
+            captured = dict(frame.f_locals)
+            assert captured["session"] is case.session
+            assert captured["store"] is case.store
+            assert captured["runtime"] is runtime
+            assert captured["composer"] is case.composer
+            assert captured["composer_snapshot"] == snapshot
+            assert probe.leases and all(
+                lease in storage_admission._live_leases for lease in probe.leases
+            )
+
+            # This is the same original sync used by the ordinary transcript poll.
+            # It may update only the text mirror; it must not edit the composer.
+            case.screen._session._sync_console_session_draft()
+            assert case.store.session_draft(case.session.id) == draft
+            assert case.composer.capture_draft_snapshot() == snapshot
+            assert (
+                case.store.session_settings_revision(case.session.id)
+                == settings_revision
+            )
+            assert (
+                next(s for s in case.store.sessions() if s.id == case.session.id)
+                is captured["session"]
+            )
+            assert runtime._chat_store is captured["store"]
+            assert (
+                case.store.session_one_shot_prefill_snapshot(case.session.id)
+                == captured["prefill"]
+            )
+            assert (
+                tuple(case.store.pending_attachments(case.session.id))
+                == captured["attachments"]
+            )
+            evidence = runtime.snapshot_console_staged_evidence()
+            assert evidence[0] is captured["evidence"][0]
+            assert evidence[1:] == captured["evidence"][1:]
+            assert (
+                stash.text,
+                stash.edit_serial,
+                stash.generation,
+                tuple(stash.segments),
+            ) == captured["stash_identity"]
+            assert case.screen._console_visible_draft_session_id == case.session.id
+            assert case.screen._console_composer_or_none() is captured["composer"]
+            mirror_changed = captured["stored_draft"] != case.store.session_draft(
+                case.session.id
+            )
+            probe.release.set()
+            try:
+                turn_id = await task
+            except bootstrap.RecoveryRequired as error:
+                raise AssertionError(
+                    f"unchanged composer refused after original mirror; mirror_changed={mirror_changed}"
+                ) from error
+            assert turn_id in runtime._turn_custody
+            assert runtime._turn_custody[turn_id].request.draft == draft
+            assert all(
+                lease not in storage_admission._live_leases for lease in probe.leases
+            )
+        finally:
+            await _retire_wired_preparation(case, task, probe)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change", ["edit", "edit_away_and_back", "same_text_scope", "store_only"]
+)
+async def test_actual_wired_preparation_still_refuses_real_draft_drift(
+    wired_composer_case, change
+):
+    """Mirroring never authorizes a changed draft revision or store owner text."""
+    case = wired_composer_case
+    _loop_projection(case)
+    runtime = case.screen._console_runtime()
+    draft = "owning input"
+    case.composer.load_draft(draft)
+    case.store.set_session_draft(case.session.id, draft)
+    stash = case.composer.capture_draft_for_send()
+    snapshot = case.composer.capture_draft_snapshot()
+    probe = _PermissionProbe(case.source, case.permissions)
+    with probe.installed():
+        task = asyncio.create_task(
+            case.screen._prompt_queue._launch_chain_async(
+                draft, case.session.id, stash, case.controller
+            )
+        )
+        try:
+            await catalog_controls._worker_entered(probe, task)
+            assert not runtime.has_custodied_turns()
+            assert probe.leases and all(
+                lease in storage_admission._live_leases for lease in probe.leases
+            )
+            if change == "store_only":
+                case.store.set_session_draft(case.session.id, "independent newer draft")
+                assert case.composer.capture_draft_snapshot() == snapshot
+            elif change == "same_text_scope":
+                case.composer.load_draft(draft)
+                assert case.composer.draft_text() == draft
+                assert (
+                    case.composer.capture_draft_snapshot().generation
+                    != snapshot.generation
+                )
+            else:
+                case.composer.insert_text("x")
+                if change == "edit_away_and_back":
+                    case.composer.delete_left()
+                    assert case.composer.draft_text() == draft
+                assert case.composer.edit_serial != snapshot.edit_serial
+                case.screen._session._sync_console_session_draft()
+            probe.release.set()
+            with pytest.raises(
+                bootstrap.RecoveryRequired, match="console_snapshot_owner_changed"
+            ):
+                await task
+            assert not runtime.has_custodied_turns()
+            assert case.composer.draft_text() == (
+                draft + "x" if change == "edit" else draft
+            )
+            assert case.store.session_draft(case.session.id) == (
+                "independent newer draft"
+                if change == "store_only"
+                else case.composer.draft_text()
+            )
+            assert all(
+                lease not in storage_admission._live_leases for lease in probe.leases
+            )
+        finally:
+            await _retire_wired_preparation(case, task, probe)

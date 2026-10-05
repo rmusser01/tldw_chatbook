@@ -73,6 +73,7 @@ def private_profile_test(function):
             XDG_DATA_HOME=str(profile / "data"),
             TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+            PYTHONIOENCODING="utf-8",
         )
         for name in (
             "TLDW_TEST_CONFIG_ROOT_OWNER",
@@ -119,7 +120,7 @@ def private_profile_test(function):
                 coverage_args += [
                     f"--cov-context={coverage_plugin.options.cov_context}"
                 ]
-        with log.open("w") as output:
+        with log.open("w", encoding="utf-8") as output:
             process = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "-m",
@@ -157,7 +158,7 @@ def private_profile_test(function):
         if process.returncode:
             pytest.fail(
                 f"{log}\n{_child_failure_report(report)}\n"
-                f"--- child log tail ---\n{log.read_text()[-16000:]}"
+                f"--- child log tail ---\n{log.read_text(encoding="utf-8")[-16000:]}"
             )
         if coverage_controller is not None and not coverage_file.is_file():
             pytest.fail(f"private profile child did not produce coverage: {log}")

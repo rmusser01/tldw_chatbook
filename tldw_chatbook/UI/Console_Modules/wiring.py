@@ -369,16 +369,20 @@ async def _prepare_console_turn_to_runtime(
     runtime = screen._console_runtime()
     store = screen._ensure_console_chat_store()
     session = next(item for item in store.sessions() if item.id == session_id)
-    stored_draft = store.session_draft(session_id)
-    prefill = store.session_one_shot_prefill_snapshot(session_id)
-    attachments = tuple(store.pending_attachments(session_id))
-    attachment_ids = tuple(item.attachment_id for item in attachments)
-    evidence = runtime.snapshot_console_staged_evidence()
     visible = screen._console_visible_draft_session_id == session_id
     composer = screen._console_composer_or_none() if visible else None
     composer_snapshot = (
         composer.capture_draft_snapshot() if composer is not None else None
     )
+    if composer is not None:
+        # Button capture can precede the ordinary poll's in-memory draft mirror.
+        # Establish that mirror before waiting; subsequent edits still refuse.
+        store.set_session_draft(session_id, composer.draft_text())
+    stored_draft = store.session_draft(session_id)
+    prefill = store.session_one_shot_prefill_snapshot(session_id)
+    attachments = tuple(store.pending_attachments(session_id))
+    attachment_ids = tuple(item.attachment_id for item in attachments)
+    evidence = runtime.snapshot_console_staged_evidence()
     stash_identity = (
         (stash.text, stash.edit_serial, stash.generation, tuple(stash.segments))
         if stash is not None
