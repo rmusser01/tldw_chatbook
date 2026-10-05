@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/private/tmp/console-dev-recovery-candidate-01a0fa6c.py", line 39, in <module>
+    assert capture['agent_fresh'] in capture['agent_migrated']
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

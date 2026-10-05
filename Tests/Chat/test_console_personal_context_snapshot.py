@@ -5,6 +5,9 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+# Config admission remains bound to the profile selected at collection.
+pytestmark = pytest.mark.bootstrap_profile
+
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Agents.agent_service import AgentService, _count_model_messages
 from tldw_chatbook.Agents.canvas_tool_provider import (
@@ -525,7 +528,7 @@ async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
     )
     monkeypatch.setattr(
         "tldw_chatbook.Chat.console_chat_controller.resolve_project_instruction_binding",
-        lambda _session, _registry: selected,
+        lambda _session, _registry, *, status_cache: selected,
     )
 
     await controller.build_context_snapshot(draft="question", session_id=session.id)
@@ -683,3 +686,61 @@ def test_fenced_instruction_capacity_counts_the_dispatched_reasoning_projection(
         response_reserve_tokens=reserve,
         reasoning_replay=policy,
     ) is (mode == "off")
+
+
+@pytest.mark.asyncio
+async def test_personal_context_snapshot_is_empty_when_gateway_hangs(
+    monkeypatch,
+) -> None:
+    import asyncio
+
+    import tldw_chatbook.Chat.console_chat_controller as controller_module
+
+    entered = []
+
+    async def hanging_gateway(selection):
+        entered.append(selection)
+        await asyncio.Event().wait()
+
+    store = ConsoleChatStore()
+    session = store.create_session(ephemeral=True)
+    builder = _ProfileContextBuilder()
+    preview = Mock()
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=SimpleNamespace(resolve_for_send=hanging_gateway),
+        agent_bridge=SimpleNamespace(build_personal_context_preview_snapshot=preview),
+        agent_runtime_enabled=True,
+    )
+    controller.PROVIDER_VALIDATION_TIMEOUT_SECONDS = 0.05
+    selection = controller._provider_selection_for_session(session.id)
+    raw_service = object()
+    service_reader = AsyncMock(return_value=raw_service)
+    builder_reader = AsyncMock(return_value=builder)
+    profile_composer = Mock()
+    tool_composer = AsyncMock()
+    monkeypatch.setattr(controller, "_personal_context_service", service_reader)
+    monkeypatch.setattr(controller, "_personal_context_builder", builder_reader)
+    monkeypatch.setattr(
+        controller_module, "_compose_profile_tool_provider", profile_composer
+    )
+    monkeypatch.setattr(controller, "_compose_agent_request_providers", tool_composer)
+
+    try:
+        snapshot = await asyncio.wait_for(
+            controller._build_personal_context_snapshot(
+                session,
+                [{"role": "user", "content": "question"}],
+                provider_selection=selection,
+            ),
+            timeout=1.0,
+        )
+    finally:
+        assert len(entered) == 1 and entered[0] is selection
+        service_reader.assert_awaited_once_with()
+        builder_reader.assert_awaited_once_with(raw_service)
+        profile_composer.assert_not_called()
+        tool_composer.assert_not_called()
+        preview.assert_not_called()
+        assert builder.requests == []
+    assert snapshot == ProfileContextSnapshot.empty()

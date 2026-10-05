@@ -50,7 +50,7 @@ def test_genuine_upgrade_creates_receipts(tmp_path, source_version):
             )
             .fetchone()
         )
-        assert db._get_db_version(db.get_connection()) == 76
+        assert db._get_db_version(db.get_connection()) == 77
         if source_version == 74:
             assert (
                 db.get_connection()
@@ -169,7 +169,7 @@ def test_v75_failure_rolls_back_ddl_and_reopens_cleanly(tmp_path, monkeypatch):
             is None
         )
     reopened = CharactersRAGDB(path, client_id="retry")
-    assert reopened._get_db_version(reopened.get_connection()) == 76
+    assert reopened._get_db_version(reopened.get_connection()) == 77
     reopened.close()
 
 

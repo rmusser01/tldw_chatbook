@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from Tests.Chat.console_interrupt_test_bindings import make_interrupt_host
+
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.MCP import live_server_request_wiring as wiring
 from tldw_chatbook.MCP import unified_control_plane_service as service_module
@@ -38,6 +40,7 @@ def test_console_and_service_share_approval_timeout_policy(
         controller_module.ConsoleChatController
     )
     controller.mcp_approval_timeout_seconds = None
+    controller._interrupt_host = make_interrupt_host(controller)
     service = service_module.UnifiedMCPControlPlaneService(
         target_store=None, context_store=None, local_service=None, server_service=None
     )

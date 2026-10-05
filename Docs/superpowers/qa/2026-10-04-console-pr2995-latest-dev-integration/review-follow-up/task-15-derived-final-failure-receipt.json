@@ -1,0 +1,15 @@
+{
+  "published_head": "b1efc37ae8f481c1df01e2f253d5878ba68e35a4",
+  "run": 37229906610,
+  "job": 111527553915,
+  "completed_at": "2026-10-04T21:11:40Z",
+  "conclusion": "failure",
+  "log_sha256": "406049b1a6c23f7bb542c612947aeec7ec0ded1b86a27dea6cb417e7e52b8904",
+  "log_bytes": 76345,
+  "cause": "Require successful PR fast lane: The required PR fast lane did not succeed.",
+  "no_additional_artifact_mismatch_observed": true,
+  "source_expansion_required": false,
+  "next_gate": "Fresh post-fix published-head PR Fast Lane, both UI shards, Derived final and PerfGuard remain required.",
+  "dev_remote_sha": "49206beea90d35ea9e6842ffa44e4b274db29d8a",
+  "private_raw_log_only": true
+}

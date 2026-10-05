@@ -314,6 +314,63 @@ def console_messages_from_conversation_tree(
     return messages
 
 
+def _refresh_console_message_parents(
+    nodes: Sequence[ConsoleChatMessage], rows: Sequence[Mapping[str, Any]]
+) -> None:
+    """Mutate current durable parents, keeping absent truly-empty rows transparent.
+
+    Unresolved or malformed ancestry leaves the supplied structural link intact.
+    Only successfully resolved skipped chains are cached, within this one refresh.
+    """
+    raw_by_id = {str(row["id"]): row for row in rows if row.get("id") is not None}
+    retained = {
+        str(node.persisted_message_id)
+        for node in nodes
+        if node.persisted_message_id is not None
+    }
+    resolved: dict[str, str | None] = {}
+    for node in nodes:
+        if node.persisted_message_id is None:
+            continue
+        node_id = str(node.persisted_message_id)
+        row = raw_by_id.get(node_id)
+        if row is None:
+            continue
+        parent = (
+            str(row["parent_message_id"])
+            if row.get("parent_message_id") is not None
+            else None
+        )
+        visited = {node_id}
+        skipped: list[str] = []
+        while True:
+            if parent in visited:
+                break
+            if parent is None or parent in retained:
+                node.parent_message_id = parent
+                for ancestor in skipped:
+                    resolved[ancestor] = parent
+                break
+            if parent in resolved:
+                parent = resolved[parent]
+                continue
+            ancestor = raw_by_id.get(parent)
+            if ancestor is None or (
+                bool(str(ancestor.get("content") or ""))
+                or isinstance(ancestor.get("image_data"), (bytes, bytearray))
+                or ancestor.get("assistant_generation_state") is not None
+                or ancestor.get("provider_continuation_json") is not None
+            ):
+                break
+            visited.add(parent)
+            skipped.append(parent)
+            parent = (
+                str(ancestor["parent_message_id"])
+                if ancestor.get("parent_message_id") is not None
+                else None
+            )
+
+
 async def load_console_conversation_tree(
     app: Any, conversation_id: str
 ) -> Mapping[str, Any] | None:

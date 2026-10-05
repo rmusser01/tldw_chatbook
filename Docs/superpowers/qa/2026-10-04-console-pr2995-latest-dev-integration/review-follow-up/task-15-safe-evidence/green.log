@@ -1,0 +1,22 @@
+........................                                                 [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-15-safe-evidence/green.xml -
+============================= slowest 25 durations =============================
+2.03s call     Tests/Chat/test_console_chat_start.py::test_restriction_registration_failure_still_drains_exact_native_owners[provider-first]
+1.52s call     Tests/Chat/test_console_chat_start.py::test_restriction_registration_failure_still_drains_exact_native_owners[provider-second]
+1.36s call     Tests/Chat/test_console_chat_start.py::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[abandonment]
+1.27s call     Tests/Chat/test_console_chat_start.py::test_restriction_registration_failure_still_drains_exact_native_owners[commit-second]
+1.26s call     Tests/Chat/test_console_chat_start.py::test_restriction_registration_failure_still_drains_exact_native_owners[commit-first]
+1.18s call     Tests/Chat/test_console_chat_start.py::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[replacement]
+1.14s call     Tests/Chat/test_console_chat_start.py::test_failed_preparation_with_no_attempt_clears_only_its_restriction[False-False]
+1.12s call     Tests/Chat/test_console_chat_start.py::test_contended_preparation_confirms_absence_after_writer_exits
+1.11s call     Tests/Chat/test_console_chat_start.py::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[run_state]
+1.10s call     Tests/Chat/test_console_chat_start.py::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[publication]
+1.05s call     Tests/Chat/test_console_chat_start.py::test_preparation_exception_reconciles_persisted_authority_conservatively[missing_runtime]
+1.05s call     Tests/Chat/test_console_chat_start.py::test_preparation_exception_reconciles_persisted_authority_conservatively[accepted]
+1.04s call     Tests/Chat/test_console_chat_start.py::test_preparation_exception_reconciles_persisted_authority_conservatively[prepared]
+1.02s call     Tests/Chat/test_console_chat_start.py::test_failed_preparation_with_no_attempt_clears_only_its_restriction[True-False]
+1.02s call     Tests/Chat/test_console_chat_start.py::test_preparation_exception_reconciles_persisted_authority_conservatively[stale_runtime]
+1.00s call     Tests/Chat/test_console_chat_start.py::test_failed_preparation_with_no_attempt_clears_only_its_restriction[True-True]
+
+(9 durations < 1s hidden.)
+24 passed in 24.66s

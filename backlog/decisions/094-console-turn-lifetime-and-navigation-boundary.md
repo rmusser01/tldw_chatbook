@@ -129,3 +129,12 @@ adding a second job system or changing the navigation stack model.
 - [TASK-15860: app-owned headless Console runtime](../tasks/task-15860%20-%20Headless-wake-fire-the-supervisor-auto-wake-with-no-Console-screen-mounted.md)
 - [TASK-1143: former screen-scoped fleet warning](../tasks/task-1143%20-%20Screen-navigation-silently-kills-the-agent-fleet.md)
 - [ADR-085: Console activity receipts and switcher ownership](085-console-activity-receipts-and-switcher-ownership.md)
+
+
+## Reusable Console Resume orchestration (2026-10-05)
+
+ADR139 establishes the reusable Console route, and ADR147 owns exact saved/character identity and handoff supersession. In PR2995 integration of dev PR3011, visit-owned Resume hydration and rollback settlement belong to the existing ConsoleSessionController. Genuine synchronous screen timer startup and async retirement entries retain the screen visit lifetime; screen-owned nullable request/Worker fields, gate, timers, suspend and unmount observations stay explicit. Named late-binding constructor callables connect only those state and sibling handoff/fleet/open/reconcile operations; no opaque screen proxy, dynamic alias or controller-to-screen runtime import is introduced.
+
+Move settle/consume/retirement orchestration behind those real entries. Leaving the visit cancels navigation presentation while rollback drains before retry or a newer character commit. Permanent unmount clears the request. Cancel once, shield drain, preserve exact request and Worker identity so stale cleanup cannot erase newer requests or lower newer gates. Accepted ordinary, Buddy and automatic turns remain app-runtime custody; their ownership, charge and permission boundaries do not move. Shutdown drains the named view groups before runtime disposal.
+
+Task19 in Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md and TASK34215.2 implement this clarification under existing ADR219/220 and fixed screen25218line/759method limits. Preserve incoming worker annotations/timer names, actual acquisition/release failure behavior and both direct test bodies while routing their constructor bindings to the real Session owner. Earlier disposable-view language does not override ADR139's reusable route.

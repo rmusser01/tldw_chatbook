@@ -1,0 +1,34 @@
+[
+  {
+    "path": "Tests/Chat/test_console_chat_create_integration.py",
+    "before_sha256": "5f619626ac53e8a0788a3c2f7199efc64930eb6a63056b6138e7e45423dda3b1",
+    "after_sha256": "a5f8aafabdecbf17c89c88debf3f7befcb9353d5bf6053ba7cf3889721b25778",
+    "ast_equal": true,
+    "old": "    assert not controller._chat_creation_records and not controller.pending_chat_create_ids()\n",
+    "new": "    assert (\n        not controller._chat_creation_records\n        and not controller.pending_chat_create_ids()\n    )\n"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_agent_bridge.py",
+    "before_sha256": "4dba2b2104fe13f0e1cb16e114390c331e9c6ff64d8712542ea2fa6b2c054df6",
+    "after_sha256": "27276862ff490858818740371a68ffa746180a1fe10d36f089e2b1076c9e8bff",
+    "ast_equal": true,
+    "old": "            if tool == \"new_chat\" and not child_request and decision.get(\"remember\", False):\n",
+    "new": "            if (\n                tool == \"new_chat\"\n                and not child_request\n                and decision.get(\"remember\", False)\n            ):\n"
+  },
+  {
+    "path": "tldw_chatbook/Chat/console_chat_controller.py",
+    "before_sha256": "ec9fb94f83ab8e9680cd6c876d8f25ad38b3e88906b2c6ae68eaa839f1cc0308",
+    "after_sha256": "efc9953dcc565e3b275d4ea405c0a7622fc77b19eb906a3ebe5f3c4455a240d3",
+    "ast_equal": true,
+    "old": "                and continuation.origin is not ConsoleSubmissionOrigin.AGENT_CHAT_START\n                and not (continuation.prepared and continuation.prepared.preserve_composer)\n",
+    "new": "                and continuation.origin is not ConsoleSubmissionOrigin.AGENT_CHAT_START\n                and not (\n                    continuation.prepared and continuation.prepared.preserve_composer\n                )\n"
+  },
+  {
+    "path": "tldw_chatbook/UI/Console_Modules/session.py",
+    "before_sha256": "d9f68f6e864fc9c9d41b7f793fb35087435062375afb8e6d3c75c37d87e144c4",
+    "after_sha256": "c9868c21d635ff338f13849a30aaf37e1c79b2481fa8bce5d7e8086b6780f950",
+    "ast_equal": true,
+    "old": "        self._visible_agent_handoff_draft: tuple[str, str, int, ComposerDraftSnapshot] | None = None\n",
+    "new": "        self._visible_agent_handoff_draft: (\n            tuple[str, str, int, ComposerDraftSnapshot] | None\n        ) = None\n"
+  }
+]

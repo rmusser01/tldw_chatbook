@@ -23,6 +23,7 @@ import gc
 import threading
 import time
 import warnings
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -673,8 +674,109 @@ async def _verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
             controller._sync_native_console_chat_ui_fn = real_sync
 
 
-async def _arm_pending_round(controller, kind: str, session_id: str):
+@contextmanager
+def _pending_close_app(request, kind, *, surviving_child=False):
+    """Give only prepared new-chat cases a real, explicitly owned database."""
+    from tempfile import TemporaryDirectory
+
+    app = _ready_app()
+    if kind != "chat_create":
+        yield app
+        return
+    with TemporaryDirectory(
+        prefix="prepared-close-", dir=request.getfixturevalue("tmp_path")
+    ) as directory:
+        db = CharactersRAGDB(
+            Path(directory) / "chats.sqlite", client_id="prepared-close"
+        )
+        app.chachanotes_db = db
+        app.local_chat_conversation_service = ChatConversationService(db)
+        runs = None
+        if surviving_child:
+            from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+            runs = AgentRunsDB(Path(directory) / "runs.sqlite")
+            app._pending_close_runs = runs
+        try:
+            yield app
+        finally:
+            if runs is not None:
+                runs.close()
+            db.close_connection()
+
+
+def _prepare_surviving_child(controller, session_id):
+    """Keep existing child authority live after the primary turn has ended."""
+    from types import SimpleNamespace
+    from tldw_chatbook.Agents.run_context import CurrentRunActor, use_run_actor
+
+    source = controller.store._sessions[session_id]
+    source.persisted_conversation_id = controller.store.persistence.create_conversation(
+        conversation_title=source.title
+    )
+    runs = controller.app._pending_close_runs
+    parent = runs.create_run(
+        conversation_id=source.persisted_conversation_id,
+        agent_kind="primary",
+        assistant_message_id="finished-parent-message",
+    )
+    child = runs.create_run(
+        conversation_id=source.persisted_conversation_id,
+        agent_kind="subagent",
+        parent_run_id=parent,
+        run_id=f"close-chat_create-{session_id}",
+    )
+    controller._agent_bridge = SimpleNamespace(
+        runs_db=runs,
+        agent_runs_db=runs,
+        live_primary_run_id=lambda conversation: parent,
+    )
+    actor = CurrentRunActor("subagent", child, parent)
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(
+            {
+                "tool": "new_chat",
+                "session_id": session_id,
+                "source_run_id": child,
+                "source_message_id": "finished-parent-message",
+                "title": "private close chat",
+                "destination": "same_workspace",
+                "mode": "draft",
+            }
+        )
+    return prepared, actor
+
+
+def _assert_surviving_creation_is_live(controller, pending):
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    prepared = pending._prepared_creation_payload
+    with use_run_actor(pending._prepared_creation_actor):
+        assert controller._chat_creation_source_live(prepared)
+        record = controller._chat_creation_record(prepared)
+        assert record is controller._chat_creation_records[prepared["_creation_token"]]
+        assert record["payload"] == prepared
+        assert not record["approved"]
+
+
+async def _arm_pending_round(
+    controller, kind: str, session_id: str, *, surviving_child=False
+):
     """Arm a real blocking round without executing the proposed tool."""
+
+    actor = None
+    if kind == "chat_create":
+        if surviving_child:
+            prepared, actor = _prepare_surviving_child(controller, session_id)
+            creation_run = actor.run_id
+        else:
+            from Tests.Chat.test_console_chat_create_integration import (
+                _prepare_close_new_chat,
+            )
+
+            prepared, creation_run = _prepare_close_new_chat(
+                controller, session_id, "private close chat"
+            )
 
     def request():
         if kind == "approval":
@@ -707,7 +809,7 @@ async def _arm_pending_round(controller, kind: str, session_id: str):
             )
         if kind == "chat_create":
             return controller.request_chat_create_confirm(
-                {"tool": "new_chat", "title": "private close chat"},
+                prepared,
                 session_id=session_id,
             )
         if kind == "worktree_merge":
@@ -728,8 +830,21 @@ async def _arm_pending_round(controller, kind: str, session_id: str):
             session_id=session_id,
         )
 
-    with use_run_id(f"close-{kind}-{session_id}"):
-        return asyncio.create_task(asyncio.to_thread(request))
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    context = (
+        use_run_actor(actor)
+        if actor is not None
+        else use_run_id(
+            creation_run if kind == "chat_create" else f"close-{kind}-{session_id}"
+        )
+    )
+    with context:
+        pending = asyncio.create_task(asyncio.to_thread(request))
+    if kind == "chat_create":
+        pending._prepared_creation_payload = prepared
+        pending._prepared_creation_actor = actor
+    return pending
 
 
 async def _verify_background_pending_close_names_consequences_and_cancels_only_its_owner(
@@ -768,122 +883,130 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
             {"allow": False, "remember": False},
         ),
     ]:
-        app = _ready_app()
-        host = ProductionConsoleHarness(app)
-        async with host.run_test(size=_SIZE) as pilot:
-            console = await _mounted_console(host, pilot, "#console-native-composer")
-            controller = console._ensure_console_chat_controller()
-            app.call_from_thread = host.call_from_thread
-            store = controller.store
-            keeper = store.active_session_id
-            assert _session_ids(store) == [keeper]
-            assert not controller.pending_round_kinds(keeper)
-            assert not controller._active_stream_tasks
-            doomed = controller.new_session(title="Pending [notes]")
-            controller.switch_session(keeper)
-            assistant = store.append_message(
-                doomed.id, role=ConsoleMessageRole.ASSISTANT, content=""
-            )
-            cancelled = asyncio.Event()
-            controller._active_cancel_events[doomed.id] = threading.Event()
-            round_task = await _arm_pending_round(controller, kind, doomed.id)
-
-            async def waiting_run(
-                controller=controller,
-                doomed=doomed,
-                assistant=assistant,
-                round_task=round_task,
-                cancelled=cancelled,
-            ):
-                task = asyncio.current_task()
-                controller._active_stream_tasks[doomed.id] = task
-                controller._active_assistant_message_ids[doomed.id] = assistant.id
-                controller._set_run_state(
-                    ConsoleRunState(ConsoleRunStatus.STREAMING, "Waiting"),
-                    session_id=doomed.id,
+        with _pending_close_app(request, kind) as app:
+            host = ProductionConsoleHarness(app)
+            async with host.run_test(size=_SIZE) as pilot:
+                console = await _mounted_console(
+                    host, pilot, "#console-native-composer"
                 )
-                try:
-                    await asyncio.shield(round_task)
-                    await asyncio.Event().wait()
-                except asyncio.CancelledError:
-                    cancelled.set()
-                    raise
-                finally:
-                    controller._active_stream_tasks.pop(doomed.id, None)
-                    controller._active_assistant_message_ids.pop(doomed.id, None)
-                    controller._active_cancel_events.pop(doomed.id, None)
-
-            run_task = asyncio.create_task(waiting_run())
-            try:
-                assert await _settle(
-                    pilot,
-                    lambda kind=kind, controller=controller, doomed=doomed: (
-                        kind in controller.pending_round_kinds(doomed.id)
-                        and doomed.id in controller._active_stream_tasks
-                    ),
-                ), "the actual pending round and its owning run did not arm"
-                await _show_tabs(console, pilot, {keeper, doomed.id})
-                assert (
-                    controller.run_marker_for(doomed.id)
-                    is ConsoleRunMarker.NEEDS_APPROVAL
+                controller = console._ensure_console_chat_controller()
+                app.call_from_thread = host.call_from_thread
+                store = controller.store
+                keeper = store.active_session_id
+                assert _session_ids(store) == [keeper]
+                assert not controller.pending_round_kinds(keeper)
+                assert not controller._active_stream_tasks
+                doomed = controller.new_session(title="Pending [notes]")
+                controller.switch_session(keeper)
+                assistant = store.append_message(
+                    doomed.id, role=ConsoleMessageRole.ASSISTANT, content=""
                 )
-                await _click(pilot, f"#console-close-session-tab-{doomed.id}")
-                dialog = await _wait_for_confirmation(host)
-                assert "Pending [notes]" in dialog.title
-                assert consequence in dialog.message
-                assert "private close" not in dialog.message
-                for zero_row in (
-                    "Unsent draft:",
-                    "Pending attachments:",
-                    "Delegated agents:",
-                    "Unsent queued prompts:",
-                ):
-                    assert zero_row not in dialog.message
-                assert await _settle(
-                    pilot,
-                    lambda dialog=dialog: dialog.query_one("#cancel-button").has_focus,
-                )
-                await _click(pilot, "#confirm-button")
-                assert await _settle(
-                    pilot,
-                    lambda doomed=doomed, store=store: (
-                        doomed.id not in _session_ids(store)
-                    ),
-                )
-                await _await_tabs(console, pilot, {keeper})
-                assert await _settle(
-                    pilot,
-                    lambda cancelled=cancelled, round_task=round_task: (
-                        cancelled.is_set() and round_task.done()
-                    ),
-                )
-                assert await round_task == result
-                assert run_task.cancelled()
-                assert not controller.has_pending_approval_round(doomed.id)
+                cancelled = asyncio.Event()
+                controller._active_cancel_events[doomed.id] = threading.Event()
                 if kind == "chat_create":
-                    assert not controller.pending_chat_create_ids()
-                    assert not controller._parked_chat_create_payloads
-                else:
-                    assert (
-                        controller._interrupt_host.session_round_payloads(
-                            kind, doomed.id
-                        )
-                        == []
+                    controller._active_assistant_message_ids[doomed.id] = assistant.id
+                round_task = await _arm_pending_round(controller, kind, doomed.id)
+
+                async def waiting_run(
+                    controller=controller,
+                    doomed=doomed,
+                    assistant=assistant,
+                    round_task=round_task,
+                    cancelled=cancelled,
+                ):
+                    task = asyncio.current_task()
+                    controller._active_stream_tasks[doomed.id] = task
+                    controller._active_assistant_message_ids[doomed.id] = assistant.id
+                    controller._set_run_state(
+                        ConsoleRunState(ConsoleRunStatus.STREAMING, "Waiting"),
+                        session_id=doomed.id,
                     )
-                    assert not controller._interrupt_host.registries[kind]
-                assert store.active_session_id == keeper
-                assert not console._console_runtime().console_needs_attention
-            finally:
-                # A copy assertion can fail before Close; release the real merge
-                # worker's cancellation signal before dropping its owning task.
-                cancel_event = controller._active_cancel_events.get(doomed.id)
-                if cancel_event is not None:
-                    cancel_event.set()
-                controller.revoke_approval_rounds_for_run(f"close-{kind}-{doomed.id}")
-                controller._cancel_pending_decisions_for_session(doomed.id)
-                run_task.cancel()
-                await asyncio.gather(run_task, return_exceptions=True)
-                await asyncio.wait_for(asyncio.shield(round_task), 5)
+                    try:
+                        await asyncio.shield(round_task)
+                        await asyncio.Event().wait()
+                    except asyncio.CancelledError:
+                        cancelled.set()
+                        raise
+                    finally:
+                        controller._active_stream_tasks.pop(doomed.id, None)
+                        controller._active_assistant_message_ids.pop(doomed.id, None)
+                        controller._active_cancel_events.pop(doomed.id, None)
+
+                run_task = asyncio.create_task(waiting_run())
+                try:
+                    assert await _settle(
+                        pilot,
+                        lambda kind=kind, controller=controller, doomed=doomed: (
+                            kind in controller.pending_round_kinds(doomed.id)
+                            and doomed.id in controller._active_stream_tasks
+                        ),
+                    ), "the actual pending round and its owning run did not arm"
+                    await _show_tabs(console, pilot, {keeper, doomed.id})
+                    assert (
+                        controller.run_marker_for(doomed.id)
+                        is ConsoleRunMarker.NEEDS_APPROVAL
+                    )
+                    await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+                    dialog = await _wait_for_confirmation(host)
+                    assert "Pending [notes]" in dialog.title
+                    assert consequence in dialog.message
+                    assert "private close" not in dialog.message
+                    for zero_row in (
+                        "Unsent draft:",
+                        "Pending attachments:",
+                        "Delegated agents:",
+                        "Unsent queued prompts:",
+                    ):
+                        assert zero_row not in dialog.message
+                    assert await _settle(
+                        pilot,
+                        lambda dialog=dialog: (
+                            dialog.query_one("#cancel-button").has_focus
+                        ),
+                    )
+                    await _click(pilot, "#confirm-button")
+                    assert await _settle(
+                        pilot,
+                        lambda doomed=doomed, store=store: (
+                            doomed.id not in _session_ids(store)
+                        ),
+                    )
+                    await _await_tabs(console, pilot, {keeper})
+                    assert await _settle(
+                        pilot,
+                        lambda cancelled=cancelled, round_task=round_task: (
+                            cancelled.is_set() and round_task.done()
+                        ),
+                    )
+                    assert await round_task == result
+                    assert run_task.cancelled()
+                    assert not controller.has_pending_approval_round(doomed.id)
+                    if kind == "chat_create":
+                        assert not controller.pending_chat_create_ids()
+                        assert not controller._parked_chat_create_payloads
+                    else:
+                        assert (
+                            controller._interrupt_host.session_round_payloads(
+                                kind, doomed.id
+                            )
+                            == []
+                        )
+                        assert not controller._interrupt_host.registries[kind]
+                    assert store.active_session_id == keeper
+                    assert not console._console_runtime().console_needs_attention
+                finally:
+                    # A copy assertion can fail before Close; release the real merge
+                    # worker's cancellation signal before dropping its owning task.
+                    cancel_event = controller._active_cancel_events.get(doomed.id)
+                    if cancel_event is not None:
+                        cancel_event.set()
+                    controller.revoke_approval_rounds_for_run(
+                        f"close-{kind}-{doomed.id}"
+                    )
+                    controller._cancel_pending_decisions_for_session(doomed.id)
+                    run_task.cancel()
+                    await asyncio.gather(run_task, return_exceptions=True)
+                    await asyncio.wait_for(asyncio.shield(round_task), 5)
 
 
 async def _verify_background_pending_close_releases_round_without_an_active_turn(
@@ -898,55 +1021,86 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
         ("question", {"answered": False, "reason": "cancelled"}),
         ("chat_create", {"allow": False, "remember": False}),
     ):
-        app = _ready_app()
-        host = ProductionConsoleHarness(app)
-        async with host.run_test(size=_SIZE) as pilot:
-            console = await _mounted_console(host, pilot, "#console-native-composer")
-            controller = console._ensure_console_chat_controller()
-            app.call_from_thread = host.call_from_thread
-            store = controller.store
-            keeper = store.active_session_id
-            doomed = controller.new_session(title="Pending decision")
-            controller.switch_session(keeper)
-            sibling = await _arm_pending_round(controller, "question", keeper)
-            pending = await _arm_pending_round(controller, kind, doomed.id)
-            try:
-                read_ids = (
-                    controller.pending_question_ids
-                    if kind == "question"
-                    else controller.pending_chat_create_ids
+        with _pending_close_app(
+            request, kind, surviving_child=kind == "chat_create"
+        ) as app:
+            host = ProductionConsoleHarness(app)
+            async with host.run_test(size=_SIZE) as pilot:
+                console = await _mounted_console(
+                    host, pilot, "#console-native-composer"
                 )
-                assert await _settle(
-                    pilot,
-                    lambda read_ids=read_ids, kind=kind: (
-                        len(read_ids()) == (2 if kind == "question" else 1)
-                    ),
-                ), "both real decision rounds must be armed before closing"
-                await _show_tabs(console, pilot, {keeper, doomed.id})
-                await _click(pilot, f"#console-close-session-tab-{doomed.id}")
-                await _wait_for_confirmation(host)
-                await _click(pilot, "#confirm-button")
-                assert await _settle(
-                    pilot,
-                    lambda doomed=doomed, store=store: (
-                        doomed.id not in _session_ids(store)
-                    ),
+                controller = console._ensure_console_chat_controller()
+                app.call_from_thread = host.call_from_thread
+                store = controller.store
+                keeper = store.active_session_id
+                doomed = controller.new_session(title="Pending decision")
+                controller.switch_session(keeper)
+                sibling = await _arm_pending_round(controller, "question", keeper)
+                pending = await _arm_pending_round(
+                    controller, kind, doomed.id, surviving_child=kind == "chat_create"
                 )
-                await _await_tabs(console, pilot, {keeper})
-                assert await _settle(pilot, pending.done, timeout=2), (
-                    "closed session left its decision armed without an owning turn"
-                )
-                assert await pending == expected
-                assert not sibling.done(), (
-                    "closing the background tab answered the viewed tab"
-                )
-                assert len(controller.pending_question_ids()) == 1
-                assert controller.pending_round_kinds(keeper) == {"question"}
-                assert not controller.has_pending_approval_round(doomed.id)
-            finally:
-                controller.revoke_approval_rounds_for_run(f"close-question-{keeper}")
-                controller.revoke_approval_rounds_for_run(f"close-{kind}-{doomed.id}")
-                await asyncio.wait_for(asyncio.gather(sibling, pending), 5)
+                try:
+                    read_ids = (
+                        controller.pending_question_ids
+                        if kind == "question"
+                        else controller.pending_chat_create_ids
+                    )
+                    assert await _settle(
+                        pilot,
+                        lambda read_ids=read_ids, kind=kind: (
+                            len(read_ids()) == (2 if kind == "question" else 1)
+                        ),
+                    ), "both real decision rounds must be armed before closing"
+                    if kind == "chat_create":
+                        assert await _settle(
+                            pilot, lambda: bool(controller._parked_chat_create_payloads)
+                        )
+                        request_id = controller.pending_chat_create_ids()[0]
+                        card = controller._parked_chat_create_payloads[request_id]
+                        assert card["session_id"] == doomed.id
+                        assert card["request_id"] == request_id
+                        assert (
+                            card["_creation_token"]
+                            is pending._prepared_creation_payload["_creation_token"]
+                        )
+                        assert not controller._pending_chat_create_rounds[request_id][
+                            "event"
+                        ].is_set()
+                        assert controller.pending_round_kinds(doomed.id) == {
+                            "chat_create"
+                        }
+                        _assert_surviving_creation_is_live(controller, pending)
+                    assert doomed.id not in controller._active_cancel_events
+                    assert doomed.id not in controller._active_assistant_message_ids
+                    await _show_tabs(console, pilot, {keeper, doomed.id})
+                    await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+                    await _wait_for_confirmation(host)
+                    await _click(pilot, "#confirm-button")
+                    assert await _settle(
+                        pilot,
+                        lambda doomed=doomed, store=store: (
+                            doomed.id not in _session_ids(store)
+                        ),
+                    )
+                    await _await_tabs(console, pilot, {keeper})
+                    assert await _settle(pilot, pending.done, timeout=2), (
+                        "closed session left its decision armed without an owning turn"
+                    )
+                    assert await pending == expected
+                    assert not sibling.done(), (
+                        "closing the background tab answered the viewed tab"
+                    )
+                    assert len(controller.pending_question_ids()) == 1
+                    assert controller.pending_round_kinds(keeper) == {"question"}
+                    assert not controller.has_pending_approval_round(doomed.id)
+                finally:
+                    controller.revoke_approval_rounds_for_run(
+                        f"close-question-{keeper}"
+                    )
+                    controller.revoke_approval_rounds_for_run(
+                        f"close-{kind}-{doomed.id}"
+                    )
+                    await asyncio.wait_for(asyncio.gather(sibling, pending), 5)
 
 
 async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
@@ -958,55 +1112,63 @@ async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
         request: Pytest request selecting the isolated private-profile child.
         monkeypatch: Pause the real bridge at its payload-enrichment boundary.
     """
-    app = _ready_app()
-    host = ProductionConsoleHarness(app)
-    async with host.run_test(size=_SIZE) as pilot:
-        console = await _mounted_console(host, pilot, "#console-native-composer")
-        controller = console._ensure_console_chat_controller()
-        app.call_from_thread = host.call_from_thread
-        keeper = controller.store.active_session_id
-        doomed = controller.new_session(title="Closing before confirmation")
-        controller.switch_session(keeper)
-        entered = threading.Event()
-        release = threading.Event()
-        enrich = controller._enrich_chat_create_confirm_payload
+    with _pending_close_app(request, "chat_create", surviving_child=True) as app:
+        host = ProductionConsoleHarness(app)
+        async with host.run_test(size=_SIZE) as pilot:
+            console = await _mounted_console(host, pilot, "#console-native-composer")
+            controller = console._ensure_console_chat_controller()
+            app.call_from_thread = host.call_from_thread
+            keeper = controller.store.active_session_id
+            doomed = controller.new_session(title="Closing before confirmation")
+            controller.switch_session(keeper)
+            entered = threading.Event()
+            release = threading.Event()
+            enrich = controller._enrich_chat_create_confirm_payload
 
-        def paused_enrichment(payload):
-            entered.set()
-            assert release.wait(10), "Close never released the enrichment boundary"
-            return enrich(payload)
+            def paused_enrichment(payload):
+                entered.set()
+                assert release.wait(10), "Close never released the enrichment boundary"
+                return enrich(payload)
 
-        monkeypatch.setattr(
-            controller, "_enrich_chat_create_confirm_payload", paused_enrichment
-        )
-        pending = await _arm_pending_round(controller, "chat_create", doomed.id)
-        try:
-            assert await _settle(pilot, entered.is_set)
-            assert not controller.pending_round_kinds(doomed.id)
-            assert doomed.id not in controller._active_cancel_events
-            await _show_tabs(console, pilot, {keeper, doomed.id})
-            await _click(pilot, f"#console-close-session-tab-{doomed.id}")
-            assert await _settle(
-                pilot, lambda: doomed.id not in _session_ids(controller.store)
+            monkeypatch.setattr(
+                controller, "_enrich_chat_create_confirm_payload", paused_enrichment
             )
-            assert doomed.id in controller._session_close_generations
-            release.set()
-            assert await _settle(pilot, pending.done, timeout=2), (
-                "chat-create confirmation armed after the committed Close sweep"
+            pending = await _arm_pending_round(
+                controller, "chat_create", doomed.id, surviving_child=True
             )
-            assert await pending == {"allow": False, "remember": False}
-            assert not controller.pending_chat_create_ids()
-            assert not controller._parked_chat_create_payloads
-            assert not controller.pending_round_kinds(doomed.id)
-            assert doomed.id not in controller._chat_create_session_grants
-            assert controller.store.active_session_id == keeper
-        finally:
-            release.set()
-            controller.revoke_approval_rounds_for_run(f"close-chat_create-{doomed.id}")
-            await asyncio.wait_for(pending, 5)
+            try:
+                assert await _settle(pilot, entered.is_set)
+                _assert_surviving_creation_is_live(controller, pending)
+                assert not controller.pending_round_kinds(doomed.id)
+                assert doomed.id not in controller._active_assistant_message_ids
+                assert doomed.id not in controller._active_cancel_events
+                await _show_tabs(console, pilot, {keeper, doomed.id})
+                await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+                assert await _settle(
+                    pilot, lambda: doomed.id not in _session_ids(controller.store)
+                )
+                assert doomed.id in controller._session_close_generations
+                release.set()
+                assert await _settle(pilot, pending.done, timeout=2), (
+                    "chat-create confirmation armed after the committed Close sweep"
+                )
+                assert await pending == {"allow": False, "remember": False}
+                assert not controller.pending_chat_create_ids()
+                assert not controller._parked_chat_create_payloads
+                assert not controller.pending_round_kinds(doomed.id)
+                assert doomed.id not in controller._chat_create_session_grants
+                assert controller.store.active_session_id == keeper
+            finally:
+                release.set()
+                controller.revoke_approval_rounds_for_run(
+                    f"close-chat_create-{doomed.id}"
+                )
+                await asyncio.wait_for(pending, 5)
 
 
-async def _verify_failed_confirmed_close_reoffers_confirmation_without_retrying(request):
+async def _verify_failed_confirmed_close_reoffers_confirmation_without_retrying(
+    request,
+):
     """A refused at-risk close keeps work and offers a fresh, explicit retry.
 
     Args:

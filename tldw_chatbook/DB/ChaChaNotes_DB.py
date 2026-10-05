@@ -745,7 +745,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 76  # notes_au FTS undelete guard ships as a migration
+    _CURRENT_SCHEMA_VERSION = 77  # Native agent-chat-start dispatch receipts.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -2734,17 +2734,6 @@ UPDATE db_schema_version
    AND version = 15;
 """
 
-
-
-
-
-
-
-
-
-
-
-
     # task-19565: this runner SQL is the SINGLE source of this migration (the
     # step's Python owns shape validation and the guarded version bump for
     # half-applied-database recovery, which a bare .sql file cannot express;
@@ -2834,8 +2823,6 @@ DELETE FROM keywords
         + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_LOG_SQL
         + _MIGRATE_V42_TO_V43_PURGE_KEYWORD_SQL
     )
-
-
 
     def __init__(
         self,
@@ -7786,6 +7773,62 @@ DELETE FROM keywords
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v76_to_v77(self, conn: sqlite3.Connection) -> None:
+        """Preserve checkpoint owners while adding native chat-start receipts."""
+        self._require_migration_entry_version(conn, 76, "V76→V77")
+        migration = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v76_to_v77_agent_chat_starts.sql"
+        )
+        with self.transaction() as cursor:
+            columns = {
+                row[1]
+                for row in cursor.execute(
+                    "PRAGMA table_info(console_dispatch_checkpoints)"
+                )
+            }
+            if "agent_chat_start_attempt_id" in columns:
+                # Column presence selects this gate; only a complete catalog admits it.
+                from .recovery_core_schema import CHACHANOTES_V76_NATIVE_SCHEMAS
+
+                catalog = tuple(
+                    row[0]
+                    for row in cursor.execute(
+                        "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+                    )
+                )
+                qualified = catalog in CHACHANOTES_V76_NATIVE_SCHEMAS
+                if not qualified:
+                    # SiteConfigManager already opens CharactersRAGDB on the
+                    # Subscription file. This runtime gate never changes the
+                    # primary backup adapter's separate catalog policy.
+                    from .recovery_operations import (
+                        _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS,
+                    )
+
+                    qualified = (
+                        catalog in _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS
+                        and tuple(
+                            cursor.execute(
+                                "SELECT MAX(version) FROM schema_version"
+                            ).fetchone()
+                        )
+                        == (2,)
+                    )
+                if not qualified:
+                    raise SchemaError("V76→V77 unsupported native receipt catalog")
+            else:
+                self._execute_migration_statements(
+                    cursor, migration.read_text(encoding="utf-8"), "V76→V77"
+                )
+            changed = cursor.execute(
+                "UPDATE db_schema_version SET version = 77 WHERE schema_name = ? AND version = 76",
+                (self._SCHEMA_NAME,),
+            )
+            if changed.rowcount != 1:
+                raise SchemaError("V76→V77 version update failed")
+
     def _migrate_from_v72_to_v73(self, conn: sqlite3.Connection) -> None:
         """Persist the note-link relation and backfill it from existing bodies."""
 
@@ -8206,6 +8249,7 @@ DELETE FROM keywords
                     73: self._migrate_from_v73_to_v74,
                     74: self._migrate_from_v74_to_v75,
                     75: self._migrate_from_v75_to_v76,
+                    76: self._migrate_from_v76_to_v77,
                 }
 
                 if current_db_version == 0:

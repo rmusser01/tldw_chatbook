@@ -57,6 +57,10 @@ from tldw_chatbook.Widgets.Console.console_status_chips import ConsoleCostChip
 from tldw_chatbook.config import load_settings, save_settings_to_cli_config
 from Tests.console_provider_doubles import provider_resolution
 
+
+# Real config/TLS/app consumers retain their collection-selected private profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 _ASYNC_SETTLE_TIMEOUT = 10.0
 
 # Anthropic-native usage-payload shapes (see ProviderUsage.from_provider_payload):
@@ -142,7 +146,7 @@ class _AnthropicCostGateway:
         yield self._reply
 
 
-class _AnthropicWaitingGateway:
+class _AnthropicWaitingGateway(_AnthropicCostGateway):
     """Stub gateway that stalls mid-stream until released -- the STREAMING
     window used to prove the fingerprint recompute is skipped while active
     (mirrors ``test_console_native_chat_flow.WaitingGateway``)."""
@@ -170,7 +174,7 @@ class _AnthropicWaitingGateway:
         yield " done"
 
 
-class _AnthropicReadinessWaitingGateway:
+class _AnthropicReadinessWaitingGateway(_AnthropicCostGateway):
     """Ready gateway that exposes the optimistic-echo readiness window."""
 
     def __init__(self) -> None:
@@ -1206,7 +1210,125 @@ async def test_keyboard_send_cancels_idle_refresh_before_run_starts(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_predispatch_echo_stays_in_context_but_not_current():
+async def test_refused_send_cancels_idle_refresh_and_next_idle_edit_rearms(monkeypatch):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        refresh = console._console_draft_spend_refresh
+        callback = Mock(wraps=refresh.refresh)
+        monkeypatch.setattr(type(refresh), "refresh", callback)
+        monkeypatch.setattr(
+            console._prompt_queue,
+            "_blocked_reason_accessor",
+            lambda: "test send refused",
+        )
+        composer.load_draft("kept refused draft")
+        await pilot.pause(0.01)
+        assert refresh.timer is not None
+
+        assert (
+            await console._dispatch_console_draft_send(
+                composer.draft_text(),
+                session_id=console._console_visible_send_session_id(),
+            )
+            is False
+        )
+        assert composer.draft_text() == "kept refused draft"
+        assert refresh.timer is None
+        callback.assert_not_called()
+
+        composer.load_draft("edited after refusal")
+        await pilot.pause(0.01)
+        assert refresh.timer is not None
+        for _ in range(100):
+            await pilot.pause(0.01)
+            if callback.call_count:
+                break
+        callback.assert_called_once()
+        assert refresh.timer is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_custody_cancels_before_validating_and_leaves_other_chat_idle(
+    monkeypatch,
+):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    host = ConsoleHarness(app)
+    release = asyncio.Event()
+    entered = asyncio.Event()
+
+    async with host.run_test(size=(200, 48)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        controller = console._ensure_console_chat_controller()
+        runtime = console._console_runtime()
+        source_id = store.active_session_id
+        assert runtime.has_custodied_turns() is False
+        assert runtime.has_custodied_turns(source_id) is False
+
+        async def hold_before_controller(record, **kwargs):
+            entered.set()
+            await release.wait()
+            return None
+
+        monkeypatch.setattr(runtime, "_run_custodied_turn", hold_before_controller)
+        refresh = console._console_draft_spend_refresh
+        callback = Mock(wraps=refresh.refresh)
+        monkeypatch.setattr(type(refresh), "refresh", callback)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("runtime admitted before validating")
+        await pilot.pause(0.01)
+        assert refresh.timer is not None
+        assert (
+            await console._dispatch_console_draft_send(
+                composer.draft_text(), session_id=source_id
+            )
+            is True
+        )
+        await asyncio.wait_for(entered.wait(), timeout=_ASYNC_SETTLE_TIMEOUT)
+        await pilot.pause(0.3)
+        assert controller.run_state_for(source_id).status is ConsoleRunStatus.IDLE
+        assert runtime.has_custodied_turns() is True
+        assert runtime.has_custodied_turns(source_id) is True
+        assert refresh.timer is None
+        callback.assert_not_called()
+        turn_id = next(iter(runtime._turn_custody))
+
+        other = store.create_session(
+            title="Other idle chat", settings=store.session_settings(source_id)
+        )
+        await console._session._activate_native_console_session(other.id)
+        assert runtime.has_custodied_turns(other.id) is False
+        assert runtime.has_custodied_turns() is True
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("other chat forecast")
+        await pilot.pause(0.01)
+        assert refresh.timer is not None
+        for _ in range(100):
+            await pilot.pause(0.01)
+            if callback.call_count:
+                break
+        callback.assert_called_once()
+        assert refresh.timer is None
+
+        release.set()
+        await runtime.wait_for_turn(turn_id)
+        await pilot.pause()
+        assert runtime.has_custodied_turns() is False
+        assert runtime.has_custodied_turns(source_id) is False
+
+
+@pytest.mark.asyncio
+async def test_unaccepted_predispatch_echo_is_visible_but_excluded_from_context_and_current():
     gateway = _AnthropicReadinessWaitingGateway()
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -1227,9 +1349,20 @@ async def test_predispatch_echo_stays_in_context_but_not_current():
         console._sync_console_settings_summary()
         state = console._build_console_cost_state()
 
+        # Unaccepted owners stay visible but cannot enter request or billed history.
+        assert before_tokens > 0
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        controller = console._ensure_console_chat_controller()
         assert (
-            console._last_console_context_control_state.request_tokens == before_tokens
+            controller.run_state_for(session_id).status is ConsoleRunStatus.VALIDATING
         )
+        assert any(
+            row.role is ConsoleMessageRole.USER
+            and row.content == "slow readiness request"
+            for row in store.messages_for_session(session_id)
+        )
+        assert console._last_console_context_control_state.request_tokens == 0
         assert state is not None
         assert "Current $0.00" in state.label
 

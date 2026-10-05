@@ -306,57 +306,36 @@ def test_execute_payload_too_large(real_db_controller):
     controller, db = real_db_controller
     session = controller.store.create_session(title="S")
     outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "x",
-         "opening_prompt": "y" * 20_001, "instructions": ""})
-    assert not outcome["ok"] and outcome["kind"] == "payload_too_large"
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "x",
+            "opening_prompt": "y" * 20_001,
+            "instructions": "",
+        }
+    )
+    assert not outcome["ok"] and outcome["kind"] == "creation_refused"
 
 
-def test_execute_new_chat_creates_conversation_and_completion(real_db_controller):
+def test_execute_new_chat_requires_live_prepared_approval(real_db_controller):
     controller, db = real_db_controller
     completed = []
     controller.complete_agent_chat_create = lambda **kw: completed.append(kw)
     session = controller.store.create_session(title="S")
     outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "Fresh",
-         "opening_prompt": "hello there", "instructions": "be brief", "run_id": "run-9"}
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "Fresh",
+            "opening_prompt": "hello there",
+            "instructions": "be brief",
+            "run_id": "run-9",
+        }
     )
-    assert outcome["ok"], outcome
-    assert outcome["copied_messages"] == 0
-    assert outcome["title"] == "Fresh"
-    created = db.get_conversation_by_id(outcome["conversation_id"])
-    assert created is not None and created["system_prompt"] == "be brief"
-    metadata = json.loads(created["metadata"])
-    assert metadata["console_agent_handoff"] == {
-        "draft": "hello there", "created_via": "new_chat", "source_run_id": "run-9"
-    }
-    # The executor marshaled exactly one UI completion with the marshal
-    # kwargs (_FakeApp's call_from_thread invokes immediately).
-    # PR reviews #1/#8: the completion now carries the session's identity
-    # fields and a NON-None workspace id (global resolves to the Console's
-    # global workspace id), plus the worker-side hydrated nodes/leaf.
-    assert completed == [{
-        "session_id": session.id,
-        "conversation_id": outcome["conversation_id"],
-        "title": "Fresh",
-        "tool": "new_chat",
-        "opening_prompt": "hello there",
-        "workspace_id": session.workspace_id or "global",
-        "nodes": [],
-        "active_leaf_persisted_id": None,
-        "settings": None,
-        "assistant_kind": session.assistant_kind,
-        "assistant_id": session.assistant_id,
-        "assistant_authority_id": session.assistant_authority_id,
-        "persona_memory_mode": None,
-        "character_id": None,
-        "character_name": None,
-    }]
-    # The new conversation is NOT wired onto any session yet (Task 8 owns
-    # session placement) -- verify no session claims it.
-    assert all(
-        s.persisted_conversation_id != outcome["conversation_id"]
-        for s in controller.store.sessions()
-    )
+    assert not outcome["ok"] and outcome["kind"] == "approval_required"
+    assert not completed
+    assert len(controller.store.sessions()) == 1
+
 
 def test_execute_fork_read_failure_maps_to_execution_failed(
     real_db_controller, monkeypatch
@@ -402,14 +381,14 @@ async def test_chat_create_callbacks_reach_bridge_when_ui_sinks_wired(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_chat_create_callbacks_absent_without_ui_sinks(tmp_path):
+async def test_chat_create_callbacks_remain_available_for_remembered_grants(tmp_path):
     from Tests.Chat.test_console_skill_script_confirm import _bridged_controller
 
     controller, captured = _bridged_controller(tmp_path)
     result = await controller.submit_draft("hi")
     assert result.accepted is True, result
-    assert captured[0]["request_chat_create_confirm"] is None
-    assert captured[0]["execute_agent_chat_create"] is None
+    assert captured[0]["request_chat_create_confirm"] is not None
+    assert captured[0]["execute_agent_chat_create"] is not None
 
 
 def test_execute_fork_merges_source_metadata(real_db_controller):
@@ -548,6 +527,70 @@ def _routed_session(controller):
     )
 
 
+def _prepared_execute(controller, payload):
+    """Exercise actual preparation and an exact controller approval round."""
+    from types import SimpleNamespace
+    from threading import Event
+    from tldw_chatbook.Agents.run_context import use_run_id
+    from tldw_chatbook.Agents.agent_routing import RoutingError
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    session = controller.store._sessions[payload["session_id"]]
+    if not session.persisted_conversation_id:
+        session.persisted_conversation_id = (
+            controller.store.persistence.create_conversation(
+                conversation_title="source"
+            )
+        )
+    controller._active_cancel_events[session.id] = Event()
+    controller._active_assistant_message_ids[session.id] = "source-message"
+    bridge = controller._agent_bridge or SimpleNamespace()
+    bridge.live_primary_run_id = lambda conversation: "source-run"
+    bridge.runs_db = SimpleNamespace(
+        get_run=lambda run_id: {
+            "id": run_id,
+            "conversation_id": session.persisted_conversation_id,
+            "agent_kind": "primary",
+            "status": "running",
+        }
+    )
+    controller._agent_bridge = bridge
+    controller.app.app_config = _FAKE_APP_CONFIG
+    runtime = SimpleNamespace(_app=controller.app)
+    runtime._resolve_new_console_assistant = lambda workspace, settings: (
+        ConsoleRuntime._resolve_new_console_assistant(runtime, workspace, settings)
+    )
+    controller.app.console_runtime = runtime
+    controller._default_session_settings = lambda: ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="destination-model",
+        system_prompt="destination instructions",
+    )
+
+    def approve(pending):
+        if pending:
+            controller.resolve_pending_chat_create(True, False, pending["request_id"])
+
+    controller.set_pending_chat_create = approve
+    with use_run_id("source-run"):
+        try:
+            prepared = controller.prepare_agent_chat_create(
+                {
+                    **payload,
+                    "source_run_id": "source-run",
+                    "source_message_id": "source-message",
+                }
+            )
+        except RoutingError as error:
+            return {"ok": False, "kind": error.code}
+        except ValueError as error:
+            return {"ok": False, "kind": str(error).split(":", 1)[0]}
+        controller._last_routing_prepared = dict(prepared)
+        assert controller.request_chat_create_confirm(prepared)["allow"]
+        return controller.execute_agent_chat_create(prepared)
+
+
 def test_execute_routing_override_disabled(real_db_controller, monkeypatch):
     controller, db = real_db_controller
     _routing(monkeypatch, enabled=False, allowlist=())
@@ -555,9 +598,17 @@ def test_execute_routing_override_disabled(real_db_controller, monkeypatch):
     session = controller.store.create_session(title="S")
     conv = controller.store.persistence.create_conversation(conversation_title="S")
     session.persisted_conversation_id = conv
-    outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "provider": "llama_cpp"})
+    outcome = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "provider": "llama_cpp",
+        },
+    )
     assert not outcome["ok"] and outcome["kind"] == "override_disabled"
 
 
@@ -566,9 +617,17 @@ def test_execute_routing_not_allowlisted(real_db_controller, monkeypatch):
     _routing(monkeypatch, enabled=True, allowlist=("openai",))
     _app_config(monkeypatch)
     session = controller.store.create_session(title="S")
-    outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "provider": "llama_cpp"})
+    outcome = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "provider": "llama_cpp",
+        },
+    )
     assert not outcome["ok"] and outcome["kind"] == "provider_not_allowlisted"
 
 
@@ -579,9 +638,17 @@ def test_execute_routing_final_guard_on_model_only(real_db_controller, monkeypat
     _routing(monkeypatch, enabled=True, allowlist=("llama_cpp/m1",))
     _app_config(monkeypatch)
     session = _routed_session(controller)
-    outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "model": "m2"})
+    outcome = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "model": "m2",
+        },
+    )
     assert not outcome["ok"] and outcome["kind"] == "provider_not_allowlisted"
 
 
@@ -592,11 +659,23 @@ def test_execute_routing_override_builds_settings(real_db_controller, monkeypatc
     session = _routed_session(controller)
     completed = []
     controller.complete_agent_chat_create = lambda **kw: completed.append(kw)
-    outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "model": "m2"})
+    outcome = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "model": "m2",
+        },
+    )
     assert outcome["ok"], outcome
-    settings = completed[0]["settings"]
+    settings = next(
+        s.settings
+        for s in controller.store.sessions()
+        if s.persisted_conversation_id == outcome["conversation_id"]
+    )
     assert settings is not None
     assert settings.provider == "llama_cpp"
     assert settings.model == "m2"
@@ -618,13 +697,29 @@ def test_execute_routing_unknown_and_unrouted_preset(real_db_controller, monkeyp
                 ]
 
     controller._agent_bridge = _Bridge()
-    out1 = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "preset": "ghost"})
+    out1 = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "preset": "ghost",
+        },
+    )
     assert not out1["ok"] and out1["kind"] == "unknown_preset"
-    out2 = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "preset": "cloudy"})
+    out2 = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "preset": "cloudy",
+        },
+    )
     assert not out2["ok"] and out2["kind"] == "preset_unrouted"
 
 
@@ -680,9 +775,17 @@ def test_execute_routing_rejects_non_string_inputs(real_db_controller):
     reachable from callers other than the closures)."""
     controller, db = real_db_controller
     session = controller.store.create_session(title="S")
-    outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "provider": ["x"]})
+    outcome = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "provider": ["x"],
+        },
+    )
     assert not outcome["ok"] and outcome["kind"] == "invalid_args"
 
 
@@ -714,6 +817,83 @@ def test_fork_from_child_run_context_copies_parent_conversation(real_db_controll
     assert handoff["conversation_id"] == outcome["conversation_id"]
 
 
+def _prepare_close_new_chat(controller, session_id, title):
+    """Prepare the exact live primary request used by Close integration fixtures."""
+    from types import SimpleNamespace
+    from tldw_chatbook.Agents.run_context import use_run_id
+    from tldw_chatbook.Chat.console_chat_store import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    source = controller.store._sessions[session_id]
+    if not source.persisted_conversation_id:
+        source.persisted_conversation_id = (
+            controller.store.persistence.create_conversation(
+                conversation_title=source.title
+            )
+        )
+    message_id = controller._active_assistant_message_ids.get(session_id)
+    if message_id is None:
+        message_id = controller.store.append_message(
+            session_id, role=ConsoleMessageRole.ASSISTANT, content=""
+        ).id
+        controller._active_assistant_message_ids[session_id] = message_id
+    controller._active_cancel_events.setdefault(session_id, threading.Event())
+    bridge = controller._agent_bridge
+    if bridge is None:
+        bridge = SimpleNamespace(_live_primary_runs={}, rows={})
+        bridge.runs_db = SimpleNamespace(get_run=lambda run: bridge.rows.get(run))
+        bridge.live_primary_run_id = lambda conversation: bridge._live_primary_runs.get(
+            conversation
+        )
+        controller._agent_bridge = bridge
+    run = f"close-create-{session_id}"
+    if hasattr(bridge.runs_db, "create_run"):
+        run = bridge.runs_db.create_run(
+            conversation_id=source.persisted_conversation_id, agent_kind="primary"
+        )
+    else:
+        bridge.rows[run] = {
+            "id": run,
+            "conversation_id": source.persisted_conversation_id,
+            "agent_kind": "primary",
+            "status": "running",
+        }
+    bridge._live_primary_runs[source.persisted_conversation_id] = run
+    if not hasattr(controller.app, "console_runtime"):
+        controller.app.app_config = {}
+        runtime = SimpleNamespace(_app=controller.app)
+        runtime._resolve_new_console_assistant = lambda workspace, settings: (
+            ConsoleRuntime._resolve_new_console_assistant(runtime, workspace, settings)
+        )
+        controller.app.console_runtime = runtime
+    with use_run_id(run):
+        prepared = controller.prepare_agent_chat_create(
+            {
+                "tool": "new_chat",
+                "session_id": session_id,
+                "title": title,
+                "source_run_id": run,
+                "source_message_id": message_id,
+            }
+        )
+    return prepared, run
+
+
+def _approve_close_new_chat(controller, source, title):
+    from tldw_chatbook.Agents.run_context import use_run_id
+
+    prepared, run = _prepare_close_new_chat(controller, source.id, title)
+
+    def approve(pending):
+        if pending:
+            controller.resolve_pending_chat_create(True, False, pending["request_id"])
+
+    controller.set_pending_chat_create = approve
+    with use_run_id(run):
+        assert controller.request_chat_create_confirm(prepared)["allow"]
+    return prepared
+
+
 @pytest.mark.parametrize("tool", ["new_chat", "fork_chat"])
 def test_confirmed_create_refuses_a_source_retained_during_close(
     real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
@@ -737,15 +917,18 @@ def test_confirmed_create_refuses_a_source_retained_during_close(
     db.set_conversation_active_leaf(conversation_id, str(message_id))
     completed = []
     controller.complete_agent_chat_create = lambda **kwargs: completed.append(kwargs)
+    payload = (
+        _approve_close_new_chat(controller, source, "Late creation")
+        if tool == "new_chat"
+        else {"tool": tool, "session_id": source.id, "title": "Late creation"}
+    )
     before = _live_conversation_count(db)
     ticket = controller.begin_session_close(
         source.id,
         expected_revision=controller.lifecycle_impact(session_id=source.id).revision,
     )
     assert any(session.id == source.id for session in controller.store.sessions())
-    outcome = controller.execute_agent_chat_create(
-        {"tool": tool, "session_id": source.id, "title": "Late creation"}
-    )
+    outcome = controller.execute_agent_chat_create(payload)
     assert not outcome["ok"] and outcome["kind"] == "session_gone"
     assert _live_conversation_count(db) == before
     assert completed == []
@@ -781,10 +964,20 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
         {"conversation_id": source_conv, "sender": "user", "content": "hi"}
     )
     db.set_conversation_active_leaf(source_conv, str(message_id))
+    payload = (
+        _approve_close_new_chat(controller, source, "Late creation")
+        if tool == "new_chat"
+        else {"tool": tool, "session_id": source.id, "title": "Late creation"}
+    )
     entered, release = threading.Event(), threading.Event()
     created, completed, queued = [], [], []
     result = {}
-    original_create = controller.store.persistence.create_conversation
+    persistence_method = (
+        "persist_console_conversation_with_policy"
+        if tool == "new_chat"
+        else "create_conversation"
+    )
+    original_create = getattr(controller.store.persistence, persistence_method)
     original_marshal = controller.app.call_from_thread
     before = _live_conversation_count(db)
     controller.complete_agent_chat_create = lambda **kwargs: completed.append(kwargs)
@@ -802,6 +995,8 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
             entered.set()
             assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
         conversation_id = original_create(**kwargs)
+        if tool == "new_chat":
+            conversation_id = kwargs["conversation_id"]
         created.append(conversation_id)
         return conversation_id
 
@@ -816,7 +1011,11 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
         Returns:
             The result produced by the actual callback on the UI thread.
         """
-        if close_at.startswith("ui-handoff") and threading.current_thread() is worker:
+        if (
+            close_at.startswith("ui-handoff")
+            and threading.current_thread() is worker
+            and not queued
+        ):
             queued.append((callback, args, kwargs))
             entered.set()
             assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
@@ -825,17 +1024,13 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
             return result["ui_result"]
         return original_marshal(callback, *args, **kwargs)
 
-    monkeypatch.setattr(
-        controller.store.persistence, "create_conversation", paused_create
-    )
+    monkeypatch.setattr(controller.store.persistence, persistence_method, paused_create)
     monkeypatch.setattr(controller.app, "call_from_thread", queued_marshal)
 
     def execute():
         """Capture executor failure without abandoning test-owned thread cleanup."""
         try:
-            result["outcome"] = controller.execute_agent_chat_create(
-                {"tool": tool, "session_id": source.id, "title": "Late creation"}
-            )
+            result["outcome"] = controller.execute_agent_chat_create(payload)
         except Exception as exc:  # noqa: BLE001 -- surface owned thread failures
             result["error"] = str(exc)
 
@@ -858,14 +1053,29 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
         release.set()
         worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert not worker.is_alive()
-    assert _live_conversation_count(db) == before
+    assert _live_conversation_count(db) == before + (tool == "new_chat")
     assert "error" not in result
-    assert not result["outcome"]["ok"]
-    assert result["outcome"]["kind"] == "session_gone"
     assert completed == []
     assert len(created) == 1
-    assert db.get_conversation_by_id(created[0]) is None
-    assert db.get_conversation_by_id(created[0], include_deleted=True)["deleted"] == 1
+    if tool == "new_chat":
+        # ADR219: an approved saved draft remains durable across source Close.
+        assert result["outcome"]["ok"]
+        assert result["outcome"]["launch_status"] == "draft"
+        assert result["outcome"]["reason"] == "source_unavailable"
+        row = db.get_conversation_by_id(created[0])
+        assert row and not row["deleted"]
+        assert (
+            json.loads(row["metadata"])["console_agent_handoff"]["state"] == "pending"
+        )
+        assert not controller._chat_creation_records
+        assert not controller.store.sessions()
+    else:
+        assert not result["outcome"]["ok"]
+        assert result["outcome"]["kind"] == "session_gone"
+        assert db.get_conversation_by_id(created[0]) is None
+        assert (
+            db.get_conversation_by_id(created[0], include_deleted=True)["deleted"] == 1
+        )
 
 
 @pytest.mark.parametrize("view_change", ["detached", "reattached"])
@@ -883,6 +1093,7 @@ def test_chat_create_completion_uses_the_current_view_sink(
     """
     controller, db = real_db_controller
     source = controller.store.create_session(title="Source")
+    prepared = _approve_close_new_chat(controller, source, "Live source")
     old_completed, new_completed = [], []
     controller.complete_agent_chat_create = lambda **kwargs: old_completed.append(
         kwargs
@@ -907,9 +1118,7 @@ def test_chat_create_completion_uses_the_current_view_sink(
         return callback(*args, **kwargs)
 
     monkeypatch.setattr(controller.app, "call_from_thread", handoff_after_view_change)
-    outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": source.id, "title": "Live source"}
-    )
+    outcome = controller.execute_agent_chat_create(prepared)
     assert outcome["ok"]
     assert db.get_conversation_by_id(outcome["conversation_id"]) is not None
     assert old_completed == []
@@ -928,6 +1137,8 @@ def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
     """
     controller, db = real_db_controller
     source = controller.store.create_session(title="Source")
+    prepared = _approve_close_new_chat(controller, source, "Placed chat")
+    original_restore = controller.store.restore_persisted_session
     placed = []
 
     def place_then_fail(**kwargs):
@@ -936,16 +1147,7 @@ def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
         Args:
             kwargs: Real executor completion inputs.
         """
-        placed.append(
-            controller.store.restore_persisted_session(
-                title=kwargs["title"],
-                workspace_id=kwargs["workspace_id"],
-                persisted_conversation_id=kwargs["conversation_id"],
-                all_nodes=kwargs["nodes"],
-                active_leaf_persisted_id=kwargs["active_leaf_persisted_id"],
-                activate=False,
-            )
-        )
+        placed.append(original_restore(**kwargs))
         raise RuntimeError("completion failed after placement")
 
     def retire_before_worker_receives_error(callback, *args, **kwargs):
@@ -971,14 +1173,970 @@ def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
             controller.finalize_session_close(ticket)
             raise
 
-    controller.complete_agent_chat_create = place_then_fail
+    monkeypatch.setattr(controller.store, "restore_persisted_session", place_then_fail)
     monkeypatch.setattr(
         controller.app, "call_from_thread", retire_before_worker_receives_error
     )
-    with pytest.raises(RuntimeError, match="completion failed after placement"):
-        controller.execute_agent_chat_create(
-            {"tool": "new_chat", "session_id": source.id, "title": "Placed chat"}
-        )
+    outcome = controller.execute_agent_chat_create(prepared)
+    assert outcome["ok"] and outcome["reason"] == "source_unavailable"
     assert len(placed) == 1
     assert placed[0] in controller.store.sessions()
     assert db.get_conversation_by_id(placed[0].persisted_conversation_id) is not None
+
+
+def test_prepared_new_chat_destination_routing_disclosed_and_durable(
+    real_db_controller, monkeypatch
+):
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=True, allowlist=("llama_cpp",))
+    _app_config(monkeypatch)
+    source = _routed_session(controller)
+    result = _prepared_execute(
+        controller, {"tool": "new_chat", "session_id": source.id, "model": "m2"}
+    )
+    assert result["ok"], result
+    prepared = controller._last_routing_prepared
+    assert prepared["provider"] == "llama_cpp" and prepared["model"] == "m2"
+    assert prepared["resolved_instructions"] == "destination instructions"
+    row = db.get_conversation_by_id(result["conversation_id"])
+    from tldw_chatbook.Chat.console_generation_settings_metadata import (
+        parse_console_generation_settings,
+    )
+
+    snapshot = parse_console_generation_settings(row["metadata"]).snapshot
+    assert snapshot.provider == "llama_cpp" and snapshot.model == "m2"
+
+
+def test_prepared_new_chat_model_only_uses_destination_provider(
+    real_db_controller, monkeypatch
+):
+    from dataclasses import replace
+
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=True, allowlist=("llama_cpp",))
+    _app_config(monkeypatch)
+    source = _routed_session(controller)
+    source.settings = replace(source.settings, provider="openai", model="source-only")
+    result = _prepared_execute(
+        controller, {"tool": "new_chat", "session_id": source.id, "model": "m2"}
+    )
+    assert result["ok"], result
+    assert controller._last_routing_prepared["provider"] == "llama_cpp"
+
+
+def test_prepared_new_chat_preset_params_win_over_config_and_keep_destination_identity(
+    real_db_controller, monkeypatch
+):
+    from types import SimpleNamespace
+    from tldw_chatbook import config
+
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=False, allowlist=())
+    configured = {
+        **_FAKE_APP_CONFIG,
+        "chat_defaults": {"temperature": 0.9},
+        "console": {"provider_defaults": {"llama_cpp": {"temperature": 0.8}}},
+    }
+    monkeypatch.setattr(config, "load_settings", lambda: configured)
+    controller._agent_bridge = SimpleNamespace(
+        agent_runs_db=SimpleNamespace(
+            list_agent_definitions=lambda enabled_only: [
+                {
+                    "name": "tuned",
+                    "description": "d",
+                    "instructions": "preset persona must not ride",
+                    "tool_allowlist": [],
+                    "provider": "llama_cpp",
+                    "model": "m1",
+                    "enabled": 1,
+                    "params": {"temperature": 0.2, "top_p": 0.4, "max_tokens": 123},
+                }
+            ]
+        )
+    )
+    source = _routed_session(controller)
+    result = _prepared_execute(
+        controller, {"tool": "new_chat", "session_id": source.id, "preset": "tuned"}
+    )
+    assert result["ok"], result
+    target = next(
+        s
+        for s in controller.store.sessions()
+        if s.persisted_conversation_id == result["conversation_id"]
+    )
+    assert target.settings.temperature == 0.2
+    assert target.settings.top_p == 0.4 and target.settings.max_tokens == 123
+    assert target.settings.system_prompt == "destination instructions"
+    from tldw_chatbook.Chat.console_generation_settings_metadata import (
+        parse_console_generation_settings,
+    )
+
+    row = db.get_conversation_by_id(result["conversation_id"])
+    durable = parse_console_generation_settings(row["metadata"]).snapshot
+    assert (
+        durable.temperature == 0.2
+        and durable.top_p == 0.4
+        and durable.max_tokens == 123
+    )
+
+
+@pytest.fixture
+def child_new_chat_rig(real_db_controller, tmp_path):
+    """A trusted child actor backed by genuine native run and conversation rows."""
+    from threading import Event
+    from types import SimpleNamespace
+    from tldw_chatbook.Agents.run_context import CurrentRunActor
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    controller, db = real_db_controller
+    source = controller.store.create_session(title="Parent chat")
+    source.persisted_conversation_id = controller.store.persistence.create_conversation(
+        conversation_title="Parent chat"
+    )
+    runs = AgentRunsDB(tmp_path / "child-runs.sqlite")
+    parent = runs.create_run(
+        conversation_id=source.persisted_conversation_id,
+        agent_kind="primary",
+        assistant_message_id="parent-message",
+    )
+    child = runs.create_run(
+        conversation_id=source.persisted_conversation_id,
+        agent_kind="subagent",
+        parent_run_id=parent,
+        task="Follow-up work",
+    )
+    controller._agent_bridge = SimpleNamespace(
+        runs_db=runs,
+        agent_runs_db=runs,
+        live_primary_run_id=lambda conversation: parent,
+    )
+    controller._active_cancel_events[source.id] = Event()
+    controller._active_assistant_message_ids[source.id] = "parent-message"
+    controller.app.app_config = _FAKE_APP_CONFIG
+    runtime = SimpleNamespace(_app=controller.app)
+    runtime._resolve_new_console_assistant = lambda workspace, settings: (
+        ConsoleRuntime._resolve_new_console_assistant(runtime, workspace, settings)
+    )
+    controller.app.console_runtime = runtime
+    controller._default_session_settings = lambda: ConsoleSessionSettings(
+        provider="llama_cpp", model="destination-model"
+    )
+    actor = CurrentRunActor("subagent", child, parent)
+    payload = {
+        "tool": "new_chat",
+        "session_id": source.id,
+        "source_run_id": child,
+        "source_message_id": "parent-message",
+        "title": "Child draft",
+        "opening_prompt": "literal /new @helper",
+        "instructions": "",
+    }
+    try:
+        yield controller, db, runs, source, actor, payload
+    finally:
+        runs.close()
+
+
+def test_child_new_chat_prepares_confirms_executes_and_requires_fresh_approval(
+    child_new_chat_rig,
+):
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    cards = []
+
+    def approve(card):
+        if card:
+            cards.append(dict(card))
+            controller.resolve_pending_chat_create(True, True, card["request_id"])
+
+    controller.set_pending_chat_create = approve
+    controller._start_created_chat = lambda *args: pytest.fail(
+        "child draft acquired start authority"
+    )
+    _, new_chat = build_chat_create_tool_closures(
+        confirm=lambda prepared: controller.request_chat_create_confirm(
+            prepared, session_id=source.id
+        ),
+        execute=controller.execute_agent_chat_create,
+        prepare=controller.prepare_agent_chat_create,
+        session_id=source.id,
+        run_id="parent-message",
+    )
+    source.draft = "parent composer custody"
+    with use_run_actor(actor):
+        first = new_chat(
+            {"title": "Child draft", "opening_prompt": "literal /new @helper"}
+        )
+        assert first.ok, first.error
+        second = new_chat({"title": "Child draft 2", "opening_prompt": "second draft"})
+        assert second.ok, second.error
+    assert len(cards) == 2
+    assert cards[0]["request_id"] != cards[1]["request_id"]
+    for card in cards:
+        assert card["run_id"] == actor.run_id
+        assert (
+            card["agent_kind"] == "subagent"
+            and card["parent_run_id"] == actor.parent_run_id
+        )
+        assert card["destination"] == "same_workspace" and card["mode"] == "draft"
+    for result, prompt in ((first, "literal /new @helper"), (second, "second draft")):
+        outcome = json.loads(result.content)
+        assert outcome["launch_status"] == "draft"
+        assert outcome["draft_set"] and outcome["copied_messages"] == 0
+        row = db.get_conversation_by_id(outcome["conversation_id"])
+        metadata = json.loads(row["metadata"])
+        assert metadata["console_agent_handoff"]["draft"] == prompt
+        assert metadata["console_agent_handoff"]["source_run_id"] == actor.run_id
+        assert not db.get_messages_for_conversation(outcome["conversation_id"])
+    assert controller.store.active_session_id == source.id
+    assert source.draft == "parent composer custody"
+    assert not controller._chat_create_session_grants.get(source.id)
+    assert (
+        not controller._chat_creation_records
+        and not controller.pending_chat_create_ids()
+    )
+    with runs.connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM automatic_chat_start_attempts"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.parametrize("extra", [{"destination": "casual"}, {"mode": "start"}])
+def test_child_new_chat_refuses_new_destination_and_start_authority(
+    child_new_chat_rig, extra
+):
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    with use_run_actor(actor), pytest.raises(PermissionError):
+        controller.prepare_agent_chat_create({**payload, **extra})
+    assert not controller._chat_creation_records
+
+
+@pytest.mark.parametrize(
+    "mutation", ["terminal_child", "wrong_actor", "source_incarnation"]
+)
+def test_child_prepared_create_rechecks_currentness_before_execution(
+    child_new_chat_rig, mutation
+):
+    from dataclasses import replace
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    controller.set_pending_chat_create = lambda card: (
+        controller.resolve_pending_chat_create(True, False, card["request_id"])
+        if card
+        else None
+    )
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+        assert controller.request_chat_create_confirm(prepared)["allow"]
+        if mutation == "terminal_child":
+            with runs.transaction() as connection:
+                connection.execute(
+                    "UPDATE agent_runs SET status='cancelled' WHERE id=?",
+                    (actor.run_id,),
+                )
+        elif mutation == "source_incarnation":
+            source.incarnation_id = "replacement-incarnation"
+        acting = (
+            replace(actor, parent_run_id="other-parent")
+            if mutation == "wrong_actor"
+            else actor
+        )
+        with use_run_actor(acting):
+            outcome = controller.execute_agent_chat_create(prepared)
+    assert not outcome["ok"] and outcome["kind"] == "approval_required"
+    assert not controller._chat_creation_records
+
+
+def test_survivor_child_draft_ignores_primary_slot_and_standing_grant(
+    child_new_chat_rig,
+):
+    from threading import Event
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    with runs.transaction() as connection:
+        connection.execute(
+            "UPDATE agent_runs SET status='done' WHERE id=?", (actor.parent_run_id,)
+        )
+    controller._agent_bridge.live_primary_run_id = lambda conversation: None
+    controller._active_cancel_events.pop(source.id)
+    controller._active_assistant_message_ids.pop(source.id)
+    scope = (source.incarnation_id, "new_chat", "global", None, "draft")
+    controller._chat_create_session_grants[source.id] = {scope}
+    cards = []
+
+    def approve(card):
+        if card:
+            cards.append(dict(card))
+            controller.resolve_pending_chat_create(True, True, card["request_id"])
+
+    controller.set_pending_chat_create = approve
+    with use_run_actor(actor):
+        first = controller.prepare_agent_chat_create(payload)
+        assert not controller._chat_creation_records[first["_creation_token"]][
+            "approved"
+        ]
+        assert controller.request_chat_create_confirm(first, session_id=source.id) == {
+            "allow": True,
+            "remember": False,
+        }
+        assert controller.execute_agent_chat_create(first)["ok"]
+        controller._active_cancel_events[source.id] = Event()
+        controller._active_assistant_message_ids[source.id] = "unrelated-next-turn"
+        second = controller.prepare_agent_chat_create(
+            {**payload, "title": "Later child draft"}
+        )
+        assert controller.request_chat_create_confirm(second, session_id=source.id) == {
+            "allow": True,
+            "remember": False,
+        }
+        assert controller.execute_agent_chat_create(second)["ok"]
+    assert len(cards) == 2 and cards[0]["request_id"] != cards[1]["request_id"]
+    assert controller._chat_create_session_grants[source.id] == {scope}
+    assert not controller._chat_creation_records
+
+
+@pytest.mark.parametrize("before_prepare", [True, False])
+def test_child_draft_observes_its_parent_turn_stop(child_new_chat_rig, before_prepare):
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    cancel = controller._active_cancel_events[source.id]
+    controller.set_pending_chat_create = lambda card: (
+        controller.resolve_pending_chat_create(True, False, card["request_id"])
+        if card
+        else None
+    )
+    with use_run_actor(actor):
+        if before_prepare:
+            cancel.set()
+            with pytest.raises(PermissionError):
+                controller.prepare_agent_chat_create(payload)
+        else:
+            prepared = controller.prepare_agent_chat_create(payload)
+            assert controller.request_chat_create_confirm(prepared)["allow"]
+            cancel.set()
+            # Completion can pop this turn's slot; its captured Stop still wins.
+            controller._active_cancel_events.pop(source.id)
+            controller._active_assistant_message_ids.pop(source.id)
+            outcome = controller.execute_agent_chat_create(prepared)
+            assert not outcome["ok"] and outcome["kind"] == "approval_required"
+    assert not controller._chat_creation_records
+
+
+def test_primary_remembered_bridge_still_confirms_each_child_request(
+    child_new_chat_rig,
+):
+    """A shared bridge memo must never inherit primary approval into a child."""
+    from tldw_chatbook.Agents.run_context import use_run_id, use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    cards = []
+
+    def approve(card):
+        if card:
+            cards.append(dict(card))
+            controller.resolve_pending_chat_create(True, True, card["request_id"])
+
+    controller.set_pending_chat_create = approve
+    _, new_chat = build_chat_create_tool_closures(
+        confirm=lambda prepared: controller.request_chat_create_confirm(
+            prepared, session_id=source.id
+        ),
+        execute=controller.execute_agent_chat_create,
+        prepare=controller.prepare_agent_chat_create,
+        session_id=source.id,
+        run_id="parent-message",
+    )
+    source.draft = "primary composer sentinel"
+    with use_run_id(actor.parent_run_id):
+        primary = new_chat({"title": "Primary", "opening_prompt": "primary draft"})
+        assert primary.ok, primary.error
+        remembered = new_chat(
+            {
+                "title": "Remembered",
+                "opening_prompt": "another",
+                "source_agent_kind": "subagent",
+            }
+        )
+        assert remembered.ok, remembered.error
+    assert len(cards) == 1
+    assert controller._chat_create_session_grants[source.id]
+    with use_run_actor(actor):
+        first = new_chat(
+            {
+                "title": "Child one",
+                "opening_prompt": "child one",
+                "source_agent_kind": "primary",
+            }
+        )
+        assert first.ok, first.error
+        second = new_chat({"title": "Child two", "opening_prompt": "child two"})
+        assert second.ok, second.error
+    assert len(cards) == 3
+    assert len({card["request_id"] for card in cards}) == 3
+    assert [card["agent_kind"] for card in cards] == ["primary", "subagent", "subagent"]
+    for card in cards[1:]:
+        assert card["run_id"] == actor.run_id
+        assert card["parent_run_id"] == actor.parent_run_id
+    for result, prompt in ((first, "child one"), (second, "child two")):
+        outcome = json.loads(result.content)
+        assert outcome["launch_status"] == "draft"
+        assert not db.get_messages_for_conversation(outcome["conversation_id"])
+        handoff = json.loads(
+            db.get_conversation_by_id(outcome["conversation_id"])["metadata"]
+        )["console_agent_handoff"]
+        assert handoff["draft"] == prompt and handoff["source_run_id"] == actor.run_id
+    assert source.draft == "primary composer sentinel"
+    assert controller.store.active_session_id == source.id
+    assert (
+        not controller._chat_creation_records
+        and not controller.pending_chat_create_ids()
+    )
+
+
+@pytest.mark.parametrize(
+    ("arguments", "category"),
+    [
+        ({"title": "x" * 121}, "payload_too_large"),
+        ({"opening_prompt": "x" * 20_001}, "payload_too_large"),
+        ({"instructions": "x" * 20_001}, "payload_too_large"),
+        ({"destination": ["secret-payload"]}, "invalid_args"),
+        ({"mode": None}, "invalid_args"),
+        ({"mode": "start", "opening_prompt": " \n\t"}, "invalid_args"),
+        ({"provider": {"secret-payload": "private"}}, "invalid_args"),
+    ],
+)
+def test_new_chat_tool_and_controller_reject_before_authority_or_execution(
+    real_db_controller, arguments, category
+):
+    controller, _db = real_db_controller
+    confirm, executor = _FakeConfirm([]), _FakeExecutor()
+    preparations = []
+    _, new_chat = build_chat_create_tool_closures(
+        confirm=confirm,
+        execute=executor,
+        session_id="s1",
+        run_id="r1",
+        prepare=lambda payload: preparations.append(payload),
+    )
+    result = new_chat(arguments)
+    assert not result.ok and result.error.startswith(category + ":")
+    assert "secret-payload" not in result.error
+    assert confirm.payloads == executor.calls == preparations == []
+    with pytest.raises(ValueError) as captured:
+        controller.prepare_agent_chat_create(arguments)
+    assert str(captured.value).startswith(category + ":")
+    assert "secret-payload" not in str(captured.value)
+
+
+@pytest.fixture(params=["primary", "subagent"])
+def creation_validation_rig(child_new_chat_rig, request):
+    """Actual prepared ownership, including a child surviving its parent turn."""
+    from tldw_chatbook.Agents.run_context import CurrentRunActor, use_run_actor
+    from tldw_chatbook.Chat.console_chat_store import ConsoleMessageRole
+
+    controller, db, runs, source, child, payload = child_new_chat_rig
+    if request.param == "primary":
+        actor = CurrentRunActor("primary", child.parent_run_id, None)
+        payload = {**payload, "source_run_id": actor.run_id}
+        controller.store.append_message(
+            source.id,
+            role=ConsoleMessageRole.ASSISTANT,
+            content="",
+            message_id="parent-message",
+        )
+    else:
+        actor = child
+        controller._active_cancel_events.pop(source.id)
+        controller._active_assistant_message_ids.pop(source.id)
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+        assert controller._chat_creation_source_live(prepared)
+    yield controller, db, runs, source, actor, prepared
+    prepared["_creation_token"].close()
+
+
+@pytest.mark.parametrize("retire", ["close", "revoke"])
+def test_creation_sql_read_does_not_block_retirement(
+    creation_validation_rig, monkeypatch, retire
+):
+    """A delayed real connection must not hold up committed Close/revocation."""
+    from contextlib import contextmanager
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, _db, runs, source, actor, prepared = creation_validation_rig
+    entered, release, retired = threading.Event(), threading.Event(), threading.Event()
+    connection = runs.connection
+    results, errors = [], []
+    reads = 0
+    controller.set_pending_chat_create = lambda card: pytest.fail(
+        "retired source armed a card"
+    )
+
+    @contextmanager
+    def parked_connection():
+        nonlocal reads
+        with connection() as conn:
+            if threading.current_thread().name == "creation-reader":
+                reads += 1
+                if reads == 2:  # First read is requester attribution, not validation.
+                    entered.set()
+                    assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+            yield conn
+
+    monkeypatch.setattr(runs, "connection", parked_connection)
+
+    def read():
+        try:
+            with use_run_actor(actor):
+                results.append(controller.request_chat_create_confirm(prepared))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            runs.close()
+
+    def release_after_deadline():
+        if not retired.wait(1):
+            release.set()
+
+    reader = threading.Thread(target=read, name="creation-reader", daemon=True)
+    watchdog = threading.Thread(target=release_after_deadline, daemon=True)
+    reader.start()
+    try:
+        assert entered.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        watchdog.start()
+        # Close owns the UI/runtime thread; the SQL reader is a real worker.
+        if retire == "close":
+            controller.begin_session_close(
+                source.id,
+                expected_revision=controller.lifecycle_impact(
+                    session_id=source.id
+                ).revision,
+            )
+        else:
+            controller.revoke_approval_rounds_for_run(actor.run_id)
+        completed_while_read_parked = not release.is_set()
+        retired.set()
+    finally:
+        release.set()
+        retired.set()
+        reader.join(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        if watchdog.ident is not None:
+            watchdog.join(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+    assert not reader.is_alive() and not watchdog.is_alive()
+    assert not errors
+    assert completed_while_read_parked, "SQLite read held the retirement registry lock"
+    assert results == [{"allow": False, "remember": False}]
+    assert not controller._chat_creation_records
+    assert not controller._chat_create_session_grants.get(source.id)
+
+
+@pytest.mark.parametrize("path", ["wrapper", "confirm", "remembered"])
+def test_creation_validation_reads_outside_registry_lock(
+    creation_validation_rig, monkeypatch, path
+):
+    """All validation phases keep actual SQL reads outside the pending lock."""
+    from contextlib import contextmanager
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, _db, runs, source, actor, prepared = creation_validation_rig
+    connection = runs.connection
+    lock_states, cards = [], []
+
+    @contextmanager
+    def observed_connection():
+        lock_states.append(controller._pending_chat_create_lock.locked())
+        with connection() as conn:
+            yield conn
+
+    monkeypatch.setattr(runs, "connection", observed_connection)
+
+    def approve(card):
+        if card:
+            cards.append(card)
+            controller.resolve_pending_chat_create(True, True, card["request_id"])
+
+    controller.set_pending_chat_create = approve
+    if path == "remembered":
+        controller._chat_create_session_grants[source.id] = {prepared["_grant_scope"]}
+    with use_run_actor(actor):
+        if path == "wrapper":
+            assert controller._chat_creation_record(prepared) is not None
+        else:
+            assert controller.request_chat_create_confirm(prepared) == {
+                "allow": True,
+                "remember": actor.kind == "primary",
+            }
+            assert len(cards) == (
+                0 if path == "remembered" and actor.kind == "primary" else 1
+            )
+    assert lock_states and not any(lock_states)
+
+
+def test_creation_database_observation_is_rechecked_before_save(
+    creation_validation_rig, monkeypatch
+):
+    """Independent SQL writers can race observation; pre-save reads anew."""
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, _source, actor, prepared = creation_validation_rig
+    controller.set_pending_chat_create = lambda card: (
+        controller.resolve_pending_chat_create(True, False, card["request_id"])
+        if card
+        else None
+    )
+    with use_run_actor(actor):
+        assert controller.request_chat_create_confirm(prepared)["allow"]
+    original = runs.get_run
+    mutated = False
+
+    def read_then_finish(run_id):
+        nonlocal mutated
+        row = original(run_id)
+        if run_id == actor.run_id and not mutated:
+            mutated = True
+            # A separate connection commits AFTER the returned row was copied.
+            import sqlite3
+
+            with sqlite3.connect(str(runs.db_path)) as conn:
+                conn.execute(
+                    "UPDATE agent_runs SET status='done' WHERE id=?", (run_id,)
+                )
+        return row
+
+    monkeypatch.setattr(runs, "get_run", read_then_finish)
+    before = _live_conversation_count(db)
+    with use_run_actor(actor):
+        # Both the original locked getter and split validation observe running.
+        assert controller._chat_creation_record(prepared) is not None
+        assert original(actor.run_id)["status"] == "done"
+        result = controller.execute_agent_chat_create(prepared)
+    assert mutated
+    assert not result["ok"] and result["kind"] == "approval_required"
+    assert _live_conversation_count(db) == before
+    assert not controller._chat_creation_records
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "retire",
+        "replace_record",
+        "payload",
+        "record_payload",
+        "source",
+        "bridge",
+        "database",
+        "incarnation",
+        "conversation",
+        "workspace",
+        "actor",
+        "closed",
+        "revoked",
+    ],
+)
+def test_creation_rechecks_runtime_identity_after_row_copy(
+    creation_validation_rig, monkeypatch, mutation
+):
+    """An observation cannot authorize a replaced or retired runtime owner."""
+    import copy
+    from dataclasses import replace
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, _db, _runs, source, actor, prepared = creation_validation_rig
+    record = controller._chat_creation_records[prepared["_creation_token"]]
+    actor_change = replace(actor, run_id="other-run")
+    read = controller._read_chat_creation_source
+    changed_actor = None
+
+    def after_copy(observation):
+        nonlocal changed_actor
+        observed = read(observation)
+        assert observed is not None and observed.row["status"] == "running"
+        if mutation == "retire":
+            prepared["_creation_token"].close()
+        elif mutation == "replace_record":
+            with controller._pending_chat_create_lock:
+                controller._chat_creation_records[prepared["_creation_token"]] = dict(
+                    record
+                )
+        elif mutation == "payload":
+            prepared["opening_prompt"] = "different approval"
+        elif mutation == "record_payload":
+            record["payload"] = {
+                **record["payload"],
+                "opening_prompt": "different approval",
+            }
+        elif mutation == "source":
+            controller.store._sessions[source.id] = copy.copy(source)
+        elif mutation == "bridge":
+            controller._agent_bridge = copy.copy(controller._agent_bridge)
+        elif mutation == "database":
+            monkeypatch.setattr(controller._agent_bridge, "runs_db", object())
+        elif mutation == "incarnation":
+            source.incarnation_id = "replacement-incarnation"
+        elif mutation == "conversation":
+            source.persisted_conversation_id = "other-conversation"
+        elif mutation == "workspace":
+            source.workspace_id = "other-workspace"
+        elif mutation == "closed":
+            controller.begin_session_close(
+                source.id,
+                expected_revision=controller.lifecycle_impact(
+                    session_id=source.id
+                ).revision,
+            )
+        elif mutation == "revoked":
+            controller.revoke_approval_rounds_for_run(actor.run_id)
+        else:
+            changed_actor = use_run_actor(actor_change)
+            changed_actor.__enter__()
+        return observed
+
+    monkeypatch.setattr(controller, "_read_chat_creation_source", after_copy)
+    with use_run_actor(actor):
+        try:
+            assert controller._chat_creation_record(prepared) is None
+        finally:
+            if changed_actor is not None:
+                changed_actor.__exit__(None, None, None)
+    assert not record["approved"]
+    assert not controller._chat_create_session_grants.get(source.id)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "terminal",
+        "missing",
+        "conversation",
+        "kind",
+        "parent",
+        "missing_parent",
+        "parent_conversation",
+        "read_error",
+    ],
+)
+def test_creation_post_wait_observes_changed_rows(
+    child_new_chat_rig, monkeypatch, mutation
+):
+    """Approving the actual card must read authority rows again after the wait."""
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    controller._active_cancel_events.pop(source.id)
+    controller._active_assistant_message_ids.pop(source.id)
+    cards, results, errors = [], [], []
+    armed = threading.Event()
+
+    def show(card):
+        if card:
+            cards.append(card)
+            armed.set()
+
+    def mutate_rows():
+        with runs.transaction() as conn:
+            if mutation == "terminal":
+                conn.execute(
+                    "UPDATE agent_runs SET status='done' WHERE id=?", (actor.run_id,)
+                )
+            elif mutation == "missing":
+                conn.execute("DELETE FROM agent_runs WHERE id=?", (actor.run_id,))
+            elif mutation == "conversation":
+                conn.execute(
+                    "UPDATE agent_runs SET conversation_id='other' WHERE id=?",
+                    (actor.run_id,),
+                )
+            elif mutation == "kind":
+                conn.execute(
+                    "UPDATE agent_runs SET agent_kind='primary' WHERE id=?",
+                    (actor.run_id,),
+                )
+            elif mutation == "parent":
+                conn.execute(
+                    "UPDATE agent_runs SET parent_run_id=NULL WHERE id=?",
+                    (actor.run_id,),
+                )
+            elif mutation == "missing_parent":
+                conn.execute(
+                    "DELETE FROM agent_runs WHERE id=?", (actor.parent_run_id,)
+                )
+            elif mutation == "parent_conversation":
+                conn.execute(
+                    "UPDATE agent_runs SET conversation_id='other' WHERE id=?",
+                    (actor.parent_run_id,),
+                )
+        if mutation == "read_error":
+
+            def failed_read(run_id):
+                raise OSError("test read failure")
+
+            monkeypatch.setattr(runs, "get_run", failed_read)
+
+    controller.set_pending_chat_create = show
+    before = _live_conversation_count(db)
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+
+    def confirm():
+        try:
+            with use_run_actor(actor):
+                results.append(controller.request_chat_create_confirm(prepared))
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            runs.close()
+
+    worker = threading.Thread(target=confirm, daemon=True)
+    worker.start()
+    resolved = False
+    try:
+        assert armed.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        assert worker.is_alive() and not results
+        mutate_rows()
+        controller.resolve_pending_chat_create(True, True, cards[0]["request_id"])
+        resolved = True
+    finally:
+        if cards and not resolved:
+            controller.resolve_pending_chat_create(False, False, cards[0]["request_id"])
+        worker.join(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+    assert not worker.is_alive() and not errors
+    assert results == [{"allow": False, "remember": False}]
+    assert len(cards) == 1
+    assert not controller._chat_creation_records
+    assert not controller._chat_create_session_grants.get(source.id)
+    assert _live_conversation_count(db) == before
+
+
+def test_creation_terminal_at_final_save_check_creates_no_row(
+    creation_validation_rig, monkeypatch
+):
+    """A terminal row after entry approval still prevents the durable save."""
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, _source, actor, prepared = creation_validation_rig
+    controller.set_pending_chat_create = lambda card: (
+        controller.resolve_pending_chat_create(True, False, card["request_id"])
+        if card
+        else None
+    )
+    with use_run_actor(actor):
+        assert controller.request_chat_create_confirm(prepared)["allow"]
+    destination = controller._chat_creation_destination_available
+    changed = []
+
+    def finish_before_save(**kwargs):
+        available = destination(**kwargs)
+        assert available
+        assert runs.set_status(actor.run_id, "done")
+        changed.append(actor.run_id)
+        return available
+
+    monkeypatch.setattr(
+        controller, "_chat_creation_destination_available", finish_before_save
+    )
+    before = _live_conversation_count(db)
+    with use_run_actor(actor):
+        outcome = controller.execute_agent_chat_create(prepared)
+    assert changed == [actor.run_id]
+    assert not outcome["ok"] and outcome["kind"] == "creation_refused"
+    assert _live_conversation_count(db) == before
+    assert not controller._chat_creation_records
+
+
+@pytest.mark.parametrize(
+    "mutation", ["cancel", "missing_cancel", "assistant", "primary"]
+)
+def test_creation_primary_owner_changes_after_row_copy(
+    child_new_chat_rig, monkeypatch, mutation
+):
+    """The copied primary row never replaces current turn ownership checks."""
+    from tldw_chatbook.Agents.run_context import CurrentRunActor, use_run_actor
+
+    controller, _db, _runs, source, child, payload = child_new_chat_rig
+    actor = CurrentRunActor("primary", child.parent_run_id, None)
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(
+            {**payload, "source_run_id": actor.run_id}
+        )
+    read = controller._read_chat_creation_source
+
+    def change_owner(observation):
+        observed = read(observation)
+        assert observed is not None
+        if mutation == "cancel":
+            controller._active_cancel_events[source.id].set()
+        elif mutation == "missing_cancel":
+            controller._active_cancel_events.pop(source.id)
+        elif mutation == "assistant":
+            controller._active_assistant_message_ids[source.id] = "other-message"
+        else:
+            controller._agent_bridge.live_primary_run_id = lambda conversation: (
+                "other-run"
+            )
+        return observed
+
+    monkeypatch.setattr(controller, "_read_chat_creation_source", change_owner)
+    try:
+        with use_run_actor(actor):
+            assert controller._chat_creation_record(prepared) is None
+    finally:
+        prepared["_creation_token"].close()
+
+
+@pytest.mark.parametrize("survives", [False, True])
+def test_creation_child_parent_cancel_changes_after_row_copy(
+    child_new_chat_rig, monkeypatch, survives
+):
+    """Captured parent Stop remains binding even if the child survives the turn."""
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, _db, _runs, source, actor, payload = child_new_chat_rig
+    parent_cancel = controller._active_cancel_events[source.id]
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+    read = controller._read_chat_creation_source
+
+    def stop_parent(observation):
+        observed = read(observation)
+        assert observed is not None
+        parent_cancel.set()
+        if survives:
+            controller._active_assistant_message_ids.pop(source.id)
+            controller._active_cancel_events.pop(source.id)
+        return observed
+
+    monkeypatch.setattr(controller, "_read_chat_creation_source", stop_parent)
+    try:
+        with use_run_actor(actor):
+            assert controller._chat_creation_record(prepared) is None
+    finally:
+        prepared["_creation_token"].close()
+
+
+def test_creation_missing_row_status_fails_closed(creation_validation_rig, monkeypatch):
+    """Copying an incomplete row must preserve the original missing-key refusal."""
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, _db, runs, _source, actor, prepared = creation_validation_rig
+    read = runs.get_run
+
+    def incomplete_row(run_id):
+        row = read(run_id)
+        if run_id == actor.run_id:
+            row.pop("status")
+        return row
+
+    monkeypatch.setattr(runs, "get_run", incomplete_row)
+    with use_run_actor(actor):
+        assert controller._chat_creation_record(prepared) is None

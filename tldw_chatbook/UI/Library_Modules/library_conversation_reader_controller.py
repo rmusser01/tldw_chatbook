@@ -82,6 +82,7 @@ through generated properties reading
 shape Task 6 installed on ``LibraryScreen`` itself, applied here to the
 controller instead.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -242,10 +243,8 @@ class LibraryConversationReaderController:
         )
         self._selected_row_id_accessor = selected_row_id_accessor
         self._selected_conversation_id_accessor = selected_conversation_id_accessor
-        # (task-32056) ``LibraryScreen._library_conversation_workspace_block``
-        # -- the workspace-registry read behind the reader's inline refusal.
-        # Bound like every other cross-cluster dependency: the depth-state
-        # cache it consults is shell-wide, not reader-owned.
+        # task-32056: bind LibraryScreen._library_conversation_workspace_block;
+        # its workspace-registry refusal reads the shell-wide depth-state cache.
         self._library_conversation_workspace_block = (
             library_conversation_workspace_block
         )
@@ -916,6 +915,7 @@ class LibraryConversationReaderController:
         """Retry the selected detail with a fresh pure-state generation."""
         event.stop()
         self._retry_library_conversation_reader()
+
 
 # --- BEGIN generated conversations-state shims ---
 # Permanent, not a cleanup-PR deletion target: the conversations cleanup PR

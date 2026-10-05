@@ -1,0 +1,47 @@
+# Spec verdict: Compliant
+# Quality verdict: Approved
+
+## Scope and checks
+
+- Reviewed the fixed `review-99bd5b13db..bda1dbf34b.diff:1` package (268,128 bytes, 99 listed commits, 46 net paths) from `99bd5b13db620435a8824b7599708e85ca8009d9` to `bda1dbf34b4785293dc1968e57bc5385a1b7ee17`. Read in bounded chunks; recovered tool-truncated portions. No Git commands, source/index/ref edits, test replay, children, or broad source inspection. The only write is this requested review.
+- Compared Task 12 in `Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md:411`, the review brief, authorized selector list, preflight/method map, QA append ruling, implementer report, freeze map, and evidence manifests. Existing ADR-067/092/120/219/220 cover this integration; the package adds no schema, migration, permission, launch, or creation authority.
+- Checked all 2,731 definition-map rows across eleven production owners: 26 upstream-owned definition hashes and 2,705 retained feature hashes have equal expected/actual values. The upstream owners match the production hunks; controller/config have no incoming method replacements. The exact rebase map reports 29,861 paths, eight exact three-way overlaps, and zero unexpected entries; the final map differs on exactly the three authorized overlays. References: `task-12-safe-evidence/production-method-union.json:1`, `task-12-safe-evidence/rebase-exact-union.json:1`, `task-12-safe-evidence/final-source-union.json:1`.
+- The final maps use the actual Task 9 source `3025df959c`, through metadata checkpoint `99bd5b13db`, rather than old preflight `5c0`. Protected host, Session, screen, compaction, fork, native-video fixture and canonical test adapter carry exact bytes; controller carries exact AST with its comment-only delta. References: `task-12-freeze-map.json:3`, `task-12-safe-evidence/protected-source-carry.json:1`.
+- Independently hashed all 58 Task 12 manifest entries and all 502 root-pinned safe artifacts: zero mismatches. Verified the 443 prior pins are included in the root record. Reviewed recorded source-union/receipt mappings, including 7,689 qualified source hashes; did not rerun the root's Git-blob verifier. References: `task-12-safe-evidence-manifest.json:1`, `task-12-root-handoff-verification.json:1`, `task-12-safe-evidence/final-receipt-source-carry.json:1`.
+
+## Strengths and contract checks
+
+- Delete uses one existing branch mutation for seed discovery, durable deletion and active-leaf persistence, then projects committed tombstones. An unsaved selection falls back to its first saved descendant; threaded rows beneath unsaved notes do not trigger flat-root scanning. Real-store tests check hidden rows, marked/media roots, search/export, reopen, Undo and real Resend. References: `tldw_chatbook/Chat/console_chat_store.py:13669`, `tldw_chatbook/Chat/console_legacy_flat_roots.py:266`, `Tests/Chat/test_console_message_delete_persistence.py:1456`.
+- Root paging returns presence flags and keyset-pages on raw timestamp/rowid; both descendant statements retain conversation/live predicates while selecting the parent index. Tied timestamps, page size one, no-statistics query plans, cross-conversation exclusion and SQLite variable limits have direct behavioral assertions. References: `tldw_chatbook/DB/ChaChaNotes_DB.py:11932`, `tldw_chatbook/DB/ChaChaNotes_DB.py:15010`, `Tests/DB/test_message_root_rows_page.py:81`, `Tests/DB/test_message_subtree_delete_bounds.py:75`.
+- Voice marker ownership is immutable in the resolved destination, rejects a parent/non-bool flag, and travels through exact user metadata write/reconcile and live publication. Both mismatch directions fail closed; other retry checks remain intact. References: `tldw_chatbook/Chat/console_voice_promotion.py:150`, `tldw_chatbook/Chat/chat_persistence_service.py:729`, `tldw_chatbook/Chat/chat_persistence_service.py:882`, `tldw_chatbook/Chat/console_chat_store.py:15980`, `Tests/Chat/test_console_voice_pair_persistence.py:1240`.
+- MCP cancellation has a separate inbound task map, exact int/string cancellation keys, malformed-key rejection, duplicate-live-ID protection and identity-safe completion cleanup. The real wire test distinguishes `1` from `"1"`, retains sibling and outbound ownership, refuses late approval and checks disconnect expiration. Missing/unparsable defaults become zero; positive timeout and confirmation-only gates remain. References: `tldw_chatbook/MCP/client.py:1007`, `tldw_chatbook/MCP/client.py:1072`, `tldw_chatbook/MCP/live_server_request_wiring.py:228`, `Tests/MCP/test_live_server_request_wiring.py:284`.
+- Character activation awaits transcript publication before focus/ready proof and synchronously retires only its exactly owned cold runtime on cancellation before transferring the token. Warm and unrelated sessions survive. The installed coalesced-sync test checks exact transcript identity, focus, and single-runtime reuse. References: `tldw_chatbook/UI/Console_Modules/workspace.py:6177`, `Tests/Chat/test_console_conversation_activation.py:651`, `Tests/UI/test_console_switcher_reuse_and_modes.py:40`.
+- The only behavioral local overlay imports the canonical native host adapter and assigns it immediately after the original nullable seam. All six parameters, configuration patches and both original equality assertions remain. The overlay patch and byte-reversal evidence agree. References: `Tests/MCP/test_approval_timeout_policy.py:10`, `Tests/MCP/test_approval_timeout_policy.py:43`, `task-12-safe-evidence/authorized-overlay.patch:1`, `task-12-safe-evidence/fixture-byte-reversal.json:1`.
+
+## Qualification and evidence checks
+
+- Parsed the retained XML: exactly 83 selected cases, zero failures/errors/skips. The actual command's selectors equal the authorized list in order: 80 behavior cases, one CI contract, two store ratchets. `selected.log:1` records 83 passed in 38.14 seconds with no warning summary. The original XML contains exactly six failures, all missing `_interrupt_host`; these remain fixture setup failures, not product RED evidence. References: `task-12-safe-evidence/selected.xml:1`, `task-12-safe-evidence/original-six.xml:1`, `task-12-safe-evidence/selected-argv.json:1`.
+- Retained derived receipts report 305 declared/index-census rows, 92 plan-pinned entries and 138 UI files against unchanged incoming floor 136. The relocated geometry test keeps the original geometry assertions and the CI workflow/target contract match. Store remains 22,334/22,344; controller 29,327/29,367. Fatal Ruff, three-overlay formatting and source whitespace receipts pass. References: `task-12-safe-evidence/index-pins.log:1`, `task-12-safe-evidence/ui-census.log:1`, `task-12-safe-evidence/fatal-ruff.log:1`, `task-12-safe-evidence/overlay-format.log:1`, `task-12-freeze-map.json:34`.
+- Reconstructed the QA append directly from the fixed diff: exactly 4,417 bytes and SHA-256 `281ec403c258c1210dac8b710e603d35eec99712ad7fbdc6cdcfe60d4a88a8d3`. The retained QA map preserves 12,336 whole-file blobs and records the one 7,982-byte original-prefix exception, matching the ruling. No claim that 12,337 final whole files remain identical. References: `task-12-safe-evidence/historical-qa-carry.json:61691`, `task-12-preflight-qa-append-note.json:1`, `Docs/QA/task-31245/switcher-reuse-and-mode-follow-up.md:134`.
+
+## Issues
+
+### Critical
+
+- None found in this integration scope.
+
+### Important
+
+- None found in this integration scope. No authority regression, ownership leak, missing required incoming hunk, or weakened fixture assertion identified.
+
+### Minor
+
+- Inherited documentation contradiction: `backlog/tasks/task-33628.8 - Console-chains-a-later-edit-and-resend-fork-after-legacy-flat-rows-on-reload.md:57` still says “AC#2 stays unticked,” although the incoming task is Done and AC#2 is checked with the accepted marked-fork scope. Update that historical sentence in the upstream task's documentation maintenance; it does not invalidate the explicit accepted residual or Task 12's source preservation.
+- Eight changed Python owners retain inherited formatter debt. Every recorded unapplied edit matches the exact baseline or dev edit; the local three-file formatting scope passes. This remains debt, not a whole-change formatter pass. References: `task-12-safe-evidence/formatter-inheritance.json:11`, `:254`, `:281`, `:788`, `:886`, `:989`, `:1051`, `:1121`.
+- The retained commit output includes existing GC-log and unreachable-object warnings. These do not indicate a source/test failure; repository housekeeping remains separate and no pruning is requested by this review. Reference: `task-12-safe-evidence/commit.log:5`.
+
+## Assessment and limits
+
+- Task quality: Approved. The fixed integration preserves incoming behavior and the actual reviewed feature source, with narrowly scoped fixture/formatting overlays and evidence that distinguishes carried receipts from new executions.
+- Cannot verify from this task diff: root final full worker/loading/public-navigation qualification, current-head Qodo/CI/PerfGuard, latest-dev ancestry at publication and normal merge. These remain explicit root gates, not waivers. Reference: `task-12-freeze-map.json:37`.
+- No outside-source check or test execution was needed: the changed contracts, behavioral tests and pinned evidence answered the concrete integration risks. Broad feature/schema/scanner/provider reviews remain closed.

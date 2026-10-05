@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-B",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target",
+    "--basetemp=/private/tmp/console-finalfix-stop-detail-01a0fa6c"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 13.858505964279175,
+  "output": ".                                                                        [100%]\n============================= slowest 25 durations =============================\n8.55s call     Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target\n\n(2 durations < 1s hidden.)\n1 passed in 11.33s\n"
+}

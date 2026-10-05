@@ -205,7 +205,11 @@ def voice_user_root_fork(
     """
     children = store._children_by_parent.get(context.origin.session_id)
     marker = appended_metadata(
-        None, ConsoleMessageRole.USER, context.expected_native_leaf_id, children, session
+        None,
+        ConsoleMessageRole.USER,
+        context.expected_native_leaf_id,
+        children,
+        session,
     )
     return marker is not None
 

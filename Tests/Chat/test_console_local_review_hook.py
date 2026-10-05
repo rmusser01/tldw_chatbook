@@ -11,11 +11,13 @@ import os
 import threading
 import time
 import weakref
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from Tests.Agents.hook_test_utils import trusted_hook_engine
+from Tests.private_profile import private_profile_test
 
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
 from tldw_chatbook.Agents.agent_models import (
@@ -234,6 +236,7 @@ def provider(state, tmp_path):
     return LocalToolProvider(workspace_root=tmp_path, resolve_state=lambda hub: state)
 
 
+@pytest.mark.bootstrap_profile
 def test_hook_clears_stamps_before_gating(tmp_path):
     p = provider(ASK, tmp_path)
     p.apply_batch_decisions(RUN, {"fs_list": "approve_once"})
@@ -242,6 +245,7 @@ def test_hook_clears_stamps_before_gating(tmp_path):
     assert p._stamps == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_hook_gates_ask_calls_in_one_batch(tmp_path):
     p = provider(ASK, tmp_path)
     seen = []
@@ -262,6 +266,7 @@ def test_hook_gates_ask_calls_in_one_batch(tmp_path):
     assert p.stamped(RUN, "fs_list") == "approve_once"
 
 
+@pytest.mark.bootstrap_profile
 def test_hook_keeps_same_name_watchlist_decisions_per_call(tmp_path):
     """One denied collection target must not cancel its approved sibling."""
     p = provider(ASK, tmp_path)
@@ -302,6 +307,7 @@ def test_hook_keeps_same_name_watchlist_decisions_per_call(tmp_path):
     assert p.stamped(RUN, "watchlists_create_collection") == "approve_session"
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize(
     ("broad", "narrow"),
     [
@@ -483,6 +489,7 @@ def test_lone_timed_out_row_still_reaches_the_provider_refusal(tmp_path):
     assert p.stamped(RUN, "fs_list") == "timeout"
 
 
+@pytest.mark.bootstrap_profile
 def test_local_pending_gate_carries_descriptor_owned_effects(tmp_path):
     gate = provider(ASK, tmp_path).pending_gate_for("fs_list", {"path": "."})
 
@@ -490,6 +497,7 @@ def test_local_pending_gate_carries_descriptor_owned_effects(tmp_path):
     assert gate.effects == (LocalApprovalEffect.PRIVATE_READ,)
 
 
+@pytest.mark.bootstrap_profile
 def test_mounted_approval_row_carries_exact_descriptor_effects(tmp_path):
     """The controller must pass the descriptor-owned effect through unchanged."""
     store = ConsoleChatStore()
@@ -532,6 +540,7 @@ def test_mounted_approval_row_carries_exact_descriptor_effects(tmp_path):
     assert row["effects"] != row["arguments"]["effects"]
 
 
+@pytest.mark.bootstrap_profile
 def test_hook_skips_non_ask_calls(tmp_path):
     p = provider(ALLOW, tmp_path)
     hook = build_local_review_hook(
@@ -545,6 +554,7 @@ def test_hook_skips_non_ask_calls(tmp_path):
     } == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_combined_hook_does_not_overwrite_a_local_refusal(tmp_path):
     p1, p2 = provider(ASK, tmp_path), provider(ASK, tmp_path)
     hook = build_combined_review_hook(
@@ -571,6 +581,7 @@ def test_combined_hook_empty_list_is_noop():
     } == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_combined_hook_clears_later_providers_when_earlier_hook_raises(tmp_path):
     """I3 across providers: a raising hook must not strand a LATER provider's
     stale prior-turn stamp for the fail-open runtime to hand to invoke()."""
@@ -595,6 +606,7 @@ def test_combined_hook_clears_later_providers_when_earlier_hook_raises(tmp_path)
     assert p2._stamps == {}
 
 
+@pytest.mark.bootstrap_profile
 def test_combined_hook_runs_remaining_hooks_after_a_raise(tmp_path):
     """A raise in one hook must not skip the remaining hooks entirely: hook 2
     still completes its own clear + round trip with this turn's decisions."""
@@ -615,6 +627,7 @@ def test_combined_hook_runs_remaining_hooks_after_a_raise(tmp_path):
     assert p2.stamped(RUN, "fs_list") == "deny"  # fresh THIS-turn decision
 
 
+@pytest.mark.bootstrap_profile
 def test_hook_level_card_deny_lands_in_the_execution_log_exactly_once(tmp_path):
     """task-32280 fix round (Critical review finding).
 
@@ -779,9 +792,12 @@ def _test_execution_context(
 def _bare_controller(app):
     """A controller instance with only what _compose_local_provider touches."""
     controller = object.__new__(ConsoleChatController)
-    controller.app = app
     controller.store = ConsoleChatStore()
-    from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
+    controller._character_read_guards = {}
+    controller.app = app
+    from Tests.Chat.console_interrupt_test_bindings import (
+        make_interrupt_host as InterruptRoundHost,
+    )
 
     controller.set_pending_question = None
     controller._interrupt_host = InterruptRoundHost(controller)
@@ -838,6 +854,7 @@ def test_compose_local_provider_disabled_flag(monkeypatch, tmp_path):
     ) == (None, None)
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_missing_master_key_defaults_enabled(
     monkeypatch, tmp_path
 ):
@@ -877,6 +894,7 @@ def test_compose_local_provider_coerces_quoted_false_to_disabled(monkeypatch, tm
     ) == (None, None)
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_coerces_quoted_true_to_enabled(monkeypatch, tmp_path):
     """Mirror case: a quoted "true" must still compose the provider."""
     monkeypatch.setattr(
@@ -926,6 +944,7 @@ def test_compose_local_provider_kill_switch_read_failure_fails_closed(
     ) == (None, None)
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_eligible(monkeypatch, tmp_path):
     monkeypatch.setattr(
         controller_mod,
@@ -957,6 +976,7 @@ def test_compose_local_provider_eligible(monkeypatch, tmp_path):
     assert gate is not None and gate.server_key == "local:__local__"
 
 
+@pytest.mark.bootstrap_profile
 def test_default_chat_local_provider_uses_scratch_not_config_or_cwd(
     monkeypatch,
     tmp_path,
@@ -995,6 +1015,7 @@ def test_default_chat_local_provider_uses_scratch_not_config_or_cwd(
     assert scratch_spaces.dispose()
 
 
+@pytest.mark.bootstrap_profile
 def test_default_chat_local_provider_rejects_after_scratch_close(tmp_path):
     scratch_spaces = ConsoleScratchSpaceManager(temp_parent=tmp_path)
     snapshot = scratch_spaces.snapshot("chat-a")
@@ -1021,18 +1042,17 @@ def test_default_chat_local_provider_rejects_after_scratch_close(tmp_path):
     assert scratch_spaces.wait_for_cleanup(timeout_seconds=2.0)
 
 
+@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per_call(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, request
 ):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
         _console_settings(workspace_root=str(tmp_path)),
     )
-    profile = tmp_path / "profile" / "config.toml"
-    profile.parent.mkdir()
-    profile.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    profile = Path(os.environ["TLDW_CONFIG_PATH"])
 
     class AppDatabase:
         def __init__(self):
@@ -1088,19 +1108,18 @@ def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per
     assert database.searches == 1
 
 
+@private_profile_test
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compose_local_provider_wires_transactional_watchlists_commands(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, request
 ):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
         _console_settings(workspace_root=str(tmp_path)),
     )
-    profile = tmp_path / "profile" / "config.toml"
-    profile.parent.mkdir()
-    profile.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    profile = Path(os.environ["TLDW_CONFIG_PATH"])
     RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
     database = SubscriptionsDB(tmp_path / "subscriptions.db")
     local_service = LocalWatchlistsService(db_factory=lambda: database)
@@ -1152,6 +1171,7 @@ async def test_compose_local_provider_wires_transactional_watchlists_commands(
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_routes_schedule_through_shared_app_command_service(
     monkeypatch, tmp_path
 ):
@@ -1205,19 +1225,18 @@ def test_compose_local_provider_routes_schedule_through_shared_app_command_servi
     ]
 
 
+@private_profile_test
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compose_local_provider_routes_long_watchlists_work_to_app_coordinator(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, request
 ):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
         _console_settings(workspace_root=str(tmp_path)),
     )
-    profile = tmp_path / "profile" / "config.toml"
-    profile.parent.mkdir()
-    profile.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    profile = Path(os.environ["TLDW_CONFIG_PATH"])
     RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
 
     class Coordinator:
@@ -1261,18 +1280,17 @@ async def test_compose_local_provider_routes_long_watchlists_work_to_app_coordin
     assert coordinator.briefings == [(5, 2)]
 
 
+@private_profile_test
+@pytest.mark.bootstrap_profile
 def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, request
 ):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
         _console_settings(workspace_root=str(tmp_path)),
     )
-    profile = tmp_path / "profile" / "config.toml"
-    profile.parent.mkdir()
-    profile.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    profile = Path(os.environ["TLDW_CONFIG_PATH"])
     policy_store = RuntimeSourceStateStore(default_runtime_policy_path())
     policy_store.save(RuntimeSourceState())
 
@@ -1350,6 +1368,7 @@ def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(
         database.close()
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_empty_workspace_root_uses_scratch(
     monkeypatch,
     tmp_path,
@@ -1368,6 +1387,7 @@ def test_compose_local_provider_empty_workspace_root_uses_scratch(
     assert local_provider.workspace_root != tmp_path.resolve()
 
 
+@pytest.mark.bootstrap_profile
 def test_console_run_without_admitted_roots_keeps_non_path_local_tools(tmp_path):
     controller = _bare_controller(SimpleNamespace(unified_mcp_service=_FakeService()))
 
@@ -1392,6 +1412,7 @@ def test_console_run_without_admitted_roots_keeps_non_path_local_tools(tmp_path)
     assert callable(review)
 
 
+@pytest.mark.bootstrap_profile
 def test_local_provider_read_only_filters_write_specs_without_global_mutation(tmp_path):
     before = LocalToolProvider(workspace_root=tmp_path)
     read_only = LocalToolProvider(workspace_root=tmp_path, allow_write=False)
@@ -1406,6 +1427,7 @@ def test_local_provider_read_only_filters_write_specs_without_global_mutation(tm
     assert after_names == before_names
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_selected_root_overrides_disabled_fallback(
     monkeypatch, tmp_path
 ):
@@ -1436,6 +1458,7 @@ def test_compose_local_provider_selected_root_overrides_disabled_fallback(
     assert {"fs_write", "fs_edit", "fs_patch"}.isdisjoint(selected_names)
 
 
+@pytest.mark.bootstrap_profile
 def test_selected_root_swap_fails_closed_before_local_invoke(monkeypatch, tmp_path):
     selected = tmp_path / "selected"
     selected.mkdir()
@@ -1476,6 +1499,7 @@ def test_selected_root_swap_fails_closed_before_local_invoke(monkeypatch, tmp_pa
     assert "outside" not in result.error
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_tilde_workspace_root_does_not_grant_home_access(
     monkeypatch, tmp_path
 ):
@@ -1501,6 +1525,7 @@ def test_compose_local_provider_tilde_workspace_root_does_not_grant_home_access(
     assert local_provider.workspace_root != (home / "repo").resolve()
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_persists_session_and_always_allow(
     monkeypatch, tmp_path
 ):
@@ -1526,6 +1551,7 @@ def test_compose_local_provider_persists_session_and_always_allow(
     assert service.persisted_states == [("local:__local__", "fs_list", "allow")]
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_session_approval_skips_reprompt(monkeypatch, tmp_path):
     monkeypatch.setattr(
         controller_mod,
@@ -1561,6 +1587,7 @@ def _composed(monkeypatch, tmp_path, service):
     return local_provider
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_records_deny_via_service(monkeypatch, tmp_path):
     service = _FakeService(
         state=EffectiveToolState(state="deny", origin="tool_override")
@@ -1578,6 +1605,7 @@ def test_compose_local_provider_records_deny_via_service(monkeypatch, tmp_path):
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_records_timeout_via_service(monkeypatch, tmp_path):
     service = _FakeService()  # ASK state
     local_provider = _composed(monkeypatch, tmp_path, service)
@@ -1591,6 +1619,7 @@ def test_compose_local_provider_records_timeout_via_service(monkeypatch, tmp_pat
     ]
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_allow_records_no_refusal(monkeypatch, tmp_path):
     service = _FakeService(state=ALLOW)
     local_provider = _composed(monkeypatch, tmp_path, service)
@@ -1600,6 +1629,7 @@ def test_compose_local_provider_allow_records_no_refusal(monkeypatch, tmp_path):
     assert service.recorded_decisions == []
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_recording_failure_does_not_break_invoke(
     monkeypatch, tmp_path
 ):
@@ -1637,6 +1667,7 @@ def _registered_task_tools(provider: LocalToolProvider) -> set[str]:
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_without_session_registers_no_todo_spec(
     monkeypatch, tmp_path
 ):
@@ -1656,6 +1687,7 @@ def test_compose_local_provider_without_session_registers_no_todo_spec(
     assert "todo_write" not in {entry.name for entry in local_provider.list_catalog()}
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_wires_the_sessions_exact_todo_store(
     monkeypatch, tmp_path
 ):
@@ -1690,6 +1722,7 @@ def test_compose_local_provider_wires_the_sessions_exact_todo_store(
     assert markers == [(target.id, target.todo_store.list_after(None))]
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_unknown_session_registers_no_todo_spec(
     monkeypatch, tmp_path
 ):
@@ -1710,6 +1743,7 @@ def test_compose_local_provider_unknown_session_registers_no_todo_spec(
     assert _registered_task_tools(local_provider) == set()
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_without_bridge_registers_no_todo_spec(
     monkeypatch, tmp_path
 ):
@@ -1731,6 +1765,7 @@ def test_compose_local_provider_without_bridge_registers_no_todo_spec(
     assert _registered_task_tools(local_provider) == set()
 
 
+@pytest.mark.bootstrap_profile
 def test_hook_passes_rationale_onto_local_pending_rows(tmp_path):
     """Qodo review #10: the local owner receives each call's rationale.
 
@@ -1760,6 +1795,7 @@ def test_hook_passes_rationale_onto_local_pending_rows(tmp_path):
     assert seen[0][1].rationale == ""
 
 
+@pytest.mark.bootstrap_profile
 def test_a_no_app_headless_round_is_not_recorded_as_a_local_user_denial(tmp_path):
     """task-32280 (Qodo #2597 #8): `request_mcp_approvals` fails CLOSED when
     no app is wired -- no card is ever shown, so no user decides anything.
@@ -1831,6 +1867,7 @@ def _deny_fs_tools_engine(tmp_path):
     )
 
 
+@pytest.mark.bootstrap_profile
 def test_pretooluse_hook_denies_before_permission_store(tmp_path):
     """A configured exit-2 PreToolUse hook denies the matched call and the
     approval round never carries it (deny-only, spec §5).
@@ -1859,6 +1896,10 @@ def test_pretooluse_hook_denies_before_permission_store(tmp_path):
         ],
         RUN,
     )
+    assert normalize_tool_review(verdicts["git_status"]).approval_decision == "approved"
+    verdicts = {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    }
     assert verdicts["fs_list"] != "proceed"
     assert verdicts["fs_list"].startswith("hook: ")
     assert normalize_tool_review(verdicts["git_status"]).verdict == "proceed"
@@ -1867,6 +1908,7 @@ def test_pretooluse_hook_denies_before_permission_store(tmp_path):
     assert rounds == [["git_status"]]
 
 
+@pytest.mark.bootstrap_profile
 def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path, monkeypatch):
     """Task 6 bridge wiring: run_reply must wrap the caller's review chain
     with the engine's PreToolUse layer when the bridge was built with an

@@ -37,6 +37,10 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 
 
+# The UI autouse app consumer retains its collection-selected private profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 def _context_state(*, request_tokens: int | None = 1_000):
     return build_console_context_control_state(
         settings=ConsoleSessionSettings(
@@ -320,7 +324,9 @@ def test_nonempty_tracker_failure_is_unavailable_but_true_empty_is_zero():
     assert "On next send ~+$" in failed_state.label
     assert failed_state.alert is True
     assert "system prompt changed" in failed_state.tooltip
-    assert empty_state.label == "Context 11% · Current $0.00 · On next send —"
+    # Context fullness belongs to the shared estimator, including tool budgets.
+    assert empty_state.label.startswith("Context ")
+    assert empty_state.label.split(" · ", 1)[1] == "Current $0.00 · On next send —"
 
 
 def test_idle_refresh_coalesces_and_uses_late_bound_callbacks():

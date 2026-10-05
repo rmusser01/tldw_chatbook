@@ -68,6 +68,7 @@ def _upstream_v15_database(path):
         for (name,) in names:
             conn.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
         for table in (
+            "automatic_chat_start_attempts",
             "automatic_wake_claims",
             "automatic_wake_attempts",
             "automatic_work_reservations",

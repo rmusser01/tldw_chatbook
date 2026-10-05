@@ -62,10 +62,6 @@ from ..Navigation.conversation_settings_navigation import (
     ConversationSettingsReturnOutcome,
     ProviderSettingsNavigationTarget,
 )
-from ..Navigation.vllm_handoff import (
-    VllmConsoleIntent,
-    owner_has_current_intent,
-)
 from ..Navigation.screen_state_store import ConsolePromptTargetProjection
 from .chat_screen_state import TaskResumeState
 
@@ -352,10 +348,6 @@ from ...Chat.console_session_settings import (
     build_target_default_console_session_settings,
     unsaved_console_endpoint_warning,
     validate_console_session_settings,
-)
-from ...Chat.console_session_endpoint_policy import (
-    ConsoleEndpointRollbackOutcome,
-    ConsoleEphemeralEndpointPolicy,
 )
 from ...Chat.console_chat_store import (
     MAX_PENDING_ATTACHMENTS,
@@ -4855,8 +4847,12 @@ class ChatScreen(BaseAppScreen):
         elif action_id == "settings":
             await self._open_console_settings(focus_model=False)
         elif action_id == "hooks":
+
+            async def review_current_hooks():
+                await self._hooks.review_current()
+
             self.run_worker(
-                self._open_console_hooks_review,
+                review_current_hooks,
                 group="console-hook-review",
                 exclusive=True,
             )
@@ -5811,11 +5807,36 @@ class ChatScreen(BaseAppScreen):
                     ConsoleDefaultSavePhase.CACHE_PUBLICATION,
                 )
 
-        await asyncio.gather(
-            persist_conversation(),
-            persist_default(),
-            persist_display_name(),
-        )
+        display_name_task = asyncio.create_task(persist_display_name())
+        primary_error: BaseException | None = None
+        try:
+            await asyncio.gather(
+                persist_conversation(),
+                persist_default(),
+                display_name_task,
+            )
+        except BaseException as exc:
+            primary_error = exc
+            raise
+        finally:
+            # The coordinator retains custody if the child never starts or a
+            # sibling fails. The child's serialized owner drains physical work.
+            cancellation: asyncio.CancelledError | None = None
+            while not display_name_task.done():
+                try:
+                    await asyncio.shield(display_name_task)
+                except asyncio.CancelledError as exc:
+                    cancellation = exc
+                except Exception:
+                    break
+            if display_name_plan is not None:
+                try:
+                    store.abandon_roleplay_projection_plan(display_name_plan)
+                except Exception:
+                    if primary_error is None:
+                        raise
+            if primary_error is None and cancellation is not None:
+                raise cancellation
 
     def _record_console_default_failure(
         self,
@@ -7449,6 +7470,12 @@ class ChatScreen(BaseAppScreen):
             self,
             rag_source_types_accessor=(lambda: _console_library_rag_source_scope(self)),
             rag_top_k_accessor=lambda: _console_library_rag_profile_top_k(),
+            read_trace_recovery_dispatch=lambda: dispatch_trace_call_recovery_action,
+            read_trace_recovery_state=lambda: trace_call_recovery_state,
+            resume_screen_is_torn_down=lambda: _console_screen_is_torn_down(self),
+            read_resume_asyncio=lambda: asyncio,
+            resume_isawaitable=lambda result: inspect.isawaitable(result),
+            read_resume_logger=lambda: logger,
         )
         # ADR-097: closed Inspect must not import its collectors at first paint.
         self._console_environment_owner = None
@@ -7907,254 +7934,6 @@ class ChatScreen(BaseAppScreen):
             (provider_config_key(provider), model_id),
             "",
         )
-
-    def consume_pending_vllm_console_intent(self) -> bool:
-        """Apply one current verified vLLM target to the active session only."""
-
-        return self._consume_verified_console_intent(
-            HandoffChannel.VLLM_CONSOLE,
-            VllmConsoleIntent,
-            "vllm",
-            "_vllm_connection_owner",
-            owner_has_current_intent,
-        )
-
-    def consume_pending_llamacpp_console_intent(self) -> bool:
-        """Apply one current verified llama.cpp target to this session only."""
-
-        from ..Navigation.llamacpp_handoff import (
-            LlamaCppConsoleIntent,
-            owner_has_current_intent as llama_owner_has_current_intent,
-        )
-
-        return self._consume_verified_console_intent(
-            HandoffChannel.LLAMACPP_CONSOLE,
-            LlamaCppConsoleIntent,
-            "llama_cpp",
-            "_llamacpp_connection_owner",
-            llama_owner_has_current_intent,
-        )
-
-    def _consume_verified_console_intent(
-        self, channel, intent_type, provider, owner_attribute, current_intent
-    ) -> bool:
-        """Reuse the exact session adoption and compensation transaction."""
-
-        store = getattr(self.app_instance, "pending_handoffs", None)
-        if type(store) is not PendingHandoffStore:
-            return False
-        if store.release_recovery(channel) is not None:
-            recovery_result = store.retry_release_recovery(
-                channel,
-                automatic=False,
-            )
-            if recovery_result != "released":
-                self.app_instance.notify(
-                    "verified provider session handoff cleanup is still pending. It will "
-                    "retry on the next Console activation.",
-                    severity="warning",
-                )
-                return False
-        claim = store.claim(channel)
-        if claim is None:
-            return False
-        session_store = None
-        session_id = None
-        current = None
-        next_settings = None
-        current_has_user_work = None
-        current_controller = None
-        current_provider_selection = None
-        current_summary_state = None
-        current_endpoint_policy = None
-        adoption_receipt = None
-        replacement_started = False
-        try:
-            intent = claim.value
-            if type(intent) is not VllmConsoleIntent:
-                raise TypeError("vLLM Console handoff was not exact")
-            owner = getattr(self.app_instance, "_vllm_connection_owner", None)
-            if not owner_has_current_intent(owner, intent):
-                raise ValueError("vLLM Console handoff is stale")
-            if not self.is_attached:
-                raise RuntimeError("Console is detached")
-            session_store = self._ensure_console_chat_store()
-            current = self._session._ensure_active_console_session_settings()
-            session_id = session_store.active_session_id
-            if session_id is None:
-                raise RuntimeError("Console active session is unavailable")
-            active_session = session_store.ensure_session()
-            if active_session.id != session_id:
-                raise RuntimeError("Console active session changed before adoption")
-            current_has_user_work = active_session.has_user_work
-            current_endpoint_policy = session_store.session_ephemeral_endpoint_policy(
-                session_id
-            )
-            current_controller = self._console_chat_controller
-            current_provider_selection = self._build_console_provider_selection()
-            current_summary_state = self._build_console_settings_summary_state()
-            configured_vllm = build_target_default_console_session_settings(
-                self._provider_readiness_app_config(),
-                "vllm",
-                intent.model_id,
-            )
-            next_settings = replace(
-                current,
-                provider="vllm",
-                model=intent.model_id,
-                base_url=configured_vllm.base_url,
-                source="user",
-            )
-            endpoint_policy = ConsoleEphemeralEndpointPolicy(
-                provider="vllm",
-                model=intent.model_id,
-                base_url=intent.api_url,
-            )
-            errors = validate_console_session_settings(
-                endpoint_policy.effective_settings(next_settings),
-                app_config=self._provider_readiness_app_config(),
-            )
-            if errors:
-                raise ValueError("vLLM Console session settings are invalid")
-            adoption_receipt = session_store.adopt_session_ephemeral_endpoint(
-                session_id,
-                settings=next_settings,
-                policy=endpoint_policy,
-            )
-            replacement_started = True
-            self._sync_console_chat_core_state()
-            self._sync_console_settings_summary()
-            if (
-                not self.is_attached
-                or session_store.active_session_id != session_id
-                or not owner_has_current_intent(owner, intent)
-                or not store.acknowledge_current(claim)
-            ):
-                raise RuntimeError("vLLM Console handoff changed during adoption")
-        except BaseException as error:
-            if (
-                replacement_started
-                and session_store is not None
-                and session_id is not None
-                and next_settings is not None
-                and current is not None
-                and current_has_user_work is not None
-            ):
-                try:
-                    outcome = (
-                        session_store.rollback_session_ephemeral_endpoint_adoption(
-                            session_id,
-                            expected_settings=next_settings,
-                            expected_policy=endpoint_policy,
-                            prior_settings=current,
-                            prior_policy=current_endpoint_policy,
-                            prior_has_user_work=current_has_user_work,
-                            receipt=adoption_receipt,
-                        )
-                    )
-                    if outcome is ConsoleEndpointRollbackOutcome.LOST_SESSION_FENCE:
-                        raise RuntimeError(
-                            "vLLM Console rollback lost its session fence"
-                        )
-                    if (
-                        outcome is ConsoleEndpointRollbackOutcome.RESTORED
-                        and session_store.active_session_id == session_id
-                    ):
-                        try:
-                            self._sync_console_chat_core_state()
-                        except BaseException:
-                            if current_controller is None:
-                                if self._console_chat_controller is not None:
-                                    raise
-                            elif current_provider_selection is None:
-                                raise
-                            else:
-                                current_controller.update_provider_selection(
-                                    current_provider_selection
-                                )
-                        try:
-                            self._sync_console_settings_summary()
-                        except BaseException:
-                            if current_summary_state is None:
-                                raise
-                            self._apply_console_settings_summary_state(
-                                current_summary_state
-                            )
-                    elif (
-                        outcome
-                        is ConsoleEndpointRollbackOutcome.BLOCKED_DURABLE_RESTORE
-                        and session_store.active_session_id == session_id
-                    ):
-                        self.app_instance.notify(
-                            "vLLM session endpoint blocked because the prior "
-                            "conversation metadata could not be restored. Retry "
-                            "the handoff or choose a provider before sending.",
-                            severity="error",
-                        )
-                        self._sync_console_chat_core_state()
-                        self._sync_console_settings_summary()
-                except BaseException as rollback_error:
-                    logger.warning(
-                        "vLLM Console handoff rollback failed "
-                        "(revision={}, exception_category={})",
-                        claim.revision,
-                        type(rollback_error).__name__,
-                    )
-                    self.app_instance.notify(
-                        "vLLM session handoff could not restore its exact prior "
-                        "state. Review the current provider before sending.",
-                        severity="error",
-                    )
-            release_failure = "false"
-            try:
-                released = store.release(claim) is True
-            except BaseException as release_error:
-                released = False
-                release_failure = "exception"
-                logger.warning(
-                    "vLLM Console handoff claim release failed "
-                    "(revision={}, exception_category={})",
-                    claim.revision,
-                    type(release_error).__name__,
-                )
-            if not released:
-                try:
-                    store.retain_release_recovery(
-                        claim,
-                        failed_attempts=1,
-                        automatic_retry_limit=3,
-                        last_failure=release_failure,
-                    )
-                except BaseException as retention_error:
-                    logger.warning(
-                        "vLLM Console handoff cleanup ownership transfer failed "
-                        "(revision={}, exception_category={})",
-                        claim.revision,
-                        type(retention_error).__name__,
-                    )
-                self.app_instance.notify(
-                    "vLLM session handoff could not be re-queued yet. Console "
-                    "retained cleanup ownership and will retry before adoption.",
-                    severity="error",
-                )
-            if isinstance(
-                error,
-                (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit),
-            ):
-                raise
-            logger.warning(
-                "vLLM Console handoff will retry "
-                "(channel={}, revision={}, exception_category={})",
-                claim.channel.value,
-                claim.revision,
-                type(error).__name__,
-            )
-            return False
-        self.app_instance.notify(
-            "Using the verified vLLM target for this Console session only.",
-            severity="information",
-        )
-        return True
 
     def _active_console_settings_context_estimate(
         self,
@@ -15091,8 +14870,14 @@ class ChatScreen(BaseAppScreen):
             )
         )
         run_allows_send = (
-            bool(getattr(run_state, "is_send_allowed", True)) and not image_edit_active
-        )
+            bool(getattr(run_state, "is_send_allowed", True))
+            or (
+                controller is not None
+                and controller._chat_start.is_prepared(
+                    controller.store.active_session_id or ""
+                )
+            )
+        ) and not image_edit_active
         can_send = (
             has_draft
             and not bool(self._console_setup_blocked_reason())
@@ -16147,55 +15932,6 @@ class ChatScreen(BaseAppScreen):
             # failure here (worst case a claim supersedes the result).
             return False
 
-    async def _dispatch_console_trace_recovery(
-        self, action: str, preparation_id: str
-    ) -> object:
-        """Route a pre-dispatch card action; a cancelled hold refills the composer."""
-
-        controller = self._ensure_console_chat_controller()
-        held = controller.trace_call_recovery_preparation()
-        # TASK-34350: read the held text BEFORE the action: the UI sync that
-        # follows it mirrors the (empty) composer back into the session draft.
-        held_text = (
-            held.executed_draft
-            if held is not None
-            and held.preparation_id == preparation_id
-            and controller.context_compaction_hold(preparation_id) is not None
-            else ""
-        )
-        result = await dispatch_trace_call_recovery_action(
-            controller,
-            action,
-            preparation_id,
-            on_started=self._start_console_transcript_sync_timer,
-            on_finished=self._sync_native_console_chat_ui,
-        )
-        composer = self._console_composer_or_none()
-        if (
-            action == "cancel"
-            and held_text
-            and controller.context_compaction_hold(preparation_id) is None
-            and composer is not None
-            and not composer.draft_text().strip()
-        ):
-            # Cancel puts the held message back where it came from.
-            composer.load_draft(held_text)
-        return result
-
-    def _console_trace_recovery_state(self) -> Any:
-        """Project the active pre-dispatch pause, with a context hold's numbers."""
-
-        controller = self._ensure_console_chat_controller()
-        preparation = controller.trace_call_recovery_preparation()
-        return trace_call_recovery_state(
-            preparation,
-            context_hold=(
-                controller.context_compaction_hold(preparation.preparation_id)
-                if preparation is not None
-                else None
-            ),
-        )
-
     def _build_console_center(self) -> Widget:
         """Build the current center without changing any surrounding shell chrome."""
         if self._console_terminal_open:
@@ -16222,8 +15958,8 @@ class ChatScreen(BaseAppScreen):
                     )
                 )
             ),
-            trace_recovery_state_builder=self._console_trace_recovery_state,
-            on_trace_recovery_action=self._dispatch_console_trace_recovery,
+            trace_recovery_state_builder=self._session._console_trace_recovery_state,
+            on_trace_recovery_action=self._session._dispatch_console_trace_recovery,
         )
 
     def _open_console_prompt_queue(self, session_id: str, revision: int) -> Any:
@@ -16977,7 +16713,11 @@ class ChatScreen(BaseAppScreen):
             )
             self.set_timer(
                 self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                self.consume_pending_vllm_console_intent,
+                self._session.consume_pending_vllm_console_intent,
+            )
+            self.set_timer(
+                self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                self._session.consume_pending_llamacpp_console_intent,
             )
             # PR3a-2 Task 4: claim a background sub-agent completion's deep
             # link (staged while Console was not mounted) and switch to the
@@ -17031,128 +16771,14 @@ class ChatScreen(BaseAppScreen):
             self._resume_navigation_startup_in_progress = False
             return
         self._resume_navigation_dispatch_worker = self.run_worker(
-            self._settle_and_start_resume_navigation(),
+            self._session.settle_and_start_resume_navigation(),
             exclusive=True,
             group="console-resume-navigation-dispatch",
         )
 
-    async def _settle_and_start_resume_navigation(self) -> None:
-        """Start one visible request after the prior visit's rollback settles."""
-        if _console_screen_is_torn_down(self):
-            self._resume_navigation_startup_in_progress = False
-            return
-        previous = self._resume_navigation_startup_worker
-        if previous is not None:
-            if not previous.is_finished and not previous.is_cancelled:
-                previous.cancel()
-            await asyncio.shield(
-                asyncio.gather(previous.wait(), return_exceptions=True)
-            )
-        if (
-            not self.is_current
-            or _console_screen_is_torn_down(self)
-            or self._resume_navigation_startup_worker is not previous
-            or (
-                self._pending_resume_local_conversation_id is None
-                and self._pending_character_conversation_target is None
-            )
-        ):
-            return
-        self._resume_navigation_startup_in_progress = True
-        self._resume_navigation_startup_worker = self.run_worker(
-            self._consume_resume_navigation_startup(),
-            exclusive=True,
-            group="console-resume-navigation-startup",
-        )
-
     async def _retire_resume_navigation_startup(self) -> bool:
         """Retire an older request and drain its rollback before a newer choice."""
-        worker = self._resume_navigation_startup_worker
-        dispatch = self._resume_navigation_dispatch_worker
-        had_request = bool(
-            self._pending_resume_local_conversation_id is not None
-            or self._pending_character_conversation_target is not None
-            or (worker is not None and not worker.is_finished)
-        )
-        for timer in getattr(self, "_console_resume_handoff_timers", ()):
-            timer.stop()
-        self._console_resume_handoff_timers = []
-        self._pending_resume_local_conversation_id = None
-        self._pending_character_conversation_target = None
-        if dispatch is not None:
-            if not dispatch.is_finished and not dispatch.is_cancelled:
-                dispatch.cancel()
-            await asyncio.shield(
-                asyncio.gather(dispatch.wait(), return_exceptions=True)
-            )
-        if worker is not None:
-            if not worker.is_finished and not worker.is_cancelled:
-                worker.cancel()
-            await asyncio.shield(
-                asyncio.gather(worker.wait(), return_exceptions=True)
-            )
-            if self._resume_navigation_startup_worker is worker:
-                self._resume_navigation_startup_worker = None
-        if had_request:
-            self._resume_navigation_startup_in_progress = False
-        return had_request
-
-    async def _consume_resume_navigation_startup(self) -> None:
-        """Consume older Console intents before the explicit resume target."""
-        target = self._pending_resume_local_conversation_id
-        typed_target = self._pending_character_conversation_target
-        worker = self._resume_navigation_startup_worker
-        cancelled = False
-        opened: bool | None = None
-        try:
-            if target is None and typed_target is None:
-                return
-            self._session.consume_pending_console_first_chat_intent(
-                defer_presentation=True,
-            )
-            await self._consume_pending_chat_handoff(
-                suppress_released_failure=True,
-            )
-            self._consume_pending_console_roleplay_repair()
-            await self._consume_pending_console_prompt_insert()
-            fleet_result = self._fleet.consume_pending_console_fleet_completion()
-            if inspect.isawaitable(fleet_result):
-                await fleet_result
-            if typed_target is not None:
-                opened = await self._workspace.open_character_navigation_target(
-                    typed_target
-                )
-            else:
-                opened = await self._workspace.open_console_workspace_conversation(
-                    target
-                )
-        except asyncio.CancelledError:
-            # The opener settles owned hydration before propagating cancellation.
-            # Keep this exact request for the next ordinary visible visit.
-            cancelled = True
-            raise
-        finally:
-            if not cancelled and (
-                self._pending_resume_local_conversation_id == target
-                and self._pending_character_conversation_target is typed_target
-            ):
-                self._pending_resume_local_conversation_id = None
-                self._pending_character_conversation_target = None
-            if self._resume_navigation_startup_worker is worker:
-                self._resume_navigation_startup_in_progress = False
-        await self._consume_pending_conversation_resume()
-        if opened is True:
-            return
-        store = self._ensure_console_chat_store()
-        if store.active_session_id is not None:
-            return
-        try:
-            self._workspace._reconcile_console_session_with_registry()
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Unable to reconcile Console after failed saved-chat startup resume"
-            )
-        await self._sync_native_console_chat_ui()
+        return await self._session.retire_resume_navigation_startup()
 
     def _notify_console_fleet_teardown_if_any(self) -> None:
         """One-shot toasts reporting the LAST Console instance's teardown.
@@ -19412,22 +19038,6 @@ class ChatScreen(BaseAppScreen):
             draft, stash=stash, session_id=session_id
         )
 
-    async def _request_console_hooks_review(self, snapshot, waiting, cancel):
-        from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
-            request_hook_review,
-        )
-
-        return await request_hook_review(
-            self,
-            self._console_runtime().ensure_hook_permissions(),
-            snapshot,
-            waiting,
-            cancel,
-        )
-
-    async def _open_console_hooks_review(self) -> None:
-        await self._hooks.review_current()
-
     async def _refresh_console_hooks(self) -> None:
         # ADR-097: indicator disk reads and hook imports start after first paint.
         while not getattr(self.app, "_ui_ready", True):
@@ -19455,6 +19065,7 @@ class ChatScreen(BaseAppScreen):
 
         from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
 
+        self._console_draft_spend_refresh.stop()
         async with send_diagnostic_scope(
             "ui_dispatch", self._ui_responsiveness_monitor()
         ) as diagnostic:
@@ -20436,13 +20047,26 @@ class ChatScreen(BaseAppScreen):
                 wake.retry_soon()
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
+        # A pending handoff owns durable draft custody, including empty edits.
+        # Read the current composer, not an older queued Input.Changed value.
+        if (
+            session_id is not None
+            and session_id == self._console_visible_draft_session_id
+            and store._sessions[session_id].agent_handoff_state == "pending"
+        ):
+            composer = self._console_composer_or_none()
+            if composer is not None:
+                store.set_session_draft(session_id, composer.draft_text())
         controller = self._console_chat_controller
         self._console_draft_spend_refresh.route_edit(
             run_active=bool(
                 session_id is not None
                 and controller is not None
-                and controller.run_state_for(session_id).status
-                in CONSOLE_ACTIVE_RUN_STATUSES
+                and (
+                    controller.run_state_for(session_id).status
+                    in CONSOLE_ACTIVE_RUN_STATUSES
+                    or self._console_runtime().has_custodied_turns(session_id)
+                )
             )
         )
 
@@ -22406,6 +22030,7 @@ class ChatScreen(BaseAppScreen):
             run_active = bool(getattr(run_state, "is_stop_allowed", False))
             send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
             active_id = controller.store.active_session_id or ""
+            run_active = run_active or controller._chat_start.is_accepted(active_id)
             if active_id:
                 queue_presentation = self._prompt_queue.presentation_for(
                     active_id,
@@ -24010,7 +23635,11 @@ class ChatScreen(BaseAppScreen):
                 ),
                 self.set_timer(
                     self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                    self.consume_pending_vllm_console_intent,
+                    self._session.consume_pending_vllm_console_intent,
+                ),
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self._session.consume_pending_llamacpp_console_intent,
                 ),
                 # PR3a-2 Task 4: mirrors the on_mount claim -- a completion
                 # staged while the user was on another screen is claimed on
@@ -24746,6 +24375,8 @@ class ChatScreen(BaseAppScreen):
         persona_memory_mode: "str | None" = None,
         character_id: "int | None" = None,
         character_name: "str | None" = None,
+        launch_status: str = "draft",
+        reason: str | None = None,
     ) -> None:
         """TASK-32482 Task 7: land a confirmed agent-created chat as a session.
 
@@ -24800,32 +24431,41 @@ class ChatScreen(BaseAppScreen):
             return
         store = controller.store
         try:
-            session = store.restore_persisted_session(
-                title=title,
-                workspace_id=workspace_id,
-                persisted_conversation_id=conversation_id,
-                all_nodes=nodes or [],
-                active_leaf_persisted_id=active_leaf_persisted_id,
-                settings=settings,
-                assistant_kind=assistant_kind,
-                assistant_id=assistant_id,
-                assistant_authority_id=assistant_authority_id,
-                persona_memory_mode=persona_memory_mode,
-                character_id=character_id,
-                character_name=character_name,
-                activate=False,
-            )
-            # Single write path: the restore rehydrates the draft from
-            # the persisted console_agent_handoff key; this fill only
-            # covers a degraded restore-side read (empty draft).
-            if opening_prompt and not session.draft:
-                store.set_session_draft(session.id, opening_prompt)
+            if tool == "fork_chat":
+                session = store.restore_persisted_session(
+                    title=title,
+                    workspace_id=workspace_id,
+                    persisted_conversation_id=conversation_id,
+                    all_nodes=nodes or [],
+                    active_leaf_persisted_id=active_leaf_persisted_id,
+                    settings=settings,
+                    assistant_kind=assistant_kind,
+                    assistant_id=assistant_id,
+                    assistant_authority_id=assistant_authority_id,
+                    persona_memory_mode=persona_memory_mode,
+                    character_id=character_id,
+                    character_name=character_name,
+                    activate=False,
+                )
+                if opening_prompt and not session.draft:
+                    store.set_session_draft(session.id, opening_prompt)
             self._workspace._invalidate_console_persisted_rows_cache()
             self.run_worker(
                 self._sync_native_console_chat_ui, exclusive=True, group="console-sync"
             )
-            verb = "Forked" if tool == "fork_chat" else "New"
-            self.app_instance.notify(f"{verb} chat created: {title}")
+            if tool == "fork_chat":
+                notice = f"Forked chat created: {title}"
+            else:
+                status = {
+                    "draft": "Draft",
+                    "started": "Started",
+                    "not_started": "Not started",
+                    "review_required": "Review required",
+                }.get(launch_status, "Review required")
+                notice = f"{status}: {title}"
+                if reason:
+                    notice += f" ({reason.replace('_', ' ')})"
+            self.app_instance.notify(notice)
         except Exception:  # noqa: BLE001 -- PR review #10: never strand the chat
             logger.opt(exception=True).error(
                 "chat_create: UI completion failed after durable create",

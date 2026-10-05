@@ -44,7 +44,7 @@ from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent, owner_ha
 jobs = []
 root = None
 controller = ConsoleEnvironmentController(
-    run_worker=lambda job, **kwargs: jobs.append(job),
+    run_worker=lambda job, **kwargs: jobs.append((job, kwargs["group"])),
     marshal_to_ui=lambda callback, *args: callback(*args),
     workspace_root_accessor=lambda: root,
     rail_open_accessor=lambda: True,
@@ -77,13 +77,20 @@ else:
 
 root = os.environ["TLDW_CONSOLE_CLOSURE_ROOT"]
 controller.poll_tick()
-assert len(jobs) == 1
+# Scope changes request both tiers; network waits for the local branch.
+assert len(jobs) == 1 and jobs[0][1] == controller.LOCAL_WORKER_GROUP
+local_job, _ = jobs.pop()
 scanner = controller._scanner
 assert isinstance(scanner, BacklogTaskScanner)
-jobs.pop()()
+local_job()
+# The real local landing releases the deferred network worker. Inspect its
+# group without running network I/O, then observe the ordinary local poll.
+assert len(jobs) == 1 and jobs[0][1] == controller.NET_WORKER_GROUP
+jobs.clear()
 controller.poll_tick()
 assert controller._scanner is scanner
 assert len(jobs) == 1
+assert jobs[0][1] == controller.LOCAL_WORKER_GROUP
 print("CONSOLE_INTERACTION_CLOSURE_OK")
 """
     result = subprocess.run(

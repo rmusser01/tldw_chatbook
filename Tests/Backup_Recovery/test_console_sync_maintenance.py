@@ -22,6 +22,8 @@ async def main():
     )
     for name in (
         '_record_ui_worker_started', '_record_ui_worker_finished',
+        '_sync_console_rail_and_controls', '_sync_console_settings_recovery_surfaces',
+        '_sync_console_live_work_readiness_rows',
         '_sync_console_chat_core_state', '_sync_console_changed_files_if_scope_changed',
         '_current_console_rail_state', '_sync_console_control_bar',
         '_sync_console_settings_summary', '_sync_console_mode_bar',

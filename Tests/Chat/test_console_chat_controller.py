@@ -3143,6 +3143,7 @@ def test_image_budget_counts_images_newest_first(monkeypatch):
     assert decoded == b"old-0"
 
 
+@pytest.mark.bootstrap_profile
 def test_provider_messages_for_next_send_estimate_uses_lightweight_projection_without_media_serialization(
     monkeypatch,
 ):

@@ -1,0 +1,43 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "-p",
+    "no:randomly",
+    "--basetemp=/private/tmp/pr2995-task18-stop-mofgu16i/pytest",
+    "Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-18-safe-evidence/stop.xml"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "environment_overrides": {
+    "PYTHONPATH": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook"
+  },
+  "profile": "unchanged canonical Tests/conftest.py bootstrap; original markers preserved",
+  "head": "3238094c92e77248483ac95254b877639c842c9b",
+  "timeout_seconds": 300,
+  "private_basetemp": "/private/tmp/pr2995-task18-stop-mofgu16i",
+  "python_version": "Python 3.12.11",
+  "source_sha256": {
+    "Tests/Architecture/test_module_size_ratchet.py": "0125ee461b6d03ed78f446972e7ed47427a206aa0931c74a7dcb2f83dd7c14cf",
+    "Tests/Chat/console_interrupt_test_bindings.py": "8af0376d99476eb40b48e7035094190625c4fb73412309f68e3df5df57993c4c",
+    "Tests/Chat/test_console_agent_swap.py": "b4b661146920879207ce249d2d29df15a91deb91cc71ed3e16dc7f64911500b1",
+    "Tests/Chat/test_console_chat_start.py": "d0fc1e4524e7260458ed32625156fd8dc7a9c68f681bcbaf18d5729a12e3c748",
+    "Tests/Chat/test_console_interrupt_rounds.py": "cbfacacf9fa73f524b56a7b9a622a724fcfc4c37b10e49e43c65c2378884b316",
+    "Tests/UI/app_factory.py": "cad6360a8ee103a0f41c1cd4930e604efa8040f271a2df1ee0f4066351f30905",
+    "Tests/UI/conftest.py": "200c8be77e4b91fa44b1d73502341fdffee9c6fa8c19e67e884a78d418920d9d",
+    "Tests/UI/test_console_runtime_ownership.py": "ef0d3c6bfbfda32740715167668207ba84c23c3867e52e3dc556c16b44d22952",
+    "Tests/UI/test_destination_shells.py": "ef44e4d233ea0ab45b8d5aefbdf7702deaf3f9bfc1b38164c2fdd1081e2d3b18",
+    "Tests/conftest.py": "a065da11e2d3d6b6a5bda42f52e537c7619dc0bee509bf2d5669491c143fa148",
+    "pyproject.toml": "5da3235e8cba334a49a99e9ef47b6cd23e7629a7ef854efe56d2db2450ef4b26",
+    "tldw_chatbook/Chat/console_chat_controller.py": "17cf4d000523e40bbc3dfae0600e5e4121b0b15e2c93926c8d818ac359ea5a06",
+    "tldw_chatbook/Chat/console_chat_start.py": "e52f7c2c120d4bb84927ed872366d654829c63888f73640906a6129eb857878f",
+    "tldw_chatbook/Chat/console_chat_store.py": "bf6eb20181f4cdf893ae4615041170929fab2b0091a42cdc25278959cd7c8771",
+    "tldw_chatbook/Chat/console_interrupt_rounds.py": "3890c8f766add7a6158e103d76e9523a500a0b071fb6fe9ec7dd65ab3fcfd89d",
+    "tldw_chatbook/Chat/console_runtime.py": "baf3b1bd1c0f048e4045e7753e18ffd7a297a1ce3e1834458074ecff727ecf35",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "c2788e9a88908335be20c47c8da799495c295e16c8db3d3581e6c7ea5c34c160",
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": "7186f5a96ac30cb92bdb8ed619f644dba5c216ca1e41706725a450f175e8e700"
+  },
+  "recorded_before_execution": true
+}

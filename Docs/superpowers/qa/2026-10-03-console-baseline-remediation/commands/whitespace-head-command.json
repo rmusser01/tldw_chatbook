@@ -1,0 +1,10 @@
+[
+  "git",
+  "diff",
+  "--check",
+  "bc2be106f1cc0409ef283c60c6778ff12c972d7a",
+  "1c1a7e3566a01b2d0b963673272eae562025ef25",
+  "--",
+  "Tests/Chat/test_console_agent_project_instructions.py",
+  "Tests/Chat/test_console_chat_fork.py"
+]

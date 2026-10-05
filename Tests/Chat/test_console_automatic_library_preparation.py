@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from Tests.Chat.console_close_helpers import close_controller_session
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.agent_models import RUN_DONE, RunOutcome
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -1852,8 +1853,9 @@ async def test_queued_recovery_postaccept_exception_settles_exact_claim_once(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["retry", "bypass"])
+@private_profile_test
 async def test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged(
-    monkeypatch, action
+    monkeypatch, action, request
 ):
     monkeypatch.setattr(controller_module, "is_vision_capable", lambda *_args: True)
     captured_contexts = []
@@ -1892,6 +1894,7 @@ async def test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged(
         ),
         model="vision-model",
     )
+    assert await controller.hook_admission_reason() is None
     controller.app = SimpleNamespace(library_rag_search_service=service)
 
     first = await controller.submit_draft("frozen draft", session_id=session.id)
@@ -2422,7 +2425,8 @@ async def _capture_staged_evidence(_app, launch, *, user_message):
 
 
 @pytest.mark.asyncio
-async def test_explicit_evidence_lease_survives_preaccept_failure(monkeypatch):
+@private_profile_test
+async def test_explicit_evidence_lease_survives_preaccept_failure(monkeypatch, request):
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("original"),
         "released": [],
@@ -2436,6 +2440,7 @@ async def test_explicit_evidence_lease_survives_preaccept_failure(monkeypatch):
         provider_gateway=_StreamingFence(),
         **_retrieval_evidence_owner(retrieval),
     )
+    assert await controller.hook_admission_reason() is None
     monkeypatch.setattr(
         retrieval_module,
         "capture_console_staged_evidence_for_chat",
@@ -2454,8 +2459,10 @@ async def test_explicit_evidence_lease_survives_preaccept_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance(
     monkeypatch,
+    request,
 ):
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("original"),
@@ -2471,6 +2478,7 @@ async def test_explicit_evidence_lease_releases_exact_launch_only_after_acceptan
         provider_gateway=gateway,
         **_retrieval_evidence_owner(retrieval),
     )
+    assert await controller.hook_admission_reason() is None
     monkeypatch.setattr(
         retrieval_module,
         "capture_console_staged_evidence_for_chat",
@@ -2489,7 +2497,10 @@ async def test_explicit_evidence_lease_releases_exact_launch_only_after_acceptan
 
 
 @pytest.mark.asyncio
-async def test_explicit_evidence_lease_never_releases_newer_launch(monkeypatch):
+@private_profile_test
+async def test_explicit_evidence_lease_never_releases_newer_launch(
+    monkeypatch, request
+):
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("original"),
         "released": [],
@@ -2504,6 +2515,7 @@ async def test_explicit_evidence_lease_never_releases_newer_launch(monkeypatch):
         provider_gateway=_StreamingFence(),
         **_retrieval_evidence_owner(retrieval),
     )
+    assert await controller.hook_admission_reason() is None
     held = _CancellationResistantBoundary()
 
     async def capture_evidence(_app, launch, *, user_message):
@@ -2530,7 +2542,10 @@ async def test_explicit_evidence_lease_never_releases_newer_launch(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_explicit_evidence_lease_cancel_keeps_original_staged(monkeypatch):
+@private_profile_test
+async def test_explicit_evidence_lease_cancel_keeps_original_staged(
+    monkeypatch, request
+):
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("original"),
         "released": [],
@@ -2544,6 +2559,7 @@ async def test_explicit_evidence_lease_cancel_keeps_original_staged(monkeypatch)
         provider_gateway=_StreamingFence(),
         **_retrieval_evidence_owner(retrieval),
     )
+    assert await controller.hook_admission_reason() is None
     held = _CancellationResistantBoundary()
 
     async def capture_evidence(_app, launch, *, user_message):
@@ -3134,8 +3150,10 @@ async def test_shutdown_callback_failure_rethrows_after_all_task_cleanup(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch(
     monkeypatch,
+    request,
 ):
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("original"),
@@ -3150,6 +3168,7 @@ async def test_ready_close_removes_echo_idempotently_and_preserves_evidence_laun
         provider_gateway=_StreamingFence(),
         **_retrieval_evidence_owner(retrieval),
     )
+    assert await controller.hook_admission_reason() is None
     held = _CancellationBoundary()
 
     async def hold_capture(_app, launch, *, user_message):

@@ -1,0 +1,6 @@
+..................................................                       [100%]
+============================= slowest 25 durations =============================
+2.54s call     Tests/Packaging/test_console_interaction_boot_closure.py::test_console_defers_setup_and_environment_io_until_requested
+
+(24 durations < 1s hidden.)
+50 passed in 9.12s

@@ -1,0 +1,9 @@
+[
+  "git",
+  "diff",
+  "--exit-code",
+  "HEAD",
+  "--",
+  "Tests/Chat/test_console_agent_project_instructions.py",
+  "Tests/Chat/test_console_chat_fork.py"
+]

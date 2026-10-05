@@ -177,6 +177,9 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Compaction failure copy is needed only when a compaction fails. Shed
+    # this interaction-only edge to cover the chat-start resident (ADR-097).
+    "tldw_chatbook.Chat.console_compaction_failure",
     # Resend eligibility and dispatch load with transcript rows or an action,
     # never while mounting an empty Console (TASK-33803, ADR-097).
     "tldw_chatbook.Chat.console_turn_resend",

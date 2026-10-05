@@ -123,7 +123,7 @@ class ConsoleTurnPreparation:
     preparation_id: str
     attempt_id: str
     session_id: str
-    origin: Literal["manual", "queued"]
+    origin: Literal["manual", "queued", "agent_chat_start"]
     queue_entry_id: str | None
     executed_draft: str = field(repr=False)
     execution_context: ConsoleTurnExecutionContext = field(repr=False)
@@ -741,9 +741,10 @@ def _validate_preparation(preparation: ConsoleTurnPreparation) -> None:
     if type(preparation.origin) is not str or preparation.origin not in {
         "manual",
         "queued",
+        "agent_chat_start",
     }:
         _invalid("origin")
-    if preparation.origin == "manual":
+    if preparation.origin in {"manual", "agent_chat_start"}:
         if (
             preparation.queue_entry_id is not None
             or preparation.queue_generation is not None

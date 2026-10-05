@@ -1,0 +1,29 @@
+{
+  "name": "base-note-fixture",
+  "revision": "7a15e3e9b4998dba8d8726bbdb722ff60a3df83d",
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service",
+    "-q",
+    "--basetemp=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-base-note-fixture-profile-uobfqagq/pytest",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-base-note-fixture.xml"
+  ],
+  "environment": {
+    "TLDW_TEST_CONFIG_ROOT": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-base-note-fixture-profile-uobfqagq"
+  },
+  "sha256": {
+    "tldw_chatbook/Chat/console_agent_bridge.py": "10ad425af0da38a74c5331590dbdab69c1a838b371b615da7ac86a23b587b0a5",
+    "tldw_chatbook/Utils/input_validation.py": "4ab3912f09027830dc28a34295ed16a6ad1b9fc8bcba2951ecbd6af6769ea33b",
+    "tldw_chatbook/Widgets/Console/console_composer_bar.py": "c09381a5fcad7ce29d604c238f36fe6bcbd6d1c09cb85003bc4030c4abda3513",
+    "tldw_chatbook/Chat/console_chat_controller.py": "df2496a5ad4874bf4af1e2111809b19a6470ff787e2b9e312be9aeadb12da26b",
+    "Tests/Agents/test_agent_chat_create_tools.py": "e7601b3151b19ee0a9d0c8a594003bf024f74169f7b15a7468a32b58580ced8e",
+    "Tests/Chat/test_console_chat_create_integration.py": "fcf5f72daae8bf860223b9f3b6b053a845b59388c13ea490db661712c922ef89",
+    "Tests/Chat/test_console_note_span_actions.py": "0d9b4d8ff80dbbf4650a23cce6efb539519b81d2f789990bed39a5e8df5225ba",
+    "Tests/UI/test_console_composer_run_controls.py": "f488881475fa9e35b03ffc7fe2f3960053a2553f25d02d57ca83e5a4d21b57f4",
+    "Tests/Utils/test_console_new_chat_input_validation.py": "e428f68152d4fc6a9af8c9f450d3512f71d1f7bd761b4df584fb07f6aca8db8a"
+  },
+  "exit": 1
+}

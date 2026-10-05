@@ -1,0 +1,3 @@
+rm 'Tests/DB/test_chachanotes_v74_agent_chat_starts_migration.py'
+rm 'tldw_chatbook/DB/migrations/agent_runs_v18_to_v19_chat_starts.sql'
+rm 'tldw_chatbook/DB/migrations/chachanotes_v73_to_v74_agent_chat_starts.sql'

@@ -604,7 +604,9 @@ async def test_fleet_controller_is_constructed_with_late_bound_screen_edges() ->
     await workers.pop()()
     controller._retry_wake_soon()
     assert controller._wake_has_pending("conversation-a") is True
-    assert controller._wake_delivering_session_ids() == frozenset({"session-a", "session-b"})
+    assert controller._wake_delivering_session_ids() == frozenset(
+        {"session-a", "session-b"}
+    )
     assert controller._console_wake_turn_active("session-b")
     assert controller._fleet_has_unsettled_children() is True
     assert wake_calls == [("wire", screen.app_instance), "seed", "retry", "retry"]
@@ -959,3 +961,50 @@ def test_prompts_resolves_the_session_sibling_at_call_time():
     )
 
     assert screen._prompts._ensure_active_console_session_settings_fn() is sentinel
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_session_verified_adoption_edges_are_late_bound(request, monkeypatch):
+    screen = _unmounted_console()
+    session = screen._session
+    with monkeypatch.context() as patch:
+        selection, summary, draft = (object() for _ in range(3))
+        controller = SimpleNamespace()
+        calls = []
+        patch.setattr(screen, "_console_chat_controller", controller)
+        patch.setattr(screen, "_build_console_provider_selection", lambda: selection)
+        patch.setattr(screen, "_build_console_settings_summary_state", lambda: summary)
+        patch.setattr(
+            screen,
+            "_apply_console_settings_summary_state",
+            lambda value: calls.append(value),
+        )
+        patch.setattr(
+            screen,
+            "_console_settings_initial_draft",
+            lambda *args, **kwargs: (calls.append((args, kwargs)), draft)[1],
+        )
+        assert session._current_chat_controller_accessor() is controller
+        assert session._build_current_provider_selection_fn() is selection
+        assert session._build_settings_summary_fn() is summary
+        session._apply_settings_summary_fn(summary)
+        assert (
+            session._settings_initial_draft_fn(
+                selection, summary, exposed_fields=frozenset()
+            )
+            is draft
+        )
+        assert calls == [
+            summary,
+            ((selection, summary), {"exposed_fields": frozenset()}),
+        ]
+    assert session.is_attached is False
+    host = ConsolidatedCSSApp()
+    async with host.run_test(size=(120, 40)) as pilot:
+        await host.push_screen(screen)
+        await pilot.pause()
+        assert session.is_attached is True
+        await host.pop_screen()
+        await pilot.pause()
+        assert session.is_attached is False

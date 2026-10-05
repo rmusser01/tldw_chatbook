@@ -1228,6 +1228,11 @@ merge, force-push):**
   ignored or empty server-side filter still selects nothing.
 - Dry-run first: print the run ids and their `headBranch` values, read them, and only
   then cancel.
+## Verify QA artifacts in Git before removing scratch
+
+**TASK-33805, Console chat starts, 2026-10-02.** The QA closure commit 31bdd52356 included exact compressed verification logs and their hash manifest. The repository log ignore rule excluded all 45 readable `.log` copies, although filesystem hash and link checks passed. The reports would therefore have broken links in a fresh checkout. Explicitly staging only the manifest-listed readable copies corrected the record; all 141 manifest artifact paths were then compared with their staged Git blobs.
+
+**What to do.** Before deleting plan scratch, verify every preserved or linked artifact against the Git index or HEAD. A filesystem check alone cannot establish that an ignored artifact will survive checkout. Use an explicit file list when force-adding QA logs so unrelated ignored files stay outside the commit.
 
 ## `backlog task edit --notes` replaces the notes; `--append-notes` adds (TASK-33640, 2026-10-04)
 

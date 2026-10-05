@@ -1,0 +1,9 @@
+............................................................             [100%]
+============================= slowest 25 durations =============================
+3.66s call     Tests/Chat/test_console_chat_create_integration.py::test_chat_create_callbacks_reach_bridge_when_ui_sinks_wired
+2.34s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_fork_passes_identity_and_hydrated_nodes
+1.16s setup    Tests/Chat/test_console_chat_create_integration.py::test_execute_routing_override_builds_settings
+1.05s call     Tests/Chat/test_console_chat_create_confirm.py::test_survivor_child_confirm_does_not_bind_next_turn_stop
+
+(21 durations < 1s hidden.)
+60 passed in 43.62s

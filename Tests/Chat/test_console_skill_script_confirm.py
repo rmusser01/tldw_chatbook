@@ -38,6 +38,7 @@ from tldw_chatbook.Skills_Interop.local_skills_service import ScriptPlan
 from tldw_chatbook.Skills_Interop.skill_script_runner import ScriptRunResult
 from Tests.console_provider_doubles import persisted_console_store
 from Tests.console_provider_doubles import provider_resolution
+from Tests.private_profile import private_profile_test
 
 
 def _wait_until(predicate: Callable[[], bool], timeout: float = 5.0) -> None:
@@ -761,6 +762,7 @@ def test_confirm_timeout_denies(make_controller):
 # -- Step 3b: bridge closure --------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_closure_denies_on_policy_without_prompting(bridge_closure_env):
     """Policy denial must not show a card."""
     from tldw_chatbook.runtime_policy.types import PolicyDeniedError
@@ -780,6 +782,7 @@ def test_closure_denies_on_policy_without_prompting(bridge_closure_env):
     assert env.confirm_calls == []
 
 
+@pytest.mark.bootstrap_profile
 def test_closure_denies_on_bad_path_without_prompting(bridge_closure_env):
     env = bridge_closure_env(
         describe_side_effect=ValueError("local_skill_script_not_found:../x.py")
@@ -789,6 +792,7 @@ def test_closure_denies_on_bad_path_without_prompting(bridge_closure_env):
     assert env.confirm_calls == []
 
 
+@pytest.mark.bootstrap_profile
 def test_closure_skips_the_prompt_when_the_skill_is_granted(bridge_closure_env):
     env = bridge_closure_env(granted=True)
     result = env.closure("demo", "scripts/hello.py", [])
@@ -797,6 +801,7 @@ def test_closure_skips_the_prompt_when_the_skill_is_granted(bridge_closure_env):
     assert env.run_calls, "the script must still actually run"
 
 
+@pytest.mark.bootstrap_profile
 def test_closure_confirm_payload_describes_the_run_being_approved(bridge_closure_env):
     """The confirm payload is exactly what the human approves on -- dropping
     a field here (e.g. the script path or args) would be a real security
@@ -811,12 +816,14 @@ def test_closure_confirm_payload_describes_the_run_being_approved(bridge_closure
     assert payload["args"] == ["--flag", "value"]
 
 
+@pytest.mark.bootstrap_profile
 def test_closure_records_the_grant_on_always_allow(bridge_closure_env):
     env = bridge_closure_env(confirm_result={"allow": True, "remember": True})
     env.closure("demo", "scripts/hello.py", [])
     assert env.granted_names == ["demo"]
 
 
+@pytest.mark.bootstrap_profile
 def test_closure_denies_when_the_user_declines(bridge_closure_env):
     env = bridge_closure_env(confirm_result={"allow": False, "remember": False})
     result = env.closure("demo", "scripts/hello.py", [])
@@ -825,6 +832,7 @@ def test_closure_denies_when_the_user_declines(bridge_closure_env):
     assert env.run_calls == []
 
 
+@pytest.mark.bootstrap_profile
 def test_closure_fails_closed_when_confirm_raises(bridge_closure_env):
     env = bridge_closure_env(confirm_side_effect=RuntimeError("ui exploded"))
     result = env.closure("demo", "scripts/hello.py", [])
@@ -832,6 +840,7 @@ def test_closure_fails_closed_when_confirm_raises(bridge_closure_env):
     assert env.run_calls == []
 
 
+@pytest.mark.bootstrap_profile
 def test_nonzero_exit_is_ok_true_with_the_failure_described(bridge_closure_env):
     """A failed SCRIPT is a successful TOOL CALL -- the agent must see it."""
     env = bridge_closure_env(run_result_exit_code=3, run_result_stderr="boom")
@@ -841,11 +850,13 @@ def test_nonzero_exit_is_ok_true_with_the_failure_described(bridge_closure_env):
     assert "boom" in result.content
 
 
+@pytest.mark.bootstrap_profile
 def test_tool_is_absent_without_a_confirm_callback(bridge_without_confirm):
     """Advertised must equal usable (the #847 lesson)."""
     assert bridge_without_confirm.run_skill_script_tool is None
 
 
+@pytest.mark.bootstrap_profile
 def test_tool_is_absent_on_an_unsupported_platform(tmp_path, monkeypatch):
     """Advertised must equal usable, applied to the Windows gap (Qodo #871
     finding 2): even with a skills service AND a confirm callback wired,
@@ -943,14 +954,18 @@ def _bridged_controller(tmp_path) -> tuple[ConsoleChatController, list[dict[str,
     return controller, captured
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_confirm_callback_absent_from_bridge_when_no_ui_sink_wired(tmp_path):
+async def test_confirm_callback_absent_from_bridge_when_no_ui_sink_wired(
+    tmp_path, request
+):
     """The #847 lesson, applied to run_skill_script: with no
     `set_pending_skill_script` wired, the controller must NOT forward
     `request_skill_script_confirm` to the bridge at all -- passing the
     (always fail-closed) bound method anyway would advertise a tool the
     model can never successfully use."""
     controller, captured = _bridged_controller(tmp_path)
+    assert await controller.hook_admission_reason() is None
     assert controller.set_pending_skill_script is None  # not wired (default)
 
     result = await controller.submit_draft("hi")
@@ -959,9 +974,11 @@ async def test_confirm_callback_absent_from_bridge_when_no_ui_sink_wired(tmp_pat
     assert captured[0]["request_skill_script_confirm"] is None
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_confirm_callback_present_when_ui_sink_wired(tmp_path):
+async def test_confirm_callback_present_when_ui_sink_wired(tmp_path, request):
     controller, captured = _bridged_controller(tmp_path)
+    assert await controller.hook_admission_reason() is None
     controller.set_pending_skill_script = lambda payload: None
 
     result = await controller.submit_draft("hi")
@@ -978,6 +995,7 @@ async def test_confirm_callback_present_when_ui_sink_wired(tmp_path):
     assert confirm.keywords == {"session_id": captured[0]["session_id"]}
 
 
+@pytest.mark.bootstrap_profile
 def test_confirm_payload_shows_the_canonical_skill_name_not_the_raw_one(
     bridge_closure_env,
 ):
@@ -1095,6 +1113,7 @@ def test_revoking_an_unknown_run_leaves_a_skill_script_confirm_armed(make_contro
     assert result["decision"] == {"allow": True, "remember": False}
 
 
+@pytest.mark.bootstrap_profile
 def test_a_late_allow_after_a_revoke_cannot_run_the_script(tmp_path, monkeypatch):
     """END TO END: the cancelled child's card is clicked Allow, and the
     script still does not run.

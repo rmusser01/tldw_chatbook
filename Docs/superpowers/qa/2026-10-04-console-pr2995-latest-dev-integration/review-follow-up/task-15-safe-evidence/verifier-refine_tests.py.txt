@@ -1,0 +1,56 @@
+from pathlib import Path
+p=Path('Tests/Chat/test_console_chat_start.py');s=p.read_text();s=s.replace('@pytest.mark.parametrize("registration_site", ["first", "second"])','@pytest.mark.parametrize("registration_site", ["first", "second", "first_uncertain"])')
+s=s.replace('(1 if registration_site == "first" else 2)', '(2 if registration_site == "second" else 1)')
+s=s.replace('    if registration_site == "second":\n        def fail_settlement', '    if registration_site != "first":\n        def fail_settlement')
+a=s.index('async def test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release')
+t=s[a:];t=t.replace('    from copy import copy\n', '    from copy import copy\n    from dataclasses import replace\n')
+t=t.replace('''            saved["replacement"] = replacement
+            saved["state"]''','''            saved["replacement"] = replacement
+            replacement_preparation = replace(
+                saved["preparation"], preparation_id="replacement-preparation"
+            )
+            assert store.begin_preparation(replacement_preparation) is replacement_preparation
+            saved["replacement_preparation"] = replacement_preparation
+            saved["state"]''')
+t=t.replace('''            assert controller.run_state_for(target.id) is saved["state"]
+''','''            assert controller.run_state_for(target.id) is saved["state"]
+            assert store.preparation_for_session(target.id) is saved["replacement_preparation"]
+''')
+t=t.replace('''        if "preparation" in saved:
+            abandon(saved["preparation"].preparation_id)
+''','''        if "preparation" in saved:
+            abandon(saved["preparation"].preparation_id)
+        if "replacement_preparation" in saved:
+            abandon(saved["replacement_preparation"].preparation_id)
+''');s=s[:a]+t;p.write_text(s)
+p=Path('Tests/DB/test_automatic_chat_starts.py');s=p.read_text();s=s.replace('"missing_runtime", "exit_failure"],','"missing_runtime", "exit_failure", "begin_failure", "read_failure", "commit_failure", "restore_failure"],')
+a=s.index('    transaction = ledger.transaction',s.index('def test_missing_start_confirmation'))
+s=s[:a]+s[a:].replace('''    if case == "exit_failure":''','''    if case in {"begin_failure", "read_failure", "commit_failure", "restore_failure"}:
+        connection = db.connection
+        class FailingConnection:
+            def __init__(self, conn):
+                self.conn = conn
+            def __getattr__(self, name):
+                return getattr(self.conn, name)
+            def execute(self, sql, *args):
+                if (
+                    (case == "begin_failure" and sql == "BEGIN IMMEDIATE")
+                    or (case == "read_failure" and "FROM automatic_chat_start_attempts" in sql)
+                    or (case == "restore_failure" and sql.startswith("PRAGMA synchronous=") and sql != "PRAGMA synchronous=FULL")
+                ):
+                    raise sqlite3.OperationalError("injected transaction failure")
+                return self.conn.execute(sql, *args)
+            def commit(self):
+                if case == "commit_failure":
+                    raise sqlite3.OperationalError("injected commit failure")
+                return self.conn.commit()
+        @contextmanager
+        def failing_connection():
+            with connection() as conn:
+                yield FailingConnection(conn)
+        monkeypatch.setattr(db, "connection", failing_connection)
+        with pytest.raises(sqlite3.OperationalError):
+            ledger._confirm_chat_start_absent("attempt", owner_id="owner")
+        monkeypatch.setattr(db, "connection", connection)
+    elif case == "exit_failure":''',1)
+p.write_text(s)

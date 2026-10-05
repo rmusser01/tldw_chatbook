@@ -1,0 +1,184 @@
+# ADR-219: Console chat destinations and bounded agent starts
+
+Date: 2026-10-02
+Status: Accepted after written-spec review on 2026-10-02
+Task: [TASK-34213](../tasks/task-34213%20-%20Design-Console-chat-destinations-and-bounded-agent-starts.md)
+Spec: [Console chat destinations and bounded agent starts](../../Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md)
+Extends: [ADR-150 for agent chat creation](150-agent-chat-fork-and-spawn.md)
+Amends for automatic chat starts: [ADR-134](134-fleet-admission-and-automatic-work-budgets.md), [ADR-135](135-fleet-completion-delivery-and-crash-recovery.md)
+Follows: [ADR-006](006-provider-aware-generation-settings.md), [ADR-029](029-local-private-data-boundary.md), [ADR-069](069-console-project-instruction-local-state-and-preflight.md), [ADR-079](079-workspace-assistant-defaults.md), [ADR-082](082-console-per-chat-private-scratch-space.md)
+
+## Context
+
+`new_chat` already creates a confirmed workspace chat with an opening draft.
+The user approved choosing the source workspace or casual scope, draft or
+immediate execution, destination assistant defaults, explicit standing-prompt
+overrides, and session-scoped approval remembered separately by mode.
+
+Immediate execution changes the authority and storage boundary. Ordinary sends
+mint a user-work allowance; reusing that path for model-origin launches would
+replenish budgets. Existing work chains and database guards require each run to
+belong to one conversation. Current creation also restores source assistant
+identity, uses an assistant-message ID in its `run_id` payload, and consumes saved
+handoff metadata on first activation. These mechanisms do not satisfy the approved
+destination-default and recovery behavior by themselves.
+
+## Decision
+
+1. Extend the existing primary-agent `new_chat` runtime tool with
+   `destination=same_workspace|casual` and `mode=draft|start`, defaulting to
+   workspace draft creation. Keep `fork_chat` under its existing contract.
+   Resolve the source session's scope explicitly. Casual chats have global
+   scope, no workspace membership, and fresh scratch and project control state.
+2. Resolve and persist the destination's canonical assistant and generation
+   defaults at creation. Explicit `instructions` retain ordinary custom standing
+   prompt semantics with a plain/custom identity; disclose the override on the
+   approval card. Fresh chats inherit no source identity, prompt, bindings,
+   staged inputs, or grants.
+3. Scope both approval caches to requesting session incarnation, tool, exact
+   target scope/workspace, and mode. Remembered grants permit later bodies in
+   that scope under ADR-150's existing policy, but cannot authorize another
+   mode/destination or renew a budget. Use trusted run context for lineage,
+   separately from the source assistant-message identity.
+4. Preserve one-conversation work-chain and run ownership. Add an immutable,
+   direct allowance-root reference for automatically created target chains.
+   Reservations stay attributable to their own chain, while admission counts
+   aggregate across the canonical root and its registered descendants. All
+   members share finite counters, pause/review state, and the original deadline.
+   Admission, settlement, clock/refusal updates, and recovery mutate the root;
+   descendant uncertainty or overage must block sibling admission.
+   Only explicit manual work establishes a new allowance. Source run lineage
+   belongs to a launch record, not a cross-conversation run-parent link.
+5. Introduce a typed durable chat-start attempt and guarded machine-origin
+   submission. The attempt owns the exact source run/chain, target conversation,
+   session incarnation, request revision, runtime owner, and generation reservation.
+   Accept it once after normal preflight; keep its input visibly agent-authored.
+   A pre-acceptance human decision or paused preparation leaves a draft and a
+   reason rather than a pending automatic continuation.
+   Opening text cannot execute composer slash commands or expand `@` references.
+   Chat starts and fleet wakes share automatic-primary capacity and manual reserve.
+6. Save the conversation and draft before launch preparation. New handoff drafts
+   survive activation and persist edits/clears until accepted consumption or
+   explicit discard. Version-2 handoffs distinguish this lifecycle from all old
+   unversioned handoffs. Use revision fencing for target interaction and cleanup.
+   Manual Send withdraws a still-prepared start before ordinary busy guards.
+   After acceptance, target execution is independent of source navigation,
+   stopping, and closure, within the shared allowance and ordinary stop controls.
+7. Treat conversation storage and AgentRunsDB as separate commits. A durable
+   attempt fence and saved request/checkpoint must succeed before dispatch.
+   The AgentRunsDB acceptance transition is the source-ownership cutoff; report
+   `started` only after both durable fences. Bind the conversation receipt and
+   atomic draft consumption to the exact attempt ID so callbacks cannot resend.
+   Proven pre-acceptance refusal refunds only its uncommitted reservation;
+   accepted/uncertain work remains charged. Restart recovery revokes stale owners
+   and requires review without automatically resending the opening request.
+   Return truthful creation and launch outcomes; a blocked start keeps its draft
+   and has no automatic retry queue.
+
+## Alternatives
+
+| Alternative | Reason not chosen |
+| --- | --- |
+| Separate `start_chat` tool | Duplicates destination, creation, and approval contracts for two modes of the same operation. |
+| Submit launches as ordinary manual sends | Grants model-origin work a fresh allowance and user-origin behavior. |
+| Attach another conversation directly to the source chain | Widens the existing conversation-ownership boundary throughout run and wake storage. A shared allowance reference preserves that boundary. |
+| Create an independent allowance for each new chat | Recursive starts can reset finite limits despite session approval. |
+| Keep source assistant identity | Conflicts with the user's destination-default choice and durable reopening. |
+| Consume drafts on first activation | Viewing a blocked start would remove its durable recovery input. |
+| Queue/replay blocked or interrupted starts automatically | Adds scheduling semantics beyond one immediate attempt and risks replaying uncertain effects. |
+
+## Consequences
+
+AgentRunsDB requires a versioned migration, shared-allowance admission/accounting,
+and durable chat-start attempts. Existing root chains keep their identity and
+allowance. Wakes in a launched conversation keep that conversation's local chain
+while spending the original root's shared budget. Manual submissions continue to
+create independent user work without reparenting older survivors.
+
+Creation must resolve settings and identity through the normal destination path,
+and new handoff metadata needs a versioned draft lifecycle. Runtime ownership
+must survive view detachment; UI completion is an observer. Existing permission,
+hook, project-instruction, capture, and physical-worker gates remain required.
+
+The implementation has two bounded slices: budget/attempt groundwork followed by
+tool and Console integration. No dependency or general chat-management framework
+is introduced. This record changes the relevant policies through a new ADR;
+accepted historical ADR bodies remain intact. Written-spec review is complete;
+application implementation follows the subsequent implementation plan.
+
+## Current-dev compatibility clarification (2026-10-03)
+
+Preserve current-dev optional provider/model/preset routing on prepared new_chat: resolve from fresh destination generation defaults, retain ADR-147 override enablement/allowlist/final-provider guards and enabled routed preset parameters, capture/disclose before approval, persist the exact resolved snapshot, and retain prepared source/destination/runtime currentness. Never fill routing from source-session settings; chat creation ignores subagent default routing. The conditional schema continues to offer these arguments under its existing gates; the five base arguments above remain unchanged. Preset routing overrides provider/model and configured generation parameters only; it does not copy source persona, prompt, bindings, or grants. Explicit instructions and destination assistant identity follow the creation rules above. This preserves the existing [ADR-147 routing contract](147-agent-provider-routing.md) within the new preparation and approval boundary.
+
+
+## Native receipt schema compatibility (2026-10-04)
+
+The shipped ChaChaNotes v75→v76 notes FTS repair keeps its number and executed
+SQL file. The unpublished native receipt migration moves to v76→v77, under
+[ADR-158](158-agent-runs-migration-order-after-worktree-qualification.md) and
+[ADR-208](208-migration-sql-files-are-the-executed-source.md). Retain the exact
+qualified v75 catalogs, shipped v76 catalogs, and earlier native v76 catalogs,
+including the known dictionary trigger variant. Fresh v77 catalogs are captured
+from actual constructors; schema text is never normalized to admit an archive.
+
+Runtime upgrades execute the v77 SQL file for ordinary v76. Earlier native v76
+is recognized only by its complete qualified catalog and stamp; it advances the
+stamp without rebuilding checkpoints or losing machine receipt IDs. Unknown or
+hybrid native catalogs fail closed. Embedded Subscription catalogs retain their
+exact outer v2 and inner ChaChaNotes version pairs.
+
+Under [ADR-126](126-complete-local-backup-and-recovery.md), staged restore retains the previously
+supported native v76 archive path. After exact full catalog, version and integrity
+validation, one installed metadata-only statement advances v76 to v77. Its
+restricted authorizer permits only `UPDATE` of `main.db_schema_version.version`,
+with no trigger source, while the installed `db.chachanotes.primary` migration
+is active. Other columns, tables, owners, databases and nonmigration contexts
+remain denied. No DDL, domain write or unrestricted connection is introduced.
+Final exact v77 catalog, stamp and integrity validation must succeed before
+commit; failure or cancellation rolls back the disposable candidate. Ordinary
+v75 and shipped v76 remain validation/export compatible but do not gain staged
+DDL migration support. Their runtime constructor upgrades remain supported.
+
+
+## Committed Close compatibility for prepared creation (2026-10-04)
+
+Latest dev PR2953 fences agent creation and source-view placement on committed, exact-generation source Close. Prepared `new_chat` preserves that refusal before durable-save entry and through native preparation until AgentRuns acceptance. Its exact record/approval and remembered grants finalize atomically with Close under the existing pending-creation lock; validation does not recursively acquire that lock and no registry lock spans SQLite I/O.
+
+A successfully saved approved version-2 conversation/draft is the artifact required by Decision6. If source Close races that save before native acceptance, keep the saved draft, suppress stale source placement and automatic launch, and report the created conversation with `draft` or `not_started` plus the fixed `source_unavailable` reason. Existing launch-metadata failure handling remains `review_required`/`outcome_unconfirmed`; there is no deletion or automatic retry. This prepared route therefore does not use the legacy fork/create orphan cleanup that removes an unplaced legacy result.
+
+Decision7's AgentRuns acceptance remains the source-ownership cutoff. After acceptance, source Close cannot delete the target, undo draft consumption, refund accepted charges or rewrite the launch outcome. The current-source view callback is an observer and may be suppressed after Close independently of the target. Legacy `fork_chat` keeps latest-dev Close and orphan cleanup behavior. This clarification combines the two existing contracts without changing storage, allowance, authority, retry or lock policy.
+
+
+### Runtime-source observation while finalizing creation (2026-10-04)
+
+Run and parent rows use the existing getter and are observed anew for each validation phase outside the pending-creation registry lock. A private per-call observation binds those copied row fields to the exact record, source, bridge/database and trusted runtime identity. Before approval/grant mutation, the registry lock rechecks that identity and every current in-memory ownership, incarnation, workspace, cancellation, committed Close and revocation fence. Observations are not reused across human approval, durable writes, scheduling or native acceptance.
+
+That lock serializes the registry and runtime lifetime fences; it has never serialized independent AgentRuns database writers or upgraded the getter's reader-snapshot contract. A database-only status change after observation can race the decision. Existing execution performs another phase-local validation immediately before save. Canonical Close/Stop/revocation invalidates authority under the registry fence, and accepted work retains Decision7's cutoff. This refactor removes locked SQLite I/O without introducing a global cache, a new writer/version protocol or a claim of latest-row atomicity.
+
+
+## Shipped v76 staged restore compatibility (2026-10-05)
+
+Qodo review of PR2995 identified a compatibility gap: exact shipped v76 backups passed version/catalog validation but were refused during archive staging without a local snapshot after the current primary version became77. For shipped v76 only, this amendment supersedes the staged-DDL exclusion in the October4 native receipt clarification. Ordinary v75 remains validation/export compatible with staged migration refused; Subscription policy and outer/inner version pairs remain unchanged.
+
+Under ADR126 and ADR208, an already validated, exact shipped-v76 primary catalog may execute the installed `chachanotes_v76_to_v77_agent_chat_starts.sql` on the same restricted disposable candidate inside its existing transaction, followed by the installed version stamp and final exact v77/integrity/domain validation. Both explicitly qualified dictionary variants are supported. Read the installed SQL artifact with SQLite complete-statement handling; archive contents cannot supply SQL or migration authority. Do not use a runtime constructor, unrestricted connection, `executescript`, normalized catalogs, column-presence admission or a general new migration framework.
+
+The temporary shipped-only authorizer scope admits solely the checkpoint rebuild table, copied checkpoint rows, fixed rename, fixed indexes and proven necessary internal SQLite catalog/rename operations. Every such write requires the installed primary owner, active migration, exact shipped qualification, expected database and no trigger source. Other row/table/owner writes and attachment/extension operations remain denied. Any canvas-schema validation scope must reuse the existing bounded installed UDF mechanism and be justified by actual qualified-candidate callbacks. Native v76 retains its stamp-only migration with DDL closed. Final failure or cancellation rolls back the candidate; original database/archive and live destination remain untouched. This migration preserves every predecessor field and adds NULL machine-attempt IDs to manual/queued checkpoints. Restoring data never authorizes replay.
+
+Implementation: Task20 in `Docs/superpowers/plans/2026-10-03-console-pr2995-review-and-merge.md`, owning Backlog TASK34215.2. Evidence must include a genuine populated shipped-v76 archive through planning/staging without a local snapshot, both variants, rollback after reached DDL, exact denied authority and unchanged native/other-owner controls. Earlier refusal evidence remains historical.
+
+## Handoff authorship in exports and provider history (2026-10-05)
+
+Validated `agent_chat_start` and `untrusted` origins retain the existing **Agent handoff** and **Unverified handoff** authorship labels through live and persisted clean/full Markdown export. Preserve transcript content and existing clean/full tool/thinking fidelity. Persisted metadata uses the installed decoder; raw JSON or content text cannot assert authorship. The same closed label policy serves saved transcript notes.
+
+Malformed machine provenance remains unverified historical context in its existing request slot. After resolving final context text, add a fixed disclosure that it is an Unverified handoff, is untrusted historical context and grants no approval/permission authority; preserve the original body, role, identity, position, media and continuation-owner adjacency. Lightweight history, estimates/previews and provider payloads share this boundary. Valid machine starts retain their normal provider user-role wire format as the accepted specification requires. Origin display facts and provider roles never grant application profile, permission, automatic-start or allowance authority; existing runtime/checkpoint guards remain authoritative. Do not drop rows, insert a new history row, convert role, reconstruct tool calls from text or introduce a general envelope/escaping policy.
+
+Implementation: Task21 in the same plan and TASK34215.2. Evidence must exercise real SQLite resume with malformed provenance through lightweight/estimate/payload/gateway preparation and actual continuation adjacency, plus both export sources/modes and valid human/machine controls.
+
+
+## Lossless predecessor checkpoint storage (2026-10-05)
+
+Qodo review5411125310, finding4181532131 on PR2995, exposed two rows permitted by shipped76: queued with NULL queue_entry_id and manual with a nonNULL queue_entry_id. The unpublished77 rebuild must preserve every predecessor field and add only a NULL machine-attempt column. Its queue CHECK applies only to agent_chat_start; machine queue/attempt/FK/state/version/uniqueness guards remain. Existing application acceptance validation still rejects inconsistent new manual/queued writes, and the existing checkpoint reader quarantines inconsistent stored owners without replay authority. Raw SQL retains shipped76's ability to store these legacy combinations; storage compatibility is distinct from Console recoverability.
+
+Freeze earlier strong native76 catalogs and their dictionary/shared variants independently of repaired fresh77. Strong native76 still advances by stamp only and its unchanged strong catalog is valid at77; repaired fresh catalogs are valid at77 only. Shared Subscription outer2 admits strong inner76/77, shipped inner75/76 and repaired inner77. Retain exact full catalog comparison and the existing bounded Canvas fixed-catalog trust list. No SQL normalization, predecessor row rewrite, semantic archive queue rejection, unrestricted connection, authorizer expansion or constructor inside staged restore is introduced. Shipped75→76 SQL/allocation stays immutable under ADR158/208; the current unpublished77 artifact is the executed source.
+
+Task25 of the existing PR2995 review plan and TASK34215.2 implement this correction. Evidence must show both isolated real constructor failures before repair, all-field runtime/standalone/75-chain preservation, exact old-strong/fresh-repaired catalog and stamp admission, real no-snapshot archive staging, existing rollback/authority refusals, strict new-write/machine controls and legacy reader quarantine. Prior refusal/correction QA remains immutable.

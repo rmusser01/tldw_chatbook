@@ -136,6 +136,47 @@ async def test_late_ready_cannot_send_a_cancelled_or_changed_draft(hook_file, ch
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("later_edit", [False, True])
+async def test_ready_without_configured_hooks_still_fences_a_changed_stash(later_edit):
+    """A ready empty hook inventory keeps the same captured-draft gate."""
+    from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+    owner = HookPermissions()
+    snapshot = owner.snapshot()
+    assert snapshot.ready and snapshot.rows == ()
+    composer = ConsoleComposerBar()
+    composer.load_draft("original")
+    captured = composer.capture_draft_for_send()
+    if later_edit:
+        composer.insert_text(" suffix")
+    sent = []
+
+    async def review(_snapshot, _waiting, _on_cancel):
+        raise AssertionError("An empty ready inventory must not request review")
+
+    async def dispatch():
+        sent.append("original")
+        return ConsolePromptDispatchResult(
+            ConsolePromptDispatchStatus.SENT, session_id="a"
+        )
+
+    hooks = ConsoleHooksController(
+        hook_permissions_accessor=lambda: owner,
+        request_review=review,
+        current_session=lambda: "a",
+        current_stash=composer.capture_draft_for_send,
+        on_state=lambda _snapshot: None,
+        notify=lambda _message, _severity: None,
+    )
+    result = await hooks.dispatch(
+        "original", session_id="a", stash=captured, dispatch=dispatch
+    )
+    assert result.accepted is (not later_edit)
+    assert sent == ([] if later_edit else ["original"])
+    assert composer.draft_text() == ("original suffix" if later_edit else "original")
+
+
+@pytest.mark.asyncio
 async def test_ready_dispatches_the_captured_send_once(hook_file):
     owner = HookPermissions()
     stash = ConsoleDraftStash([], "original", False, edit_serial=1, generation=1)

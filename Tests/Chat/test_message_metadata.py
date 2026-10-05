@@ -12,10 +12,12 @@ import pytest
 
 from tldw_chatbook.Chat.message_metadata import (
     CHARACTER_EMOTE_FALLBACK_REASONS,
+    MESSAGE_ORIGIN_AGENT_CHAT_START,
     MESSAGE_ORIGIN_AGENT_WAKE,
     MESSAGE_ORIGINS,
     TEMPLATE_KINDS,
     TRANSCRIPT_STATUSES,
+    AgentChatStartMetadata,
     CharacterEmoteEventMetadata,
     CharacterEmoteMetadata,
     MessageMetadata,
@@ -252,7 +254,16 @@ def test_unknown_origin_is_refused_at_construction():
         MessageMetadata(origin="agent-wake")
 
     for origin in MESSAGE_ORIGINS:
-        assert MessageMetadata(origin=origin).origin == origin
+        provenance = None
+        if origin == MESSAGE_ORIGIN_AGENT_CHAT_START:
+            with pytest.raises(
+                ValueError, match="requires exact chat-start provenance"
+            ):
+                MessageMetadata(origin=origin)
+            provenance = AgentChatStartMetadata("attempt", "source-run", "source-chat")
+        assert (
+            MessageMetadata(origin=origin, agent_chat_start=provenance).origin == origin
+        )
 
 
 def test_from_json_degrades_an_unrecognised_origin_to_blank():

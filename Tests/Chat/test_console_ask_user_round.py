@@ -135,6 +135,7 @@ def test_no_ui_returns_cancelled_immediately(make_controller):
     }
 
 
+@pytest.mark.bootstrap_profile
 def test_answer_round_trip_and_marker(make_controller):
     controller = make_controller()
     markers = []
@@ -157,6 +158,7 @@ def test_answer_round_trip_and_marker(make_controller):
     assert markers and "Which DB? → Postgres" in markers[0][1]
 
 
+@pytest.mark.bootstrap_profile
 def test_resolve_with_a_stale_or_missing_id_is_dropped(make_controller):
     controller = make_controller()
     thread, box = _start(controller, _questions())
@@ -196,6 +198,7 @@ def test_timeout_reads_console_config_when_no_seam(make_controller, monkeypatch)
     assert controller._resolve_ask_user_timeout_seconds() == 0.0
 
 
+@pytest.mark.bootstrap_profile
 def test_second_ask_in_the_same_session_is_busy_and_the_third_is_refused(make_controller):
     controller = make_controller()
     session = controller.new_session(title="s")
@@ -211,6 +214,7 @@ def test_second_ask_in_the_same_session_is_busy_and_the_third_is_refused(make_co
     assert box["result"]["answered"] is True
 
 
+@pytest.mark.bootstrap_profile
 def test_a_parked_background_round_mounts_on_switch(make_controller):
     controller = make_controller()
     first = controller.new_session(title="first")
@@ -230,6 +234,7 @@ def test_a_parked_background_round_mounts_on_switch(make_controller):
     assert box["result"]["answered"] is True
 
 
+@pytest.mark.bootstrap_profile
 def test_revoking_the_run_returns_cancelled(make_controller):
     controller = make_controller()
     session = controller.new_session(title="s")
@@ -279,6 +284,7 @@ def test_timeout_precedence_env_beats_config_and_empty_or_bad_env_is_ignored(
     assert controller._resolve_ask_user_timeout_seconds() == 1.5, "the seam still wins for tests"
 
 
+@pytest.mark.bootstrap_profile
 def test_concurrent_asks_for_one_session_arm_exactly_one_round(make_controller):
     """Check-and-register is one critical section: two sibling workers
     asking at the same instant cannot both arm."""
@@ -321,6 +327,7 @@ def test_bounce_map_is_bounded_and_cleared_on_revoke(make_controller):
     thread.join(timeout=5)
 
 
+@pytest.mark.bootstrap_profile
 def test_malformed_answers_are_dropped_and_the_round_stays_armed(make_controller):
     controller = make_controller()
     thread, box = _start(controller, _questions())
@@ -352,6 +359,7 @@ def test_marker_names_the_sub_agent_label_when_present():
     assert format_question_marker("agent", _questions(), result, asker_label="ignored").splitlines()[0] == "? Questions from the agent (2):"
 
 
+@pytest.mark.bootstrap_profile
 def test_payload_carries_the_sub_agents_label_from_the_run_actor(make_controller):
     controller = make_controller()
     markers = []
@@ -374,6 +382,7 @@ def test_payload_carries_the_sub_agents_label_from_the_run_actor(make_controller
     assert markers and markers[0].startswith("? Questions from sub-agent 'researcher'")
 
 
+@pytest.mark.bootstrap_profile
 def test_primary_agent_payload_has_no_label(make_controller):
     controller = make_controller()
     thread, box = _start(controller, _questions())

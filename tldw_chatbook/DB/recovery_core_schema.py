@@ -24,7 +24,7 @@ PROMPTS_V4_TO_V5_SQL = (
 
 CORE_SCHEMAS = (
     (
-        'db.chachanotes.primary',
+        "db.chachanotes.primary",
         76,
         (
             "CREATE INDEX character_conversation_search_dirty_authority_revision\n  ON character_conversation_search_dirty(data_authority_id, source_revision)",
@@ -563,7 +563,7 @@ CORE_SCHEMAS = (
         ),
     ),
     (
-        'db.media.primary',
+        "db.media.primary",
         9,
         (
             "CREATE INDEX idx_chunking_templates_deleted\n            ON ChunkingTemplates(deleted)",
@@ -624,7 +624,7 @@ CORE_SCHEMAS = (
             "CREATE INDEX idx_unvectorizedmediachunks_merge_parent_uuid ON UnvectorizedMediaChunks(merge_parent_uuid)",
             "CREATE INDEX idx_unvectorizedmediachunks_prev_version ON UnvectorizedMediaChunks(prev_version)",
             "CREATE UNIQUE INDEX idx_unvectorizedmediachunks_uuid ON UnvectorizedMediaChunks(uuid)",
-            "CREATE TABLE \"ChunkingTemplates\" (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            uuid TEXT NOT NULL UNIQUE,\n            name TEXT NOT NULL,\n            description TEXT,\n            template_json TEXT NOT NULL,\n            tags TEXT,\n            is_builtin BOOLEAN NOT NULL DEFAULT 0,\n            version INTEGER NOT NULL DEFAULT 1,\n            deleted BOOLEAN NOT NULL DEFAULT 0,\n            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n        )",
+            'CREATE TABLE "ChunkingTemplates" (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            uuid TEXT NOT NULL UNIQUE,\n            name TEXT NOT NULL,\n            description TEXT,\n            template_json TEXT NOT NULL,\n            tags TEXT,\n            is_builtin BOOLEAN NOT NULL DEFAULT 0,\n            version INTEGER NOT NULL DEFAULT 1,\n            deleted BOOLEAN NOT NULL DEFAULT 0,\n            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n        )',
             "CREATE TABLE DocumentVersions (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        media_id INTEGER NOT NULL,\n        version_number INTEGER NOT NULL,\n        prompt TEXT,\n        analysis_content TEXT,\n        content TEXT NOT NULL,\n        created_at DATETIME,\n        uuid TEXT UNIQUE NOT NULL,\n        last_modified DATETIME NOT NULL,\n        version INTEGER NOT NULL DEFAULT 1,\n        client_id TEXT NOT NULL,\n        deleted BOOLEAN NOT NULL DEFAULT 0,\n        prev_version INTEGER,\n        merge_parent_uuid TEXT,\n        FOREIGN KEY (media_id) REFERENCES Media(id) ON DELETE CASCADE,\n        UNIQUE (media_id, version_number)\n    )",
             "CREATE TABLE Keywords (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        keyword TEXT NOT NULL UNIQUE COLLATE NOCASE,\n        uuid TEXT UNIQUE NOT NULL,\n        last_modified DATETIME NOT NULL,\n        version INTEGER NOT NULL DEFAULT 1,\n        client_id TEXT NOT NULL,\n        deleted BOOLEAN NOT NULL DEFAULT 0,\n        prev_version INTEGER,\n        merge_parent_uuid TEXT\n    )",
             "CREATE TABLE Media (\n        id INTEGER PRIMARY KEY AUTOINCREMENT,\n        url TEXT UNIQUE,\n        title TEXT NOT NULL,\n        type TEXT NOT NULL,\n        content TEXT,\n        author TEXT,\n        ingestion_date DATETIME,\n        transcription_model TEXT,\n        is_trash BOOLEAN DEFAULT 0 NOT NULL,\n        trash_date DATETIME,\n        vector_embedding BLOB,\n        chunking_status TEXT DEFAULT 'pending' NOT NULL,\n        vector_processing INTEGER DEFAULT 0 NOT NULL,\n        content_hash TEXT UNIQUE NOT NULL,\n        uuid TEXT UNIQUE NOT NULL,\n        last_modified DATETIME NOT NULL,\n        version INTEGER NOT NULL DEFAULT 1,\n        client_id TEXT NOT NULL,\n        deleted BOOLEAN NOT NULL DEFAULT 0,\n        prev_version INTEGER,\n        merge_parent_uuid TEXT\n    , chunking_config TEXT, transcription_provenance_json TEXT DEFAULT NULL)",
@@ -657,7 +657,7 @@ CORE_SCHEMAS = (
         ),
     ),
     (
-        'db.prompts.primary',
+        "db.prompts.primary",
         5,
         (
             PROMPTS_DRAFTS_INDEX_SQL,
@@ -698,7 +698,7 @@ CORE_SCHEMAS = (
         ),
     ),
     (
-        'db.library_collections',
+        "db.library_collections",
         4,
         (
             "CREATE INDEX idx_collection_capture_highlights_by_item\n        ON collection_capture_highlights(authority_key, capture_id, created_at, highlight_id)\n        ",
@@ -742,7 +742,7 @@ CORE_SCHEMAS = (
         ),
     ),
     (
-        'db.library_ingest_jobs',
+        "db.library_ingest_jobs",
         7,
         (
             "CREATE TABLE \"ingest_jobs\" (\n                    seq INTEGER PRIMARY KEY,\n                    job_id TEXT UNIQUE NOT NULL,\n                    source_path TEXT NOT NULL,\n                    title TEXT NOT NULL DEFAULT '',\n                    author TEXT NOT NULL DEFAULT '',\n                    keywords TEXT NOT NULL DEFAULT '[]',\n                    perform_analysis INTEGER NOT NULL DEFAULT 0,\n                    chunk_enabled INTEGER NOT NULL DEFAULT 0,\n                    chunk_size INTEGER NOT NULL DEFAULT 0,\n                    state TEXT NOT NULL CHECK (state IN ('queued','parsing','writing','done','failed','cancelled')),\n                    retry_count INTEGER NOT NULL DEFAULT 0,\n                    detected_type TEXT NOT NULL DEFAULT '',\n                    error TEXT NOT NULL DEFAULT '',\n                    finished_at_wall TEXT NOT NULL DEFAULT '',\n                    media_id INTEGER,\n                    superseded INTEGER NOT NULL DEFAULT 0,\n                    dismissed INTEGER NOT NULL DEFAULT 0,\n                    permanent INTEGER NOT NULL DEFAULT 0,\n                    ingest_options TEXT DEFAULT '{}',\n                    error_detail TEXT DEFAULT NULL,\n                    progress TEXT DEFAULT NULL,\n                    content_hash TEXT DEFAULT NULL,\n                    origin TEXT NOT NULL DEFAULT 'local' CHECK (origin IN ('local','server')),\n                    remote_job_id TEXT DEFAULT NULL,\n                    batch_id TEXT DEFAULT NULL\n                , remote_media_id TEXT DEFAULT NULL, retry_of_job_id TEXT DEFAULT NULL, stt_failure_provenance_json TEXT DEFAULT NULL, retry_source_failure_provenance_json TEXT DEFAULT NULL, research_source_operation_id TEXT DEFAULT NULL, dispatch_held INTEGER NOT NULL DEFAULT 0\n                    CHECK (dispatch_held IN (0, 1)))",
@@ -771,4 +771,53 @@ CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = tuple(
     for sql in next(
         row[2] for row in CORE_SCHEMAS if row[0] == "db.chachanotes.primary"
     )
+)
+
+
+# ADR-219: exact constructor-captured v76 deltas; retain both qualified v75 catalogs.
+CHACHANOTES_V75_SCHEMA = next(
+    row[2] for row in CORE_SCHEMAS if row[0] == "db.chachanotes.primary"
+)
+CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_DICTIONARY_UPDATE_SCHEMA
+_CHACHANOTES_V76_REPLACEMENTS = {
+    "CREATE INDEX idx_console_dispatch_checkpoints_user_message\n  ON console_dispatch_checkpoints(user_message_id)": "CREATE INDEX idx_console_dispatch_checkpoints_user_message\n    ON console_dispatch_checkpoints(user_message_id)",
+    "CREATE TABLE console_dispatch_checkpoints (\n    assistant_message_id TEXT PRIMARY KEY\n        REFERENCES messages(id) ON DELETE CASCADE,\n    user_message_id TEXT NOT NULL\n        REFERENCES messages(id) ON DELETE CASCADE,\n    conversation_id TEXT NOT NULL\n        REFERENCES conversations(id) ON DELETE CASCADE,\n    schema_version INTEGER NOT NULL DEFAULT 1\n        CHECK(schema_version > 0),\n    preparation_id TEXT NOT NULL UNIQUE,\n    attempt_id TEXT NOT NULL,\n    state TEXT NOT NULL\n        CHECK(state IN ('accepted', 'dispatch_started')),\n    checkpoint_revision INTEGER NOT NULL DEFAULT 1\n        CHECK(checkpoint_revision > 0),\n    user_message_version INTEGER NOT NULL\n        CHECK(user_message_version > 0),\n    assistant_message_version INTEGER NOT NULL\n        CHECK(assistant_message_version > 0),\n    origin TEXT NOT NULL CHECK(origin IN ('manual', 'queued')),\n    queue_entry_id TEXT,\n    frozen_authority_json TEXT NOT NULL,\n    resolved_destination_json TEXT NOT NULL,\n    reconstructability_json TEXT NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n)": "CREATE TABLE \"console_dispatch_checkpoints\" (\n    assistant_message_id TEXT PRIMARY KEY\n        REFERENCES messages(id) ON DELETE CASCADE,\n    user_message_id TEXT NOT NULL\n        REFERENCES messages(id) ON DELETE CASCADE,\n    conversation_id TEXT NOT NULL\n        REFERENCES conversations(id) ON DELETE CASCADE,\n    schema_version INTEGER NOT NULL DEFAULT 1\n        CHECK(schema_version > 0),\n    preparation_id TEXT NOT NULL UNIQUE,\n    attempt_id TEXT NOT NULL,\n    state TEXT NOT NULL\n        CHECK(state IN ('accepted', 'dispatch_started')),\n    checkpoint_revision INTEGER NOT NULL DEFAULT 1\n        CHECK(checkpoint_revision > 0),\n    user_message_version INTEGER NOT NULL\n        CHECK(user_message_version > 0),\n    assistant_message_version INTEGER NOT NULL\n        CHECK(assistant_message_version > 0),\n    origin TEXT NOT NULL CHECK(origin IN ('manual', 'queued', 'agent_chat_start')),\n    queue_entry_id TEXT,\n    agent_chat_start_attempt_id TEXT UNIQUE,\n    frozen_authority_json TEXT NOT NULL,\n    resolved_destination_json TEXT NOT NULL,\n    reconstructability_json TEXT NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK ((origin = 'queued' AND queue_entry_id IS NOT NULL)\n        OR (origin IN ('manual', 'agent_chat_start') AND queue_entry_id IS NULL)),\n    CHECK ((origin = 'agent_chat_start' AND agent_chat_start_attempt_id IS NOT NULL\n            AND length(agent_chat_start_attempt_id) BETWEEN 1 AND 200)\n        OR (origin IN ('manual', 'queued') AND agent_chat_start_attempt_id IS NULL))\n)",
+}
+CHACHANOTES_V76_SCHEMA = tuple(
+    _CHACHANOTES_V76_REPLACEMENTS.get(sql, sql) for sql in CHACHANOTES_V75_SCHEMA
+)
+# Freeze the earlier strong native76/77 catalogs before deriving repaired77.
+CHACHANOTES_V76_NATIVE_SCHEMAS = (
+    CHACHANOTES_V76_SCHEMA,
+    tuple(
+        _CHACHANOTES_V76_REPLACEMENTS.get(sql, sql)
+        for sql in CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA
+    ),
+)
+CHACHANOTES_V76_SHIPPED_SCHEMAS = (
+    CHACHANOTES_V75_SCHEMA,
+    CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA,
+)
+_CHACHANOTES_V77_QUEUE_CHECK = "CHECK ((origin = 'queued' AND queue_entry_id IS NOT NULL)\n        OR (origin IN ('manual', 'agent_chat_start') AND queue_entry_id IS NULL))"
+CHACHANOTES_V77_SCHEMA, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = (
+    tuple(
+        sql.replace(
+            _CHACHANOTES_V77_QUEUE_CHECK,
+            "CHECK (origin != 'agent_chat_start' OR queue_entry_id IS NULL)",
+        )
+        for sql in schema
+    )
+    for schema in CHACHANOTES_V76_NATIVE_SCHEMAS
+)
+CORE_SCHEMAS = tuple(
+    (owner, 77, CHACHANOTES_V77_SCHEMA)
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+
+
+CHACHANOTES_NATIVE_V76_TO_V77_SQL = (
+    "UPDATE db_schema_version SET version = 77 "
+    "WHERE schema_name = 'rag_char_chat_schema' AND version = 76",
 )

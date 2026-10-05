@@ -1539,6 +1539,8 @@ def test_a_failed_delivery_task_never_wedges_the_delivering_flag(monkeypatch):
     session = SimpleNamespace(id="s-1", persisted_conversation_id="conv-1")
     controller = SimpleNamespace(
         _disposed=False,
+        max_parallel_runs=3,
+        _live_busy_session_ids=lambda: [],
         store=SimpleNamespace(sessions=lambda: [session]),
         send_refusal_copy=lambda session_id: None,
     )

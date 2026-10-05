@@ -18497,3 +18497,40 @@ TASK-34403's checked readiness warm regression held the original checked_config_
 In TASK-34403 AC22, pytest loaded the managed worktree but the actual filesystem executor launched sys.executable with -I. That isolated worker resolved the editable primary checkout, so adding a managed root-pin fix alone could not qualify the actual helper. An original -I origin/hash probe proved the primary root-pin and filesystem identity bytes still matched the immutable baseline; this supported the genuine Windows stat/HANDLE mismatch without claiming a changed worker was tested.
 
 A private EvidenceRoot-only interpreter of the same Python 3.12 ABI then exposed the managed app and profile-core paths before the existing dependency environment. Ordinary -I probes verified five managed module origins/hashes and matching dependency versions before regression qualification. The native identity controls passed afterward. A pytest working directory or parent sys.path insertion does not establish child source identity; verify the actual isolated helper launch before attributing its outcome to the worktree. Preserve the shipping loader and primary environment when test-only isolation is sufficient.
+
+## Visible Stop needs an inside-parent geometry assertion (TASK-33805, 2026-10-02)
+
+The isolated real Console rendered an accepted background chat as Agent running,
+but its Stop button was missing at the terminal edge. The button had display=true
+and width6: an existing Redirect button used10 cells that the composer action row
+never reserved. A mounted regression measured Stop's right edge169 against its
+parent's159, then clicked Stop after the width fix and verified the target's saved
+stopped state. Checking button presence/display alone would have missed the bug.
+
+The same run found that Ctrl+U cleared a version-2 handoff visibly while the saved
+revision stayed unchanged, although direct store edit/clear tests passed. Exercise
+the mounted composer event and reopen the actual database: persistence must be
+wired to the empty edit event, not only to activation or nonblank input.
+
+### A clean rebase can duplicate cleanup before a new ownership guard
+
+PR #2995 rebased an earlier chat-create grant cleanup onto dev's newer close-ticket validation. Git merged both removals without a conflict: a stale ticket revoked a live session grant before being rejected, even though the newer validated cleanup already existed. Final review found the duplicate; all four existing stale/mismatched/generation and valid-close controls failed with KeyError before repair. Removing only the prevalidation cleanup made the complete shutdown owner pass36tests (`Docs/superpowers/qa/2026-10-03-console-pr2995-review-and-merge/task-2-report.md`). After rebasing lifecycle code, compare cleanup with newly landed ownership guards and qualify the complete affected guard owner; a conflict-free merge is not behavior evidence.
+
+## Recovery tests must cover cleanup after commit
+
+PR #2995 initially qualified 260 distinct affected Task4 cases, but an independent real-file probe still found an allowance bypass. Recovery A committed and paused before its transient registry cleanup; recovery B then accepted charged work and installed an uncertainty restriction. A's late foreign-owner sweep removed B's new restriction, reopening sibling admission while the durable attempt remained accepted with generation charge1. Sequential recovery controls had missed the postcommit gap.
+
+The repair captures the exact foreign entries inside the durable transaction and removes only unchanged entry identities after successful commit. Three deterministic overlap controls cover later-owner entries, unknown-root restrictions and a captured key refreshed after commit; all retain denial and charges until verified reconciliation. Keep transient registry locks out of SQLite I/O. When recovery has postcommit cleanup, test that boundary explicitly as well as sequential owner replacement (`Docs/superpowers/qa/2026-10-03-console-pr2995-review-and-merge/task-4-report.md` and `task-4-fix1-review.md`).
+
+
+## An already-locked helper can still hide storage work
+
+During PR #2995's integration with committed Close, an exact-record helper removed a recursive acquisition of the registry lock. Sixteen phase controls and the final 58 startup/navigation checks passed, but independent review found that the helper still called AgentRunsDB.get_run under that lock. A delayed SQLite read could therefore hold up the same registry lock that Close and cancellation needed. A lock-depth check alone would have missed it.
+
+Trace calls through storage getters and park a real read while the actual owner-thread Close runs. Keep storage observations outside the registry section, then atomically recheck exact record and current runtime ownership before deciding. Copying a row does not make independent database writers transactional with that decision; characterize that limit and separately prove the final pre-save check refuses a terminal source. Evidence: [original review](../../Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/task-8-review.md), [repair report](../../Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/task-8-fix1-report.md) and [scoped repair review](../../Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/task-8-fix1-review.md).
+
+## A Close refusal needs a live source witness before Close
+
+PR #2995 initially tried to restore a no-owning-turn fixture by stripping the primary cancellation and assistant registrations after arming a creation card. The production primary-source predicate requires those registrations, so the source was already stale before Close. A later denial could have passed without exercising the Close fence.
+
+The corrected two no-parent phases use actual surviving-child rows and trusted actor context, with a positive exact-record/source-live witness at the original parked-card or enrichment barrier. Owning-parent and primary grant cases retain their original primary setup. Preserve those positive witnesses alongside the denial, outcome and cleanup assertions; reaching a card alone does not prove that its execution authority is still live. Evidence: [fixture proposal](../../Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/task-8-surviving-child-fixture-proposal.json), [live witness](../../Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/task-8-surviving-child.json) and [review](../../Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/task-8-review.md).
