@@ -495,3 +495,61 @@ separate candidates, not silently bundled fixes. All qualification gaps remain
 open. Logs: `/tmp/task31966-heap-source.log`, `/tmp/task31966-heap-owners.log`,
 `/tmp/task31966-control-restyles.log` and
 `/tmp/task31966-control-restyles-attempt2.log`.
+
+### Approved bounded Send-reason correction
+
+After user approval, the existing shared reason owner now replaces its actual
+`w-*`/`h-*` set atomically with Textual's native `set_classes`. Unrelated
+classes, inline-size resets, measured width budget, escaped setup copy/link,
+empty/narrow suppression and full-width voice preparation remain intact. All
+four callers still share this owner; no GC/cache policy, dependency, activation
+authority or voice/attachment correction was bundled. Existing ADR120/150/161/198
+apply; no new ADR is required for this behavior-preserving rendering fix.
+
+Mounted RED: four failures and two passes; five unchanged calls caused twenty
+real node restyles and a transition caused four rather than one. Initial GREEN:
+six passes. A read-only independent review found no production blocker; its
+canonical composer-ID suggestion was applied to the harness. After removing
+only this production hunk, the final harness again produced the four expected
+RED failures. The added real full-width voice transition retains cached reason
+copy while suppressing its layout, then restores its bounded one-row guidance.
+
+Final focused check: **25 passed in 164.77s**, no pytest warnings, strict
+descriptor gate exit 0 and no retained database files at any of its 25 teardown
+observations. Admission/lease descriptors remain; this is not whole-app final
+resource retirement. Command covered the new mounted module, the existing
+private-profile Send-disabled contracts and design-token governance. The new
+test/checker paths format clean and the new test is Ruff clean. The production
+file retains the same seven inherited Ruff findings; its remaining format
+suggestions are a subset of the baseline's, with none added. Whitespace passes.
+The new regression module is included in the UI PR census and its floor raised
+by one. Logs: `/tmp/task31966-send-reason-red.log`,
+`/tmp/task31966-send-reason-green.log` and
+`/tmp/task31966-send-reason-final.log`.
+All eleven derived-artifact guards pass after the final test addition
+(`/tmp/task31966-send-reason-final-preflight.log`); UI census is 142 files,
+floor 140. This is not a full test sweep.
+
+The broader affected run was interrupted after 101 failures, 42 passes and one
+thread warning; it is **not a passed covering suite**. Representative existing
+reason-width/voice tests fail before mounting because source-bound config sees
+`raw_source_selection_changed`. The retry-thread warning has the same admission
+cause, not a ResourceWarning. A bounded comparison with the production fix
+removed reproduces both config failures, the retry failure/warning and the
+dimension-governance failure in unchanged agentic-terminal, splash-theme and
+workflows stylesheets (counts 1/2/11). That baseline run had eight failures,
+two passes and one warning, including the four intended RED cases, in 13.23s.
+This proves those representative failures are inherited, not that every
+interrupted case was individually qualified. No warning suppression, source
+guard bypass or unrelated stylesheet repair was applied. The separate combined
+governance attempt was interrupted at this inherited dimension failure after
+19 passes. Logs: `/tmp/task31966-send-reason-cover.log`,
+`/tmp/task31966-send-reason-reviewed.log` and
+`/tmp/task31966-send-reason-baseline.log`. Initial default-basetemp RED also
+reported unrelated old pytest garbage-directory cleanup warnings; later runs
+use fresh explicit private basetemp roots without deleting those directories.
+
+Fresh clean-head restyle and full-scale measurements remain to run. No
+qualification pass, native/Windows/participant waiver, semantic work or final
+combined PR follows from this local regression result. TASK31966 remains
+In Progress with all criteria open.

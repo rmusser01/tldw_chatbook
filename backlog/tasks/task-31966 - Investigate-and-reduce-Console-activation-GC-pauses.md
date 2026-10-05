@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 00:31'
+updated_date: '2026-10-05 00:56'
 labels:
   - console
   - performance
@@ -80,6 +80,16 @@ activation authority; a new global GC/cache/lifecycle policy requires its own
 approved architectural decision. At the original checkpoint, no implementation
 plan or remedy was approved. The current bounded plan above does not authorize a
 global policy change or claim qualification completion.
+
+### Approved Send-reason correction — 2026-10-04
+
+1. Add mounted RED regressions for unchanged visible/hidden/empty Send reasons and atomic state transitions; retain real width budgets and class restyling.
+2. Replace only the shared Send-reason owner's size-class mutations atomically; preserve unrelated classes, inline resets, escaped copy/setup link and full-width voice preparation.
+3. Verify mounted geometry, resize, conflicting overrides and voice/disabled-state contracts with targeted tests and strict resource observations. Do not bundle voice/attachment candidate fixes.
+4. Commit clean source and rerun the identical small restyle observer with freshly prepared exact-head source, then the real-owner scale matrix under the unchanged limits. Preserve residual failures and external qualification gaps.
+ADR required: no new ADR.
+ADR path: N/A; existing ADR120, ADR150, ADR161 and ADR198 above apply.
+Reason: a local rendering-idempotence correction preserves every authority, sizing, ownership and GC/cache policy boundary. User approved this bounded design after the ed124 restyle evidence.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -88,4 +98,6 @@ global policy change or claim qualification completion.
 Implemented and committed bounded recovery-height idempotence at 0ab325187e: mounted RED/GREEN, six final regressions pass with strict DB retirement, eleven artifact guards pass. Broader targeted run: 117 pass, four inherited config-admission failures reproduced without the fix. Same real-owner diagnostic measured five height updates at 0.375 ms summed versus 94.219 ms baseline. Fresh 10k/250k Keyword check passes: 300 exact queries, P95 240.416 ms, zero owned DB descriptors after cleanup. Full narrow/wide UI matrix still fails all eight 50 ms activation intervals (max 93.817 ms); a current-head GC trace proves collections contribute but do not explain every stall. Native/Windows/participant and terminal app-owner retirement gaps remain unwaived; all AC remain open. Existing ADR120/150/161/198 apply; no global GC/cache policy change. See Docs/QA/task-31245/fixture-rebuild-2026-10-04.md for source IDs, raw timings, failed runs and remaining work.
 
 At clean ed124369f1, untimed small-profile heap traversal reached 6,389 of 6,617 unfrozen Strips from widget caches after two actual saved-chat resumes; boot pre-import freezing changes generation membership, so this is not leak or latency proof. Separate real-node observer counted 40 Send-reason, ten voice-status and ten attachment-indicator restyles in five unchanged control refreshes, zero dropped records or app exceptions. Shared Send-reason width/height remove-and-readd is the next bounded candidate; all four callers traced. Await its short design approval before production implementation, preserving budget/copy/voice behavior and existing ADR120/150/161/198. No GC policy change or qualification waiver. Raw source-bound receipts, failed observer setup and causal limits recorded in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
+
+Implemented the approved shared Send-reason atomic size-class correction, preserving budgets, copy safety and voice suppression. Canonical-ID mounted RED repeats without the fix; final new mounted, private-profile Send-disabled and token check passes 25 tests in 164.77s, no warnings, strict zero retained database files at all 25 teardown observations. Independent review found no production blocker. Representative config admission failures, retry-thread warning and unchanged CSS dimension failure reproduce with the fix removed; broader interrupted covering run is not qualified. New regression joins the UI census. Existing ADR120/150/161/198 apply; fresh clean-head restyle/scale measurement and external qualification remain pending, all AC open. Full evidence and failure limits appended to Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
 <!-- SECTION:NOTES:END -->

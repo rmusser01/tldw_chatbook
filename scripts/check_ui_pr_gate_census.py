@@ -127,7 +127,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33620.9 adds the private-profile mounted rename publication regressions.
 # TASK-31245 adds the private-profile hydration and handle-ownership regressions.
 # TASK-31966 adds the mounted recovery-bar idempotence/geometry regressions.
-MINIMUM_FILES = 149
+# TASK-31966 adds the shared Send-reason size idempotence/resize regressions.
+MINIMUM_FILES = 150
 
 
 def read_census(path: Path) -> list[str]:

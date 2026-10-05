@@ -2149,46 +2149,25 @@ class ConsoleComposerBar(Horizontal):
             # draft keeps its floor; below a legible budget the strip hides
             # entirely (the Send tooltip still carries the reason).
             cap = self._send_reason_width_cap()
-            if cap > 0:
-                strip.styles.display = "block"
-                strip.remove_class(*(name for name in strip.classes if name.startswith("w-")))
-                strip.set_styles(width=None)
-                strip.add_class("w-auto")
-                strip.styles.min_width = 0
-                strip.styles.max_width = cap
-                strip.remove_class(*(name for name in strip.classes if name.startswith("h-")))
-                strip.set_styles(height=None)
-                strip.add_class("h-1")
-                strip.styles.min_height = 1
-            else:
-                strip.styles.display = "none"
-                strip.remove_class(*(name for name in strip.classes if name.startswith("w-")))
-                strip.set_styles(width=None)
-                strip.add_class("w-0")
-                strip.styles.min_width = 0
-                strip.styles.max_width = 0
-                strip.remove_class(*(name for name in strip.classes if name.startswith("h-")))
-                strip.set_styles(height=None)
-                strip.add_class("h-0")
-                strip.styles.min_height = 0
         else:
             if strip.content != Content(""):
                 strip.update(Content(""))
-            strip.styles.display = "none"
-            strip.remove_class(*(name for name in strip.classes if name.startswith("w-")))
-            strip.set_styles(width=None)
-            strip.add_class("w-0")
-            strip.styles.min_width = 0
-            strip.styles.max_width = 0
-            strip.remove_class(*(name for name in strip.classes if name.startswith("h-")))
-            strip.set_styles(height=None)
-            strip.add_class("h-0")
-            strip.styles.min_height = 0
-        if self._voice_full_width_preparing:
-            # The exact executor-wait copy and unchanged Mic/Send budget fill
-            # the row. Keep this redundant guidance cached but out of layout
-            # until the next ordinary voice-status repaint restores it.
-            strip.styles.display = "none"
+            cap = 0
+        visible = cap > 0
+        # Replace owned size classes atomically: unchanged guidance must not
+        # remove/re-add the same classes and synchronously restyle the node.
+        classes = {name for name in strip.classes if not name.startswith(("w-", "h-"))}
+        classes.update(("w-auto", "h-1") if visible else ("w-0", "h-0"))
+        strip.set_styles(width=None, height=None)
+        strip.set_classes(classes)
+        strip.styles.min_width = 0
+        strip.styles.max_width = cap
+        strip.styles.min_height = 1 if visible else 0
+        # Executor-wait copy owns the row during full-width preparation. Keep
+        # guidance cached but out of layout until ordinary voice paint returns.
+        strip.styles.display = (
+            "block" if visible and not self._voice_full_width_preparing else "none"
+        )
 
     def _send_price_is_available(self) -> bool:
         """Answer the cheap "is there a price to show?" question.
