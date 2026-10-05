@@ -836,11 +836,13 @@ def test_shipped76_archive_stages_v77_without_changing_source(tmp_path, dictiona
     assert all(index in restored_indexes for index in indexes)
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert connection.execute("PRAGMA quick_check").fetchone() == ("ok",)
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 
     db = CharactersRAGDB(path, client_id="restored-read")
     try:
+        assert tuple(db.get_connection().execute("PRAGMA quick_check").fetchone()) == (
+            "ok",
+        )
         _assert_legacy_queue_quarantine(db)
     finally:
         db.close_connection()

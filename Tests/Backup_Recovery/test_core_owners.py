@@ -133,13 +133,17 @@ def test_schema_policy_matches_installed_store(core_store):
     )
     assert policy.schema_sql[0] == (owner._CURRENT_SCHEMA_VERSION, actual)
     assert len(policy.schema_sql) == (
-        8 if name == "chachanotes" else 2 if name == "prompts" else 1
+        10 if name == "chachanotes" else 2 if name == "prompts" else 1
     )
     if name == "chachanotes":
         from tldw_chatbook.DB.recovery_core_schema import (
             CHACHANOTES_NATIVE_V76_TO_V77_SQL,
+            CHACHANOTES_V76_NATIVE_SCHEMAS,
         )
 
+        assert policy.schema_sql[-2:] == tuple(
+            (77, schema) for schema in CHACHANOTES_V76_NATIVE_SCHEMAS
+        )
         assert policy.migration_steps == ((76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),)
     elif name != "prompts":
         assert policy.migration_steps == ()

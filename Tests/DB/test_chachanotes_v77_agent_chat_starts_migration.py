@@ -746,13 +746,11 @@ def test_populated_legacy_queue_paths_are_lossless(tmp_path, dictionary, route):
                     "CREATE INDEX idx_console_dispatch_checkpoints_user_message\n  ON console_dispatch_checkpoints(user_message_id)",
                 ),
             )
-            assert (
-                tuple(
-                    tuple(row)
-                    for row in connection.execute("SELECT * FROM notes ORDER BY id")
+            with closing(sqlite3.connect(path)) as notes_connection:
+                assert (
+                    tuple(notes_connection.execute("SELECT * FROM notes ORDER BY id"))
+                    == notes
                 )
-                == notes
-            )
             catalog = tuple(
                 row[0]
                 for row in connection.execute(
