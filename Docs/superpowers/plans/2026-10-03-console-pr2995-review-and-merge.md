@@ -832,7 +832,7 @@ Reason: document the existing request/outcome and both tool modes without changi
 
 Fresh sole source/index/HEAD writer after Task23 approval; no children. Exactly two owners: tldw_chatbook/Chat/console_chat_start.py and tldw_chatbook/Agents/tool_catalog.py. Read task-24-initial-feedback.json for current9d8 Qodo review5411125310, inline4181532123 and summary finding8c5ee8dc-6465-4b8a-ac0e-9e7372968c5c. Task25 legacy-storage repair is separate and remains open. Global no-install/no-suite/no-cohort-replay/fixed-cap/preserve-QA/shared-dirty-checkout rules apply. Use shared .venv/bin/python3.12 for AST/Ruff; all mutations in this managed worktree need require_escalated. No Git cleanup/gc/prune or remote writes.
 
-- [ ] Replace only ConsoleChatStartCoordinator.start docstring with the exact code below. Keep the entire executable AST and every other owner node unchanged. Confirm accuracy against the method and its existing refusal/outcome/cancellation helpers; if the supplied text contradicts code, stop with NEEDS_CONTEXT rather than widening source scope.
+- [x] Replace only ConsoleChatStartCoordinator.start docstring with the exact code below. Keep the entire executable AST and every other owner node unchanged. Confirm accuracy against the method and its existing refusal/outcome/cancellation helpers; if the supplied text contradicts code, stop with NEEDS_CONTEXT rather than widening source scope.
 
 ```python
         """Return at refusal or both acceptance fences while owning the target task.
@@ -855,7 +855,7 @@ Fresh sole source/index/HEAD writer after Task23 approval; no children. Exactly 
         """
 ```
 
-- [ ] Replace only NEW_CHAT_TOOL_SCHEMA opening_prompt property description with the exact adjacent string literals below. Retain type/default/enums/required/top-level description/every other schema and executable statement unchanged. No new aliases/constants/framework or behavior test mirroring this copy.
+- [x] Replace only NEW_CHAT_TOOL_SCHEMA opening_prompt property description with the exact adjacent string literals below. Retain type/default/enums/required/top-level description/every other schema and executable statement unchanged. No new aliases/constants/framework or behavior test mirroring this copy.
 
 ```python
                 "description": (
@@ -867,8 +867,10 @@ Fresh sole source/index/HEAD writer after Task23 approval; no children. Exactly 
                 ),
 ```
 
-- [ ] Do not replay passing tests for these prose-only changes. Capture actual separate source-bound fatal Ruff (E9,F63,F7,F82), added-hunk formatting and whitespace receipts with argv/exits/stdout/stderr/source hashes, and whole-owner Python3.12 AST reversal: restore only original start docstring and opening_prompt description constant to reproduce both complete BASE owner ASTs. Formatter inherited whole-file debt must be distinguished from added-hunk results; preserve an actual unexpected failure before asking for scope. Pin every newly created task artifact and two source owners in task-24-safe-evidence/manifest.json; verify all12582 historical QA mode/blob/path entries and all unowned BASE source paths unchanged, without rewriting historical receipts. Self-review, commit only these two owners, return clean closed-process source/index/HEAD custody with task-24-report.md. One independent scoped review spans recorded dispatchBASE through finalsource, before source Task25/publication/new Qodo/normal merge gates.
+- [x] Do not replay passing tests for these prose-only changes. Capture actual separate source-bound fatal Ruff (E9,F63,F7,F82), added-hunk formatting and whitespace receipts with argv/exits/stdout/stderr/source hashes, and whole-owner Python3.12 AST reversal: restore only original start docstring and opening_prompt description constant to reproduce both complete BASE owner ASTs. Formatter inherited whole-file debt must be distinguished from added-hunk results; preserve an actual unexpected failure before asking for scope. Pin every newly created task artifact and two source owners in task-24-safe-evidence/manifest.json; verify all12582 historical QA mode/blob/path entries and all unowned BASE source paths unchanged, without rewriting historical receipts. Self-review, commit only these two owners, return clean closed-process source/index/HEAD custody with task-24-report.md. One independent scoped review spans recorded dispatchBASE through finalsource, before source Task25/publication/new Qodo/normal merge gates.
 
+
+Task24 completion: sourcea87b5f2da51e independently Spec Compliant/Quality Approved, zero Critical/Important/Minor. Three source-phase boxes checked. Root verifies40original/8corrected artifact pins/twoowner hashes/whole-ownerAST/12589QA(original12582+sevenpublished) and reportprefix/aliases; static receipts pass, no test replay. Successful V3 proof execution exit/time/source-binding limits disclosed, V4 finalproof/current source qualifies. Original failed checker/count and premature observation retained. Task25 and new publication/current-head hosted gates/actual merge AC8 remain open.
 
 ### Task 25: Preserve predecessor checkpoint rows and exact historical catalogs
 
