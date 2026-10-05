@@ -1046,3 +1046,341 @@ async def test_memory_database_preload_keeps_its_own_connection():
         assert db.get_conversation_by_id(target)["title"] == "Memory"
     finally:
         db.close_connection()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_restore_preserves_empty_parent_transparency() -> None:
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(":memory:", "transparent-parent-restore")
+    try:
+        service = ChatConversationService(db)
+        target = service.create_conversation(
+            title="Transparent parents", scope_type="global"
+        )
+        rows = [
+            ("root", None, "user", "Root prompt"),
+            ("answer", "root", "assistant", "Answer"),
+            ("empty-1", "answer", "user", ""),
+            ("empty-2", "empty-1", "user", ""),
+            ("child", "empty-2", "user", "Follow-up"),
+            ("sibling", "answer", "user", "Other branch"),
+            ("empty-root", None, "user", ""),
+            ("imported-root", "empty-root", "user", "Imported prompt"),
+            ("imported-answer", "imported-root", "assistant", "Imported answer"),
+        ]
+        for index, (message_id, parent, role, content) in enumerate(rows):
+            db.add_message(
+                dict(
+                    id=message_id,
+                    conversation_id=target,
+                    parent_message_id=parent,
+                    sender=role,
+                    role=role,
+                    content="Historical row"
+                    if role == "user" and not content
+                    else content,
+                    timestamp=f"2026-10-05T00:00:{index:02}.000000+00:00",
+                )
+            )
+            if role == "user" and not content:
+                current = db.get_message_by_id(message_id)
+                assert db.update_message(
+                    message_id,
+                    {"content": ""},
+                    current["version"],
+                    preserve_descendants=True,
+                )
+                durable = db.get_message_by_id(message_id)
+                assert durable["content"] == ""
+                assert durable["parent_message_id"] == parent
+        tree = service.get_conversation_tree(
+            target, depth_cap=10_000, root_limit=10_000
+        )
+        flattened = console_messages_from_conversation_tree(tree)
+        expected_ids = [
+            "root",
+            "answer",
+            "child",
+            "sibling",
+            "imported-root",
+            "imported-answer",
+        ]
+        assert [node.persisted_message_id for node in flattened] == expected_ids
+        expected_content = [
+            (node.persisted_message_id, node.content) for node in flattened
+        ]
+        raw_before = db.get_messages_for_conversation(target)
+        app = SimpleNamespace(chachanotes_db=db)
+        for prepared in (False, True):
+            for leaf, before in (("child", None), (None, "imported-root")):
+                assert db.set_conversation_active_cursor(
+                    target, active_leaf_message_id=leaf, before_message_id=before
+                )
+                store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+                data = (
+                    await prepare_console_session_data(
+                        app=app, store=store, conversation_id=target, tree=tree
+                    )
+                    if prepared
+                    else None
+                )
+                session = await hydrate_console_session(
+                    app=app,
+                    store=store,
+                    conversation_id=target,
+                    tree=tree,
+                    settings=None,
+                    prepared_data=data,
+                )
+                restored = store.all_messages_for_session(session.id)
+                assert [
+                    (node.persisted_message_id, node.content) for node in restored
+                ] == expected_content
+                by_id = {node.persisted_message_id: node for node in restored}
+                assert len({node.id for node in restored}) == len(expected_ids)
+                if prepared:
+                    assert [node.id for node in restored] == [
+                        node.id for node in data.nodes
+                    ]
+                assert by_id["child"].parent_message_id == "answer"
+                assert (
+                    store._native_parent_by_message[by_id["child"].id]
+                    == by_id["answer"].id
+                )
+                assert by_id["imported-root"].parent_message_id is None
+                assert [
+                    node.persisted_message_id
+                    for node in store.siblings_at(by_id["child"].id)[0]
+                ] == ["child", "sibling"]
+                if leaf:
+                    assert [
+                        node.persisted_message_id
+                        for node in store.messages_for_session(session.id)
+                    ] == ["root", "answer", "child"]
+                    assert store.active_leaf(session.id) == by_id["child"].id
+                else:
+                    assert store.messages_for_session(session.id) == []
+                    assert store.active_leaf(session.id) is None
+                    assert store.session_draft(session.id) == "Imported prompt"
+                assert db.get_conversation_active_cursor(target) == (leaf, before)
+                assert db.get_messages_for_conversation(target) == raw_before
+    finally:
+        db.close_connection()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_restore_refreshes_current_durable_parents() -> None:
+    from Tests.Chat.test_console_provider_continuation import _complete_k3_checkpoint
+    from Tests.Chat.test_console_thinking_persistence import _thinking
+    from tldw_chatbook.Chat.provider_continuation import dump_provider_continuation_json
+    from tldw_chatbook.Chat.thinking_blocks import dump_thinking_blocks_json
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    checkpoint = _complete_k3_checkpoint("Old answer")
+    checkpoint_json = dump_provider_continuation_json(checkpoint)
+    thinking_json = dump_thinking_blocks_json(_thinking("Sidecar owner"))
+    db = CharactersRAGDB(":memory:", "current-parent-restore")
+    try:
+        service = ChatConversationService(db)
+        target = service.create_conversation(
+            title="Current parents", scope_type="global"
+        )
+        entries = [
+            ("root", None, "user", "Root"),
+            ("old", "root", "assistant", "Old answer"),
+            ("new", "root", "assistant", "New branch"),
+            ("new-child", "new", "user", "Keep branch"),
+            ("empty-1", "old", "user", ""),
+            ("empty-2", "empty-1", "user", ""),
+            ("retained-change", "old", "user", "Retained change"),
+            ("null-change", "old", "user", "Root change"),
+            ("empty-change", "empty-2", "user", "Empty change"),
+            ("fanout", "empty-2", "user", "Same empty chain"),
+            ("sidecar", "old", "assistant", ""),
+            ("sidecar-child", "sidecar", "user", "Sidecar child"),
+        ]
+        controls = [
+            "missing-child",
+            "missing-ancestor",
+            "cycle",
+            "self",
+            "back-to-child",
+            "content-gap",
+            "image-gap",
+            "bytearray-gap",
+            "state-gap",
+            "continuation-gap",
+            "cache-seed",
+            "cache-self",
+        ]
+        entries += [(name, "old", "user", name) for name in controls]
+        for index, (message_id, parent, role, content) in enumerate(entries):
+            extra = {}
+            if message_id == "old":
+                extra = dict(
+                    provider_continuation_json=checkpoint_json,
+                    assistant_generation_state="complete",
+                )
+            elif message_id == "sidecar":
+                extra = dict(thinking_blocks_json=thinking_json)
+            elif message_id == "null-change":
+                extra = dict(metadata_json='{"root_fork":true}')
+            db.add_message(
+                dict(
+                    id=message_id,
+                    conversation_id=target,
+                    parent_message_id=parent,
+                    sender=role,
+                    role=role,
+                    content="Historical row"
+                    if role == "user" and not content
+                    else content,
+                    timestamp=f"2026-10-05T00:00:{index:02}.000000+00:00",
+                    **extra,
+                )
+            )
+            if role == "user" and not content:
+                current = db.get_message_by_id(message_id)
+                assert db.update_message(
+                    message_id,
+                    {"content": ""},
+                    current["version"],
+                    preserve_descendants=True,
+                )
+                durable = db.get_message_by_id(message_id)
+                assert durable["content"] == ""
+                assert durable["parent_message_id"] == parent
+        tree = service.get_conversation_tree(
+            target, depth_cap=10_000, root_limit=10_000
+        )
+        store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+        app = SimpleNamespace(chachanotes_db=db)
+        assert db.set_conversation_active_cursor(
+            target, active_leaf_message_id="empty-change", before_message_id=None
+        )
+        data = await prepare_console_session_data(
+            app=app, store=store, conversation_id=target, tree=tree
+        )
+        assert "sidecar" not in {node.persisted_message_id for node in data.nodes}
+        supplied = [
+            (node.id, node.persisted_message_id, node.content) for node in data.nodes
+        ]
+        for message_id, parent in (
+            ("retained-change", "new"),
+            ("null-change", None),
+            ("empty-1", "new"),
+        ):
+            current = db.get_message_by_id(message_id)
+            assert db.update_message(
+                message_id,
+                {"parent_message_id": parent},
+                current["version"],
+                preserve_descendants=True,
+            )
+        raw_before = db.get_messages_for_conversation(target)
+        current_rows = [
+            dict(row)
+            for row in raw_before
+            if row["id"] not in {"sidecar", "missing-child"}
+        ]
+        gaps = {
+            "missing-ancestor": "unfetched",
+            "cycle": "cycle-1",
+            "self": "self",
+            "back-to-child": "back-gap",
+            "content-gap": "gap-content",
+            "image-gap": "gap-image",
+            "bytearray-gap": "gap-bytearray",
+            "state-gap": "gap-state",
+            "continuation-gap": "gap-continuation",
+            "cache-seed": "cache-gap",
+            "cache-self": "cache-gap",
+        }
+        for row in current_rows:
+            if row["id"] in gaps:
+                row["parent_message_id"] = gaps[row["id"]]
+        current_rows += [
+            dict(id="cycle-1", parent_message_id="cycle-2"),
+            dict(id="cycle-2", parent_message_id="cycle-1"),
+            dict(id="back-gap", parent_message_id="back-to-child"),
+            dict(id="cache-gap", parent_message_id="cache-self"),
+            dict(id="gap-content", parent_message_id="new", content="retained"),
+            dict(id="gap-image", parent_message_id="new", image_data=b""),
+            dict(id="gap-bytearray", parent_message_id="new", image_data=bytearray()),
+            dict(
+                id="gap-state",
+                parent_message_id="new",
+                assistant_generation_state="complete",
+            ),
+            dict(
+                id="gap-continuation",
+                parent_message_id="new",
+                provider_continuation_json="null",
+            ),
+        ]
+        # The real thinking-only owner is appended after its child in the raw pass.
+        current_rows += [dict(row) for row in raw_before if row["id"] == "sidecar"]
+        data = replace(data, continuation_rows=current_rows)
+        session = await hydrate_console_session(
+            app=app,
+            store=store,
+            conversation_id=target,
+            tree=tree,
+            settings=None,
+            prepared_data=data,
+        )
+        restored = store.all_messages_for_session(session.id)
+        by_id = {node.persisted_message_id: node for node in restored}
+        assert [
+            (node.id, node.persisted_message_id, node.content) for node in restored[:-2]
+        ] == supplied
+        assert [node.persisted_message_id for node in restored[-2:]] == [
+            "gap-continuation",
+            "sidecar",
+        ]
+        warning_owner = restored[-2]
+        assert warning_owner.id == "gap-continuation"
+        assert warning_owner.role is ConsoleMessageRole.ASSISTANT
+        assert warning_owner.content == ""
+        assert warning_owner.assistant_generation_state is None
+        assert warning_owner.provider_continuation is None
+        assert (
+            warning_owner.provider_continuation_warning
+            == "Exact tool continuation was discarded."
+        )
+        assert warning_owner.parent_message_id == "new"
+        assert store._native_parent_by_message[warning_owner.id] == by_id["new"].id
+        for child, parent in {
+            "retained-change": "new",
+            "null-change": None,
+            "empty-change": "new",
+            "fanout": "new",
+            "sidecar-child": "sidecar",
+            **{
+                name: "old"
+                for name in controls
+                if name not in {"continuation-gap", "cache-seed"}
+            },
+            "continuation-gap": "gap-continuation",
+            "cache-seed": "cache-self",
+        }.items():
+            assert by_id[child].parent_message_id == parent, child
+            assert store._native_parent_by_message[by_id[child].id] == (
+                by_id[parent].id if parent else None
+            ), child
+        assert [
+            node.persisted_message_id for node in store.messages_for_session(session.id)
+        ] == ["root", "new", "empty-change"]
+        assert by_id["old"].provider_continuation == checkpoint
+        assert by_id["sidecar"].thinking == _thinking("Sidecar owner")
+        assert db.get_conversation_active_cursor(target) == ("empty-change", None)
+        assert db.get_messages_for_conversation(target) == raw_before
+        assert (
+            db.get_message_by_id("old")["provider_continuation_json"] == checkpoint_json
+        )
+        assert db.get_message_by_id("sidecar")["thinking_blocks_json"] == thinking_json
+    finally:
+        db.close_connection()

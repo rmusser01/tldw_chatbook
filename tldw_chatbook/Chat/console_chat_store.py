@@ -4261,11 +4261,6 @@ class ConsoleChatStore:
                 continue
             if thinking.envelope is not None:
                 node.id = persisted_id
-            node.parent_message_id = (
-                str(row["parent_message_id"])
-                if row.get("parent_message_id") is not None
-                else None
-            )
             node.provider_continuation = safe.checkpoint
             node.provider_continuation_warning = safe.warning
             node.provider_continuation_remote = bool(
@@ -4283,6 +4278,11 @@ class ConsoleChatStore:
             node.thinking_actions_enabled = (
                 thinking.generation_actions_enabled and thinking.warning is None
             )
+        from tldw_chatbook.Chat.console_conversation_hydration import (
+            _refresh_console_message_parents,
+        )
+
+        _refresh_console_message_parents(nodes, rows)
         return nodes
 
     def _quarantine_continuation_hydration(
