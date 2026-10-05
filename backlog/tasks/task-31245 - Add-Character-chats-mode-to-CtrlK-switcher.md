@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:09'
-updated_date: '2026-10-05 06:13'
+updated_date: '2026-10-05 17:06'
 labels:
   - console
   - switcher
@@ -139,6 +139,8 @@ PR3009 Qodo follow-up: direct cancellation during transcript publication reprodu
 Fixture tooling frozen at f7b4227e36, synthetic first-send profile corrected at c25ea51e57. Fresh c25 standalone Keyword: 300 samples correct, P95 131.421958ms, loop max6.3825ms, zero retained DB resources. Full UI matrix:60 searches+8 exact activations, busy max34.928375ms, all8 activation loop gaps fail50ms limit (69–134ms); post-run-test handles18, not final native retirement. Read-only observer diagnostics retained with causal limits. Confirmed separate untimed setup-frame race; narrow actual-frame wait corrected,47 targeted tests17.94s/no warnings/strictzeroDB, independent review clean. Details Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. No GC/cache policy change, no acceptance waived; native/Windows/participants/resource/performance and TASK31246 dependency remain open.
 
 Retained partial native macOS evidence at clean 81c0d22: actual 244x73 dedicated Terminal, synthetic-only profile, exact MRU Amber-07 and cold/warm History Amber-01 reuse with expected three-to-four tabs and no warm duplicate. Normal native Ctrl+Q returns zero, source/corpus unchanged, but 37 DB descriptors remain at app return. Shift+F3/Character, required viewports, Context/Roleplay/recovery/rename/cancellation boundaries, Windows and actual participants remain unqualified; background capture lag and unsuccessful AX insertion retained, not passed. Checklist and AC1 now name Shift+F3, following ADR031 without production binding changes. Fresh 10k/250k Keyword passes, UI still has six activation loop failures; no qualification waiver. Evidence inventory: Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
+
+2026-10-05 finite-reader follow-through: production exact-target revalidation and benchmark-owned Keyword snapshots reuse installed finite-operation ownership; actual RED/GREEN, 98 affected production/caller tests and 56 measurement/fixture tests pass without warnings and with empty strict DB-file censuses. At frozen b5e0f37bb0, two full-activity headless traces record zero worker-owned connections after physical executor join, but five constructor caches remain (22/24 DB descriptors); this is not native application retirement. Fresh full corpus Keyword passes 300 exact queries; normal UI preserves 60 exact searches/eight exact activations but five activation loop windows fail the unchanged 50ms gate. Latest receipts and partial-native limits in fixture-rebuild-2026-10-04.md and README; no new AC checks, semantics dependency or native/Windows/participant/performance waiver. In Progress; no final PR yet.
 <!-- SECTION:NOTES:END -->
 
 ### Approved native follow-up — 2026-09-07

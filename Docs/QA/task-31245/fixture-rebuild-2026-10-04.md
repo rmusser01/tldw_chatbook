@@ -1683,3 +1683,52 @@ read-only review finds no actionable issue. Raw RED/GREEN logs are
 `keyword-owner-red.log` and `keyword-owner-green.log` in the root above.
 Fresh clean-head full-activity ownership remains next; this test-only correction
 does not waive constructor retirement, latency, native, Windows or participants.
+
+### Final finite-reader comparison — 2026-10-05
+
+Frozen source `b5e0f37bb0cdea13c8b67d067246dab8cd63d4f8` is measured
+alone against a fresh ready-index, quick-check-valid corpus of 10,000
+conversations/250,000 eligible messages plus four excluded canaries. Counts are
+10,000/250,004/10,000; digest
+`ca0505616a8f631ea28643e0417cbdef78d3eb97e17ef9b175ac3c8a9ea84c52`.
+Source/head/corpus guards hold. Standalone Keyword passes 300 exact measured
+queries, no correctness failures, P95 103.089667 ms and loop maximum 5.883167 ms.
+After corpus cleanup, registered handles and owned database descriptors are zero.
+Raw root: `/tmp/task31966-keyword-owner-pkvILn`, including
+`host-before-measure.log`, `build.log`, `corpus/build-receipt.json`,
+`keyword.log` and `keyword/keyword-receipt.json`.
+
+The uninstrumented UI matrix still fails, exit1. All 60 exact searches and eight
+exact OPENED activations complete without app exception, with unchanged
+source/corpus and 50 ms loop/100 ms busy-paint limits. Five activation loop
+windows exceed 50 ms: narrow 65.683792/51.853708 ms; wide
+70.857833/78.352583/76.840667 ms. Preparation passes at
+40.201583/41.844083 ms; all busy paints pass (maximum 63.851458 ms).
+Narrow/wide lists show four/eleven rows from 50 fetched. The reported one Chat
+handle at run_test unmount is property-specific, not a whole-app resource census.
+Keep `ui.log` and `ui/ui-evidence/ui-latency-evidence.json`; no causal latency
+improvement is inferred from variation between runs.
+
+Two independent fresh-process full-activity origin traces use the unchanged
+pre-import v2 observer (SHA256
+`7b3437928708b597648892b686fd5ba002b46c05842d41f2ca11892ac55a9402`).
+Each records 636 unique registrations, zero drops, no untraced retained handle,
+and exact clean source. At both Textual shutdown and physical default-executor
+join, each has five native-open main-thread constructor connections, zero
+worker-owned connections, active operations or pending acquisitions. Database
+descriptor counts are 22 in the first process and 24 in the repeat, not an
+identical-file-count plateau. The remaining connection origins are shared
+Chat/config, evaluation orchestration, Library collections, Subscriptions and
+Workspace construction; no repaired finite production or benchmark reader
+retains a worker cache. After runner join only MainThread and the daemon storage
+admission thread remain in the captured thread list.
+
+Keep `ui-owner.log`, `ui-owner-diagnostic/ui-owner-diagnostic.json`,
+`ui-owner-repeat.log` and `ui-owner-repeat/ui-owner-diagnostic.json`. These traces
+exit1 for their instrumented timing failures and explicitly report
+diagnostic-not-qualified. Their timings are not substituted for the normal
+matrix. Retained constructor caches alone do not prove a leak or authorize
+blanket close; application versus process ownership and producer-stop ordering
+still need a bounded architectural decision. All TASK-31966 criteria remain
+open, as do native, Windows and participant qualification. No fourth production
+performance remedy, global GC/cache policy, evidence waiver or final PR.
