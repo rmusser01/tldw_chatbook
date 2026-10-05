@@ -10311,9 +10311,12 @@ async def test_settings_provider_category_saves_and_clears_local_api_key(monkeyp
         await pilot.pause()
         clear_button = screen.query_one("#settings-provider-api-key-clear", Button)
         assert clear_button.disabled is False
-        clear_button.focus()
+        # TASK-33007.2 (owner ruling 2026-10-04), rewritten on purpose: Clear
+        # is not a Tab stop; ctrl+l on the API key field presses it.
+        screen.query_one("#settings-provider-api-key", Input).focus()
         await pilot.pause()
-        await pilot.press("enter")
+        await pilot.press("ctrl+l")
+        await pilot.pause()
         draft = screen._settings_drafts[SettingsCategoryId.PROVIDERS_MODELS]
         assert draft.values["api_key"] == ""
         await pilot.click("#settings-save-category")
