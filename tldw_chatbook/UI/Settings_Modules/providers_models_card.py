@@ -35,6 +35,7 @@ from textual.widgets import (
     SelectionList,
     Static,
 )
+from textual.widgets.input import Selection
 
 from ...Chat.console_provider_endpoints import (
     first_configured_endpoint,
@@ -161,6 +162,10 @@ class ProviderFilterInput(PickerSearchInput):
     which never takes focus, so the control is one Tab stop: Up/Down move
     the list's highlight, Enter chooses, and Escape keeps the current
     provider.
+
+    Compose it with ``select_on_focus=False``: Input's own select-on-focus
+    leaves the caret after the name, and this control selects with the caret
+    at the head (``select_all``).
     """
 
     BINDINGS = [
@@ -170,6 +175,20 @@ class ProviderFilterInput(PickerSearchInput):
 
     def _picker(self) -> OptionList:
         return self.screen.query_one("#settings-provider-picker", OptionList)
+
+    def select_all(self) -> None:
+        """Select the whole name with the caret at its head.
+
+        Input keeps one cell for the caret after the last character and
+        scrolls to it, so a caret at the end pushes the head of a name as
+        wide as the control out of view (TASK-33007.9). Typing still replaces
+        the selection.
+        """
+        self.selection = Selection(len(self.value), 0)
+
+    def _on_focus(self, event: events.Focus) -> None:
+        if not event.from_app_focus:  # as Input's select-on-focus
+            self.select_all()
 
     def action_move_highlight(self, step: int) -> None:
         """Open the list, or move its highlight by one row.
@@ -371,14 +390,19 @@ def sync_provider_control(screen: SettingsScreen) -> bool:
     if picker.display:
         return False
     label = shown_provider_label(screen)
-    if control.value == label:
-        return False
-    with control.prevent(Input.Changed):
-        control.value = label
-    if control.has_focus:
+    changed = control.value != label
+    if changed:
+        with control.prevent(Input.Changed):
+            control.value = label
+    if not control.has_focus:
+        # At rest the name reads from its head, wherever the caret was left
+        # (force: Textual does not scroll a disabled widget without it).
+        control.scroll_to(x=0, animate=False, force=True)
+    elif changed:
         control.select_all()  # After a choice, typing filters afresh.
-    screen._refresh_provider_picker("")
-    return True
+    if changed:
+        screen._refresh_provider_picker("")
+    return changed
 
 
 def selection_source_word(source: object) -> str:
@@ -1085,6 +1109,7 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 classes="settings-compact-input",
                 placeholder="Type to filter providers",
                 tooltip=PROVIDER_CONTROL_TOOLTIP,
+                select_on_focus=False,
             )
             yield Static(
                 selection_source_word(resolved.provider_source),

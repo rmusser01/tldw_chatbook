@@ -196,7 +196,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # serial) gates Console Behavior's global fallbacks -- Model defaults' rows,
 # the On/Off streaming Select, the config-key disclosure and a real save that
 # a new chat and an inheriting model default both follow.
-MINIMUM_FILES = 166
+# TASK-33007.9 raised it to 139: test_settings_connect_rows.py (23 mounted
+# cases, ~6.7 min serial measured at load average 35; 13-25 s a case) gates
+# Connect's one-row rows -- the Provider control's name after a choice or
+# Revert, painted from its head, its open list's box at both full-screen
+# sizes, the key's source words, the Key check row and the Tab budget to Model.
+MINIMUM_FILES = 167
 
 
 def read_census(path: Path) -> list[str]:
