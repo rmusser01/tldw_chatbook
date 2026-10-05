@@ -517,6 +517,91 @@ async def test_a_hand_edited_fallback_shows_the_value_and_word_a_new_chat_resolv
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_hand_edited_choice_with_no_option_reads_saved_and_names_its_value(
+    request,
+):
+    """Review round 3 (1): reasoning and thinking choices are read as a new
+    chat reads them, without folding case. A saved "High" is no option, so
+    the Select stays blank (it showed "high", which a new chat never gets),
+    yet the row says "Console Behavior" and names what a new chat takes, as
+    "bogus" does (it read "provider"). Choosing an option is an edit; Revert
+    brings back the blank, held row with nothing staged."""
+    app = _app({"reasoning_effort": "High", "verbosity": "bogus"})
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        resolved = build_default_console_session_settings(
+            {"chat_defaults": dict(app.app_config["chat_defaults"])}
+        )
+        assert (resolved.reasoning_effort, resolved.verbosity) == ("High", "bogus")
+        effort = screen.query_one(f"#{_cid('reasoning_effort')}", Select)
+        assert effort.value is Select.NULL
+        assert screen.query_one(f"#{_cid('verbosity')}", Select).value is Select.NULL
+        assert _row_copy(screen, "reasoning_effort") == (
+            "Console Behavior",
+            "saved 'High' is not a choice",
+        )
+        assert _row_copy(screen, "verbosity") == (
+            "Console Behavior",
+            "saved 'bogus' is not a choice",
+        )
+        assert _row_copy(screen, "thinking_effort") == (
+            "provider",
+            "blank = provider default",
+        )
+        assert not _dirty(screen)
+
+        effort.focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("end", "up", "enter")
+        await _wait_until(pilot, lambda: effort.value == "high", "reasoning = high")
+        await pilot.pause()
+        assert _dirty(screen) == {"reasoning_effort"}
+        assert _row_copy(screen, "reasoning_effort")[0] == "edited *"
+
+        await _revert(host, pilot, screen)
+        await _wait_until(pilot, lambda: effort.value is Select.NULL, "the revert")
+        await pilot.pause()
+        await pilot.pause()
+        assert _row_copy(screen, "reasoning_effort") == (
+            "Console Behavior",
+            "saved 'High' is not a choice",
+        )
+        assert not _dirty(screen)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_shown_negative_integer_can_be_backspaced_away(request):
+    """Review round 3 (2): a hand-edited ``seed = -1`` is shown as a new chat
+    reads it, so its Input must take the edit that clears it. Backspace from
+    the end leaves "-" (a digits-only restrict refused that, so nothing
+    happened), then blank."""
+    host = _SettingsCssHarness(_app({"seed": -1}), "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open(host, pilot)
+        screen.query_one("#settings-console-sampling", Collapsible).collapsed = False
+        await pilot.pause()
+        seed = screen.query_one(f"#{_cid('seed')}", Input)
+        assert seed.value == "-1"
+        assert _row_copy(screen, "seed")[0] == "Console Behavior"
+        assert not _dirty(screen)
+
+        seed.focus()
+        await pilot.press("end", "backspace")
+        await pilot.pause()
+        assert seed.value == "-"
+        await pilot.press("backspace")
+        await pilot.pause()
+        assert seed.value == ""
+        assert _row_copy(screen, "seed") == ("edited *", "blank = provider default")
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_the_streaming_key_fact_lives_in_the_inspector_config_key_disclosure(
     request,
 ):

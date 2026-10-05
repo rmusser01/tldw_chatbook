@@ -7802,10 +7802,6 @@ class SettingsScreen(BaseAppScreen):
     def _loaded_console_default_frequency_penalty(self) -> float | str:
         return self._loaded_chat_default("frequency_penalty")
 
-    def _loaded_console_default_choice(self, key: str, allowed: frozenset[str]) -> str:
-        value = str(self._chat_defaults().get(key, "") or "").strip().lower()
-        return value if value in allowed else ""
-
     def _loaded_console_default_thinking_budget_tokens(self) -> int | str:
         return self._loaded_chat_default("thinking_budget_tokens")
 
@@ -7851,22 +7847,12 @@ class SettingsScreen(BaseAppScreen):
             "seed": self._loaded_console_default_seed(),
             "presence_penalty": self._loaded_console_default_presence_penalty(),
             "frequency_penalty": self._loaded_console_default_frequency_penalty(),
-            "reasoning_effort": self._loaded_console_default_choice(
-                "reasoning_effort",
-                REASONING_EFFORT_OPTIONS,
-            ),
-            "reasoning_summary": self._loaded_console_default_choice(
-                "reasoning_summary",
-                REASONING_SUMMARY_OPTIONS,
-            ),
-            "verbosity": self._loaded_console_default_choice(
-                "verbosity",
-                VERBOSITY_OPTIONS,
-            ),
-            "thinking_effort": self._loaded_console_default_choice(
-                "thinking_effort",
-                THINKING_EFFORT_OPTIONS,
-            ),
+            # Unfolded, as a new chat takes them: a hand-edited "High" is
+            # shown as no choice, never as "high" (TASK-33007.7).
+            **{
+                name: self._loaded_chat_default(name)
+                for name in CLOSED_ENUM_SELECT_OPTIONS
+            },
             "thinking_budget_tokens": self._loaded_console_default_thinking_budget_tokens(),
         }
         from .settings_goal_policy import GOAL_SETTING_DEFAULTS
@@ -11093,7 +11079,12 @@ class SettingsScreen(BaseAppScreen):
     def _stage_console_default_value(self, key: str, value: object) -> None:
         category = SettingsCategoryId.CONSOLE_BEHAVIOR
         loaded = self._console_behavior_loaded_values().get(key)
-        if (
+        choices = CLOSED_ENUM_SELECT_OPTIONS.get(key)
+        if choices is not None and value == "" and loaded not in choices:
+            # A blank Select over a saved choice it has no option for (a
+            # hand-edited "High") is how that value shows, so is no edit.
+            value = loaded
+        elif (
             isinstance(value, str)
             and not isinstance(loaded, str)
             and value.strip() == self._console_input_value(loaded)
@@ -35114,8 +35105,11 @@ class SettingsScreen(BaseAppScreen):
                     pass
             for selector, (enum_key, value) in select_values.items():
                 try:
-                    self.query_one(selector, Select).value = self._select_option_value(
-                        value, CLOSED_ENUM_SELECT_OPTIONS[enum_key]
+                    # Only an exact option is shown (TASK-33007.7).
+                    self.query_one(selector, Select).value = (
+                        value
+                        if value in CLOSED_ENUM_SELECT_OPTIONS[enum_key]
+                        else Select.NULL
                     )
                 except QueryError:
                     pass

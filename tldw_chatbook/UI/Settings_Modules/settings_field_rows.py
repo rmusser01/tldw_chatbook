@@ -40,6 +40,7 @@ from ...Chat.console_session_settings import (
     ConsoleValueLayer,
     build_default_console_session_settings,
     chat_defaults_held_fields,
+    chat_defaults_value,
     resolve_console_value_layers,
 )
 from ...config import coerce_bool_setting
@@ -96,6 +97,9 @@ CONSOLE_SAMPLING_ID = "settings-console-sampling"
 #: A fallback ``[chat_defaults]`` does not hold shows tldw's own value, which
 #: a provider's table outranks (the default chain's order).
 UNSET_FALLBACK_HELP = "not set here · a provider's own setting comes first"
+#: A saved choice the Select has no option for (a hand-edited "High"): a new
+#: chat still takes it, so the row names it instead of reading blank.
+NOT_A_CHOICE_HELP = "saved '{value}' is not a choice"
 #: The global fallbacks' Sampling title when no sampler holds a value;
 #: nothing inherits on this surface, so it is not Model defaults' word.
 NO_SAMPLER_SET = "none set"
@@ -570,7 +574,8 @@ def _console_fallback_control(screen: SettingsScreen, name: str) -> Widget:
         options = CLOSED_ENUM_SELECT_OPTIONS[name]
         return Select(
             [(option, option) for option in options],
-            value=screen._select_option_value(value, options),
+            # Only an exact option: a saved "High" is no choice, not "high".
+            value=value if value in options else Select.NULL,
             id=console_fallback_id(name),
             classes="settings-compact-select",
             allow_blank=True,
@@ -583,7 +588,9 @@ def _console_fallback_control(screen: SettingsScreen, name: str) -> Widget:
         id=console_fallback_id(name),
         classes="settings-compact-input",
         placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key(name)],
-        restrict=r"^[0-9]*$" if name in _INTEGER_FIELDS else None,
+        # A leading minus is typeable so a shown hand-edited ``seed = -1``
+        # can be backspaced away; Save refuses it with the field's message.
+        restrict=r"^-?[0-9]*$" if name in _INTEGER_FIELDS else None,
     )
 
 
@@ -653,8 +660,10 @@ def refresh_console_fallbacks(screen: SettingsScreen) -> None:
     ``[chat_defaults]`` holds reads "Console Behavior"; one it does not hold
     (tldw's own Streaming, Temperature or Top P) reads "built-in" and says a
     provider's own setting comes first, as the default chain orders them; a
-    blank optional row leaves the choice to the provider. A cleared
-    Temperature or Top P says it is required, because Save refuses a blank.
+    blank optional row leaves the choice to the provider, unless it is a
+    saved choice the Select has no option for, which reads "Console
+    Behavior" and names that value. A cleared Temperature or Top P says it is
+    required, because Save refuses a blank.
     The Sampling title names only samplers ``[chat_defaults]`` holds or the
     draft edited, never a built-in value shown at rest.
 
@@ -668,7 +677,8 @@ def refresh_console_fallbacks(screen: SettingsScreen) -> None:
         return
     draft = screen._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
     dirty = draft.dirty_keys if draft is not None else frozenset()
-    held = chat_defaults_held_fields(screen._app_config_mapping(), MODEL_DEFAULT_FIELDS)
+    app_config = screen._app_config_mapping()
+    held = chat_defaults_held_fields(app_config, MODEL_DEFAULT_FIELDS)
     names = {console_fallback_id(name): name for name in MODEL_DEFAULT_FIELDS}
     shown_sampling: dict[str, str] = {}
     for row in fallbacks.query(".settings-input-row"):
@@ -685,7 +695,12 @@ def refresh_console_fallbacks(screen: SettingsScreen) -> None:
             (None, _PROVIDER),
             saved_word=_CONSOLE_BEHAVIOR if name in held else _BUILT_IN,
         )
-        if not text and name in REQUIRED_FIELDS:
+        if not text and name in held and name not in dirty:
+            word = _CONSOLE_BEHAVIOR
+            help_text = NOT_A_CHOICE_HELP.format(
+                value=chat_defaults_value(app_config, name)
+            )
+        elif not text and name in REQUIRED_FIELDS:
             # Chat settings' copy for the same state, with the table's range.
             help_text = f"Required: {MODEL_CONFIG_FIELDS[name].valid_range}."
         elif word == _BUILT_IN:
