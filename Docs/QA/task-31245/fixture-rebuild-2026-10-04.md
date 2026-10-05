@@ -1732,3 +1732,143 @@ blanket close; application versus process ownership and producer-stop ordering
 still need a bounded architectural decision. All TASK-31966 criteria remain
 open, as do native, Windows and participant qualification. No fourth production
 performance remedy, global GC/cache policy, evidence waiver or final PR.
+
+### Approved Console allocation/refresh diagnostic — 2026-10-05
+
+Frozen clean source `5c8c69babbc58024076dcc69148bb1c8acebc26d` contains the
+approved diagnostic plan. All production, Tests, scripts and package inputs are
+byte-identical to the preceding `b5e0f37bb0` normal/resource checkpoint. The
+user approved this Console-only diagnostic, not a fourth production remedy or
+global GC/cache/lifetime change. Existing ADR120 and ADR198 apply; no new ADR.
+All runs use the existing synthetic offline real-profile/network/keyring guards
+and run sequentially, not concurrently with other app probes or tests.
+
+Raw root: `/tmp/task31966-console-allocation-z8neRS`. Fresh scale corpus counts
+are 10,000/250,004/10,000, ready index and valid quick-check; digest
+`7b986a63b08ca1f87f929647a20dc38b7e05c5a33332fd6423e66b9956b95258`.
+Standalone Keyword passes all 300 exact measurements, P95 108.649 ms, maximum
+loop interval 6.963625 ms, no correctness failures and zero owned database
+descriptors/registered handles after cleanup. Build/Keyword source guards pass.
+Keep `build.log`, `corpus/build-receipt.json`, `keyword.log` and
+`keyword/keyword-receipt.json`. This is retrieval evidence, not UI latency.
+
+The unchanged forwarding-tested config/native/GC observer reaches all 60 exact
+searches and eight exact OPENED activations, with 70 retained matrix samples,
+no app exception and clean exact source/unchanged corpus. Exit1 retains seven
+failures: two narrow activations, wide preparation, one wide Keyword query in
+the historical semantic-category oracle, and three wide activations. That
+oracle label does not enable Meaning search. There are 28 paired outer
+main-thread generation-2 collections and zero dropped GC/wait/config/native
+records. GC thresholds stay 700/10/10 before and after; no forced collection.
+
+Absolute interval comparison reconstructs each worst sentinel gap from raw
+timestamps and matches the recorded maximum. It never adds inclusive nested
+spans or subtracts diagnostic timing from a normal measurement:
+
+| Activation | Worst loop gap (ms) | Gen-2 overlap (ms) | Bounded observation |
+| --- | ---: | ---: | --- |
+| 52x20 #1 | 87.656125 | none | Native layout 22.286292; enclosing timer 23.842250; remaining work unattributed by these wrappers |
+| 52x20 #4 | 52.677000 | none | Native layout 19.901834; enclosing timer 21.317833 |
+| 120x50 #1 | 40.586250 | none | Passing window; config callback 12.549750 contains summary 6.259833 and widget application 4.664083 |
+| 120x50 #2 | 87.047792 | 32.518542 | Collection triggered inside native geometry/compositor reflow |
+| 120x50 #3 | 120.749083 | 70.438375 | Collection triggered inside native CSS matching/widget mount |
+| 120x50 #4 | 114.459958 | 53.983708 | Collection triggered inside native visual/render/style-cache work |
+
+The trigger identifies the allocation site, not ownership of scanned or
+reclaimed objects. Native/config span totals are inclusive, not exclusive CPU
+costs. Whole-run config scope-entry ranges are not activation-only attribution.
+Keep `ui-gc.log`, `ui-gc-diagnostic/ui-evidence/ui-latency-evidence.json`, its
+`gc-caller-diagnostic.json`, `native-refresh-diagnostic.json`,
+`config-phases-diagnostic.json` and `interval-analysis.json`. The latter SHA256
+is `2bd8076aad0fffcdd198b3e571e3e0eef261b0d68b5a10ecf4c15ef195b1341f`.
+
+Because the narrow no-GC gaps remained partly unattributed, one bounded follow-on
+sampler observes code identifiers/line numbers only; it retains no frame/local
+values, conversation text or credentials. It forwards original key dispatch,
+summary and run_test arguments/results/errors, samples only activation windows
+with a late diagnostic heartbeat, and stops/joins its thread at completion.
+Fresh forwarding checks pass. It changes no production source, measured
+readiness boundary or guard. This is an extension of the approved diagnostic,
+not a production-fix plan.
+
+The sampler run again reaches all 60 searches/eight OPENED outcomes, clean exact
+source/unchanged corpus and no app exception. Exit1 retains seven failed
+activation windows: narrow 69.286875/65.505417/50.238250/83.785625 ms and wide
+90.037125/125.068458/100.143375 ms. The first wide activation passes at
+46.990458 ms. It retains 163 samples/eight windows and 28 paired gen-2 events,
+zero dropped records, stopped sampler and maximum capture cost 0.405542 ms.
+Thresholds remain 700/10/10. Samples locate code while the heartbeat is late;
+counts are not CPU shares. Sampling perturbs scheduling; GIL-held GC can prevent
+sampling, and selector/wait samples are not proof of application CPU work.
+
+In narrow #2, the 65.505417 ms worst gap has no gen-2 overlap. Samples include
+checked storage/pinned-directory work, actual card SQL through
+`_console_browser_character_labels_for`, the mandatory real-profile guard, and
+the asyncio selector. Narrow #3 also has no gen-2 overlap and includes registry
+active-workspace reconciliation plus checked path resolution. Narrow #1 shows
+fresh provider-config posture and storage startup/admission work. Wide #2–4
+overlap native Strip/compositor/style-cache rendering and 62.417250/71.498292/
+71.083500 ms gen-2 spans. These are separate instrumented intervals, not timings
+substituted for the preceding normal matrix. Keep `code-location.log`,
+`ui-code-location/code-location-diagnostic.json`, its original UI matrix and
+`sample-analysis.json` (SHA256
+`2fa3f2fd1c7903f51d068a6b75998adbd64e8151faa5222d68eb9098a1b70322`).
+
+The separate untimed heap census uses a newly prepared small source, counts
+30/60/28, digest
+`12eb7cd51c41522469f374d9da98873323e59684da870d03bfa832d50bf5194c`.
+No native Terminal window is operated. Two saved resumes followed by three cold
+and one warm exact Character activations succeed; session counts 4/5/6/6 prove
+warm reuse in this headless journey only. App exception is None, corpus unchanged,
+fixture exit0 and final source verification clean/exact. The diagnostic JSON
+has no `source_clean_and_exact_after` field; the launcher enforces the final
+source guard even when no standard receipt is present.
+
+| Untimed snapshot | Unfrozen tracked | Frozen | Strip | FIFO / empty FIFO | Strip reached / not reached by partial widget traversal |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Ready before resumes | 128842 | 493557 | 3446 | 24222 / 23404 | 3432 / 14 |
+| After two saved resumes | 84323 | 620166 | 4304 | 30267 / 29269 | 3965 / 339 |
+| After three cold + one warm | 113975 | 612651 | 5404 | 38039 / 36297 | 4465 / 939 |
+| After unmount, app still owned | 102060 | 603991 | 4579 | 32264 / 30652 | 512 / 4067 |
+
+Direct cache owners include mounted ChatScreen/layout containers, buttons,
+provider transcript regions and Console session surfaces. Approximately 95–97%
+of observed FIFO caches are empty; the installed Strip constructor creates seven
+FIFO caches. Late boot freeze and reference-count disposal change the frozen
+population, so these are not equivalent steady-state samples or leak/growth
+proof. The partial traversal can include unreachable widget cycles, excludes
+other global/compositor roots and cannot identify already-collected ownership.
+Census strong references/allocations are untimed; retaining the app after unmount
+is not terminal resource proof. Keep `small-build.log`, the prepared native
+receipt, `heap.log` and `heap-diagnostic/heap-owner-diagnostic.json` (SHA256
+`17e81277a941c7e219b1e93e3adc5bacc054e4dec49dee359e191d3d641a6ebc`).
+
+Diagnostic script provenance (original bytes retained):
+
+| Script | SHA256 |
+| --- | --- |
+| `/tmp/task31966-gc-caller-probe.py` | `ece43d63d6a4ee383cca27195355695bd892bb6352ac30c18a5bd0711390835b` |
+| `/tmp/task31966-native-refresh-probe.py` | `50ee94d65f8f048177a5e72e63b6be81dd4ad9644fef97a78f06b011704d1197` |
+| `/tmp/task31966-config-phases-v2.py` | `f3d7d56051ffc91cc86ea531b57bff9c43c94c9dbf8ded364851d9c0e7960362` |
+| `/tmp/task31245-freeze-5uPHpo/diagnose_heap_owners_ed124.py` | `2bc0e22a0e6b3a3184fa92510bdaa7a0ed8b7210aca504ef909b38621eedfd77` |
+| Raw-root `analyze_intervals.py` | `c63266fd483f5bfb7d1f2db6ba72f86daf004d6acb10b3e56c53bbdbd636b649` |
+| Raw-root `sample_console_intervals.py` | `e25232940237cadfd97484ef1c8653016aecc17ceded4465f9c7519ed4522192` |
+| Raw-root `analyze_samples.py` | `c9b32755a416c6394f0924f7afd3586340f50c318fe36d04c7e7c2628a691b65` |
+
+All three new throwaway scripts are Ruff clean; interval pairing/source/head and
+worst-gap reconstruction assertions pass. Original observer forwarding checks
+also pass. No dependency, source UI, GC, cache, threshold or authority change.
+The preceding uninstrumented `b5e0f37bb0` matrix remains the normal acceptance
+receipt; no new normal matrix or full test sweep is claimed for this diagnostic.
+
+Read-only caller tracing confirms candidate-only labels (two shared callers),
+fresh provider settings with an existing synchronous derivation memo, and
+immediate registry/session reconciliation on ordinary resume. Those contracts
+must survive a correction. The next bounded design candidate is redundant
+Console label/config derivation work, reusing installed checked-operation and
+per-pass helpers; quantify required versus redundant reads before selecting it.
+No scope may cross an await or replace fresh authority with stale cached state.
+General rendering/heap work and constructor-lifetime policy are separate
+architectural questions; this evidence does not authorize blanket GC/cache
+changes. All TASK-31966 criteria remain open, along with native, Windows,
+unfamiliar-participant and final app-owner retirement qualification. No final PR.
