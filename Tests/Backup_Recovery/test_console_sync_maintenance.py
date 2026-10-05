@@ -16,6 +16,7 @@ async def main():
     screen = SimpleNamespace(
         is_running=True, _closing=False, _closed=False,
         _console_sync_in_progress=False, _console_sync_requested=False,
+        _console_session_tabs_sync_lock=asyncio.Lock(), _console_session_tabs_sync_calls=0,
         _console_chat_store=None,
         _console_chat_controller=None,
         _console_context_read_snapshot=None,

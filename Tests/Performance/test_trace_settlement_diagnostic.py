@@ -37,9 +37,11 @@ def _assert_no_app_imports(before):
     )
 
 
-def _observer_control(directory):
+def _observer_control(directory, *, sources_loaded=True, missing_source=None):
     EVIDENCE = directory
     PLUGIN = SOURCE_DIR / "console_trace_settlement_witness.py"
+    assert missing_source in (None, "store", "coordinator")
+    assert not sources_loaded or missing_source is None
     imports_before = set(sys.modules)
     modules = {}
     try:
@@ -75,7 +77,7 @@ def _observer_control(directory):
         sources = {
             "trace_pure_coordinator": 'from dataclasses import dataclass\nfrom enum import Enum\nimport threading\nclass TraceCallState(Enum):\n    COMPLETE = "complete"\n@dataclass(frozen=True)\nclass TraceCallRecord:\n    state: TraceCallState\n@dataclass(frozen=True)\nclass _PreparedSettlement:\n    call_id: str\n@dataclass(frozen=True)\nclass ConsoleTraceSettlementHandoff:\n    _coordinator: object\n    _database: object\n    _prepared: _PreparedSettlement\n    def settle(self, canonical_message_id):\n        return self._coordinator._settle_claimed(self._database, self._prepared)\nclass ConsoleTraceSettlementCoordinator:\n    def __init__(self):\n        self._queue_lock = threading.Lock()\n        self._pending, self._inflight = {}, {}\n        self._dropped_count = 0\n    def _settle_claimed(self, database, prepared):\n        self._inflight[prepared.call_id] = "pure"\n        try:\n            self._settle_prepared(database, prepared)\n        except Exception:\n            with self._queue_lock:\n                self._inflight.pop(prepared.call_id, None)\n                self._enqueue_locked(database, prepared)\n            return False\n        self._inflight.pop(prepared.call_id, None)\n        return True\n    def _settle_prepared(self, database, prepared):\n        if database:\n            raise RuntimeError("pure API controlled exception")\n        return TraceCallRecord(TraceCallState.COMPLETE)\n    def _enqueue_locked(self, database, prepared):\n        self._pending[prepared.call_id] = (database, prepared)\n',
             "trace_pure_store": 'import threading\nclass ConsoleChatStore:\n    def __init__(self, normal, failure):\n        self.normal, self.failure = normal, failure\n        self._provider_trace_settlement_lock = threading.RLock()\n        self._provider_trace_settlements = {}\n        self._provider_trace_settlement_work = {}\n        self._provider_trace_settlement_failed_work = {}\n        self._provider_trace_settlement_owned_call_ids = set()\n        self._provider_trace_settlement_worker_active = False\n        self._provider_trace_settlement_executor_closed = False\n    @staticmethod\n    def _run_provider_trace_settlement(handoff, canonical_message_id):\n        try:\n            result = handoff.settle(canonical_message_id)\n            return result is not False\n        except Exception:\n            return False\n    def _drain_provider_trace_settlement_work(self):\n        self._run_provider_trace_settlement(self.normal, None)\n        if not self._run_provider_trace_settlement(self.failure, None):\n            self._provider_trace_settlement_failed_work["pure-failure"] = (self.failure, None)\n            self._provider_trace_settlement_owned_call_ids.add("pure-failure")\n',
-            "trace_pure_probe": 'async def test_native_console_pause_probe(witness, thread, go, errors, controller):\n    result = {"trace_states": ["complete"] * 3, "response_links": 3, "provider_calls": 3}\n    witness.start()\n    go.set()\n    thread.join(5)\n    assert not thread.is_alive() and not errors\n    assert result["trace_states"] == ["complete"] * 3\n    return witness.stop(result)\n',
+            "trace_pure_probe": 'async def test_native_console_pause_probe(witness, thread, go, errors, controller):\n    result = {"trace_states": ["complete"] * 3, "response_links": 3, "provider_calls": 3}\n    witness.start()\n    _load_sources()\n    go.set()\n    thread.join(5)\n    assert not thread.is_alive() and not errors\n    assert result["trace_states"] == ["complete"] * 3\n    return witness.stop(result)\n',
         }
         modules = {}
         for name, source in sources.items():
@@ -109,6 +111,19 @@ def _observer_control(directory):
         thread = threading.Thread(target=worker, name="pure-existing-trace-worker")
         thread.start()
         assert entered.wait(5)
+        if not sources_loaded:
+            for role in ("store", "coordinator"):
+                name = "trace_pure_" + role
+                assert sys.modules.pop(name) is modules[name]
+
+        def load_sources():
+            if not sources_loaded:
+                for role in ("store", "coordinator"):
+                    if role != missing_source:
+                        name = "trace_pure_" + role
+                        sys.modules[name] = modules[name]
+
+        modules["trace_pure_probe"].__dict__["_load_sources"] = load_sources
         body = modules["trace_pure_probe"].test_native_console_pause_probe
         witness = Witness(
             modules["trace_pure_probe"], body, SimpleNamespace(phase="pure_control")
@@ -123,6 +138,14 @@ def _observer_control(directory):
             assert not thread.is_alive()
             if witness.active:
                 witness.stop({})
+        discovery = control["lazy_source_discovery"]
+        assert discovery["initial_store_loaded"] is sources_loaded
+        assert discovery["initial_coordinator_loaded"] is sources_loaded
+        assert {item["source"] for item in discovery["qualified_bindings"]} == {
+            "store",
+            "coordinator",
+        }
+        assert control["original_terminal_source_and_owner_coverage_complete"]
         assert not control["invalid_evidence"] and (
             not control["live_spans_after_teardown"]
         )
@@ -336,11 +359,36 @@ def _launcher_control(directory, mode):
 
 class TraceSettlementDiagnosticPureTests(unittest.TestCase):
     def test_code_local_observer_retires_existing_worker_and_exceptional_spans(self):
-        with tempfile.TemporaryDirectory(prefix="trace-observer-pure-") as temporary:
-            control = _observer_control(Path(temporary))
-        self.assertEqual(control["global_events"], 0)
-        self.assertTrue(control["hooks_retired_before_inactive"])
-        self.assertFalse(control["invalid_evidence"])
+        for sources_loaded in (True, False):
+            with self.subTest(sources_loaded=sources_loaded):
+                with tempfile.TemporaryDirectory(
+                    prefix="trace-observer-pure-"
+                ) as temporary:
+                    control = _observer_control(
+                        Path(temporary), sources_loaded=sources_loaded
+                    )
+                self.assertEqual(control["global_events"], 0)
+                self.assertTrue(control["hooks_retired_before_inactive"])
+                self.assertFalse(control["invalid_evidence"])
+
+    def test_original_terminal_requires_both_lazy_sources_and_observed_owners(self):
+        for missing_source in ("store", "coordinator"):
+            with self.subTest(missing_source=missing_source):
+                with tempfile.TemporaryDirectory(
+                    prefix="trace-missing-source-"
+                ) as temporary:
+                    with self.assertRaisesRegex(
+                        AssertionError,
+                        "requires qualified stock sources and observed owners",
+                    ):
+                        _observer_control(
+                            Path(temporary),
+                            sources_loaded=False,
+                            missing_source=missing_source,
+                        )
+                self.assertTrue(
+                    all(sys.monitoring.get_tool(number) is None for number in (3, 4, 5))
+                )
 
     def _launcher(self, mode):
         with tempfile.TemporaryDirectory(prefix="trace-launcher-api-") as temporary:

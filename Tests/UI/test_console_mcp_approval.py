@@ -1338,6 +1338,41 @@ async def _show_production_approval_batch(
     raise AssertionError("Production approval batch did not finish rendering")
 
 
+async def _await_original_console_sync_completion(screen, pilot, *, deadline):
+    """Wait for actual method ownership; a queue callback is not completion."""
+    from types import CoroutineType
+
+    original_code = ChatScreen._sync_native_console_chat_ui.__code__
+
+    def owns_original_sync(coroutine):
+        for _ in range(64):
+            if type(coroutine) is not CoroutineType:
+                return False
+            frame = coroutine.cr_frame
+            if (coroutine.cr_code is original_code and frame is not None
+                    and frame.f_locals.get("self") is screen):
+                return True
+            coroutine = coroutine.cr_await
+        return False
+
+    while True:
+        # A queued Textual worker owns its original coroutine even before its
+        # Task starts. Started direct/worker calls retain it in their await chain.
+        pending = any(
+            worker.node is screen and owns_original_sync(worker._work)
+            for worker in screen.workers
+        ) or any(
+            owns_original_sync(task.get_coro()) for task in asyncio.all_tasks()
+            if task is not asyncio.current_task()
+        )
+        if (not pending and not screen._console_sync_in_progress
+                and not screen._console_sync_requested):
+            return
+        remaining = deadline - time.monotonic()
+        assert remaining > 0, "Original Console sync did not finish within startup budget"
+        await pilot.pause(min(0.01, remaining))
+
+
 async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
     """Wait through startup projections until the Console is the active screen."""
     deadline = time.monotonic() + 10.0
@@ -1376,8 +1411,14 @@ async def _wait_for_production_console_ready(app, pilot) -> ChatScreen:
     # behind it so completion means the production projection itself has run.
     await asyncio.wait_for(asyncio.shield(projection_task), timeout=10.0)
     projection_drained = asyncio.Event()
+    projection_deadline = time.monotonic() + 10.0
     screen.call_next(projection_drained.set)
-    await asyncio.wait_for(projection_drained.wait(), timeout=10.0)
+    await asyncio.wait_for(
+        projection_drained.wait(), timeout=max(0.0, projection_deadline - time.monotonic())
+    )
+    await _await_original_console_sync_completion(
+        screen, pilot, deadline=projection_deadline
+    )
 
     assert app.screen is screen
     assert screen._console_attach_reconciled

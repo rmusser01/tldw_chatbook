@@ -1810,3 +1810,42 @@ _SENSITIVE_INPUT_ORIGINALS = (
         )
     ),
 )
+
+
+# TASK-34404: defining originals for reuse of existing pure refusal metadata.
+_STARTUP_PATH_METADATA_ORIGINALS = (
+    _SensitiveConfigInputBundle,
+    tuple(_SensitiveConfigInputBundle.__dict__.items()),
+    tuple(
+        (
+            namespace,
+            name,
+            callback,
+            callback.__code__,
+            callback.__globals__,
+            callback.__defaults__,
+            callback.__kwdefaults__,
+            tuple((callback.__kwdefaults__ or {}).items()),
+            callback.__closure__,
+            tuple((cell, cell.cell_contents) for cell in callback.__closure__ or ()),
+        )
+        for namespace, name, callback in (
+            *(
+                (
+                    _SensitiveConfigInputBundle.__dict__,
+                    name,
+                    _SensitiveConfigInputBundle.__dict__[name],
+                )
+                for name in ("__init__", "_task", "check")
+            ),
+            *(
+                (globals(), name, globals()[name])
+                for name in (
+                    "_sensitive_reader_bindings",
+                    "_sensitive_cached_reader_bindings",
+                    "_sensitive_guarded_readers_current",
+                )
+            ),
+        )
+    ),
+)

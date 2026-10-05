@@ -5,6 +5,7 @@ import inspect
 import json
 import math
 import secrets
+import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
@@ -5817,4 +5818,37 @@ _CONSOLE_STANDARD_METHODS = (
     ("effective_tool_states", UnifiedMCPControlPlaneService.effective_tool_states),
     ("local_external_catalog", UnifiedMCPControlPlaneService.local_external_catalog),
     ("_audit_downgrade_if_fresh", UnifiedMCPControlPlaneService._audit_downgrade_if_fresh),
+)
+
+
+# TASK-34403: definition-time provenance of the omitted controller callback.
+# These are callable inputs only; the provider still reads live native policy.
+_CONSOLE_CONTROLLER_SWITCH_MODULE = sys.modules[__name__]
+_CONSOLE_CONTROLLER_SWITCH_CLASS = UnifiedMCPControlPlaneService
+
+
+def _capture_controller_inputs(function):
+    keyword_defaults = function.__kwdefaults__
+    closure = function.__closure__
+    return (
+        function.__defaults__,
+        keyword_defaults,
+        tuple(dict.items(keyword_defaults)) if keyword_defaults is not None else (),
+        closure,
+        tuple((cell, cell.cell_contents) for cell in closure or ()),
+    )
+
+
+_CONSOLE_CONTROLLER_SWITCH_METHODS = tuple(
+    (
+        name,
+        descriptor,
+        function,
+        function.__code__,
+        function.__globals__,
+        _capture_controller_inputs(function),
+    )
+    for name in ("get_kill_switch", "permission_store")
+    for descriptor in (vars(UnifiedMCPControlPlaneService)[name],)
+    for function in (descriptor.fget if type(descriptor) is property else descriptor,)
 )

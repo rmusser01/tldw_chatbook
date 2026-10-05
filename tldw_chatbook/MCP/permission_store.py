@@ -67,6 +67,7 @@ import errno
 import hashlib
 import fnmatch
 import json
+import sys
 import os
 import re
 import tempfile
@@ -75,7 +76,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from types import MappingProxyType
+from types import FunctionType, MappingProxyType
 from typing import Any, Callable, Iterator, Literal, Mapping
 
 from loguru import logger
@@ -2645,4 +2646,69 @@ _CONSOLE_STANDARD_METHODS = (
     ("load", MCPPermissionStore.load),
     ("get_kill_switch", MCPPermissionStore.get_kill_switch),
     ("mark_config_changed", MCPPermissionStore.mark_config_changed),
+)
+
+
+# TASK-34403: only the two original guarded members used by the omitted getter.
+# The known decorator's function cell is captured here, never lazily unwrapped.
+_CONSOLE_CONTROLLER_PERMISSION_MODULE = sys.modules[__name__]
+_CONSOLE_CONTROLLER_PERMISSION_CLASS = MCPPermissionStore
+
+
+def _capture_controller_inputs(function):
+    keyword_defaults = function.__kwdefaults__
+    closure = function.__closure__
+    return (
+        function.__defaults__,
+        keyword_defaults,
+        tuple(dict.items(keyword_defaults)) if keyword_defaults is not None else (),
+        closure,
+        tuple((cell, cell.cell_contents) for cell in closure or ()),
+    )
+
+
+def _capture_controller_permission_member(name):
+    wrapper = vars(MCPPermissionStore)[name]
+    guard = mcp_sources.guarded
+    if type(wrapper) is not FunctionType or type(guard) is not FunctionType:
+        return name, wrapper, ()
+    wrapper_codes = tuple(
+        code
+        for code in guard.__code__.co_consts
+        if type(code) is type(guard.__code__) and code.co_name == "wrapped"  # noqa: E721 -- exact original code
+    )
+    if (
+        len(wrapper_codes) != 1
+        or wrapper.__code__ is not wrapper_codes[0]
+        or wrapper.__globals__ is not vars(mcp_sources)
+        or wrapper.__closure__ is None
+        or "function" not in wrapper.__code__.co_freevars
+    ):
+        return name, wrapper, ()
+    try:
+        body = wrapper.__closure__[
+            wrapper.__code__.co_freevars.index("function")
+        ].cell_contents
+    except ValueError:
+        return name, wrapper, ()
+    if type(body) is not FunctionType or body.__globals__ is not globals():
+        return name, wrapper, ()
+    return (
+        name,
+        wrapper,
+        tuple(
+            (
+                function,
+                function.__code__,
+                function.__globals__,
+                sys.modules[function.__globals__["__name__"]],
+                _capture_controller_inputs(function),
+            )
+            for function in (wrapper, body)
+        ),
+    )
+
+
+_CONSOLE_CONTROLLER_PERMISSION_METHODS = tuple(
+    _capture_controller_permission_member(name) for name in ("get_kill_switch", "load")
 )

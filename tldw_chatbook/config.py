@@ -77,7 +77,6 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
     from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
 from tldw_chatbook.provider_registry import ALL_RECORDS, CLOUD_PROVIDER_CONFIG_KEYS
-from tldw_chatbook.Utils.toml_serialization import dumps_cli_config
 from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH,
@@ -113,6 +112,41 @@ if TYPE_CHECKING:
 #######################################################################################################################
 #
 # Functions:
+
+
+def _contains_literal_backslash_x(value: Any) -> bool:
+    pending = [value]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if type(current) is str:  # noqa: E721 - inspect builtin values without custom coercion.
+            if "\\x" in current:
+                return True
+        elif type(current) in (dict, list, tuple):
+            identity = id(current)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            # Only builtin containers enter this branch; custom mappings keep the legacy route.
+            pending.extend(current.values() if type(current) is dict else current)  # noqa: E721
+    return False
+
+
+def dumps_cli_config(config_data: Mapping[str, Any]) -> str:
+    """Retain the original codec and defer the exceptional literal encoder.
+
+    Args:
+        config_data: Original configuration mapping passed to the writer.
+
+    Returns:
+        TOML text using the existing ordinary or literal-backslash-x codec.
+    """
+    if not _contains_literal_backslash_x(config_data):
+        return toml.dumps(config_data)
+    from tldw_chatbook.Utils.toml_serialization import dumps_cli_config as special
+
+    return special(config_data)
+
 
 logger.debug("CRITICAL DEBUG: config.py module is being imported/executed NOW.")
 # --- Constants ---

@@ -1860,3 +1860,39 @@ return, and retain publication refusal outside optional observer handling.
 Actual fresh root admission, native retirement, custom/default/foreign-worker/
 survivor contracts and existing budgets/deadlines remain. This is refusal-only
 finite metadata, not permission or a resolved sensitive-context cache.
+
+
+### TASK-34403 AC23 finite stock MCP composition precheck (2026-10-05)
+
+ADR required: yes; this extends the existing finite source-custody interface.
+The ordinary controller and exact stock provider currently read the same kill
+switch at composition entry. The provider must still perform its original fresh
+native read before catalog composition and its separate fresh effective
+permission read afterward. Only the unchanged original factory, constructor,
+composition methods, projection methods, service callback and native snapshot
+pipeline may omit the preceding duplicate controller read. Customized classes,
+factories, callbacks and preinstalled changed bodies retain the original
+controller precheck and no-argument compose call.
+
+One issued composition record retains the actual original factory, service and
+captured native source owners. It carries callback provenance, no permission
+verdict. Exact defining code/globals/defaults/keyword-defaults/closures and
+receiver/source identity must remain current before construction, inside the
+provider's existing producer lifetime, and after every composition await.
+Drift after qualification refuses without invoking a replacement under this
+route. Tool invocation retains its independent fresh kill/permission checks.
+Global worker guards, physical retirement, deadlines and integrated budgets
+remain unchanged.
+
+The original native nine-case RED was 2 expected failures and 7 unchanged
+custom/source-control passes. The first candidate is a deliberate verification
+checkpoint: a newly identified same-function service-body gap must reproduce
+RED and be repaired before this route is described as qualified. Constructor
+and await retarget controls, original custom signatures, fresh killed/unkilled
+composition and native physical retirement are required evidence.
+
+AC23 callable provenance refinement before production: the omitted service getter and permission property, and the two known defining permission guard bodies, must retain definition-time code/globals/default/keyword-default-item/closure-cell identity. Constructor owned-profile defaults are authority-bearing inputs even when callable object/code identities do not change. Changed or unsupported customized wrappers retain the original controller precheck; a body change after actual Native worker entry refuses publication. Qualify new real-source Native controls before repairing the optimization. This captures no permission verdict and preserves generic worker guards, original budgets and fresh producer reads.
+
+### Qualified MCP composition inner-await fences
+
+The same issued finite controller composition token must validate full captured callable metadata at each existing stock catalog post-await boundary, before the next source read. Eventual refusal after the whole catalog returns is insufficient. The exact stock private route receives the same token and captured-source keeper; custom and ordinary no-argument composition keep their declared prechecks. An inventory exception handler must not swallow qualified metadata refusal. This adds no authority verdict cache and keeps each actual checked native read.

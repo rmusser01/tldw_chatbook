@@ -235,3 +235,7 @@ call's policy retained the detached owner's archived binding through canonical
 revision ancestry. Keep metadata and payload revision reachability separate.
 Check both the admission gap and a shared-policy detached payload; never use a
 timer delay as evidence that a captured send survives normal maintenance.
+
+## Read-only executor callbacks still own database connections
+
+**TASK-34406 / PR #3023, 2026-10-05.** The original Library delete/undo journey completed its assertions but sandbox cleanup found a Workspace connection and exact lease owned by an already exited executor thread. The bounded original acquisition chain identified LocalWorkspaceRegistryService.get_workspace_scope; the UI thread's own connection was already closed. Closing the factory's current-thread cache could never retire that worker handle. Put an existing finite operation-owned connection boundary around the synchronous producer so it retires on its own thread. Verify the actual connection and lease before test cleanup on success, SQLite error and waiter cancellation; retain borrowed transactions and memory/custom lifetime controls. The three reproduced leaks became six passing native controls and the unchanged Library journey then passed physical cleanup. A dead worker is not evidence that its database lease retired.

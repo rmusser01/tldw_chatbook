@@ -34,6 +34,10 @@ from tldw_chatbook.runtime_policy import RuntimeSourceState
 # root conftest's autouse cleanup after each test.
 _created_dirs: list[Path] = []
 
+# Strong original owners paired with their exact newly-created sandbox files.
+_created_databases: dict[Path, tuple[tuple[object, type, Path], ...]] = {}
+_created_instance_locks: dict[Path, tuple[object, object, Path]] = {}
+
 # Every still-running `get_subscriptions_db_path` patch started by
 # `_build_test_app` (task-1631); stopped by the root conftest's autouse
 # cleanup after each test. See `_build_test_app`'s own comment for why this
@@ -203,22 +207,188 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
     return db
 
 
-def drain_created_dirs() -> int:
-    """Remove every user-data dir created since the last drain.
+def _record_created_databases(app: TldwCli, directory: Path) -> None:
+    """Retain exact factory file owners before callers can replace app fields."""
+    from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
+    from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
+    from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+    from tldw_chatbook.Research_Interop.local_research_service import (
+        LocalResearchService,
+    )
+    from tldw_chatbook.Scheduling.db.scheduled_tasks_db import ScheduledTasksDB
+    from tldw_chatbook.Writing_Interop.local_writing_service import LocalWritingService
 
-    Called by the root conftest's autouse cleanup fixture after each test, so
-    a test that builds several apps leaks nothing. Removal happens while the
-    app objects may still hold open sqlite handles — POSIX unlink semantics
-    make that safe, and the per-test gc in app-mounting dirs (task-1468)
-    closes the handles promptly afterwards.
+    declarations = (
+        (getattr(app, "local_workspace_db", None), WorkspaceDB, "workspaces.sqlite"),
+        (
+            getattr(app, "local_library_collections_db", None),
+            LibraryCollectionsDB,
+            "library_collections.sqlite",
+        ),
+        (
+            getattr(app, "subscriptions_db", None),
+            SubscriptionsDB,
+            "subscriptions.sqlite",
+        ),
+        (
+            getattr(getattr(app, "scheduling_service", None), "db", None),
+            ScheduledTasksDB,
+            "scheduled_tasks.sqlite",
+        ),
+        (
+            getattr(app, "local_research_service", None),
+            LocalResearchService,
+            "research.sqlite",
+        ),
+        (
+            getattr(app, "local_writing_service", None),
+            LocalWritingService,
+            "writing.sqlite",
+        ),
+    )
+    _created_databases[directory] = tuple(
+        (owner, expected_type, directory / filename)
+        for owner, expected_type, filename in declarations
+        if type(owner) is expected_type
+        and not owner.is_memory_db
+        and owner.db_path == directory / filename
+    )
+    # The advisory file handle is independent of storage._startups. Keep the
+    # exact original owner, not a later app-field lookup that could be borrowed.
+    from io import BufferedRandom
+    from tldw_chatbook.Utils.instance_lock import InstanceLockStatus
+
+    status = getattr(app, "_instance_lock_status", None)
+    handle = status.handle if type(status) is InstanceLockStatus else None
+    if (
+        type(handle) is BufferedRandom
+        and Path(handle.name) == directory / ".instance.lock"
+    ):
+        _created_instance_locks[directory] = (
+            status,
+            handle,
+            directory / ".instance.lock",
+        )
+
+
+def _retire_created_databases(directory: Path) -> None:
+    """Require actual original owner retirement before deleting this sandbox."""
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import (
+        _close_settled_core_cache,
+        _repository_participant,
+    )
+
+    for owner, expected_type, expected_path in _created_databases.get(directory, ()):
+        if type(owner) is not expected_type or owner.db_path != expected_path:
+            raise RuntimeError("test_factory_database_owner_changed")
+        participant = _repository_participant(owner)
+        with storage._lock:
+            already_retired = (
+                participant.closed
+                and storage._pause is None
+                and not participant.connections
+                and not participant.retiring_threads
+                and not any(
+                    operation.participant is participant
+                    for operation in storage._operations
+                )
+                and not any(
+                    lease.resource_path == expected_path
+                    for lease in storage._live_leases
+                )
+            )
+        if already_retired:
+            continue
+        if not _close_settled_core_cache(owner):
+            raise RuntimeError("test_factory_database_not_retired")
+        with storage._lock:
+            participant.close_admission()
+            if (
+                storage._pause is not None
+                or participant.connections
+                or participant.retiring_threads
+                or any(
+                    operation.participant is participant
+                    for operation in storage._operations
+                )
+                or any(
+                    lease.resource_path == expected_path
+                    for lease in storage._live_leases
+                )
+                or any(
+                    getattr(attempt.operation, "participant", None) is participant
+                    for attempt in storage._pending_acquisitions
+                )
+            ):
+                raise RuntimeError("test_factory_database_not_retired")
+    # The native close wrapper retires a resource lease only after physical
+    # close. Unknown or still-borrowed resources remain visible and keep the
+    # owned sandbox. Do not modify the global maintenance drain or startup.
+    with storage._lock:
+        participants = tuple(
+            _repository_participant(owner)
+            for owner, _, _ in _created_databases.get(directory, ())
+        )
+        if (
+            storage._pause is not None
+            or any(
+                participant.connections or participant.retiring_threads
+                for participant in participants
+            )
+            or any(
+                isinstance(getattr(lease, "resource_path", None), Path)
+                and lease.resource_path.is_relative_to(directory)
+                for lease in storage._live_leases
+            )
+            or any(
+                operation.participant in participants
+                for operation in storage._operations
+            )
+            or any(
+                getattr(attempt.operation, "participant", None) in participants
+                for attempt in storage._pending_acquisitions
+            )
+        ):
+            raise RuntimeError("test_factory_directory_has_live_storage")
+    captured_lock = _created_instance_locks.get(directory)
+    if captured_lock is not None:
+        from io import BufferedRandom
+        from tldw_chatbook.Utils.instance_lock import InstanceLockStatus
+
+        status, handle, expected_path = captured_lock
+        if (
+            type(status) is not InstanceLockStatus
+            or type(handle) is not BufferedRandom
+            or Path(handle.name) != expected_path
+        ):
+            raise RuntimeError("test_factory_instance_lock_owner_changed")
+        # Exact native BinaryIO.close also releases the OS advisory lock.
+        # Never unlink around an open handle or release a borrowed profile.
+        BufferedRandom.close(handle)
+        if not handle.closed:
+            raise RuntimeError("test_factory_instance_lock_not_closed")
+
+
+def drain_created_dirs() -> int:
+    """Physically retire captured factory databases, then remove their dirs.
+
+    Retained/unmounted apps need no GC. Active or foreign handles, changed
+    owners and failed deletion keep the queue entry and surface the failure.
+    Borrowed databases outside the fresh factory directory are never owned.
 
     Returns:
-        The number of directories removed.
+        The number of directories physically removed.
     """
     drained = 0
     while _created_dirs:
-        path = _created_dirs.pop()
-        shutil.rmtree(path, ignore_errors=True)
+        path = _created_dirs[-1]
+        _retire_created_databases(path)
+        if path.exists():
+            shutil.rmtree(path)
+        _created_dirs.pop()
+        _created_databases.pop(path, None)
+        _created_instance_locks.pop(path, None)
         drained += 1
     return drained
 
@@ -464,6 +634,7 @@ def _build_test_app(
         ):
             stack.enter_context(ctx)
         app = TldwCli()
+        _record_created_databases(app, user_data_dir)
         # PR-3 Task 4: the Library RAG answer worker runs a real provider
         # call automatically once a rag-mode retrieval settles -- no button
         # of its own. `LibraryScreen._library_rag_answer_chat_kwargs` treats

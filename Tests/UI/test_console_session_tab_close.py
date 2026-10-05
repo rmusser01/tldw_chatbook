@@ -23,7 +23,7 @@ import gc
 import threading
 import time
 import warnings
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 import pytest
@@ -33,6 +33,8 @@ from textual.css.query import NoMatches
 from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
+from Tests.UI._child_creation_original_admission import original_child_creation_admission  # noqa: F401
+from Tests.UI._original_prepared_fleet_db_lifetime import original_prepared_fleet_db_lifetime  # noqa: F401
 from Tests.UI.app_factory import (
     _build_test_app,
     drain_active_service_patches,
@@ -674,35 +676,63 @@ async def _verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
             controller._sync_native_console_chat_ui_fn = real_sync
 
 
-@contextmanager
-def _pending_close_app(request, kind, *, surviving_child=False):
-    """Give only prepared new-chat cases a real, explicitly owned database."""
-    from tempfile import TemporaryDirectory
+@asynccontextmanager
+async def _pending_close_app(request, kind, *, surviving_child=False):
+    """Give prepared new-chat cases an exact runtime and database lifetime."""
+    import shutil
+    import sys
+    from tempfile import mkdtemp
+    from Tests.UI._prepared_close_owned_resources import PreparedCloseOwnedResources
 
     app = _ready_app()
     if kind != "chat_create":
         yield app
         return
-    with TemporaryDirectory(
-        prefix="prepared-close-", dir=request.getfixturevalue("tmp_path")
-    ) as directory:
-        db = CharactersRAGDB(
-            Path(directory) / "chats.sqlite", client_id="prepared-close"
-        )
-        app.chachanotes_db = db
-        app.local_chat_conversation_service = ChatConversationService(db)
-        runs = None
-        if surviving_child:
-            from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    temporary_root = request.getfixturevalue("tmp_path").resolve()
+    directory = Path(mkdtemp(prefix="prepared-close-", dir=temporary_root)).absolute()
+    assert directory.resolve().parent == temporary_root
+    db = CharactersRAGDB(directory / "chats.sqlite", client_id="prepared-close")
+    app.chachanotes_db = db
+    app.local_chat_conversation_service = ChatConversationService(db)
+    runs = None
+    if surviving_child:
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-            runs = AgentRunsDB(Path(directory) / "runs.sqlite")
-            app._pending_close_runs = runs
+        runs = AgentRunsDB(directory / "runs.sqlite")
+        app._pending_close_runs = runs
+    owner = PreparedCloseOwnedResources(app, directory, db, runs)
+    app._pending_close_owned_resources = owner
+    try:
+        yield app
+    finally:
+        primary = sys.exception()
         try:
-            yield app
-        finally:
-            if runs is not None:
-                runs.close()
-            db.close_connection()
+            try:
+                # The host is gone, but the original owner loop is still alive.
+                await owner.dispose_runtime()
+            finally:
+                if owner.runtime_terminal:
+                    owner.close_creators()
+                    assert directory.resolve().parent == temporary_root
+                    shutil.rmtree(directory)
+        except BaseException as cleanup:
+            if primary is None:
+                raise
+            # Only fixed helper refusal codes may accompany the primary failure.
+            reasons = {
+                "prepared_close_disposal_wrong_thread",
+                "prepared_close_runtime_runs_not_retained",
+                "prepared_close_finalization_wrong_thread",
+                "prepared_close_runtime_not_disposed",
+                "prepared_close_database_owner_changed",
+                "prepared_close_database_not_retired",
+                "prepared_close_directory_has_live_storage",
+            }
+            reason = (cleanup.args[0] if type(cleanup) is RuntimeError
+                      and len(cleanup.args) == 1 and type(cleanup.args[0]) is str  # noqa: E721 - reject custom static error argument types
+                      and cleanup.args[0] in reasons else None)
+            primary.add_note("prepared_close_cleanup_error:" + type(cleanup).__name__
+                             + (":" + reason if reason is not None else ""))
 
 
 def _prepare_surviving_child(controller, session_id):
@@ -777,6 +807,11 @@ async def _arm_pending_round(
             prepared, creation_run = _prepare_close_new_chat(
                 controller, session_id, "private close chat"
             )
+        owner = getattr(controller.app, "_pending_close_owned_resources", None)
+        if owner is not None:
+            assert owner.app is controller.app
+            owner.adopt_runtime_runs()
+        prepared_runs = getattr(controller._agent_bridge, "runs_db", None)
 
     def request():
         if kind == "approval":
@@ -808,10 +843,13 @@ async def _arm_pending_round(
                 session_id=session_id,
             )
         if kind == "chat_create":
-            return controller.request_chat_create_confirm(
-                prepared,
-                session_id=session_id,
-            )
+            scope = (owner.request_connection_scope(prepared_runs)
+                     if owner is not None else nullcontext())
+            with scope:
+                return controller.request_chat_create_confirm(
+                    prepared,
+                    session_id=session_id,
+                )
         if kind == "worktree_merge":
             return controller.request_worktree_merge_confirm(
                 {"run_id": "private-child", "action": "merge"}, session_id=session_id
@@ -883,7 +921,7 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
             {"allow": False, "remember": False},
         ),
     ]:
-        with _pending_close_app(request, kind) as app:
+        async with _pending_close_app(request, kind) as app:
             host = ProductionConsoleHarness(app)
             async with host.run_test(size=_SIZE) as pilot:
                 console = await _mounted_console(
@@ -1021,7 +1059,7 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
         ("question", {"answered": False, "reason": "cancelled"}),
         ("chat_create", {"allow": False, "remember": False}),
     ):
-        with _pending_close_app(
+        async with _pending_close_app(
             request, kind, surviving_child=kind == "chat_create"
         ) as app:
             host = ProductionConsoleHarness(app)
@@ -1112,7 +1150,7 @@ async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
         request: Pytest request selecting the isolated private-profile child.
         monkeypatch: Pause the real bridge at its payload-enrichment boundary.
     """
-    with _pending_close_app(request, "chat_create", surviving_child=True) as app:
+    async with _pending_close_app(request, "chat_create", surviving_child=True) as app:
         host = ProductionConsoleHarness(app)
         async with host.run_test(size=_SIZE) as pilot:
             console = await _mounted_console(host, pilot, "#console-native-composer")

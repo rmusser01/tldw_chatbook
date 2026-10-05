@@ -96,6 +96,15 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # TASK-32826: batch-read durable manual reminders off-loop so restored
         # conversation rows display their saved unread state on first use.
         ("_load_manual_unread_rows", "console-manual-unread-load"),
+        # TASK-34406 / ADR-126: restored Agent rail/fleet history and nonempty
+        # browser badges move their finite checked reads off the UI loop.
+        # Both are demand driven by the first visible owner/row projection.
+        ("_load_historical_presentation", "console-agent-history"),
+        ("_load_subagent_counts", "console-subagent-counts"),
+        # TASK-34406 / ADR-126: cold provider/context display obtains one
+        # checked off-loop mapping, then publishes only its same-owner result.
+        ("_refresh", "console-readiness-config"),
+        ("_sync_native_console_chat_ui", "console-readiness-publication"),
         ("_refresh_console_skill_candidates", "default"),
         # ADR-197: one off-loop saved-consent snapshot for the Hooks indicator.
         ("_refresh_console_hooks", "console-hook-refresh"),

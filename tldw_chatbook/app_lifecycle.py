@@ -28,7 +28,7 @@ import sqlite3
 import subprocess
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Sequence
 
 from loguru import logger
 from loguru import logger as loguru_logger
@@ -36,7 +36,6 @@ from textual import work
 from textual.message_pump import active_message_pump
 from textual.worker import Worker, WorkerCancelled, WorkerState
 
-from tldw_chatbook.app_keep_alive import keep_alive_notice, retire_dead_pump
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
 from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 from tldw_chatbook.Chat.console_settings_durability import (
@@ -64,6 +63,24 @@ from tldw_chatbook.Widgets.confirmation_dialog import (
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
     from tldw_chatbook.Workflows.session import WorkflowSession
+
+
+def retire_dead_pump(
+    app: Any, pump: Any, frames: Sequence[tuple[str, str, int | None]]
+) -> str | None:
+    """Load the original recovery helper only when handling a pump error."""
+    from tldw_chatbook.app_keep_alive import retire_dead_pump as retire
+
+    return retire(app, pump, frames)
+
+
+def keep_alive_notice(
+    site: tuple[str, str, int | None], pump: Any, raised: BaseException, kind: str
+) -> str:
+    """Preserve the lifecycle alias without loading error recovery at boot."""
+    from tldw_chatbook.app_keep_alive import keep_alive_notice as notice
+
+    return notice(site, pump, raised, kind)
 
 
 DEFERRED_MEDIA_CLEANUP_DELAY_SECONDS = 5.0
@@ -1387,7 +1404,7 @@ class LifecycleMixin:
 
             # Clean up any lingering subprocess
             for proc in (
-                subprocess._active.copy()
+                (subprocess._active or []).copy()
             ):  # Make a copy to avoid modification during iteration
                 try:
                     if proc.poll() is None:  # Process is still running

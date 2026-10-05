@@ -26,6 +26,7 @@ from tldw_chatbook.Chat.rag_scope import (
     serialize_scope,
 )
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.Utils.input_validation import validate_workspace_name
 from tldw_chatbook.Utils.sensitive_paths import find_root_binding_conflict
 
@@ -3359,7 +3360,8 @@ class LocalWorkspaceRegistryService:
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
-            with self.db.connection() as conn:
+            database = self.db
+            with operation_owned_connection(database), database.connection() as conn:
                 row = conn.execute(
                     """
                     SELECT payload, updated_at

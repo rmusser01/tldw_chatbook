@@ -7502,6 +7502,8 @@ class ChatScreen(BaseAppScreen):
         self._console_cost_ttl_timer: Any | None = None
         self._console_sync_in_progress = False
         self._console_sync_requested = False
+        self._console_session_tabs_sync_lock = asyncio.Lock()
+        self._console_session_tabs_sync_calls = 0
         self._console_attach_reconciled = False
         self._console_attach_reconcile_running = False
         self._console_resume_after_reconcile = False
@@ -18393,7 +18395,7 @@ class ChatScreen(BaseAppScreen):
         """Observe actual sync completion without cancelling its publication."""
         if not getattr(self, "_console_sync_maintenance_paused", False):
             raise RuntimeError("console_sync_maintenance_not_paused")
-        while self._console_sync_in_progress:
+        while self._console_sync_in_progress or self._console_session_tabs_sync_calls:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
@@ -18447,10 +18449,17 @@ class ChatScreen(BaseAppScreen):
             return
         if (
             getattr(self, "_console_sync_maintenance_paused", False)
-            or self._console_sync_in_progress
             or getattr(self, "_console_control_bar_replay_whole_sync", False)
         ):
             self._console_sync_requested = True
+            return
+        if self._console_sync_in_progress:
+            self._console_sync_requested = True
+            try:
+                await self._sync_console_native_session_tabs()
+            except Exception:
+                if not _console_screen_is_torn_down(self):
+                    raise
             return
         self._console_sync_in_progress = True
         self._record_ui_worker_started("console-sync")
@@ -18500,14 +18509,9 @@ class ChatScreen(BaseAppScreen):
             # stable metadata observations expire within two seconds. Actions
             # and commits retain their independent fresh native scope checks.
             await self._character_context.refresh_presentation_if_scope_changed(self)
-            # task-280: hand the control bar a pre-await snapshot (its own
-            # pre-existing timing). The rail-VISIBILITY call below must NOT
-            # reuse this snapshot: `_sync_console_native_session_tabs` can
-            # create/activate a session, changing what the rail derivation
-            # sees, and pre-task-280 the visibility check always computed
-            # fresh post-await state (PR #660 review caught the reuse as a
-            # staleness regression — the one-tuple-per-tick dedupe is
-            # withdrawn for the visibility half).
+            # Tab publication can create/activate a session. Capture and
+            # warm the current target after it suspends; rail visibility
+            # still derives fresh state after transcript publication (PR #660).
             #
             # TASK-22201: the workspace-context builds of one tick (the rail
             # states here, the workspace-context push, the control bar's and
@@ -18523,6 +18527,9 @@ class ChatScreen(BaseAppScreen):
                 self, max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
             )
             with read_snapshot.scope(), self._workspace.tick_workspace_build_scope():
+                # Publish current membership before a cold display read. Read
+                # the current controller/store only after publication suspends.
+                await self._sync_console_native_session_tabs()
                 controller = self._console_chat_controller
                 store = self._console_chat_store
                 if (
@@ -18544,9 +18551,8 @@ class ChatScreen(BaseAppScreen):
                 self._sync_console_settings_recovery_surfaces()
                 self._sync_console_live_work_readiness_rows()
                 self._sync_console_mode_bar()
-                await self._sync_console_native_session_tabs()
-                # Re-read the target after suspension; a tab publication may
-                # have created, persisted or activated a different session.
+                # Re-read after readiness suspension; interleaved owner
+                # changes require their own fresh warm before later UI reads.
                 controller = self._console_chat_controller
                 store = self._console_chat_store
                 if (
@@ -18605,51 +18611,93 @@ class ChatScreen(BaseAppScreen):
 
     async def _sync_console_native_session_tabs(self) -> None:
         """Refresh native Console session tabs from store state."""
+        self._console_session_tabs_sync_calls += 1
         try:
-            surface = self.query_one("#console-session-surface", ConsoleSessionSurface)
-        except QueryError:
-            return
-        store = self._ensure_console_chat_store()
-        self._session._ensure_active_console_session_settings()
-        controller = getattr(self, "_console_chat_controller", None)
-        streaming_session_id = (
-            controller.streaming_session_id() if controller is not None else None
-        )
-        sessions = store.sessions()
-        # PR3a-2 Task 4: viewing IS the clear -- the active session's
-        # conversation carrying the durable unseen-completion mark means
-        # the user is now looking at the conversation the badge points to,
-        # so the mark (and with it every surface it drives) is cleared
-        # through the named seam. Guarded by the cached set first, so the
-        # common no-mark tick costs no DB access.
-        # Parallel-agents spec PA-T8: per-session fleet marker (RUNNING /
-        # NEEDS_APPROVAL / FINISHED_OK / FINISHED_FAILED), superseding the
-        # legacy single-session `streaming_session_id` cursor above for tabs
-        # that have a controller -- `run_marker_for` already derives RUNNING
-        # from the same live-busy definition `streaming_session_id` used, so
-        # this is a strict superset, not a second notion of "in-flight".
-        # PR3a-2 Task 4 threads the durable unseen-completion mark in as
-        # the lowest-precedence marker (`_console_run_marker_with_unseen`).
-        run_markers = self._fleet.prepare_session_run_markers(
-            tuple(sessions),
-            store.active_session_id,
-        )
-        queue_counts = (
-            {
-                session.id: controller.activity_for(session.id).queued_count
-                for session in sessions
-            }
-            if controller is not None
-            else None
-        )
-        self._maybe_show_fleet_coachmark(sessions, surface)
-        await surface.sync_sessions(
-            sessions=sessions,
-            active_session_id=store.active_session_id,
-            streaming_session_id=streaming_session_id,
-            run_markers=run_markers,
-            queue_counts=queue_counts,
-        )
+            async with self._console_session_tabs_sync_lock:
+                while True:
+                    if _console_screen_is_torn_down(self):
+                        return
+                    try:
+                        surface = self.query_one(
+                            "#console-session-surface", ConsoleSessionSurface
+                        )
+                    except QueryError:
+                        return
+                    store = self._ensure_console_chat_store()
+                    sessions = store.sessions()
+                    active_session_id = store.active_session_id
+                    active_session = next(
+                        (
+                            session
+                            for session in sessions
+                            if session.id == active_session_id
+                        ),
+                        None,
+                    )
+                    # Tabs reuse established settings. Checked readiness
+                    # publication owns pristine-default convergence; only
+                    # missing settings/blank creation need the live ensure.
+                    if active_session is None or active_session.settings is None:
+                        self._session._ensure_active_console_session_settings()
+                        store = self._ensure_console_chat_store()
+                        sessions = store.sessions()
+                        active_session_id = store.active_session_id
+                    controller = getattr(self, "_console_chat_controller", None)
+                    streaming_session_id = (
+                        controller.streaming_session_id()
+                        if controller is not None
+                        else None
+                    )
+                    membership = tuple((session.id, session) for session in sessions)
+                    # Preserve the original seen-mark, fleet marker and queue
+                    # count path for every actual membership publication.
+                    run_markers = self._fleet.prepare_session_run_markers(
+                        tuple(sessions), active_session_id
+                    )
+                    queue_counts = (
+                        {
+                            session.id: controller.activity_for(session.id).queued_count
+                            for session in sessions
+                        }
+                        if controller is not None
+                        else None
+                    )
+                    self._maybe_show_fleet_coachmark(sessions, surface)
+                    await surface.sync_sessions(
+                        sessions=sessions,
+                        active_session_id=active_session_id,
+                        streaming_session_id=streaming_session_id,
+                        run_markers=run_markers,
+                        queue_counts=queue_counts,
+                    )
+                    if _console_screen_is_torn_down(self):
+                        return
+                    # The Surface's own lock/mount awaits permit owner changes.
+                    # Repaint those changes within this same counted caller.
+                    if self._console_chat_store is not store:
+                        continue
+                    current_sessions = store.sessions()
+                    if (
+                        store.active_session_id != active_session_id
+                        or len(current_sessions) != len(membership)
+                        or any(
+                            current is not captured or current.id != session_id
+                            for (session_id, captured), current in zip(
+                                membership, current_sessions
+                            )
+                        )
+                    ):
+                        continue
+                    try:
+                        current_surface = self.query_one(
+                            "#console-session-surface", ConsoleSessionSurface
+                        )
+                    except QueryError:
+                        return
+                    if current_surface is surface:
+                        return
+        finally:
+            self._console_session_tabs_sync_calls -= 1
 
     async def _append_native_console_system_message(
         self, message: str, *, session_id: str | None = None

@@ -2309,11 +2309,65 @@ class ServiceWiringMixin:
         self.research_source_association_scheduler = scheduler
 
     def _build_chatbook_db_paths(self) -> dict[str, str]:
-        return {
-            "ChaChaNotes": str(get_chachanotes_db_path()),
-            "Media": str(get_media_db_path()),
-            "Prompts": str(get_prompts_db_path()),
-        }
+        import sys
+        from types import FunctionType
+
+        from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery import config_participants as life
+
+        callbacks = (get_chachanotes_db_path, get_media_db_path, get_prompts_db_path)
+        names = ("get_chachanotes_db_path", "get_media_db_path", "get_prompts_db_path")
+        selected = None
+        retained = life.__dict__.get("_STARTUP_PATH_READER_ORIGINAL")
+        tuple_type = tuple
+        if type(retained) is tuple_type and len(retained) == 3:
+            reader, code, namespace = retained
+            if (
+                type(reader) is FunctionType
+                and life.__dict__.get("_startup_path_config_bundle") is reader
+                and reader.__code__ is code
+                and reader.__globals__ is namespace
+                and namespace is life.__dict__
+                and reader.__defaults__ is None
+                and reader.__kwdefaults__ is None
+                and reader.__closure__ is None
+            ):
+                selected = reader(
+                    config,
+                    tuple(
+                        (sys.modules[__name__], name, callback)
+                        for name, callback in zip(names, callbacks)
+                    ),
+                )
+        if selected is None:
+            return {
+                "ChaChaNotes": str(get_chachanotes_db_path()),
+                "Media": str(get_media_db_path()),
+                "Prompts": str(get_prompts_db_path()),
+            }
+        bundle, check = selected
+        operation, identity = bundle.operation, bundle.checked_identity
+        capture, publish, key, error = (
+            bundle.capture_publication,
+            bundle.check_publication,
+            bundle.key,
+            bundle.error,
+        )
+        check()
+        with operation(config) as active:
+            check()
+            owner = capture(config, active)
+            paths = {}
+            for label, callback in zip(("ChaChaNotes", "Media", "Prompts"), callbacks):
+                check()
+                paths[label] = str(callback())
+                check()
+                if identity(config, active) != (key[1], key[3]):
+                    raise error("chatbook_path_source_changed")
+        with owner[-1]:
+            check(publication=True)
+            publish(config, owner)
+            return paths
 
     def _wire_prompt_chatbook_services(self) -> None:
         self.local_prompt_service = LocalPromptService(prompts_interop)

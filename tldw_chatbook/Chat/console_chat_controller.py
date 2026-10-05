@@ -15677,12 +15677,46 @@ class ConsoleChatController:
             if publish_counts:
                 self._publish_mcp_inspector_counts(tool_count, not_connected)
 
-        service = getattr(self.app, "unified_mcp_service", None)
+        app = self.app
+        service = getattr(app, "unified_mcp_service", None)
         if service is None:
             publish(None, None)
             return None
+        from tldw_chatbook.Agents import mcp_tool_provider as provider_source
+
+        factory = MCPToolProvider
+        composition = None
         try:
-            kill_switch = await asyncio.to_thread(service.get_kill_switch)
+            capture, capture_code, capture_globals, capture_inputs = (
+                provider_source._CONTROLLER_CAPTURE_ORIGINAL
+            )
+            if (
+                provider_source.capture_standard_controller_composition is capture
+                and capture.__code__ is capture_code
+                and capture.__globals__ is capture_globals
+                and capture_globals is vars(provider_source)
+                and provider_source._ControllerCatalogComposition
+                is provider_source._CONTROLLER_COMPOSITION_CLASS
+                and all(
+                    vars(owner).get(name) is function
+                    and function.__code__ is code
+                    and function.__globals__ is namespace
+                    and namespace is vars(provider_source)
+                    for owner, name, function, code, namespace, inputs in provider_source._CONTROLLER_COMPOSE_HELPERS
+                )
+                and provider_source._controller_inputs_checker_current()
+                and provider_source._controller_inputs_current(capture, capture_inputs)
+                and all(
+                    provider_source._controller_inputs_current(function, inputs)
+                    for _owner, _name, function, _code, _namespace, inputs in provider_source._CONTROLLER_COMPOSE_HELPERS
+                )
+            ):
+                composition = capture(factory, service)
+            kill_switch = (
+                False
+                if composition is not None
+                else await asyncio.to_thread(service.get_kill_switch)
+            )
         except Exception:  # noqa: BLE001 -- fail closed to "no MCP this run"
             logger.opt(exception=True).warning(
                 "ConsoleChatController: get_kill_switch failed; skipping MCP this run"
@@ -15695,7 +15729,39 @@ class ConsoleChatController:
         bound_request_approvals = functools.partial(
             self.request_mcp_approvals, session_id=session_id
         )
-        provider = MCPToolProvider(
+
+        def require_composition_current(provider=None):
+            if composition is not None:
+                if (
+                    self.app is not app
+                    or getattr(app, "unified_mcp_service", None) is not service
+                ):
+                    raise PermissionError("mcp_catalog_owner_changed")
+                if (
+                    provider_source._ControllerCatalogComposition
+                    is not provider_source._CONTROLLER_COMPOSITION_CLASS
+                    or not all(
+                        vars(owner).get(name) is function
+                        and function.__code__ is code
+                        and function.__globals__ is namespace
+                        and namespace is vars(provider_source)
+                        for owner, name, function, code, namespace, inputs in provider_source._CONTROLLER_COMPOSE_HELPERS
+                    )
+                    or not provider_source._controller_inputs_checker_current()
+                    or not all(
+                        provider_source._controller_inputs_current(function, inputs)
+                        for _owner, _name, function, _code, _namespace, inputs in provider_source._CONTROLLER_COMPOSE_HELPERS
+                    )
+                ):
+                    raise PermissionError("mcp_catalog_source_changed")
+                composition.require_current(MCPToolProvider, provider)
+
+        try:
+            require_composition_current()
+        except Exception:  # noqa: BLE001 -- qualification drift refuses composition
+            publish(None, None)
+            return None
+        provider = (factory if composition is not None else MCPToolProvider)(
             service=service,
             main_loop=asyncio.get_running_loop(),
             approval_callback=bound_request_approvals,
@@ -15717,7 +15783,12 @@ class ConsoleChatController:
             maximum_definition_hashes=maximum_definition_hashes,
         )
         try:
-            await provider.compose_catalog()
+            require_composition_current(provider)
+            if composition is not None:
+                await provider.compose_catalog(_controller_composition=composition)
+            else:
+                await provider.compose_catalog()
+            require_composition_current(provider)
         except Exception:  # noqa: BLE001 -- a composition failure must not abort the send
             logger.opt(exception=True).warning(
                 "ConsoleChatController: MCP compose_catalog failed; skipping MCP this run"

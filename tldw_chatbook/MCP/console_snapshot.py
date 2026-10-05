@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from types import MappingProxyType, MethodType
+from types import FunctionType, MappingProxyType, MethodType
 from typing import Any, Callable
 
 from loguru import logger
@@ -35,12 +35,18 @@ from .permission_store import (
     MCPPermissionStore,
     EffectiveToolState,
     _CONSOLE_STANDARD_METHODS as _permission_methods,
+    _CONSOLE_CONTROLLER_PERMISSION_MODULE as _permission_switch_module,
+    _CONSOLE_CONTROLLER_PERMISSION_CLASS as _permission_switch_class,
+    _CONSOLE_CONTROLLER_PERMISSION_METHODS as _permission_switch_methods,
     definition_hash,
     resolve_effective_state,
 )
 from .unified_control_plane_service import (
     UnifiedMCPControlPlaneService,
     _CONSOLE_STANDARD_METHODS as _unified_methods,
+    _CONSOLE_CONTROLLER_SWITCH_MODULE as _unified_switch_module,
+    _CONSOLE_CONTROLLER_SWITCH_CLASS as _unified_switch_class,
+    _CONSOLE_CONTROLLER_SWITCH_METHODS as _unified_switch_methods,
 )
 
 
@@ -585,3 +591,200 @@ async def capture_console_definition_maximum(
                 type(exc).__name__,
             )
             return {}
+
+
+def _capture_controller_inputs(function):
+    keyword_defaults = function.__kwdefaults__
+    closure = function.__closure__
+    return (
+        function.__defaults__,
+        keyword_defaults,
+        tuple(dict.items(keyword_defaults)) if keyword_defaults is not None else (),
+        closure,
+        tuple((cell, cell.cell_contents) for cell in closure or ()),
+    )
+
+
+def _controller_inputs_current(function, inputs):
+    defaults, keyword_defaults, keyword_items, closure, cells = inputs
+    if (
+        function.__defaults__ is not defaults
+        or function.__kwdefaults__ is not keyword_defaults
+        or function.__closure__ is not closure
+    ):
+        return False
+    if keyword_defaults is not None:
+        if type(keyword_defaults) is not dict:  # noqa: E721 -- exact built-in inputs
+            return False
+        current_items = tuple(dict.items(keyword_defaults))
+        if len(current_items) != len(keyword_items) or not all(
+            current_key is key and current_value is value
+            for (current_key, current_value), (key, value) in zip(
+                current_items, keyword_items
+            )
+        ):
+            return False
+    if len(closure or ()) != len(cells):
+        return False
+    try:
+        return all(
+            current_cell is cell and current_cell.cell_contents is contents
+            for current_cell, (cell, contents) in zip(closure or (), cells)
+        )
+    except ValueError:
+        return False
+
+
+def _controller_switch_callbacks_current():
+    if (
+        sys.modules.get(_unified_switch_module.__name__) is not _unified_switch_module
+        or vars(_unified_switch_module).get("UnifiedMCPControlPlaneService")
+        is not _unified_switch_class
+        or UnifiedMCPControlPlaneService is not _unified_switch_class
+        or vars(_unified_switch_module).get("_CONSOLE_CONTROLLER_SWITCH_METHODS")
+        is not _unified_switch_methods
+        or sys.modules.get(_permission_switch_module.__name__)
+        is not _permission_switch_module
+        or vars(_permission_switch_module).get("MCPPermissionStore")
+        is not _permission_switch_class
+        or MCPPermissionStore is not _permission_switch_class
+        or vars(_permission_switch_module).get("_CONSOLE_CONTROLLER_PERMISSION_METHODS")
+        is not _permission_switch_methods
+    ):
+        return False
+    for name, descriptor, function, code, namespace, inputs in _unified_switch_methods:
+        current = vars(_unified_switch_class).get(name)
+        if not (
+            current is descriptor
+            and (type(current) is not property or current.fget is function)
+            and type(function) is FunctionType
+            and function.__code__ is code
+            and function.__globals__ is namespace
+            and namespace is vars(_unified_switch_module)
+            and _controller_inputs_current(function, inputs)
+        ):
+            return False
+    for name, wrapper, bindings in _permission_switch_methods:
+        if (
+            vars(_permission_switch_class).get(name) is not wrapper
+            or len(bindings) != 2
+        ):
+            return False
+        for function, code, namespace, defining_module, inputs in bindings:
+            if not (
+                type(function) is FunctionType
+                and function.__code__ is code
+                and function.__globals__ is namespace
+                and namespace is vars(defining_module)
+                and sys.modules.get(defining_module.__name__) is defining_module
+                and _controller_inputs_current(function, inputs)
+            ):
+                return False
+    return True
+
+
+_CONTROLLER_INPUTS_CHECK = (
+    _controller_inputs_current,
+    _controller_inputs_current.__code__,
+    _controller_inputs_current.__globals__,
+)
+
+
+def _controller_inputs_checker_current():
+    original, code, namespace = _CONTROLLER_INPUTS_CHECK
+    return (
+        type(_controller_inputs_current) is FunctionType
+        and _controller_inputs_current is original
+        and original.__code__ is code
+        and original.__globals__ is namespace
+        and namespace is globals()
+        and original.__defaults__ is None
+        and original.__kwdefaults__ is None
+        and original.__closure__ is None
+    )
+
+
+# TASK-34403: defining metadata for the fresh composition switch pipeline.
+# This table is callback provenance only; each actual source read stays native.
+_CONTROLLER_PRECHECK_MODULE = sys.modules[__name__]
+_CONTROLLER_PRECHECK_CLASS = _CapturedSources
+_CONTROLLER_PRECHECK_FUNCTIONS = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__globals__,
+        _capture_controller_inputs(function),
+    )
+    for name, function in (
+        ("_controller_inputs_current", _controller_inputs_current),
+        ("_controller_inputs_checker_current", _controller_inputs_checker_current),
+        ("_controller_switch_callbacks_current", _controller_switch_callbacks_current),
+        ("_source_identity", _source_identity),
+        ("_original_method", _original_method),
+        ("_original_bound_method", _original_bound_method),
+        ("_original_class_member", _original_class_member),
+        ("_same_callback", _same_callback),
+        ("standard_local_catalog_sources", standard_local_catalog_sources),
+        ("standard_console_sources", standard_console_sources),
+        ("standard_console_catalog_sources", standard_console_catalog_sources),
+        ("_owned_worker", _owned_worker),
+        ("_checked_read", _checked_read),
+        ("read_console_kill_switch", read_console_kill_switch),
+    )
+)
+_CONTROLLER_PRECHECK_METHODS = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__globals__,
+        _capture_controller_inputs(function),
+    )
+    for name in (
+        "__init__",
+        "_method_bindings",
+        "require_current",
+        "permission_owner",
+        "permission_call",
+    )
+    for function in (vars(_CapturedSources)[name],)
+)
+
+
+def controller_precheck_pipeline_current() -> bool:
+    """Check originals without resolving a path or reusing permission data."""
+    if (
+        sys.modules.get(__name__) is not _CONTROLLER_PRECHECK_MODULE
+        or _CapturedSources is not _CONTROLLER_PRECHECK_CLASS
+    ):
+        return False
+    for owner, bindings in (
+        (vars(_CONTROLLER_PRECHECK_MODULE), _CONTROLLER_PRECHECK_FUNCTIONS),
+        (vars(_CONTROLLER_PRECHECK_CLASS), _CONTROLLER_PRECHECK_METHODS),
+    ):
+        for name, original, code, namespace, inputs in bindings:
+            current = owner.get(name)
+            if not (
+                type(current) is FunctionType
+                and current is original
+                and current.__code__ is code
+                and current.__globals__ is namespace
+                and namespace is vars(_CONTROLLER_PRECHECK_MODULE)
+            ):
+                return False
+    if not _controller_inputs_checker_current():
+        return False
+    for bindings in (_CONTROLLER_PRECHECK_FUNCTIONS, _CONTROLLER_PRECHECK_METHODS):
+        for _name, function, _code, _namespace, inputs in bindings:
+            if not _controller_inputs_current(function, inputs):
+                return False
+    return _controller_switch_callbacks_current()
+
+
+_CONTROLLER_PIPELINE_CHECK = (
+    controller_precheck_pipeline_current,
+    controller_precheck_pipeline_current.__code__,
+    controller_precheck_pipeline_current.__globals__,
+    _capture_controller_inputs(controller_precheck_pipeline_current),
+)
