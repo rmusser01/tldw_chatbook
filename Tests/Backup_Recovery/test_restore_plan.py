@@ -782,6 +782,64 @@ def test_real_older_sqlite_migrates_only_private_candidate(tmp_path):
     assert source.read_bytes() == original
 
 
+@pytest.mark.parametrize("dictionary", [False, True])
+def test_shipped76_archive_stages_v77_without_changing_source(tmp_path, dictionary):
+    import sqlite3
+    from contextlib import closing
+
+    from Tests.Backup_Recovery.test_chachanotes_native76_compatibility import (
+        _checkpoint_state,
+        _owner,
+        _shipped76,
+    )
+    from tldw_chatbook.Backup_Recovery import sqlite_validation as validation
+    from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
+    from tldw_chatbook.Backup_Recovery.staging import stage_restore
+
+    source = tmp_path / "shipped.sqlite"
+    before, messages, indexes = _shipped76(source, dictionary=dictionary)
+    original = source.read_bytes()
+    owner = _owner()
+    assert validation.validate_candidate(owner, source, Event(), migrate=False) == ()
+
+    def primary(doc):
+        producer(doc)
+        doc["directories"][0]["synthetic"] = True
+        doc["owners"][0].update(owner_id=owner.owner_id, schema_version=76)
+        doc["files"][0]["owner_id"] = owner.owner_id
+        logical_id = "profile:profile:" + owner.owner_id
+        doc["files"][0]["logical_id"] = logical_id
+        doc["dependency_groups"][0]["members"] = [logical_id]
+        for row in doc["producer_inventory"]:
+            row["owner_id"] = owner.owner_id
+            if row["logical_id"] == "file":
+                row["logical_id"] = logical_id
+
+    archive = sealed(tmp_path, mutate=primary, data=original)
+    archive_paths = (tmp_path / "fixture.zip", archive.path)
+    archive_bytes = tuple(path.read_bytes() for path in archive_paths)
+    destination = tmp_path / "new"
+    plan = plan_restore(
+        archive, mode="isolated", destinations={"root": destination}, target=None
+    )
+    assert plan.local_snapshot is None
+    candidate = stage_restore(archive, plan, tmp_path / "work", Event())
+    rows = json.loads((candidate / "candidate.json").read_bytes())["artifacts"]
+    path = Path(next(row for row in rows if row["kind"] == "file")["candidate"])
+    assert validation.validated_schema_version(owner, path, Event()) == 77
+    after, restored_messages, restored_indexes = _checkpoint_state(path)
+    for row in after:
+        assert row.pop("agent_chat_start_attempt_id") is None
+    assert after == before
+    assert restored_messages == messages
+    assert all(index in restored_indexes for index in indexes)
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    assert source.read_bytes() == original
+    assert tuple(path.read_bytes() for path in archive_paths) == archive_bytes
+    assert not destination.exists()
+
+
 def test_synthetic_container_does_not_authorize_sibling_retirement(tmp_path):
     from tldw_chatbook.Backup_Recovery.restore_plan import plan_restore
 

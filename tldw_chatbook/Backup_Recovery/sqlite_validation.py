@@ -96,6 +96,8 @@ class _Restrictions:
         self.steps = 0
         self.migrating = False
         self.migration_owner = None
+        self.shipped_checkpoint_migration = False
+        self.shipped_checkpoint_rename = False
         self.canvas_schema = False
         self.changing_schema_trust = False
         self.reading_fts_metadata = False
@@ -146,7 +148,78 @@ class _Restrictions:
             return second in {"type", "name", "sql"}
         return action == sqlite3.SQLITE_UPDATE and second == "sql"
 
+    def _shipped_checkpoint_step(self, action, first, second, database, source):
+        """Admit only the measured installed v76 checkpoint rebuild callbacks."""
+        if not (
+            self.shipped_checkpoint_migration
+            and self.migrating
+            and self.migration_owner == "db.chachanotes.primary"
+            and source is None
+        ):
+            return False
+        if action == sqlite3.SQLITE_ALTER_TABLE:
+            return self.shipped_checkpoint_rename and (first, second, database) == (
+                "main",
+                "console_dispatch_checkpoints_v77",
+                None,
+            )
+        if action == sqlite3.SQLITE_FUNCTION:
+            return self.shipped_checkpoint_rename and (first, second, database) == (
+                None,
+                "sqlite_rename_table",
+                None,
+            )
+        # RENAME compiles these internal updates even with no temporary tables
+        # or AUTOINCREMENT on the renamed table (observed on SQLite 3.49.1).
+        if database == "temp" and first == "sqlite_temp_master":
+            return self.shipped_checkpoint_rename and (
+                action == sqlite3.SQLITE_READ
+                and second in {"type", "name", "sql", "tbl_name"}
+                or action == sqlite3.SQLITE_UPDATE
+                and second in {"sql", "tbl_name"}
+            )
+        if database != "main":
+            return False
+        indexes = {
+            "idx_console_dispatch_checkpoint_conversation",
+            "idx_console_dispatch_checkpoints_user_message",
+        }
+        return (
+            action == sqlite3.SQLITE_CREATE_TABLE
+            and first == "console_dispatch_checkpoints_v77"
+            or action == sqlite3.SQLITE_INSERT
+            and first in {"sqlite_master", "console_dispatch_checkpoints_v77"}
+            or action == sqlite3.SQLITE_DROP_TABLE
+            and first == "console_dispatch_checkpoints"
+            or action == sqlite3.SQLITE_DELETE
+            and first in {"sqlite_master", "console_dispatch_checkpoints"}
+            or action == sqlite3.SQLITE_CREATE_INDEX
+            and (
+                first in indexes
+                and second == "console_dispatch_checkpoints"
+                or first
+                in {
+                    "sqlite_autoindex_console_dispatch_checkpoints_v77_1",
+                    "sqlite_autoindex_console_dispatch_checkpoints_v77_2",
+                    "sqlite_autoindex_console_dispatch_checkpoints_v77_3",
+                }
+                and second == "console_dispatch_checkpoints_v77"
+            )
+            or action == sqlite3.SQLITE_REINDEX
+            and first in indexes
+            or action == sqlite3.SQLITE_UPDATE
+            and (
+                self.shipped_checkpoint_rename
+                and first == "sqlite_sequence"
+                and second == "name"
+                or first == "sqlite_master"
+                and second in {"type", "name", "tbl_name", "rootpage", "sql"}
+            )
+        )
+
     def authorize(self, action, first, second, database, source):
+        if self._shipped_checkpoint_step(action, first, second, database, source):
+            return sqlite3.SQLITE_OK
         if self._evals_drop_column_step(action, first, second, database):
             return sqlite3.SQLITE_OK
         if database not in (None, "main"):
@@ -221,6 +294,15 @@ class _Restrictions:
         if self.migrating:
             if action == sqlite3.SQLITE_TRANSACTION:
                 return sqlite3.SQLITE_OK
+            if self.migration_owner == "db.chachanotes.primary":
+                allowed = (
+                    action == sqlite3.SQLITE_UPDATE
+                    and first == "db_schema_version"
+                    and second == "version"
+                    and database == "main"
+                    and source is None
+                )
+                return sqlite3.SQLITE_OK if allowed else sqlite3.SQLITE_DENY
             # Research keeps its existing ADD COLUMN authority. Only fixed
             # installed statements execute while this temporary gate is open.
             if (
@@ -296,15 +378,6 @@ class _Restrictions:
                 )
                 if allowed:
                     return sqlite3.SQLITE_OK
-            if (
-                self.migration_owner == "db.chachanotes.primary"
-                and action == sqlite3.SQLITE_UPDATE
-                and first == "db_schema_version"
-                and second == "version"
-                and database == "main"
-                and source is None
-            ):
-                return sqlite3.SQLITE_OK
             if self.migration_owner == "db.prompts.primary":
                 allowed = (
                     action == sqlite3.SQLITE_CREATE_TABLE
@@ -655,19 +728,22 @@ def _validate_candidate(
             if issues:
                 return (issues, None)
             if migrate and version != max(policy.versions):
+                shipped_checkpoint = False
                 if installed.owner_id == "db.chachanotes.primary":
                     from tldw_chatbook.DB.recovery_core_schema import (
                         CHACHANOTES_V76_NATIVE_SCHEMAS,
+                        CHACHANOTES_V76_SHIPPED_SCHEMAS,
                     )
 
                     actual_sql = tuple(
                         row[3] for row in _catalog(connection) if row[3] is not None
                     )
-                    if (
-                        version != 76
-                        or actual_sql not in CHACHANOTES_V76_NATIVE_SCHEMAS
+                    if version != 76 or actual_sql not in (
+                        *CHACHANOTES_V76_NATIVE_SCHEMAS,
+                        *CHACHANOTES_V76_SHIPPED_SCHEMAS,
                     ):
                         return (("unsupported_schema_migration",), None)
+                    shipped_checkpoint = actual_sql in CHACHANOTES_V76_SHIPPED_SCHEMAS
                 restrictions.migrating = True
                 restrictions.migration_owner = installed.owner_id
                 try:
@@ -681,6 +757,43 @@ def _validate_candidate(
                         if len(choices) != 1:
                             return (("unsupported_schema_migration",), None)
                         expected, statements = choices[0]
+                        if shipped_checkpoint:
+                            migration = (
+                                Path(__file__).resolve().parents[1]
+                                / "DB"
+                                / "migrations"
+                                / "chachanotes_v76_to_v77_agent_chat_starts.sql"
+                            )
+                            restrictions.shipped_checkpoint_migration = True
+                            try:
+                                pending = ""
+                                for line in migration.read_text(
+                                    encoding="utf-8"
+                                ).splitlines(keepends=True):
+                                    pending += line
+                                    if sqlite3.complete_statement(pending):
+                                        if restrictions.expired():
+                                            raise InterruptedError
+                                        # Only this fixed RENAME needs internal sequence/temp
+                                        # updates; direct SQL cannot borrow their authority.
+                                        restrictions.shipped_checkpoint_rename = (
+                                            pending.strip()
+                                            == (
+                                                "ALTER TABLE console_dispatch_checkpoints_v77 "
+                                                "RENAME TO console_dispatch_checkpoints;"
+                                            )
+                                        )
+                                        try:
+                                            connection.execute(pending)
+                                        finally:
+                                            restrictions.shipped_checkpoint_rename = (
+                                                False
+                                            )
+                                        pending = ""
+                                if pending.strip():
+                                    raise ValueError("incomplete_installed_migration")
+                            finally:
+                                restrictions.shipped_checkpoint_migration = False
                         for statement in statements:
                             if restrictions.expired():
                                 raise InterruptedError
