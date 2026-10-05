@@ -1909,3 +1909,57 @@ Fresh clean-head scale/UI measurements follow this commit. Eliminating unused
 queries is not evidence that the unchanged 50ms activation/100ms busy limits
 now pass, nor native/Windows/participant or application-cache retirement proof.
 All TASK-31966 acceptance criteria remain open.
+
+### Native-label correction: frozen-source requalification — 2026-10-05
+
+Frozen `b738054edf475e2128b9b8d80b52d13a2e68492c` uses a fresh
+10,000-conversation/250,000-eligible-message corpus plus four excluded canaries.
+Ready index, counts10,000/250,004/10,000 and quick-check pass; corpus SHA256
+`27437f2ea7de6c9e763e4d65a3b1f35fa45eaad4916fafddf97bb85107a3dafd`.
+All300 standalone Keyword identities pass, P95105.448875ms, loop9.916375ms;
+registered handles and owned DB files after cleanup are zero. Source fences hold.
+Raw root is `/tmp/task31966-native-label-8xIitV`: `build.log`,
+`corpus/build-receipt.json`, `keyword.log`, `keyword/keyword-receipt.json`.
+
+The normal UI matrix still fails, exit1. All60 exact searches/eight OPENED
+activations complete at52x20/120x50, no app exception and unchanged corpus/source.
+Six activation loop windows exceed50ms: narrow62.180750/56.246083/61.527750ms;
+wide62.025958/89.041708/78.595167ms. One wide body search also fails51.097ms.
+Preparation39.248/37.417333ms and all busy paints (maximum34.058417ms) pass their
+unchanged limits. Observer maximum46.2925ms is retained as an overhead limit,
+not exclusive production cost; cross-run variation does not prove a causal
+latency improvement. Four/eleven rows paint from50 fetched. One Chat handle at
+run_test unmount is not whole-app retirement. Retain `ui.log` and
+`ui/ui-evidence/ui-latency-evidence.json`; no failing sample is discarded.
+
+Actual CUA macOS attempt uses only new Terminal window121584, prepared synthetic
+source30conversations/60messages/28index documents (digest
+`45855f5b92f67eefb1429df5463e4973dea8297465ade69181dd471e779dea12`).
+Accessibility/Screen Recording are granted; foregrounding the dedicated QA
+window was authorized. Native Ctrl+K shows CURRENT Indigo-07 versus highlighted
+MRU Amber-07; native Return displays `NATIVE_MARKER_AMBER_07`, three tabs
+unchanged. Actual cells remain244x73, not a required viewport. Evidence:
+`native-07.jpg` and `native-08.jpg`; startup is `native-macos/native-startup.json`.
+Host is macOS26.5.2 arm64, Terminal2.15, Python3.12.11/Textual8.2.8. SHA256:
+launcher `1d897dabe88a1e35eb3fc69f54feb909eea96f03fa0574af38aeadcb51f3a65b`;
+Active frame `3fc5481ae999c2d4c6b9b5558f116836a74862d938d3184e35c36e2ddf8260ac`;
+resumed frame `6462539cdb1d489ca4c5689a33f94837467fd55e0945fc92d9811cab45bfcf41`.
+The Inspector's initial snapshot is Not Applicable; actual Shell > Show
+Inspector later reveals Columns244/Rows73. Its panel controls are absent from
+the CLI AX tree. Pixel/AX-text attempts do not change size; text insertion is
+acknowledged against a shell AXTextArea instead of the intended field. Do not
+count these attempts as resizing or text-entry success.
+
+The integrated computer-use selector then explicitly denies
+`com.apple.Terminal` for safety reasons. Terminal UI operations stop immediately;
+no alternate UI path follows that denial. The controller verifies only disposable
+Python PID80035's full command and sends SIGINT. `ps` confirms it has stopped.
+Its returned-not-qualified receipt has null return_code, unchanged corpus and
+clean/exact final source fences, with26 DB descriptors at app return. This is
+controller interruption, not normal native quit or retirement. Required native
+viewports/workflows, font/zoom/remapping, Windows and actual participants remain
+unqualified. Read-only app inventory finds installed VMware/Parallels, neither
+running; that is not proof of an available prepared Windows qualification host.
+
+The tested code is available for draft PR review; this receipt does not establish
+merge/release readiness or waive the remaining TASK-31245/TASK-31966 gates.

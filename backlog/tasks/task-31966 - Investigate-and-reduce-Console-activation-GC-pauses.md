@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 18:10'
+updated_date: '2026-10-05 18:30'
 labels:
   - console
   - performance
@@ -255,4 +255,6 @@ Approved Console-only diagnostic completed at clean 5c8c69babbc58024076dcc69148b
 Implemented bounded native authoritative-label fallback correction: existing trimmed session names no longer trigger unused card SELECTs; missing/blank/deleted fallback, identities, persisted/page projection and checked activation authority remain unchanged. Real file-backed SQLite and ConsoleChatStore isolated RED3fail/1control; GREEN7pass3.41s. Affected installed activation/measurement/projection verification53pass79.52s, exit0/no warnings, all53 strict DB-file censuses empty. New test range/production formatting clean; seven test and69 production inherited Ruff diagnostic multisets unchanged. All11 artifact guards/whitespace pass. Existing ADR120/198; no cache/GC/lifetime/interface policy or new ADR. Raw root /tmp/task31966-native-label-8xIitV and durable receipt in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. Fresh frozen-source scale/UI and native/Windows/participant qualification remain next; all AC open.
 
 Independent scoped read-only review found no critical, important or minor findings; local patch ready for planned qualification, not global merge-ready. Its separate seven-node run passed4.59s with unrelated shared-temp cleanup warnings; isolated strict53-test receipt above remains the warning-free evidence.
+
+Frozen b738054edf fresh10k/250k Keyword300passes,P95105.448875ms,loop9.916375ms,zero owned cleanup resources. NormalUI60exact searches/eightOPENED but sixactivation windows(max89.041708ms) andonebodysearch51.097ms fail50ms; preparation/busy gates pass. Source/corpus guards hold, observer max46.2925ms retained as limit. NativeQA window121584 verifiesCtrlK/MRU Enter exactAmber07,three tabs unchanged only244x73. Inspector sizing does not commit. IntegratedCUA explicitly denies Terminal safety; allTerminalUI stops, no alternate path. ExactdisposablePythonPID80035 controllerSIGINT-stopped; nullnative-return code,sourceguards true,26DBdescriptors,not normalquit or retirement. DraftPR preparation does not waive remaining performance/native/Windows/participant gates. Full receipt Docs/QA/task-31245/fixture-rebuild-2026-10-04.md; task remains InProgress.
 <!-- SECTION:NOTES:END -->

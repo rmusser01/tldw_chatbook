@@ -2,6 +2,15 @@
 
 Status: **HOLD — partial macOS evidence retained; qualification incomplete.**
 
+Current `b738054edf` attempt confirms native Ctrl+K/blank MRU Enter with three
+unchanged tabs only at244x73. Inspector field attempts do not resize the window.
+The integrated computer-use tool explicitly refuses Terminal for safety reasons;
+no alternate UI controls are used afterward. Verified disposable QA Python
+PID80035 is controller-interrupted, not normally quit; final source/corpus fences
+hold and26 DB descriptors remain at app return. Required dimensions/workflows,
+Windows and participants remain unqualified. Full receipt:
+`fixture-rebuild-2026-10-04.md`, frozen-source native-label checkpoint.
+
 Earlier clean `81c0d22ff9538f75135c09eb0c43a3f31b7a0ccc` observed Active MRU
 switching and cold/warm History reuse at 244×73. Latest clean
 `18acbb41836a3262e0cdc94b3f7346cd1f89db9b` retries retain current/selected

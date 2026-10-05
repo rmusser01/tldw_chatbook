@@ -25,6 +25,15 @@ traces retain no worker-owned connections after executor join; five constructor
 caches remain, with 22/24 database descriptors. This is headless diagnostic
 evidence, not application-cache retirement or native/performance qualification.
 
+Frozen `b738054edf` adds the tested native-label fallback read correction.
+Fresh standalone Keyword passes300 queries (P95105.448875ms); the normal UI
+matrix still fails six activation windows (maximum89.041708ms) and one search.
+All60 searches/eight exact opens complete; preparation/busy limits pass. Native
+MRU is observed only at244x73. Integrated computer use explicitly refuses
+Terminal; no UI workaround follows, and only the disposable QA Python process
+is controller-interrupted. Required native/Windows/participant and app-cache
+retirement proof remain open. This supports draft review, not merge acceptance.
+
 The [2026-09-07 switcher follow-up](switcher-reuse-and-mode-follow-up.md) records
 the duplicate-tab and selected-mode corrections reported during manual QA.
 
