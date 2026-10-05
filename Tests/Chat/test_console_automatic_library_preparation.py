@@ -71,6 +71,10 @@ from tldw_chatbook.UI.Views.RAGSearch.search_handoff import (
     build_library_rag_evidence_bundle,
 )
 
+# These controllers read canonical hook authority before sending. Keep the
+# selected private config profile, as the existing marked recovery cases do.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class ConsoleChatStore(_ConsoleChatStore):
     """Ephemeral test store with an automatic-retrieval authority ceiling."""
@@ -1407,6 +1411,8 @@ async def test_provider_preflight_refusal_never_claims_dispatch_started_or_wedge
     async def refuse_preflight(
         *, session_id, provider_messages, assistant_message_id, **_kwargs
     ):
+        if _kwargs.get("assessment_sink") is not None:
+            return provider_messages, None
         preparation = store.preparation_for_session(session_id)
         assert preparation is not None
         observed_states.append(preparation.state)
@@ -2250,6 +2256,8 @@ async def test_shutdown_tracks_accepted_submit_and_rechecks_before_external_call
     if path == "direct":
 
         async def hold_preflight(*, provider_messages, **_kwargs):
+            if _kwargs.get("assessment_sink") is not None:
+                return provider_messages, None
             await held.wait()
             return provider_messages, None
 
@@ -2362,6 +2370,8 @@ async def test_close_drops_submit_owner_before_cancelled_task_finalizer(
     else:
 
         async def hold_preflight(*, provider_messages, **_kwargs):
+            if _kwargs.get("assessment_sink") is not None:
+                return provider_messages, None
             await held.wait()
             return provider_messages, None
 
@@ -2679,6 +2689,8 @@ async def test_postaccept_cancellation_returns_exact_accepted_result(monkeypatch
     if path == "direct":
 
         async def hold_preflight(*, provider_messages, **_kwargs):
+            if _kwargs.get("assessment_sink") is not None:
+                return provider_messages, None
             await held.wait()
             return provider_messages, None
 
@@ -2760,6 +2772,8 @@ async def test_off_thread_begin_shutdown_schedules_owner_loop_cancellation(
         if path == "direct":
 
             async def hold_preflight(*, provider_messages, **_kwargs):
+                if _kwargs.get("assessment_sink") is not None:
+                    return provider_messages, None
                 await held.wait()
                 return provider_messages, None
 
@@ -2948,6 +2962,8 @@ async def test_closed_loop_peer_never_blocks_same_session_live_submit_shutdown(
     held = _CancellationBoundary()
 
     async def hold_preflight(*, provider_messages, **_kwargs):
+        if _kwargs.get("assessment_sink") is not None:
+            return provider_messages, None
         await held.wait()
         return provider_messages, None
 
@@ -3033,6 +3049,8 @@ async def test_shutdown_callback_failure_rethrows_after_all_task_cleanup(
     held = _CancellationBoundary()
 
     async def hold_preflight(*, provider_messages, **_kwargs):
+        if _kwargs.get("assessment_sink") is not None:
+            return provider_messages, None
         await held.wait()
         return provider_messages, None
 
@@ -3248,6 +3266,8 @@ async def test_recovered_queue_acknowledges_postaccept_cancellation_once(
     if path == "direct":
 
         async def hold_preflight(*, provider_messages, **_kwargs):
+            if _kwargs.get("assessment_sink") is not None:
+                return provider_messages, None
             await held.wait()
             return provider_messages, None
 

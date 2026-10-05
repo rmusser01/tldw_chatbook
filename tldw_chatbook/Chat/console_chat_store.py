@@ -3198,7 +3198,13 @@ class ConsoleChatStore:
 
         self.delete_message(message_id)
         session = self._session_or_raise(session_id)
-        session.title = title
+        # Saved sends do not auto-title; their older snapshots cannot undo a
+        # committed rename. Scratch/rebound identity rollback still restores.
+        if (
+            persisted_conversation_id is None
+            or session.persisted_conversation_id != persisted_conversation_id
+        ):
+            session.title = title
         session.persisted_conversation_id = persisted_conversation_id
 
     def _durable_thinking_history_policy(
@@ -5462,7 +5468,12 @@ class ConsoleChatStore:
             if session is not None:
                 if current.origin == "manual":
                     session.draft = current.executed_draft
-                session.title = current.pre_send_title
+                if (
+                    current.pre_send_conversation_id is None
+                    or session.persisted_conversation_id
+                    != current.pre_send_conversation_id
+                ):
+                    session.title = current.pre_send_title
                 self.rebind_persisted_conversation(
                     session.id,
                     current.pre_send_conversation_id,
@@ -7066,11 +7077,15 @@ class ConsoleChatStore:
         if not isinstance(identity, ConsoleStagedConversationIdentity):
             raise TypeError("identity must be ConsoleStagedConversationIdentity")
         session = self._session_or_raise(session_id)
+        first_binding = session.persisted_conversation_id is None
         self.publish_first_persisted_conversation(
             session_id,
             identity.conversation_id,
         )
-        session.title = identity.title
+        # Existing saved titles are owned by committed rename publication,
+        # not the title snapshot captured by an older send or retry.
+        if first_binding:
+            session.title = identity.title
         self._flush_staged_capture_policy(session)
 
     @staticmethod
@@ -8279,7 +8294,9 @@ class ConsoleChatStore:
         with self._fork_source_transition(session_id):
             if session.persisted_conversation_id != conversation_id:
                 if conversation_id in self._conversation_title_transitions:
-                    raise RuntimeError("A conversation title change is still publishing.")
+                    raise RuntimeError(
+                        "A conversation title change is still publishing."
+                    )
                 session.conversation_binding_revision = (
                     self._advance_console_settings_binding_revision(
                         session_id,

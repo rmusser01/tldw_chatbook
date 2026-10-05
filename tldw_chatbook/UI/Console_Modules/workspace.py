@@ -7794,7 +7794,12 @@ class ConsoleWorkspaceController:
         ):
             self.app_instance.notify("That title cannot be used.", severity="warning")
             return
-        new_title = sanitize_string(candidate, max_length=_CONVERSATION_TITLE_MAX)
+        new_title = sanitize_string(
+            candidate, max_length=_CONVERSATION_TITLE_MAX
+        ).strip()
+        if not new_title:
+            self.app_instance.notify("That title cannot be used.", severity="warning")
+            return
 
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:

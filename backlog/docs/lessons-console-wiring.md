@@ -324,3 +324,21 @@ native handles with no dropped registrations, while explicitly preserving the
 headless/native distinction and a still-present separate theme executor. Retire
 finite callbacks on their own thread through the installed owner boundary; do
 not turn the fixture's blanket retirement into a production lifetime policy.
+
+## Committed saved titles are not owned by older send snapshots
+
+**TASK-33620.9, 2026-10-05, publication review of c7e5558.** The new rename
+publication test cancelled a pending send before publishing its new title, so
+it missed the reverse order. Publishing first and cancelling afterward restored
+the old `pre_send_title`. The same stale snapshot existed in optimistic-send
+rollback and successful delayed durable identity publication; SQLite kept the
+new name while live surfaces reverted. The strict regression run produced six
+failures with five rollback controls passing, and the successful-publication
+check produced two more failures (including replay after first persistence).
+
+Saved sends do not auto-title. Keep the current title when their saved binding
+is unchanged; retain genuine scratch/rebound rollback and first-save naming.
+Test both event orders and the shared successful-send publication helper, not
+only cancellation inside the rename worker. Also recheck sanitized title input
+before writing: a raw nonblank control byte can become blank during sanitization
+and otherwise erase the saved title before live publication rejects it.

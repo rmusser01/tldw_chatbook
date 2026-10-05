@@ -101,3 +101,54 @@ Raw local logs remain in `/tmp/rename-real-menu-red.log`,
 `/tmp/rename-preflight-verified.log`. These temporary paths are not portable
 evidence; the source-bound commands and bounded outcomes above are the durable
 receipt. Frozen baseline diagnostic copy is `/tmp/rename-frozen-base-PbBiHI`.
+
+## Publication review follow-up — 2026-10-05
+
+Source checkpoint: `c7e5558f25036996e85fb570419f4a31a529df5c`, on dev
+`74557e202ac38c6d29510d0940a062ca7cc7f38b`. Independent read-only review
+found two missed rename boundaries. A pending preparation or optimistic send
+could restore its old title after a committed rename; tracing successful sends
+found the same overwrite through staged identity publication. Saved sends do
+not auto-title, so these three existing store paths now preserve the current
+title for an unchanged saved binding. Genuine scratch/rebound rollback and
+first-save naming remain intact; no new title ledger, cache, or dependency was
+added. Control-only saved-tab input could also sanitize to blank after its
+initial validation and erase the durable title before publication failed. The
+shared workspace entry point now rejects sanitized, stripped blank input before
+worker admission.
+
+Strict regression RED: **6 failed, 5 passed in 8.79s**, with stale-title
+restoration and real SQLite blank-title writes; a separate successful-publication
+RED had **2 failures**, including replay after first save. GREEN: **13 passed in
+8.36s**, no pytest warnings, with zero database files at every recorded teardown.
+The controls cover cancellation before/during/after publication, preparation
+and optimistic rollback, saved/scratch/rebound identities, first-save naming,
+repeat publication, and actual mounted saved-tab/shared validation. Independent
+follow-up review found no remaining scoped code/test blockers for draft
+publication. This is not native or release qualification.
+
+Raw receipts: `/tmp/task33620-rename-review-1aQNn4/{red,identity-red,green}.log`.
+Both changed tests are Ruff-clean and all four Python paths format-clean.
+Normalized production Ruff remains **186 baseline / 186 feature** with zero
+additions or removals. Broader affected checks are recorded below when complete.
+
+The initial seven-file affected selection stopped with two hook-admission
+fixture failures and **171 passing cases in 246.20s**. Both failures reproduced
+in isolation before changed title paths. The automatic-preparation module now
+uses the existing `bootstrap_profile` contract for canonical private config
+reads; hook admission remains real. Those two cases and the held-provider
+control passed (**3 in 1.07s**). The next run exposed two stale test barriers
+and stopped with **230 passing cases in 242.14s**: postaccept stubs intercepted
+the installed observation-only READY assessment. Eight stubs now skip only
+that invocation, retaining every original ACCEPTED/identity/cancellation
+assertion. All **14 owner controls passed in 3.85s**, but the strict process
+**failed** on retained `tldw_chatbook_workspaces.db` files. No warning filter,
+forced collection, blanket close, or production preflight change was added.
+Independent review found no blocker in either bounded fixture correction.
+The interrupted attempts and strict resource failure remain unsuccessful
+evidence, not a qualified batch.
+
+Raw receipts additionally include `affected.log`, `refusal-isolated.log`,
+`refusal-profile-green.log`, `affected-final.log`, and `barrier-green.log` in
+the same private root. The preparation-file Ruff ratchet remains three
+inherited diagnostics with zero additions or removals; it was not bulk-formatted.

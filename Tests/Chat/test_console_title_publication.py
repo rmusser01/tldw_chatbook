@@ -131,8 +131,17 @@ def test_rebinding_into_an_active_title_transition_is_refused() -> None:
     assert alias.persisted_conversation_id == "other"
 
 
-def test_cancelling_saved_preparation_during_rename_keeps_cleanup_working() -> None:
-    """An unchanged saved binding must not interrupt preparation cancellation."""
+@pytest.mark.parametrize(
+    "order", ["cancel-first", "publish-first", "after-publication"]
+)
+def test_cancelling_saved_preparation_during_rename_keeps_cleanup_working(
+    order: str,
+) -> None:
+    """Cancellation cleans transient inputs without undoing a committed rename.
+
+    Args:
+        order: Cancellation before, during, or after committed title publication.
+    """
     from Tests.Chat.test_console_turn_preparation import _preparation_values
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_turn_preparation import (
@@ -158,7 +167,8 @@ def test_cancelling_saved_preparation_during_rename_keeps_cleanup_working() -> N
     )
     preparation = ConsoleTurnPreparation(**values)
     store.begin_preparation(preparation)
-    with store.conversation_title_transition("same") as publish:
+
+    def cancel():
         cancelled = store.cancel_preparation(
             session.id, preparation.preparation_id, expected_state=preparation.state
         )
@@ -167,8 +177,69 @@ def test_cancelling_saved_preparation_during_rename_keeps_cleanup_working() -> N
             and cancelled.state is ConsoleTurnPreparationState.CANCELLED
         )
         assert transient.id not in store._message_session_index
+        assert session.draft == preparation.executed_draft
+        assert session.persisted_conversation_id == "same"
+
+    with store.conversation_title_transition("same") as publish:
+        if order == "cancel-first":
+            cancel()
         publish("New")
+        if order == "publish-first":
+            cancel()
+    if order == "after-publication":
+        cancel()
     assert session.title == "New"
+
+
+@pytest.mark.parametrize("rollback", ["preparation", "optimistic"])
+@pytest.mark.parametrize("binding", ["same", None, "other"])
+def test_send_rollback_preserves_only_the_unchanged_saved_title(
+    rollback: str, binding: str | None
+) -> None:
+    """Saved titles survive rollback; scratch or rebound identities still restore.
+
+    Args:
+        rollback: Preparation cancellation or earlier optimistic-send rollback.
+        binding: Captured pre-send conversation identity.
+    """
+    from Tests.Chat.test_console_turn_preparation import _preparation_values
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_turn_preparation import ConsoleTurnPreparation
+
+    store = ConsoleChatStore()
+    session = store.restore_persisted_session(
+        title="Old",
+        workspace_id=None,
+        persisted_conversation_id="same",
+        all_nodes=[],
+    )
+    transient = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="draft", persist=False
+    )
+    if rollback == "preparation":
+        values = _preparation_values(session_id=session.id)
+        values.update(
+            pre_send_conversation_id=binding,
+            pre_send_title="Old",
+            transient_user_message_id=transient.id,
+        )
+        preparation = ConsoleTurnPreparation(**values)
+        store.begin_preparation(preparation)
+    store.publish_conversation_title("same", "New")
+    if rollback == "preparation":
+        assert (
+            store.cancel_preparation(
+                session.id, preparation.preparation_id, expected_state=preparation.state
+            )
+            is not None
+        )
+    else:
+        store.rollback_transient_send(
+            session.id, transient.id, title="Old", persisted_conversation_id=binding
+        )
+    assert session.title == ("New" if binding == "same" else "Old")
+    assert session.persisted_conversation_id == binding
+    assert transient.id not in store._message_session_index
 
 
 def test_title_publication_callback_expires_with_its_admission_scope() -> None:
@@ -178,3 +249,35 @@ def test_title_publication_callback_expires_with_its_admission_scope() -> None:
         publish("New")
     with pytest.raises(RuntimeError, match="expired"):
         publish("Late")
+
+
+@pytest.mark.parametrize("already_saved", [True, False])
+def test_committed_send_identity_preserves_a_saved_title_but_names_first_save(
+    already_saved: bool,
+) -> None:
+    """A staged send title is authoritative only for first persistence.
+
+    Args:
+        already_saved: Existing saved binding or an unbound first-send session.
+    """
+    from tldw_chatbook.Chat.console_chat_store import ConsoleStagedConversationIdentity
+
+    store = ConsoleChatStore()
+    if already_saved:
+        session = store.restore_persisted_session(
+            title="Old",
+            workspace_id=None,
+            persisted_conversation_id="same",
+            all_nodes=[],
+        )
+        staged = ConsoleStagedConversationIdentity("same", "Old")
+        store.publish_conversation_title("same", "New")
+    else:
+        session = store.create_session(title="Chat 1")
+        staged = ConsoleStagedConversationIdentity("same", "First message")
+    store.publish_committed_identity(session.id, staged)
+    assert session.title == ("New" if already_saved else "First message")
+    assert session.persisted_conversation_id == "same"
+    store.publish_conversation_title("same", "Later rename")
+    store.publish_committed_identity(session.id, staged)
+    assert session.title == "Later rename"

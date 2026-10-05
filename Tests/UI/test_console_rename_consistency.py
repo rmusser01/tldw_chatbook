@@ -29,6 +29,55 @@ pytestmark = pytest.mark.bootstrap_profile
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("entry_point", ["shared", "tab"])
+async def test_post_sanitize_blank_rename_leaves_saved_and_live_title_unchanged(
+    activation_library,  # noqa: F811
+    entry_point: str,
+) -> None:
+    """Control-only input must be refused before any durable write is admitted.
+
+    Args:
+        activation_library: Isolated app and real SQLite lifetime owners.
+        entry_point: Shared rename entry point or mounted saved-tab callback.
+    """
+    owner, _, db = activation_library
+    _configure_native_ready_console(owner)
+    host = ConsoleHarness(owner)
+    async with host.run_test(size=(120, 50)) as pilot:
+        chat = host.screen
+        assert await chat._workspace._resume_console_workspace_conversation("exact")
+        target = chat._ensure_console_chat_store().ensure_session()
+        before = db.get_conversation_by_id("exact")
+        notes = []
+        owner.notify = lambda message, **kwargs: notes.append(str(message))
+        if entry_point == "shared":
+            chat._workspace._rename_console_conversation("exact", "\x00")
+        else:
+            chat._session._open_console_session_rename_modal(target.id)
+            await _until(
+                lambda: (
+                    host.screen is not chat
+                    and bool(host.screen.query("#console-rename-session-title"))
+                )
+            )
+            host.screen.dismiss("\x00")
+        await pilot.pause()
+        workers = [
+            worker
+            for worker in chat.workers
+            if worker.group == "console-conversation-rename"
+        ]
+        if workers:
+            await chat.workers.wait_for_complete(workers)
+        after = db.get_conversation_by_id("exact")
+        assert after["title"] == before["title"]
+        assert after["version"] == before["version"]
+        assert target.title == before["title"]
+        assert any("cannot be used" in note for note in notes)
+        assert not any(note.startswith("Renamed to") for note in notes)
+
+
+@pytest.mark.asyncio
 async def test_title_receipt_retires_when_the_tray_is_replaced(
     activation_library,  # noqa: F811
     monkeypatch,

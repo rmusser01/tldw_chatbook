@@ -163,6 +163,13 @@ never activate a tab or infer identity from the title. Publishing only the
 active runtime was rejected because inactive and intentionally duplicated
 runtimes can refer to the same saved conversation.
 
+For an unchanged saved binding, an older send's title snapshot is not title
+authority: preparation cancellation, optimistic-send rollback, and delayed
+successful-send publication preserve the current committed title. Scratch or
+changed-binding rollback still restores its prior identity, and first
+persistence still publishes its staged title. Saved rename input is checked
+again after sanitization, before admitting any durable write.
+
 ## Context
 
 The incumbent switcher eagerly loads a mixed local tuple, mounts at most twenty
