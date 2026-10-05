@@ -18473,3 +18473,16 @@ The shared finite-read correction passes the 59-test strict owner batch, with
 borrowed transaction, memory and custom ownership controls intact. Exercise the
 real entry point and assert every participating database owner, not a cleanup
 boundary supplied by the test. Evidence: [source-bound receipt](../../Docs/QA/task-31245/fixture-rebuild-2026-10-04.md).
+
+## A finite ownership scope starts before authority capture
+
+TASK-31966, 2026-10-05: the first Console visual-reader correction enclosed the
+Persona inventory query but not its two authority captures. Six real Character
+read regressions passed; review traced linked-Persona capture through
+`LocalCharacterPersonaService.get_character` to the same native database. The
+first capture opened a cold worker cache before the ownership scope, which then
+correctly treated that handle as borrowed and retained it. Two real linked-
+Persona success/failure cases reproduced the leak after physical worker join.
+Keep every materializing read of that captured owner, including authority
+revalidation, inside the existing finite boundary. Character-only coverage does
+not prove the sibling Persona route. Evidence: [retained REDs and review](../../Docs/QA/task-31245/fixture-rebuild-2026-10-04.md).

@@ -117,6 +117,7 @@ otherwise suggest belong here, for the reasons noted:
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from functools import partial
 import json
@@ -252,6 +253,7 @@ from ...Character_Chat.persona_visual_identity import (
     resolve_persona_visual_identity,
 )
 from ...DB.VisualIdentity_DB import VisualIdentityRepository
+from ...DB.base_db import operation_owned_connection
 from ...config import (
     DEFAULT_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
     MAX_CONSOLE_PROJECT_INSTRUCTIONS_MAX_BYTES,
@@ -694,25 +696,32 @@ def _resolve_visual_identity_for_db(
 ) -> VisualIdentityResolution | None:
     """Resolve one immutable preview request without retaining its screen."""
 
+    from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
     _session_id, actor_kind, actor_id = scope
     try:
-        if actor_kind == "persona":
-            if local_persona_service is None:
-                return None
-            return resolve_persona_visual_identity(
+        with (
+            operation_owned_connection(db)
+            if type(db) is CharactersRAGDB and not db.is_memory_db
+            else nullcontext()
+        ):
+            if actor_kind == "persona":
+                if local_persona_service is None:
+                    return None
+                return resolve_persona_visual_identity(
+                    db,
+                    local_persona_service,
+                    persona_id=actor_id,
+                    requested_state=requested_state,
+                    manual_expression_key=manual_expression_key,
+                )
+            return resolve_visual_identity(
                 db,
-                local_persona_service,
-                persona_id=actor_id,
+                actor_kind=actor_kind,
+                actor_id=actor_id,
                 requested_state=requested_state,
                 manual_expression_key=manual_expression_key,
             )
-        return resolve_visual_identity(
-            db,
-            actor_kind=actor_kind,
-            actor_id=actor_id,
-            requested_state=requested_state,
-            manual_expression_key=manual_expression_key,
-        )
     except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
         logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
             "Console reaction resolution failed for actor_kind={} actor_id={} "
@@ -731,24 +740,35 @@ def _visual_identity_options_for_db(
 ) -> tuple[ReactionOption, ...]:
     """Read metadata-only preview options without retaining its screen."""
 
+    from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
     _session_id, actor_kind, actor_id = scope
     try:
-        persona_authority = None
-        if actor_kind == "persona":
-            if local_persona_service is None:
-                return ()
-            persona_authority = capture_local_persona_visual_identity(
-                local_persona_service, actor_id
-            )
-            if persona_authority is None:
-                return ()
-        graph = VisualIdentityRepository(db).get_active_actor_pack(actor_kind, actor_id)
-        if (
-            actor_kind == "persona"
-            and capture_local_persona_visual_identity(local_persona_service, actor_id)
-            != persona_authority
+        with (
+            operation_owned_connection(db)
+            if type(db) is CharactersRAGDB and not db.is_memory_db
+            else nullcontext()
         ):
-            return ()
+            persona_authority = None
+            if actor_kind == "persona":
+                if local_persona_service is None:
+                    return ()
+                persona_authority = capture_local_persona_visual_identity(
+                    local_persona_service, actor_id
+                )
+                if persona_authority is None:
+                    return ()
+            graph = VisualIdentityRepository(db).get_active_actor_pack(
+                actor_kind, actor_id
+            )
+            if (
+                actor_kind == "persona"
+                and capture_local_persona_visual_identity(
+                    local_persona_service, actor_id
+                )
+                != persona_authority
+            ):
+                return ()
     except (SQLiteError, TypeError, ValueError, OverflowError) as exc:
         logger.debug(  # noqa: PLE1205 - Loguru uses brace-style arguments.
             "Console reaction inventory failed for actor_kind={} actor_id={} "
@@ -2082,6 +2102,8 @@ class ConsoleSessionController:
     ) -> VisualIdentityResolution | None:
         """Resolve a message's exact immutable character expression."""
 
+        from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
         _session_id, actor_kind, actor_id = scope
         db = self._visual_identity_db_accessor()
         if (
@@ -2091,15 +2113,20 @@ class ConsoleSessionController:
         ):
             return None
         try:
-            return resolve_historical_visual_identity(
-                db,
-                actor_id=identity.actor_id,
-                pack_id=identity.pack_id,
-                pack_version_id=identity.pack_version_id,
-                expression_key=identity.expression_key,
-                expression_id=identity.expression_id,
-                asset_id=identity.asset_id,
-            )
+            with (
+                operation_owned_connection(db)
+                if type(db) is CharactersRAGDB and not db.is_memory_db
+                else nullcontext()
+            ):
+                return resolve_historical_visual_identity(
+                    db,
+                    actor_id=identity.actor_id,
+                    pack_id=identity.pack_id,
+                    pack_version_id=identity.pack_version_id,
+                    expression_key=identity.expression_key,
+                    expression_id=identity.expression_id,
+                    asset_id=identity.asset_id,
+                )
         except (SQLiteError, TypeError, ValueError, OverflowError):
             logger.debug(
                 "Console historical reaction resolution failed actor_id={}",

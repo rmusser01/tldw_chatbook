@@ -2,10 +2,13 @@
 
 Status: **HOLD — partial macOS evidence retained; qualification incomplete.**
 
-The clean `81c0d22ff9538f75135c09eb0c43a3f31b7a0ccc` walkthrough observed
-Active MRU switching, cold/warm History reuse and normal Ctrl+Q at 244×73.
-It did not qualify the required viewports, Character workflows, Windows or
-participants. At app return, 37 database descriptors remained open. See
+Earlier clean `81c0d22ff9538f75135c09eb0c43a3f31b7a0ccc` observed Active MRU
+switching and cold/warm History reuse at 244×73. Latest clean
+`18acbb41836a3262e0cdc94b3f7346cd1f89db9b` retries retain current/selected
+Active marking, pointer access to Character chats and normal Ctrl+Q; background
+typing/resize controls did not reliably commit. Required viewports, Character
+workflows, Windows and participants remain unqualified. At latest app return,
+28 database descriptors remained open. See
 `fixture-rebuild-2026-10-04.md` for exact outcomes and raw receipt paths; do not
 promote this partial walkthrough into a complete native or resource pass.
 

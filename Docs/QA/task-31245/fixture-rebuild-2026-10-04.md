@@ -1468,3 +1468,83 @@ GREEN and guards are `projection-red.log`, `projection-controls-before.log`,
 Fresh clean-head shutdown is next. Application-cache retirement, native input
 and required geometry, latency, Windows and participant gates remain unwaived;
 all TASK-31966 criteria stay open and the final combined PR is not ready.
+
+### Projection shutdown and native control limits — 2026-10-05
+
+Clean `18acbb41836a3262e0cdc94b3f7346cd1f89db9b` is freshly prepared with
+the guarded 30-chat/60-message/28-card native fixture. The unchanged weak-key
+observer records 154 unique registrations, zero drops, actual headless quit
+and physical default-executor join. Return zero and source/corpus guards hold.
+After join, eight native-open connections and 30 DB descriptors remain, with
+no active operations or pending acquisitions. None originates from the repaired
+projection or six earlier finite-reader offloads. Five are the unchanged
+main-thread constructor caches; three exited-worker Chat handles originate in
+the shared current visual-identity resolver. The separate theme executor remains
+live. Origin tracing, not fluctuating total counts, identifies this next finite
+read boundary; it does not establish global producer shutdown or justify blanket
+cache closure.
+
+CUA permissions are granted. The dedicated synthetic Terminal window 121428
+again shows distinct current/selected Active rows at 244x73. Pointer selection
+opens Character chats, but background query typing and geometry controls do
+not reliably commit in the observed frames. Neither keyword navigation nor the
+required viewports is passed. Native Ctrl+Q exits normally, returning zero with
+both source guards true; 28 DB descriptors remain at App.run return. The normal
+quit frame is retained, not relabelled as terminal owner-retirement proof.
+Original Terminal sessions and real conversations remain untouched. Explicit
+permission to foreground only the dedicated QA window has been requested;
+background no-ops are not permission denials or product-failure diagnoses.
+
+Raw root: `/tmp/task31966-projection-shutdown-njK8UJ`. Prepared receipts are
+under `prepared`, unchanged origin/return receipts under `headless`, native
+return receipts under `native`, with `native-start.png`, `native-normal-quit.png`
+and the intervening actual native frames retained. The observer script hash
+remains `c31e69b6519d76c56d144e4f891ad62305ccdd1f3ccc5de480dbd4bfa3652fc7`.
+No controller kill, GC/cache change, timing-limit change or qualification waiver.
+
+### Shared finite visual-identity reads — 2026-10-05
+
+Current avatar, reaction inventory and immutable historical-avatar callbacks
+return materialized values. Each shared Console boundary now reuses installed
+`operation_owned_connection` only for exact native file-backed Chat databases.
+Borrowed handles/transactions, memory/custom owners, writers, immutable asset
+guards, Persona authority revalidation and all original failure/fallback and
+stale-result behavior are preserved. No new helper or global lifetime policy.
+
+Six real Character success/SQL-failure cases reproduce the original worker
+handle retention after physical runner join. The nine borrower/memory/custom
+controls pass before the production fix. An initial borrower fixture updated
+all cards and hit a unique-name constraint; those three setup failures are
+excluded from RED, and the corrected exact-card controls then pass. Independent
+review catches the linked-Persona inventory captures outside the first proposed
+scope. Two additional real local-service success/failure cases reproduce that
+leak; the final scope includes both captures and the graph query. Review of the
+corrected production and test ownership has no actionable findings.
+
+The first affected run records 134 passes, four stale UI assertion/geometry
+failures and 56 profile-admission setup errors. Retaining the collection-bound
+isolated bootstrap profile, exact constructor ownership and shipping app-tier
+sizing CSS removes those fixture errors. The next run records 156 passes and 40
+avatar failures: most paths were genuinely blocked by first-run Console setup,
+one failure injected a removed ChatController.close_session method, and one
+empty-state assertion targeted the obsolete hidden caption. Existing ready-
+Console configuration, the actual awaited Runtime.close_session and the visible
+identity row restore the intended paths; no setup/authority gate or behavioral
+assertion is bypassed. All failed logs remain, not relabelled as green.
+
+Final six-file affected run: **196 pass in 257.02s**, exit zero, with unchanged
+strict file-retirement requirement. All 196 terminal observations contain no
+database files. No resource warnings occur. Three third-party deprecation
+warnings remain at textual_image's Pillow Image.getdata call; they are neither
+suppressed nor presented as warning-free verification. New finite-reader tests
+are Ruff/format clean; modified ranges are format clean, and full production
+and old caller-fixture diagnostic multisets remain unchanged at 47 and 27.
+All eleven derived-artifact guards pass; UI census 143, unchanged floor 140.
+
+Raw root: `/tmp/task31966-projection-shutdown-njK8UJ`, including `visual-red.log`,
+`visual-controls-before.log`, `persona-red.log`, failed `visual-green.log` and
+`visual-green-final.log`, focused `visual-focus.log`/`avatar-ready-focus.log`,
+final `visual-green-ready.log`, static JSON receipts and
+`visual-preflight-final.log`. A fresh clean-head shutdown comparison is next.
+Application-cache retirement, required native viewports/input, latency, Windows
+and participant criteria remain open; no fourth performance remedy or waiver.

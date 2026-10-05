@@ -15,12 +15,17 @@ from Tests.UI.test_console_retrieval_controller import _controller as retrieval_
 from Tests.UI.test_console_review_selection_controller import (
     _controller as review_owner,
 )
+from tldw_chatbook.Character_Chat.local_character_persona_service import (
+    LocalCharacterPersonaService,
+)
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_expression_state import CharacterEmoteHistoryIdentity
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     resolve_scope_for_session,
 )
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -33,6 +38,161 @@ def database(tmp_path):
     db.add_conversation({"id": "conversation", "title": "Finite readers"})
     try:
         yield db
+    finally:
+        with db.quiesce_connections(timeout_seconds=5):
+            pass
+        assert db.registered_connection_count() == 0
+
+
+def _visual_read(database, reader, character_id):
+    """Invoke the real shared Console callback, without adding ownership."""
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._visual_identity_db_accessor = lambda: database
+    scope = ("session", "character", str(character_id))
+    if reader == "current":
+        return controller._resolve_visual_identity(scope, "idle", None)
+    if reader == "inventory":
+        return controller._visual_identity_options(scope)
+    return controller._resolve_historical_visual_identity(
+        scope,
+        CharacterEmoteHistoryIdentity(character_id, 1, 1, "neutral", None, 1),
+    )
+
+
+@pytest.mark.parametrize("reader", ["current", "inventory", "historical"])
+@pytest.mark.parametrize("sql_failure", [False, True])
+def test_visual_read_retires_new_worker_cache(database, reader, sql_failure):
+    """Materialized visual readers retire only their newly acquired handle."""
+    character_id = database.add_character_card({"name": "Finite visual reader"})
+    if sql_failure:
+        table = (
+            "visual_identity_packs"
+            if reader == "historical"
+            else "visual_identity_bindings"
+        )
+        database.get_connection().execute(
+            f"ALTER TABLE {table} RENAME TO unavailable_visual_table"
+        )
+
+    async def read():
+        if sql_failure and reader != "historical":
+            with pytest.raises(CharactersRAGDBError, match="no such table"):
+                await asyncio.to_thread(_visual_read, database, reader, character_id)
+            return
+        result = await asyncio.to_thread(_visual_read, database, reader, character_id)
+        if reader == "inventory":
+            assert result == ()
+        else:
+            assert result.actor_id == str(character_id)
+            assert result.image_bytes is None
+            assert result.resolution_source == "placeholder"
+
+    caller = database.get_connection()
+    for _ in range(2):
+        asyncio.run(read())
+        assert database.registered_connection_count() == 1
+        assert database.get_connection() is caller
+    assert caller.execute("SELECT 1").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("sql_failure", [False, True])
+def test_linked_persona_inventory_retires_capture_worker_cache(
+    database, tmp_path, sql_failure
+):
+    """Both real linked-card captures belong to the finite inventory read."""
+    character_id = database.add_character_card(
+        {"name": "Linked Persona", "image": b"\x89PNG\r\n\x1a\nportrait"}
+    )
+    service = LocalCharacterPersonaService(
+        database, persona_store_path=tmp_path / "personas.json"
+    )
+    persona = service.create_persona_profile(
+        {"name": "Linked Persona", "character_card_id": character_id}
+    )
+    controller = ConsoleSessionController.__new__(ConsoleSessionController)
+    controller._visual_identity_db_accessor = lambda: database
+    controller.app_instance = SimpleNamespace(
+        character_persona_scope_service=SimpleNamespace(local_service=service)
+    )
+    scope = ("session", "persona", persona["id"])
+    if sql_failure:
+        database.get_connection().execute(
+            "ALTER TABLE visual_identity_bindings RENAME TO unavailable_visual_table"
+        )
+
+    async def read():
+        if sql_failure:
+            with pytest.raises(CharactersRAGDBError, match="no such table"):
+                await asyncio.to_thread(controller._visual_identity_options, scope)
+        else:
+            assert (
+                await asyncio.to_thread(controller._visual_identity_options, scope)
+                == ()
+            )
+
+    caller = database.get_connection()
+    for _ in range(2):
+        asyncio.run(read())
+        assert database.registered_connection_count() == 1
+        assert database.get_connection() is caller
+    assert caller.execute("SELECT 1").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("reader", ["current", "inventory", "historical"])
+@pytest.mark.parametrize("owner", ["borrowed", "memory", "custom"])
+def test_visual_read_preserves_caller_owned_cache(tmp_path, reader, owner):
+    """Borrowed transactions and excluded native owners retain their cache."""
+    db = (
+        CharactersRAGDB(":memory:", "visual-memory")
+        if owner == "memory"
+        else (CharactersRAGDB if owner == "borrowed" else _CustomDatabase)(
+            tmp_path / "visual-control.sqlite", "visual-control"
+        )
+    )
+    try:
+        character_id = db.add_character_card({"name": "Visual ownership control"})
+
+        def read():
+            connection = db.get_connection()
+            if owner == "borrowed":
+                try:
+                    with (
+                        pytest.raises(RuntimeError, match="borrowed rollback"),
+                        db.transaction(),
+                    ):
+                        connection.execute(
+                            "UPDATE character_cards SET name = 'Uncommitted' WHERE id = ?",
+                            (character_id,),
+                        )
+                        _visual_read(db, reader, character_id)
+                        assert db.get_connection() is connection
+                        assert connection.in_transaction
+                        assert (
+                            connection.execute(
+                                "SELECT name FROM character_cards WHERE id = ?",
+                                (character_id,),
+                            ).fetchone()[0]
+                            == "Uncommitted"
+                        )
+                        raise RuntimeError("borrowed rollback")
+                finally:
+                    db.close_connection()
+                return
+            if owner == "memory" and reader != "historical":
+                with pytest.raises(CharactersRAGDBError, match="no such table"):
+                    _visual_read(db, reader, character_id)
+            else:
+                _visual_read(db, reader, character_id)
+            assert db.get_connection() is connection
+            assert connection.execute("SELECT 1").fetchone()[0] == 1
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(read).result(timeout=5)
+        assert db.registered_connection_count() == (1 if owner == "borrowed" else 2)
+        if owner == "borrowed":
+            assert db.get_character_card_by_id(character_id)["name"] == (
+                "Visual ownership control"
+            )
     finally:
         with db.quiesce_connections(timeout_seconds=5):
             pass

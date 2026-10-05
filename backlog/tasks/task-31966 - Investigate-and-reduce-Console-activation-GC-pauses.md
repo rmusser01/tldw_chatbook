@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 15:12'
+updated_date: '2026-10-05 16:00'
 labels:
   - console
   - performance
@@ -150,6 +150,16 @@ Reason: routine reuse of the existing exact-file-owner callback boundary at conf
 ADR required: no new ADR.
 ADR path: N/A; existing ADR120 and finite native callback ownership apply.
 Reason: this corrects one shared materialized read through the installed resource boundary, not registry writer or global application policy.
+
+### Finite Console visual-identity readers
+
+1. Retain clean 18acbb4183 shutdown trace: three exited Chat handles originate from current visual-identity resolution, none from projection. All constructor caches remain separate; native Ctrl+Q returns0 with28 descriptors, native query/geometry attempts are partial or no-op.
+2. Trace current, inventory and historical Console reader callers, then extend the existing real-SQLite finite-reader regression with healthy/failing SQL cases for these three materialized callback families. Preserve failure/fallback and borrower/memory/custom controls.
+3. Reuse installed operation_owned_connection at the shared synchronous Console read boundaries only for exact native file-backed Chat owners. Preserve persona authority, immutable historical transaction, file/asset lifetime guards, actual values, exceptions, stale-result checks, all writers and application cache ownership. No new helper or global lifecycle/GC/cache policy.
+4. Run proportional caller/helper suites and strict resource census, static/artifact guards and independent review; freeze source and repeat guarded shutdown. Keep native viewport/input, latency, Windows, participant and application-cache criteria open.
+ADR required: no new ADR.
+ADR path: N/A; existing ADR120 and finite native callback ownership apply.
+Reason: routine finite Console-reader resource correction within standing resource-fix approval, not a fourth performance remedy or new visual-identity lifecycle contract.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -192,4 +202,6 @@ Rebased all20 task-owned commits onto dev74557e202a;18 replay unchanged, two con
 Bounded remaining Console finite readers: six original to_thread offloads now reuse installed run_owned_db_call for cached/fresh metadata, world-book summary, citation counts, annotation previews and sibling annotation-browser initial read. Twelve real-SQLite success/failure regressions have valid handle-retention REDs, including physical runner join and preserved main owner; invalid initial citation fixture setup failures are retained but excluded from RED. Caller fixture declarations align with extracted session/turn/memory edges and retain the existing isolated bootstrap profile; no authority/assertion bypass. Final targeted batch 129 passed in 32.99s, exit 0, no pytest warnings, all 129 strict terminal observations contain no DB files. Changed tests Ruff/format clean; four production diagnostic multisets add nothing; modified method ranges format clean; eleven artifact guards pass (143 gated UI paths, floor unchanged). Independent scoped reviews found no production or test-integrity issues. Durable evidence appended to Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. Clean-head shutdown probe remains next; no global lifetime/GC/cache policy, fourth performance remedy or qualification waiver. All task criteria remain unchecked.
 
 Clean 4448cbb210 guarded shutdown records 134 unique registrations/zero drops, six open connections and 27 DB descriptors after executor join: five constructor caches plus actual async projection Chat read; none from the six corrected finite readers. Native CUA succeeds in dedicated Terminal121371 at244x73: MRU Enter resumes exact Amber transcript without new tab; normal Ctrl+Q returns0/source guards hold,29 descriptors remain. Stray composer ;2d is retained as unresolved native input evidence, not clean qualification. Shared project_workspace_membership finite read now reuses installed exact-file operation_owned_connection. Actual direct service/reconcile tests remove test-added Chat cleanup:4 valid REDs,3 borrower/memory/custom controls pass pre-fix. Final59 targeted tests pass21.44s, no warnings,59 strict observations without DB files. Changed tests Ruff/format clean; production range format clean,72 inherited diagnostics unchanged; all11 artifact guards and whitespace pass. Independent scoped review has no findings. Evidence and testing-wrapper lesson recorded; fresh clean-head shutdown next. No global cache/lifetime/GC policy or fourth performance remedy; all AC and native/Windows/participant/latency/app-cache gaps stay open.
+
+Implemented bounded shared current/inventory/historical visual-reader retirement through installed exact-file ownership. Six real Character REDs plus two genuine linked-Persona REDs; nine borrower/memory/custom controls pass before correction. Initial fixture SQL collision and both failed covering runs are retained and excluded from passing evidence. Repair actual caller fixtures with isolated bootstrap profile, existing constructor retirement/exact DB registration, shipping sizing CSS, real Console readiness and current runtime close injection; no gate or assertion bypass. Final six-file run:196 pass in257.02s, exit0, all196 strict observations without DB files, no resource warnings; three installed textual-image0.8.5/Pillow12.1.1 getdata deprecations remain unsuppressed. New tests Ruff/format clean; modified ranges format clean,47 production and27 inherited fixture diagnostics unchanged. All11 artifact guards green, census143/floor140 unchanged. Independent final review has no findings; receipt and authority-capture ownership lesson recorded. Fresh clean-head shutdown remains next. No global lifetime/GC/cache policy, fourth performance remedy or qualification waiver; all AC and native/latency/Windows/participant/application-cache gaps remain open.
 <!-- SECTION:NOTES:END -->
