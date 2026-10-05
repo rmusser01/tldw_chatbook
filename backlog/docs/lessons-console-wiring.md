@@ -370,3 +370,21 @@ Trace why a cache is admitted before inventing its teardown policy. An empty
 authority result does not need a database read; unnecessary construction can
 look like a lifetime leak. Keep the existing nonempty/retarget controls and
 close only the regression's own database handles.
+
+## Abandoned test Tasks still own their ContextVar reset context
+
+**TASK-34402, PR3024, 2026-10-05.** The emergency fixture correctly dropped
+its closed-loop Task but collected it outside the Task's copied Context. Its
+diagnostic/manual-authority finalizers raised two genuine token-reset errors.
+The warning-as-error control fails. Merely collecting inside the exact public
+Task Context also fails: Python 3.12's custom exception handler tries to enter
+that same Context again, replacing the expected pending diagnostic with an
+unhandled-handler error whose nested text still contains the pending message.
+
+For this deliberately abandoned test owner, use its captured public Context
+and observe the real default handler. Require exact first-line messages/counts,
+both binding restorations, original weakref/ledger assertions and no unraisable
+warnings; substring matching would accept the failed experiment. The 114-case
+covering run passes without warnings or retained database files. This is fixture
+ownership only: production emergency detachment still cannot make a closed-loop
+Task terminal. Do not catch authority-reset errors or claim normal native quit.

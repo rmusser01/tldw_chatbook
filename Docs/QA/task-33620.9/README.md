@@ -306,3 +306,48 @@ All earlier failed receipts remain above. Emergency ContextVar warnings, the
 complete affected resource batch, native/Windows/participant/scale qualification
 and current-head Qodo review remain open; exhausted Qodo credits are not a
 review waiver.
+
+### Broader resource recheck and emergency fixture context — TASK-34402
+
+The original seven-file selection plus four empty-authority controls at
+`1b79a6ac0c8918c990c6e4e69904d94fdfba3bf7` finishes **349 passed, 2 warnings
+in 678.53s**, strict exit **1**. Its unchanged 1,000-send test passes in
+456.20s. All 349 teardown observations are retained: database retention starts
+at the acceptance module's conversation-failure case and reaches **55 SQLite
+descriptors** from `acceptance.sqlite` and four accepted-cancellation databases.
+The earlier workspace-profile and queued/durable fixture files no longer
+appear; this is still a failed broader resource gate, not qualification.
+
+The deliberate closed-loop fixture produces a fresh warning-as-error RED:
+**1 failed in 1.17s**, with both ContextVar resets running outside their
+token-owning Task context. Running collection in the exact public Task context
+alone fails (**1 in 0.59s**): Python's custom exception handler re-enters that
+already-active context and loses the required pending-task diagnostic. That
+unsuccessful experiment was not installed or counted as GREEN. A forwarding
+probe of the installed default handler passes (**1 in 0.81s**, strict exit 0).
+
+The bounded test correction retains every original COMMITTING, sidecar,
+ledger, provider and weakref assertion. Only this deliberately abandoned
+Task receives a captured public Context for its existing final collection.
+The actual default handler is observed through exact first-line/count equality:
+one `Task was destroyed but it is pending!`, no preceding asyncio errors.
+Both scoped bindings must restore, every captured warning fails, and unraisable
+exceptions are errors. No production reset, coroutine close, Task state,
+collector setting, foreign-owner or emergency-policy change. Python's
+[Task context](https://docs.python.org/3.12/library/asyncio-task.html#asyncio.create_task)
+and [exception-handler contract](https://docs.python.org/3.12/library/asyncio-eventloop.html#asyncio.loop.set_exception_handler)
+describe the context boundary; the failed probe preserves its concrete limit.
+
+Original live/closed controls: **15 passed in 4.98s**, no warnings, strict
+exit 0, zero DB files at all teardowns. Complete preparation module plus durable
+non-retention controls: **114 passed, 1 deselected in 76.12s**, no warnings,
+strict exit 0, zero DB files at all 114 teardowns. The 1,000-send case is not
+duplicated in this follow-up. Independent scoped review finds no actionable
+issue. All eleven artifact guards pass. Changed test format clean; its three
+inherited Ruff findings unchanged.
+
+Raw receipts: `/tmp/switcher-emergency-context-ciQIs5/{affected,red,probe,default-probe,green,covering}.log`.
+These are temporary logs, not portable evidence. The 55 acceptance-fixture
+descriptors, full corrected resource rerun and native/Windows/participant/scale
+and Qodo gates remain open. Controlled test-owned abandonment is not proof of
+warning-free production emergency teardown or terminal abandoned Tasks.

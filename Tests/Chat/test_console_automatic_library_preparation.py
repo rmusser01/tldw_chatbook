@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import logging
 import threading
 import warnings
 import weakref
+from contextvars import copy_context
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -2893,7 +2895,12 @@ def test_live_loop_shutdown_cancels_and_awaits_submit_without_asyncio_diagnostic
     )
 
 
-def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch):
+@pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")
+def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch, caplog):
+    from tldw_chatbook.Agents.automatic_work_runtime import current_automatic_work
+    from tldw_chatbook.Chat.console_send_diagnostics import _CURRENT as diagnostic_scope
+
+    caplog.set_level(logging.ERROR, logger="asyncio")
     store = ConsoleChatStore()
     store.library_policy_coordinator = _PolicyCoordinator(ConsoleAutoRetrieve.AUTOMATIC)
     session = store.create_session(session_id="closed-session")
@@ -2908,13 +2915,13 @@ def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch):
 
     monkeypatch.setattr(controller, "_record_prompt_history", hold_history)
     closed_loop = asyncio.new_event_loop()
-    loop_errors: list[str] = []
     closed_loop.set_debug(True)
-    closed_loop.set_exception_handler(
-        lambda _loop, context: loop_errors.append(str(context.get("message", "")))
-    )
+    submit_context = copy_context()
+    previous_diagnostic = submit_context.run(diagnostic_scope.get)
+    previous_work = submit_context.run(current_automatic_work)
     submit = closed_loop.create_task(
-        controller.submit_draft("unreachable draft", session_id=session.id)
+        controller.submit_draft("unreachable draft", session_id=session.id),
+        context=submit_context,
     )
     history_ready = closed_loop.create_task(held.wait())
     submit_ref = weakref.ref(submit)
@@ -2949,7 +2956,7 @@ def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch):
             assert controller._prepared_send_continuations == {}
             assert controller._shutdown_requested.is_set()
             assert gateway.provider_calls == 0
-            assert loop_errors == []
+            assert not any(record.name == "asyncio" for record in caplog.records)
         finally:
             if not closed_loop.is_closed():
                 submit.cancel()
@@ -2961,13 +2968,20 @@ def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch):
                 closed_loop.run_until_complete(closed_loop.shutdown_default_executor())
                 closed_loop.close()
             del submit
-            gc.collect()
+            # Collect this deliberate abandonment in its token-owning context.
+            # The default handler retains the genuine pending-task diagnostic;
+            # a custom handler would re-enter this Context on Python 3.12.
+            submit_context.run(gc.collect)
 
     assert submit_ref() is None
-    assert loop_errors == ["Task was destroyed but it is pending!"]
-    assert not any(
-        "was never awaited" in str(item.message) for item in captured_warnings
-    )
+    assert submit_context.run(diagnostic_scope.get) is previous_diagnostic
+    assert submit_context.run(current_automatic_work) is previous_work
+    assert [
+        record.getMessage().splitlines()[0]
+        for record in caplog.records
+        if record.name == "asyncio"
+    ] == ["Task was destroyed but it is pending!"]
+    assert captured_warnings == []
 
 
 @pytest.mark.asyncio
