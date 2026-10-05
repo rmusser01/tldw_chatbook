@@ -458,6 +458,16 @@ class OmniVoiceStepBase(SetupStep):
         except NoMatches:
             pass
 
+    def _show_blocked(self, blocked: str | None, *, testing: bool) -> None:
+        """Say on the status line why Test and Hear is off, for either half
+        (review round 2, G8-R2-F5); see ``voice_status.blocked_status``."""
+        status = self.query_one("#setup-voice-status", Static)
+        line = voice_status.blocked_status(
+            str(status.renderable), blocked, testing=testing
+        )
+        if line is not None:
+            status.update(line)
+
     async def _run_omnivoice_sample(
         self, generation: int, text: str, speed: float, seed: int
     ) -> None:

@@ -450,48 +450,34 @@ class VoiceSetupStep(OmniVoiceStepBase):
 
     def _refresh_sample_state(self) -> None:
         try:
-            sample = self.query_one("#setup-voice-sample", Input).value
-            trimmed_count = len(sample.strip())
+            sample = self.query_one("#setup-voice-sample", Input).value.strip()
             self.query_one("#setup-voice-sample-count", Static).update(
-                f"{trimmed_count} / 500"
+                f"{len(sample)} / 500"
             )
             key_row = self.query_one("#setup-voice-key-row")
+            testing = self._test_in_progress_generation is not None
             if self._preset == voice_state.VOICE_PRESET_OMNIVOICE:
                 key_row.display = False
+                blocked = None if sample else voice_status.BLANK_SAMPLE_COPY
+                self._show_blocked(blocked, testing=testing)
                 self.query_one("#setup-voice-test", Button).disabled = (
-                    self._test_in_progress_generation is not None
+                    testing
                     or self._omnivoice_installing
                     or self._omnivoice_state != "ready"
-                    or not 1 <= trimmed_count <= 500
+                    or blocked is not None
                 )
                 return
-            try:
-                draft = self._draft_from_controls()
-                valid = voice_state.validate_voice_setup_draft(
-                    draft
-                ).configuration_valid
-            except (TypeError, ValueError):
-                valid = False
-                draft = None
+            draft, blocked = voice_status.sample_readiness(self._draft_from_controls)
             uses_key = draft is not None and draft.authentication_mode == "api_key"
             missing_key = uses_key and self._existing_openai_credential() is None
             key_row.display = missing_key or (uses_key and self._staged_key is not None)
             self.query_one("#setup-voice-test", Button).disabled = (
-                self._test_in_progress_generation is not None
-                or not valid
-                or missing_key
+                testing or blocked is not None or missing_key
             )
-            status = self.query_one("#setup-voice-status", Static)
-            status_text = str(status.renderable)
-            if missing_key and self._test_in_progress_generation is None:
+            if missing_key:
                 self._verified_draft = None
-                status.update(voice_status.KEY_NEEDED_COPY)
-            elif (
-                not missing_key
-                and status_text == voice_status.KEY_NEEDED_COPY
-                and self._test_in_progress_generation is None
-            ):
-                status.update(voice_status.DEFAULT_STATUS_COPY)
+                blocked = voice_status.KEY_NEEDED_COPY
+            self._show_blocked(blocked, testing=testing)
             self._refresh_service_status()
         except Exception:
             return

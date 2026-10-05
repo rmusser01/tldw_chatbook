@@ -298,6 +298,25 @@ async def test_reshow_rereads_state_without_cancelling_install(monkeypatch) -> N
         assert step._omnivoice_installing is True
 
 
+async def test_a_blank_sample_says_why_test_is_off(monkeypatch) -> None:
+    """Review round 2 (G8-R2-F5): OmniVoice shares the status line, so a
+    blank sample says why Test and Hear is off there too."""
+    from tldw_chatbook.UI.Wizards import first_run_voice_status as voice_status
+
+    _state(monkeypatch, "ready")
+    step = _step()
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _select_omnivoice(step, pilot)
+        step.query_one("#setup-voice-sample", Input).value = ""
+        await pilot.pause()
+
+        assert step.query_one("#setup-voice-test", Button).disabled
+        assert str(step.query_one("#setup-voice-status", Static).render()) == (
+            voice_status.BLANK_SAMPLE_COPY
+        )
+
+
 async def test_commit_without_default_saves_nothing(monkeypatch) -> None:
     _state(monkeypatch, "ready")
     step = _step()

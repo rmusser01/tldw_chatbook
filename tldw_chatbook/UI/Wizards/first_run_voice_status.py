@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+from collections.abc import Callable
 from urllib.parse import urlsplit
 
 from tldw_chatbook.TTS.pocket_tts_native import (
@@ -35,6 +36,10 @@ PLAYBACK_FAILED_COPY = (
     "The service answered, but this computer couldn't play the audio. Check "
     "your sound output, then replay."
 )
+#: While Test and Hear is off for a reason the user can fix, the status line
+#: says it (review round 2, G8-R2-F5) instead of inviting a dead press.
+BLANK_SAMPLE_COPY = "Type some sample text above to test the voice."
+_FIX_ADVANCED_LEAD = "To test, fix this under Advanced: "
 TESTING_COPY = "Testing voice…"
 CANCELLED_COPY = "Test cancelled. Press Test and Hear to retry."
 KEY_NEEDED_COPY = (
@@ -188,6 +193,57 @@ def service_status_copy(
     )
 
 
+def sample_readiness(
+    read_draft: Callable[[], vs.VoiceSetupDraft],
+) -> tuple[vs.VoiceSetupDraft | None, str | None]:
+    """The controls' draft, and why Test and Hear can't send it.
+
+    Review round 2 (G8-R2-F5): the button went disabled while the status line
+    still said "press Test and Hear", and never said what to fix.
+
+    Args:
+        read_draft: Reads the draft from the controls (raises on a bad speed).
+
+    Returns:
+        The draft (None when it can't be read) and the reason the test is
+        off, or None when the draft can be sent.
+    """
+    try:
+        draft = read_draft()
+    except (TypeError, ValueError):
+        # Only Speed can fail to parse; never echo a parser's message.
+        return None, f"{_FIX_ADVANCED_LEAD}Speed must be a number between 0.25 and 4.0."
+    validation = vs.validate_voice_setup_draft(draft, require_sample=False)
+    if not validation.configuration_valid:
+        return draft, f"{_FIX_ADVANCED_LEAD}{validation.errors[0]}"
+    if not draft.sample_text.strip():
+        return draft, BLANK_SAMPLE_COPY
+    return draft, None
+
+
+def blocked_status(current: str, blocked: str | None, *, testing: bool) -> str | None:
+    """What the status line should change to while Test and Hear is off.
+
+    Args:
+        current: The status line now.
+        blocked: Why the test is off (see :func:`sample_readiness`), or None.
+        testing: A test is running; its own copy owns the line.
+
+    Returns:
+        The new line, or None to leave it (a result, the re-run "Current
+        voice" line once nothing blocks the test).
+    """
+    if testing:
+        return None
+    if blocked is not None:
+        return None if current == blocked else blocked
+    if current in {KEY_NEEDED_COPY, BLANK_SAMPLE_COPY} or current.startswith(
+        _FIX_ADVANCED_LEAD
+    ):
+        return DEFAULT_STATUS_COPY
+    return None
+
+
 def no_voice_copy(saved: prefill.SavedVoice | None) -> str:
     """The line under the radio while "No voice for now" is chosen.
 
@@ -298,6 +354,7 @@ def voice_test_failure_copy(
 
 __all__ = [
     "AUTH_HELP_COPY",
+    "BLANK_SAMPLE_COPY",
     "CANCELLED_COPY",
     "DEFAULT_HELP_COPY",
     "DEFAULT_STATUS_COPY",
@@ -311,9 +368,11 @@ __all__ = [
     "PLAYED_COPY",
     "PROBE_TIMEOUT_SECONDS",
     "TESTING_COPY",
+    "blocked_status",
     "default_help_copy",
     "no_voice_copy",
     "probe_endpoint_reachable",
+    "sample_readiness",
     "service_status_copy",
     "voice_test_failure_copy",
 ]

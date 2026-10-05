@@ -1110,6 +1110,45 @@ async def test_voice_copy_controls_and_auto_tick(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_disabled_test_button_says_why(monkeypatch) -> None:
+    """Review round 2 (G8-R2-F5): with Test and Hear disabled by a blank
+    sample or an Advanced value it cannot send, the status still read
+    "Optional — press Test and Hear to play a short sample.", inviting a
+    press that does nothing and never saying what to fix."""
+    monkeypatch.setattr(voice_step_module, "probe_endpoint_reachable", lambda _u: False)
+    step = _step()
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause()
+        status = step.query_one("#setup-voice-status", Static)
+        test = step.query_one("#setup-voice-test", Button)
+
+        step.query_one("#setup-voice-sample", Input).value = "   "
+        await pilot.pause()
+        assert test.disabled
+        assert str(status.render()) == voice_status.BLANK_SAMPLE_COPY
+
+        step.query_one("#setup-voice-sample", Input).value = "Hello"
+        await pilot.pause()
+        assert not test.disabled
+        assert str(status.render()) == voice_status.DEFAULT_STATUS_COPY
+
+        step.query_one("#setup-voice-format", Input).value = "mp3"
+        await pilot.pause()
+        assert test.disabled
+        assert str(status.render()) == (
+            "To test, fix this under Advanced: PocketTTS returns WAV audio only. "
+            "Set the output format to wav."
+        )
+
+        step.query_one("#setup-voice-format", Input).value = "wav"
+        await pilot.pause()
+        assert not test.disabled
+        assert str(status.render()) == voice_status.DEFAULT_STATUS_COPY
+
+
+@pytest.mark.asyncio
 async def test_a_successful_test_on_an_untouched_rerun_still_saves(monkeypatch) -> None:
     """Review round 2 (F2): a successful test counts as acting this run, so
     Next posts a save even when nothing was edited (the user verified it)."""
