@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 07:10'
+updated_date: '2026-10-05 14:03'
 labels:
   - console
   - performance
@@ -120,6 +120,16 @@ Reason: this test-only correction removes artificial descendant callback fan-out
 ADR required: no new ADR.
 ADR path: N/A; existing ADR120 and ADR198 apply.
 Reason: bounded test-only observer allocation reduction, covered by the user's approval to repair scale verification, preserves all native dispatch, actual first-paint proof and production ownership/GC/cache boundaries. No fourth production remedy is authorized.
+
+### Bounded local-marks read ownership correction
+
+1. Retain clean d7b1 shutdown evidence and trace every unread_token/unread_ids_for caller. These synchronous service reads return materialized tokens/sets; no cursor escapes and no UI behavior changes.
+2. Add real file-backed worker REDs for both reads, including a SQL failure after acquisition. Verify borrowed handles/transactions, custom database owners and memory ownership remain untouched.
+3. Adopt existing operation_owned_connection only for exact installed file-backed CharactersRAGDB owners inside these two shared reader methods. Preserve manual locks, revision publication, chunking, validation, results and original exceptions. No public interface, query, write, global close, GC/cache policy or fourth performance remedy.
+4. Run targeted marks/attention/navigation and installed helper contracts with explicit terminal fixture retirement and read-only descriptor checks. Commit source, then repeat a fresh guarded shutdown-owner probe; do not relabel headless evidence as native or claim all remaining owners closed.
+ADR required: no new ADR.
+ADR path: N/A; existing ADR120 and installed operation-owned connection contract apply.
+Reason: routine adoption of the existing finite callback ownership boundary at proven new-handle readers; caller caches and app/process lifetimes are unchanged. The user's standing approval for resource fixes covers this bounded correction.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -152,4 +162,8 @@ Implemented bounded first-busy observation correction in the benchmark only: act
 Frozen first-busy correction 0abbd7bf16: fresh10k/250k corpus and300 Keyword queries pass (P95 123.915667ms; loop13.286542ms; zero resources after cleanup). Full normal UI completes60 exact searches/eight OPENED activations, one busy capture each (<0.8ms), all preparation/search/busy gates pass, but seven activation loop intervals fail50ms (max114.820666ms). Same-head unchanged attribution probe retains26 paired gen2/16 Pilot waits/zero drops, unchanged thresholds; failed intervals include both no-GC cases and39.8–74.8ms native transcript/render/layout collections. Trigger is not heap ownership; inclusive spans cannot be added or subtracted. Required final capture has a separate diagnostic GC trigger, not proof of every stall. No fourth production or global GC/cache fix selected. Mixed process/app DB ownership and thread-specific close APIs mean native37-descriptor retirement still needs a proven owner-specific remedy. Raw roots/logs/limits appended to Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. All AC open; external qualification and architecture checkpoint remain, no PR yet.
 
 Clean d7b1e915dc shutdown-owner diagnosis uses the guarded small real-app fixture, actual headless quit and read-only installed storage census before and after default-executor join. Corrected runs retain 34-42 DB descriptors; final exact weak-key origin run has ten native-open connections: shared Chat main plus five exited workers (local-marks unread reads, world-book summary and cached RAG metadata), and main-thread evaluation/Library/Subscriptions/Workspace caches. No active transaction, storage operation or pending acquisition after runner join; separate theme executor still live. Invalid awaited synchronous-quit attempt and insufficient scalar-ID origin attempt retained explicitly. Source/corpus guards true; no owner close, GC/cache policy, production or qualification change. Evidence and final script hash in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. Next resource fix must preserve finite callback, borrowed cache and app/process ownership boundaries; all latency/native/Windows/participant gates stay open.
+
+Implemented bounded finite unread-reader ownership at both shared readers using the installed helper, exact native file guard and lazy imports. Real file-backed RED: 4 handle leaks, 8 borrower/memory/custom controls pass; initial GREEN 12 pass. Wider strict run exposed old fixture leaks: 97 bodies pass but FD growth 206 and required gate fails. Explicit unit constructor retirement yields 97 pass in39.58s, no warnings and zero retained DB files across97 observations. Mounted child body initially passes but constructor/marks DB gate fails; reuse existing owned_console_apps plus exact database registration yields14 mounted cases pass in125.64s and all14 actual child DB censuses clean. The parent report has no warnings, but inspection of every actual child log finds sandbox-only cache-write warnings; warning-free mounted verification remains pending a properly authorized rerun. Independent scoped reviews have no findings; eleven artifact guards green, changed Python Ruff/range-format and whitespace clean. Existing ADR120/finite-operation contract, no new ADR or production global lifetime/GC/cache change. Fresh clean-source shutdown comparison remains next; latency/native/Windows/participant gates stay open and all AC remain unchecked. Full RED/GREEN paths and limits in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
+
+Final authorized mounted rerun supersedes the prior warning-free limit: all14 cases pass in138.11s (/tmp/task31966-marks-mounted-clean-OFaktB/tests.log), no pytest warnings in parent or any actual child log, zero DB-file observations across14 children. The private runner clears PYTEST_ADDOPTS, so inherited parent cache options had not reached children; normal worktree write authorization fixed the cache warning without code/filter/threshold changes. Source shutdown proof and latest-dev integration remain pending; no qualification waiver or PR-ready claim.
 <!-- SECTION:NOTES:END -->

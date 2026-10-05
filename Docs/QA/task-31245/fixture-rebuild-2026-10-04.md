@@ -1232,3 +1232,79 @@ an app-wide blanket close is not justified. No production remedy, fourth
 performance correction, new global lifecycle/GC/cache policy, qualification
 waiver or PR was introduced by this diagnosis. All remaining native/resource,
 latency, Windows and participant gates stay open.
+
+### Finite unread-reader retirement — 2026-10-05
+
+The exact weak-key origin trace above identified finite local-marks reads among
+the retained Chat worker handles. Both shared readers (`unread_token` and
+`unread_ids_for`) now use the installed operation-owned boundary only for the
+exact file-backed `CharactersRAGDB` class. Their manual lock, query, chunking,
+validation, token/revision semantics and returned materialized values remain
+unchanged. Already registered caller caches and transactions, memory databases,
+custom owners and other mark readers/writers retain their previous lifetimes.
+Imports remain lazy; no new owner abstraction, public API or UI change was added.
+Existing ADR120 and the installed finite-operation contract apply; no new ADR or
+global lifetime/GC/cache policy is introduced.
+
+Real file-backed, physically joined executor regressions first failed against
+the unchanged production readers: four failures each observed two registered
+handles instead of the expected one. Eight borrowed-transaction/memory/custom
+controls already passed. The failure cases execute a real missing-table query
+after acquisition and preserve its `sqlite3.OperationalError`.
+Raw RED: `/tmp/task31966-marks-red-pWi8uO/tests.log` (4 failed, 8 passed, 7.31s).
+Initial GREEN: `/tmp/task31966-marks-green-DfEAWi/tests.log` (12 passed, 7.25s,
+no pytest warnings, required read-only descriptor gate clean).
+
+The first wider 97-case run passed every body but **failed** the required
+retirement gate. Old local-marks unit tests had no terminal database teardown:
+85 observations retained database files; the final observation held 43 Chat
+handles plus WAL/SHM descriptors, and the unchanged FD sentinel warned of growth
+by 206. This is not a warning-free or resource-qualified pass.
+Raw failed gate: `/tmp/task31966-marks-cover-rIMHvo/tests.log`.
+
+The unit module now captures only its actual constructor alias and quiesces
+those exact test-owned databases after bodies and their worker pools stop.
+Final wider verification: `/tmp/task31966-marks-final-oA64Gu/tests.log`:
+97 passed in 39.58s, no pytest warnings, all 97 required read-only observations
+contain no database files. This covers local marks, timestamp shape, attention
+projection, installed finite-offload/cancellation contracts and the new ownership
+regressions. Fixture retirement is not a production shutdown policy.
+
+The first mounted reminder test's child body also passed, but its child census
+retained constructor databases and the custom marks database, so the process
+gate correctly failed. A separate sandbox-only pytest cache-write warning was
+also retained. Raw failure:
+`/tmp/task31966-marks-mounted-red-jgvvxN/tests.log`. The module now opts into the
+existing `owned_console_apps` fixture and registers each exact marks database
+for retirement after final runtime disposal. An explicit writable parent cache
+directory does not reach the private child, which clears `PYTEST_ADDOPTS`.
+No warning filter or threshold change is used.
+Full mounted verification: `/tmp/task31966-marks-mounted-final-zgoSqI/tests.log`,
+14 passed in 125.64s. The parent has no pytest warnings, but inspection of the
+actual child logs still finds cache-write warnings; this is not warning-free
+verification. Every one of the 14 actual child
+processes also has a required clean read-only database-file census. Coverage
+includes stale acknowledgements, duplicate/cancelled navigation, actual unread
+menu dispatch, composer/row focus and Unicode/ASCII action geometry at three
+sizes. These mounted tests are not native Terminal qualification.
+
+The properly authorized rerun at
+`/tmp/task31966-marks-mounted-clean-OFaktB/tests.log` passes all 14 cases in
+138.11s. The parent and each actual child log have no pytest warnings; all 14
+child resource observations contain no database files. No code, warning filters
+or thresholds changed between those runs. Child cache writes required normal
+worktree write authorization because the private runner deliberately clears the
+parent's `PYTEST_ADDOPTS`; the failed/non-warning-free receipts above remain.
+
+Independent read-only reviews found no actionable issue in the production
+scope, real regression tests, unit constructor capture or mounted fixture
+registration. All eleven derived-artifact guards pass in
+`/tmp/task31966-marks-green-DfEAWi/preflight.log`. Changed Python passes Ruff;
+test files and the modified production method range are formatted. The unchanged
+`_now` expression elsewhere in the production file retains its pre-existing
+full-file formatting difference. Whitespace is clean.
+
+Fresh clean-source shutdown evidence remains pending. Neither these tests nor
+fixture cleanup proves all app/process caches closed, latency qualification,
+native input/geometry, Windows or participant usability. All corresponding
+workstream gates remain open; no final follow-up PR is ready yet.
