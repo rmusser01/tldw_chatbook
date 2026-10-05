@@ -30,6 +30,18 @@ filtered mounted rename leave no workspace files after teardown without GC or
 observer cleanup. A passing warning sentinel proves only that its threshold was
 not exceeded; inspect ownership directly before claiming terminal retirement.
 
+**TASK-34411, 2026-10-05.** A parked real character-metadata callback entered
+the finite guard with a borrowed worker handle. Exact-file quiescence closed
+that object, then resumed acquisition; the callback reopened a different handle.
+After physical completion it remained executable and registered because cleanup
+remembered only the entry-time borrowed flag. Cold entry passed, warm entry
+failed; installed AgentRuns, Workspace and Collections replacement controls
+failed on success and SQL error while unchanged active transactions stayed live.
+Capture the exact original native identity: preserve it if still current, but
+retire a replacement acquired within the completed operation. Do not infer that
+an object is caller-owned merely because its predecessor was borrowed, or claim
+this deterministic defect explains an intermittent failure not yet captured.
+
 The initial observer covered constructor profiles, not every test `tmp_path`.
 Adding the current run's explicit temporary root exposed Chat handles that the
 first filter could not see. Local quiescence then retired them, but the shared

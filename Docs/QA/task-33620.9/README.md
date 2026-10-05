@@ -425,7 +425,7 @@ native-origin log `e151abfe442e8282a7e6619485aef5436bd6bc6c6799808661427f9ea18cf
 temporary native-origin script `784c9107b7a0a26bf670af54350f56ac55ceb7a374c28cb81afe5ced83e00869`.
 Temporary logs/scripts are retained locally, not portable archived evidence.
 
-### Current-head CI failure and matching dev baseline
+### Earlier published-head CI failure and matching dev baseline
 
 Perf Guard run [37371292704](https://github.com/rmusser01/tldw_chatbook/actions/runs/37371292704)
 at `51860b4558` passes latency and boot-budget
@@ -441,3 +441,63 @@ No budget, native admission, monitor or production policy was changed, and no
 blind workflow retry was requested. Artifact run **37371292729** remains
 pending at this checkpoint. Qodo remains credit-blocked, with no actual review;
 CodeRabbit's draft-skip status is not a substitute.
+
+### Exact finite-operation replacement retirement — TASK-34411
+
+A deterministic control parks the installed character scope-metadata read
+inside `operation_owned_connection` before SQL. Exact-file quiescence retires
+the worker's original borrower; after quiescence resumes acquisition, the read
+opens a different native handle. The old entry-time `borrowed` boolean skips
+retirement even after physical callback completion. This establishes a concrete
+shared-helper defect, **not** the cause of the uncaptured intermittent profile
+failure recorded above.
+
+The corrected repository regression records **7 failed / 7 passed in 1.99s**:
+warm character metadata and success/error replacements for all three installed
+raw core owners fail native closed-handle assertions; cold metadata and
+unchanged active transactions pass. The error crosses the actual ownership
+guard's `finally`. The preceding draft test also recorded 7 failures / 7 passes,
+but its nested error catch did not establish error propagation through the outer
+guard; that receipt is retained and superseded by the corrected control.
+
+The fix captures the exact original native object on both supported routes and
+retires a different current handle after operation completion. Existing
+owner-thread close/refusal, memory/custom routing and async cancellation behavior
+are unchanged. No new lifetime, native admission, collector or cleanup policy is
+introduced; existing ADR-126 applies, with no new ADR required.
+
+Targeted verification: **136 passed in 64.73s, no pytest warnings, strict exit 0**.
+All 136 parent-process post-teardown observations contain zero test database
+files. Existing subprocess Library controls independently assert native closure
+and preserved borrowers; the parent census is not a child descriptor census.
+The new test is Ruff/formatter clean; the edited helper region formats clean,
+with the same six inherited whole-file Ruff diagnostics and unrelated formatter
+changes as its base. The existing formatter ratchet, whitespace check and all
+eleven derived-artifact guards pass. Independent scoped source/test review found
+no actionable findings. The complete nine-file affected batch records **363
+passed in 574.06s, no pytest warnings, strict exit 0**; all 363 post-teardown
+observations contain zero test database files. The unchanged 1,000-send control
+passes in 387.96s with its original count, assertions and timeout. The
+failure-conditioned retention probe reports `null`: this passing run does not
+capture or attribute the old intermittent failure.
+
+Local receipts: `/tmp/pr3024-replacement-red-corrected.log` (SHA256
+`02116e1e9b7916828390adc2780aabc8ca7c203b465ae6c4f0f110e3ad0eea20`)
+and `/tmp/pr3024-replacement-green.log` (SHA256
+`6a92becff8a480faf9f01f4aaddd00977ef9674291a28f0023cf3b47a38f3bb7`).
+The complete affected receipt `/tmp/pr3024-replacement-affected.log` has SHA256
+`56d8b421bd063d11f4d9e8b72df233ae1992937f6abcdf0c87d706f17072eb9e`.
+Temporary receipts are retained locally, not portable archived evidence.
+Native, Windows, participant, latency and external-review gates remain HOLD.
+
+The subsequent exact published head `7e7fb51ee0cbfe2eb01a162b20f38ec574fd0e34`
+has a successful [Perf Guard run 37377248523](https://github.com/rmusser01/tldw_chatbook/actions/runs/37377248523),
+with both tested and untested credential-poll variants at **6.75 os.open/tick**
+under the unchanged ceiling. That is current-head CI evidence, not a demonstrated
+cause or repair of the older 10.125 result, nor qualification for this new
+unpublished helper patch. Derived Artifacts is still running at this checkpoint.
+Qodo is credit-blocked; CodeRabbit's explicit full-review request terminates with
+no files to review because organization path filters exclude all 72 changed
+files. Neither skipped review is a clean external review. Review-configuration
+direction remains pending; no organization settings or PR-local override was
+changed.
