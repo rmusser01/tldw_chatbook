@@ -213,6 +213,31 @@ def test_another_default_provider_is_the_current_voice_even_with_an_endpoint() -
 
 
 @pytest.mark.parametrize(
+    "table",
+    (
+        {"default_provider": "kokoro", "OPENAI_BASE_URL": "http://127.0.0.1:8766/tts"},
+        {"OPENAI_BASE_URL": "http://127.0.0.1:8766/tts"},
+    ),
+)
+def test_a_saved_pocket_tts_address_on_any_port_fills_pocket_tts_axes(table) -> None:
+    """Review round 2 (G8-R2-F2): the fallback model, voice and format were
+    chosen by the preset, so a /tts address off port 8000 (Custom) got
+    tts-1-hd / shimmer / mp3 -- a draft pocket-tts can never speak, which
+    silently disabled Test and Hear and made an untouched Next refuse."""
+    saved = prefill.saved_voice_from_config(table)
+
+    assert saved is not None
+    assert saved.slot_preset == vs.VOICE_PRESET_CUSTOM
+    draft = saved.draft
+    assert (draft.model_id, draft.voice_id, draft.response_format) == (
+        "pocket-tts",
+        "alba",
+        "wav",
+    )
+    assert vs.validate_voice_setup_draft(draft).configuration_valid
+
+
+@pytest.mark.parametrize(
     ("preset", "table", "locked"),
     (
         (vs.VOICE_PRESET_POCKET_TTS, {}, True),

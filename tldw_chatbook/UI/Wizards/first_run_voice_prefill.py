@@ -19,7 +19,10 @@ from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_authentication_mode,
     normalize_openai_compatible_endpoint,
 )
-from tldw_chatbook.TTS.pocket_tts_native import POCKET_TTS_VOICES
+from tldw_chatbook.TTS.pocket_tts_native import (
+    POCKET_TTS_VOICES,
+    is_pocket_tts_native_url,
+)
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as vs
 
 #: What the runtime uses for the OpenAI slot when nothing is saved
@@ -153,9 +156,13 @@ def saved_voice_from_config(table: object) -> SavedVoice | None:
     except (TypeError, ValueError):
         return None if own_axes else other
     slot_preset = _openai_slot_preset(endpoint.speech_url)
-    defaults = {
-        vs.VOICE_PRESET_POCKET_TTS: (vs.POCKET_TTS_MODEL, vs.POCKET_TTS_VOICE, "wav"),
-    }.get(slot_preset, _RUNTIME_FALLBACK)
+    # Any pocket-tts /tts address, not only the preset's port: tts-1-hd /
+    # shimmer / mp3 there is a draft it can never speak (G8-R2-F2).
+    defaults = (
+        (vs.POCKET_TTS_MODEL, vs.POCKET_TTS_VOICE, "wav")
+        if is_pocket_tts_native_url(endpoint.speech_url)
+        else _RUNTIME_FALLBACK
+    )
     model = (_text(table, "default_model") if own_axes else "") or defaults[0]
     voice = (_text(table, "default_voice") if own_axes else "") or defaults[1]
     response_format = (_text(table, "default_format") if own_axes else "").lower()

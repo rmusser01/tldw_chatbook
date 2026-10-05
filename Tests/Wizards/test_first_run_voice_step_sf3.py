@@ -425,6 +425,48 @@ async def test_another_default_provider_keeps_the_box_free_and_its_defaults() ->
 
 
 @pytest.mark.asyncio
+async def test_custom_over_a_saved_pocket_tts_address_is_testable_and_untouched() -> (
+    None
+):
+    """Review round 2 (G8-R2-F2): kokoro reads replies and the slot holds a
+    pocket-tts /tts address on 8766. Choosing Custom filled tts-1-hd /
+    shimmer / mp3, which silently disabled Test and Hear, and Next (nothing
+    edited) refused with "PocketTTS returns WAV audio only"."""
+    table = {
+        "default_provider": "kokoro",
+        "default_model": "kokoro",
+        "default_voice": "af_bella",
+        "default_format": "wav",
+        "default_speed": 1.0,
+        "OPENAI_BASE_URL": "http://127.0.0.1:8766/tts",
+        "OPENAI_AUTH_MODE": "none",
+    }
+    seen: list[tuple[str, str, str, bool]] = []
+
+    async def pick_custom(step, pilot):
+        step._select_preset_button("setup-voice-preset-custom")
+        await pilot.pause()
+        seen.append(
+            (
+                *(
+                    step.query_one(f"#setup-voice-{field}", Input).value
+                    for field in ("model", "voice", "format")
+                ),
+                step.query_one("#setup-voice-test", Button).disabled,
+            )
+        )
+
+    step, app, outcome, before, after = await _commit_through_real_writer(
+        table, None, act=pick_custom
+    )
+
+    assert seen == [("pocket-tts", "alba", "wav", False)]
+    assert outcome == (True, "")
+    assert app.saves == []
+    assert after == before
+
+
+@pytest.mark.asyncio
 async def test_the_old_wizards_pocket_tts_write_is_not_preselected_or_rewritten() -> (
     None
 ):
