@@ -6979,7 +6979,7 @@ class ConsoleChatController:
                 detail=reason,
             )
         if configuration is None:
-            configuration = self.resolve_turn_configuration_snapshot(session_id)
+            configuration = await self.capture_turn_configuration_snapshot(session_id)
         if not isinstance(configuration, ConsoleTurnConfigurationSnapshot):
             raise TypeError("Queue configuration must be an immutable turn snapshot.")
         if configuration.session_id != session_id:
@@ -7959,7 +7959,7 @@ class ConsoleChatController:
                 "Enable or configure it, or Discard the interrupted run.",
             )
             return False
-        configuration = self.resolve_turn_configuration_snapshot(session_id)
+        configuration = await self.capture_turn_configuration_snapshot(session_id)
         maximum = dict(configuration.skill_context_maximum)
         plugin_service = getattr(
             getattr(self._skills_service, "local_service", None), "plugin_service", None
@@ -10684,7 +10684,7 @@ class ConsoleChatController:
             if resumed_preparation is not None
             else configuration
             if configuration is not None
-            else self.resolve_turn_configuration_snapshot(session.id)
+            else await self.capture_turn_configuration_snapshot(session.id)
         )
         if any(
             row.get("plugin_owned")
@@ -13855,7 +13855,7 @@ class ConsoleChatController:
             raise _DispatchRecoveryRefusal(
                 "Dispatch recovery checkpoint is unavailable."
             )
-        configuration = self.resolve_turn_configuration_snapshot(session_id)
+        configuration = await self.capture_turn_configuration_snapshot(session_id)
         authority = await self._capture_turn_library_authority(
             session_id,
             configuration,
@@ -14068,7 +14068,7 @@ class ConsoleChatController:
             turn_context = getattr(context, "turn_context", None)
             if not isinstance(turn_context, ConsoleTurnExecutionContext):
                 turn_context = self._finalize_turn_execution_context(
-                    self.resolve_turn_configuration_snapshot(session_id),
+                    await self.capture_turn_configuration_snapshot(session_id),
                     authority,
                     context.resolution,
                 )
@@ -17556,7 +17556,7 @@ class ConsoleChatController:
                 project_selection=project_selection,
                 project_authority_guard=project_authority_guard,
             )
-        local_provider, local_review_hook = self._compose_local_provider(
+        local_provider, local_review_hook = await self._compose_local_provider_async(
             session_id=session_id,
             turn_context=turn_context,
             project_root=(project_selection.root if project_selection else None),
@@ -17569,6 +17569,72 @@ class ConsoleChatController:
         )
         return mcp_provider, builtin_gate, local_provider, local_review_hook
 
+    async def _compose_local_provider_async(self, **kwargs):
+        """Prepare only a standard blocking switch read before loop composition."""
+        import sys
+
+        from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+        from tldw_chatbook.MCP.console_snapshot import (
+            read_console_kill_switch,
+            standard_console_sources,
+        )
+
+        app = self.app
+        app_config = getattr(app, "app_config", None)
+        service = getattr(app, "unified_mcp_service", None)
+        context = kwargs.get("turn_context")
+        enabled = (
+            context.tool_configuration.get(
+                "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            )
+            if context is not None
+            else get_cli_setting(
+                "console", "local_tools_enabled", LOCAL_TOOLS_DEFAULT_ENABLED
+            )
+        )
+        if not coerce_bool_setting(
+            enabled, LOCAL_TOOLS_DEFAULT_ENABLED
+        ) or not standard_console_sources(service):
+            return self._compose_local_provider(**kwargs)
+        store = self.store
+        session_id = kwargs.get("session_id")
+        session = next((item for item in store.sessions() if item.id == session_id), None)
+        revision = (
+            store.session_settings_revision(session_id) if session is not None else None
+        )
+        scratch = self._scratch_spaces
+        identity = config.current_config_identity()
+        try:
+            kill_switch = await read_console_kill_switch(service)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Console local composition switch unavailable (exception_type={})",
+                type(exc).__name__,
+            )
+            return None, None
+        if (
+            self.app is not app
+            or getattr(app, "app_config", None) is not app_config
+            or self.store is not store
+            or self._scratch_spaces is not scratch
+            or getattr(app, "unified_mcp_service", None) is not service
+            or sys.modules.get("tldw_chatbook.config") is not config
+            or config.current_config_identity() != identity
+            or next((item for item in store.sessions() if item.id == session_id), None)
+            is not session
+            or (
+                session is not None
+                and store.session_settings_revision(session_id) != revision
+            )
+        ):
+            raise RecoveryRequired("console_snapshot_owner_changed")
+        return self._compose_local_provider(
+            **kwargs, _captured_service=service, _captured_kill_switch=kill_switch
+        )
+
     def _compose_local_provider(
         self,
         session_id: str | None = None,
@@ -17579,16 +17645,17 @@ class ConsoleChatController:
         project_root_identity: tuple[tuple[str, int, int, int], ...] | None = None,
         project_root_guard: Callable[[], bool] | None = None,
         admitted_roots: Sequence[Any] | None = None,
+        _captured_service: Any = None,
+        _captured_kill_switch: bool | None = None,
     ) -> tuple[
         LocalToolProvider | None, Callable[[list["ToolCall"]], dict[str, str]] | None
     ]:
         """Build THIS run's LocalToolProvider + review hook, or ``(None, None)``.
 
         Sync, unlike ``_compose_mcp_provider``: ``LocalToolProvider``'s
-        specs are static (no async catalog composition), so there is no
-        main-loop I/O constraint -- but it is still called from
-        ``_run_agent_reply`` alongside the MCP composition, before the
-        bridge is dispatched onto ``asyncio.to_thread``.
+        specs are static. The async request path prepares the blocking
+        compose-time switch separately, then calls this builder on its
+        owning loop. Direct synchronous callers retain the original read.
 
         Returns ``(None, None)`` whenever local tools should not be
         offered this run:
@@ -17654,11 +17721,19 @@ class ConsoleChatController:
         )
         if not coerce_bool_setting(local_tools_enabled, LOCAL_TOOLS_DEFAULT_ENABLED):
             return None, None
-        service = getattr(self.app, "unified_mcp_service", None)
+        service = (
+            _captured_service
+            if _captured_service is not None
+            else getattr(self.app, "unified_mcp_service", None)
+        )
         if service is None:
             return None, None
         try:
-            kill_switch = service.get_kill_switch()
+            kill_switch = (
+                service.get_kill_switch()
+                if _captured_kill_switch is None
+                else _captured_kill_switch
+            )
         except Exception:  # noqa: BLE001 -- fail closed to "no local tools this run"
             logger.opt(exception=True).warning(
                 "ConsoleChatController: get_kill_switch failed; skipping local tools this run"
@@ -17668,9 +17743,7 @@ class ConsoleChatController:
             return None, None
 
         profile_id = (
-            turn_context.tool_policy_profile_id
-            if turn_context is not None
-            else "default"
+            turn_context.tool_policy_profile_id if turn_context is not None else "default"
         )
         profile_kwargs = {} if profile_id == "default" else {"profile_id": profile_id}
 
@@ -17761,9 +17834,7 @@ class ConsoleChatController:
                 raise RuntimeError("Watchlists source service unavailable")
             return local_watchlists_service.create_sources_exact_batch_sync(rows)
 
-        watchlists_command_service = getattr(
-            self.app, "watchlists_command_service", None
-        )
+        watchlists_command_service = getattr(self.app, "watchlists_command_service", None)
         if watchlists_command_service is None:
             watchlists_command_service = WatchlistsCommandService(
                 runtime_source_loader=load_default_runtime_source_state,
@@ -21512,7 +21583,7 @@ class ConsoleChatController:
             return self._summarize_block(
                 session_id, "Conversation changed before summarization could start."
             )
-        configuration = self.resolve_turn_configuration_snapshot(session_id)
+        configuration = await self.capture_turn_configuration_snapshot(session_id)
         try:
             resolution = await self._resolve_for_send_bounded(
                 configuration.provider_selection
@@ -22050,7 +22121,7 @@ class ConsoleChatController:
         span = self._note_span_messages(session_id, message_id)
         if isinstance(span, ConsoleSubmitResult):
             return span
-        configuration = self.resolve_turn_configuration_snapshot(session_id)
+        configuration = await self.capture_turn_configuration_snapshot(session_id)
         try:
             resolution = await self._resolve_for_send_bounded(
                 configuration.provider_selection
@@ -22390,7 +22461,7 @@ class ConsoleChatController:
         clean_content, validation_error = self._validated_draft(new_content)
         if validation_error is not None:
             return self._block(session_id, validation_error)
-        configuration = self.resolve_turn_configuration_snapshot(session_id)
+        configuration = await self.capture_turn_configuration_snapshot(session_id)
         turn_selection = configuration.provider_selection
 
         # task-573: the resend carries the anchor's attachments, so the same
@@ -23933,6 +24004,157 @@ class ConsoleChatController:
             ),
         }
 
+    async def capture_turn_configuration_snapshot(
+        self,
+        session_id: str,
+        *,
+        context_provider: Callable[..., ConsoleTurnConfigurationSnapshot] | None = None,
+    ) -> ConsoleTurnConfigurationSnapshot:
+        """Prepare fresh native MCP inputs before composing on the owning loop."""
+        import sys
+        from types import MethodType
+
+        from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+        from tldw_chatbook.MCP.console_snapshot import (
+            capture_console_definition_maximum,
+            standard_console_sources,
+        )
+        from tldw_chatbook.UI.Console_Modules.session import (
+            ConsoleSessionController,
+            _CONSOLE_TURN_CONTEXT_BUILDER,
+        )
+
+        original_provider = self._turn_context_provider
+        provider = context_provider if context_provider is not None else original_provider
+
+        def synchronous_capture() -> ConsoleTurnConfigurationSnapshot:
+            if context_provider is None:
+                return self.resolve_turn_configuration_snapshot(session_id)
+            context = provider(session_id)
+            if not isinstance(context, ConsoleTurnConfigurationSnapshot):
+                raise TypeError(
+                    "Console turn-context provider must return ConsoleTurnConfigurationSnapshot."
+                )
+            if context.session_id != session_id:
+                raise ValueError(
+                    "Console turn-context provider returned a different session."
+                )
+            return context
+
+        screen_owner = getattr(provider, "__self__", None)
+        standard_screen = (
+            isinstance(provider, MethodType)
+            and type(screen_owner) is ConsoleSessionController
+            and provider.__func__ is _CONSOLE_TURN_CONTEXT_BUILDER
+        )
+        if provider is not None and not standard_screen:
+            return synchronous_capture()
+        app = self.app
+        app_config = getattr(app, "app_config", None)
+        service = getattr(app, "unified_mcp_service", None)
+        if not standard_console_sources(service):
+            return synchronous_capture()
+
+        store = self.store
+        session = next(item for item in store.sessions() if item.id == session_id)
+        scratch = self._scratch_spaces
+        provider_config = self._provider_config
+        configuration_identity = config.current_config_identity()
+        revision = store.session_settings_revision(session_id)
+        workspace_id = store.session_workspace_id(session_id)
+        selection = self._provider_selection_for_session(session_id)
+        if standard_screen and (
+            screen_owner.app_instance is not app
+            or screen_owner._ensure_console_chat_store() is not store
+        ):
+            raise RecoveryRequired("console_snapshot_owner_changed")
+        screen_callbacks = (
+            tuple(
+                getattr(screen_owner, name, None)
+                for name in (
+                    "_current_chat_store_accessor",
+                    "_chat_store_accessor",
+                    "_provider_readiness_app_config_fn",
+                    "_build_provider_selection_fn",
+                    "_scratch_snapshot_provider",
+                    "_rag_source_types_accessor",
+                    "_rag_top_k_accessor",
+                )
+            )
+            if standard_screen
+            else ()
+        )
+
+        def same_callback(current: Any, original: Any) -> bool:
+            return current is original or (
+                type(current) is MethodType
+                and type(original) is MethodType
+                and current.__func__ is original.__func__
+                and current.__self__ is original.__self__
+            )
+
+        def require_current() -> None:
+            current_session = next(
+                (item for item in store.sessions() if item.id == session_id), None
+            )
+            if (
+                self.app is not app
+                or self.store is not store
+                or current_session is not session
+                or self._turn_context_provider is not original_provider
+                or getattr(app, "app_config", None) is not app_config
+                or self._scratch_spaces is not scratch
+                or self._provider_config is not provider_config
+                or getattr(app, "unified_mcp_service", None) is not service
+                or sys.modules.get("tldw_chatbook.config") is not config
+                or config.current_config_identity() != configuration_identity
+                or store.session_settings_revision(session_id) != revision
+                or store.session_workspace_id(session_id) != workspace_id
+                or self._provider_selection_for_session(session_id) != selection
+            ):
+                raise RecoveryRequired("console_snapshot_owner_changed")
+            if standard_screen and (
+                screen_owner.app_instance is not app
+                or screen_owner._ensure_console_chat_store() is not store
+                or not all(
+                    same_callback(getattr(screen_owner, name, None), original)
+                    for name, original in zip(
+                        (
+                            "_current_chat_store_accessor",
+                            "_chat_store_accessor",
+                            "_provider_readiness_app_config_fn",
+                            "_build_provider_selection_fn",
+                            "_scratch_snapshot_provider",
+                            "_rag_source_types_accessor",
+                            "_rag_top_k_accessor",
+                        ),
+                        screen_callbacks,
+                    )
+                )
+            ):
+                raise RecoveryRequired("console_snapshot_owner_changed")
+
+        maximum = await capture_console_definition_maximum(
+            service, CONSOLE_MCP_BUILTIN_RAW_NAME_EXCLUSIONS
+        )
+        require_current()
+        context = (
+            provider(session_id, mcp_definition_maximum=maximum)
+            if standard_screen
+            else self.resolve_runtime_turn_configuration_snapshot(
+                session_id, mcp_definition_maximum=maximum
+            )
+        )
+        require_current()
+        if not isinstance(context, ConsoleTurnConfigurationSnapshot):
+            raise TypeError(
+                "Console turn-context provider must return ConsoleTurnConfigurationSnapshot."
+            )
+        if context.session_id != session_id:
+            raise ValueError("Console turn-context provider returned a different session.")
+        return context
+
     def resolve_turn_configuration_snapshot(
         self, session_id: str
     ) -> ConsoleTurnConfigurationSnapshot:
@@ -23953,7 +24175,7 @@ class ConsoleChatController:
         return self.resolve_runtime_turn_configuration_snapshot(session_id)
 
     def resolve_runtime_turn_configuration_snapshot(
-        self, session_id: str
+        self, session_id: str, *, mcp_definition_maximum: Mapping[str, str] | None = None
     ) -> ConsoleTurnConfigurationSnapshot:
         """Capture configuration without consulting a screen-owned provider."""
 
@@ -23965,9 +24187,7 @@ class ConsoleChatController:
         from tldw_chatbook.Library.library_rag_state import library_rag_profile_top_k
 
         workspace_id = self.store.session_workspace_id(session_id)
-        roots, aliases, skipped = capture_change_review_admission(
-            self.app, workspace_id
-        )
+        roots, aliases, skipped = capture_change_review_admission(self.app, workspace_id)
         app_config = self._provider_config() if self._provider_config else {}
         console_config = app_config.get("console", {})
         if not isinstance(console_config, Mapping):
@@ -24024,7 +24244,11 @@ class ConsoleChatController:
             ),
             skill_context_maximum=capture_skill_context_maximum(self.app, workspace_id),
             mcp_tool_maximum=(
-                mcp_definition_maximum := capture_mcp_definition_maximum(self.app)
+                mcp_definition_maximum := (
+                    capture_mcp_definition_maximum(self.app)
+                    if mcp_definition_maximum is None
+                    else mcp_definition_maximum
+                )
             ),
             mcp_definition_maximum=mcp_definition_maximum,
             capabilities={
@@ -24282,7 +24506,7 @@ class ConsoleChatController:
         captured_configuration = (
             configuration
             if configuration is not None
-            else self.resolve_turn_configuration_snapshot(session_id)
+            else await self.capture_turn_configuration_snapshot(session_id)
         )
         library_authority = await self._capture_turn_library_authority(
             session_id,

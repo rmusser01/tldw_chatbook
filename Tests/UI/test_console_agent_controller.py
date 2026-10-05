@@ -319,6 +319,7 @@ async def test_drilldown_row_click_retargets_the_full_log_to_that_run(
 @pytest.mark.asyncio
 async def test_subagent_badge_counts_batch_once_and_cache_until_the_row_set_changes(
     tmp_path,
+    monkeypatch,
 ):
     """One batched DB query per refresh, and no re-query while the visible
     row set is unchanged (the 0.2s poll tick calls this every time)."""
@@ -333,6 +334,15 @@ async def test_subagent_badge_counts_batch_once_and_cache_until_the_row_set_chan
     async with host.run_test(size=_AGENT_SECTION_SIZE) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-rail-section-header-agent")
+
+        # This cache test supplies AB/A rows directly. The mounted browser
+        # owns a separate native conversation row set; isolate only its
+        # declared display dependency so the global DB spy has one consumer.
+        monkeypatch.setattr(
+            console._workspace,
+            "_subagent_counts_for_rows_fn",
+            lambda _bridge, _rows: {},
+        )
 
         bridge = _bridge_over(db_path)
         console._console_agent_bridge = bridge

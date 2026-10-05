@@ -1,6 +1,6 @@
 # ADR-126: Complete local backup and recovery
 
-Status: Accepted — revision 4 approved by the user on 2026-09-07
+Status: Accepted â€” revision 4 approved by the user on 2026-09-07
 Date: 2026-09-07
 
 2026-09-12 user correction: the Go implementation/build/delivery choice in decision
@@ -25,7 +25,7 @@ workflows on all three platforms and final Windows owner support tests. Exact
 revisions, artifact receipts and remaining merge limitations are recorded in the
 [cross-platform verification record](../../Docs/Development/backup-cross-platform-verification-2026-09-12.md).
 
-Revision: 4 — incorporates the fourth user-requested design review.
+Revision: 4 â€” incorporates the fourth user-requested design review.
 
 2026-09-15 user-authorized architecture migration (TASK-32628): expose selectable
 data groups within the existing Python backup set and recovery coordinator.
@@ -401,7 +401,7 @@ completion. Source-only private test children retire only their own quiescent
 startup for independent native evidence; production startup/responder/Complete
 qualification remains unavailable pending whole Task10 implementation and review.
 
-### Task10 phase12 — concrete Persona Visual lifetimes (rulings70–73)
+### Task10 phase12 â€” concrete Persona Visual lifetimes (rulings70â€“73)
 
 Actual Persona Visual repository/core operations, runtime asset file readers,
 issued authoring workspaces, imported review candidates and immutable publication
@@ -450,7 +450,7 @@ Required-state clear continues to produce a reviewable, unpublishable dirty draf
 clearing an optional state preserves existing valid publication behavior. No new
 visual feature, capture reader, archive capability or Complete claim is introduced.
 
-### Task10 phase13 — Shared Visual Identity source/native lifetimes (rulings74–75)
+### Task10 phase13 â€” Shared Visual Identity source/native lifetimes (rulings74â€“75)
 
 `Backup_Recovery/visual_identity_participants.py` binds the actual loaded config,
 canonical profile, registered CharactersRAGDB, original candidate and fixed source
@@ -494,7 +494,7 @@ its UI pending lifetime is evidence of outstanding work, not runtime retirement.
 App/headless aggregation, responder/startup release and remaining persistence
 cohorts require Task10 continuation and whole-task review. No Complete promotion.
 
-Rulings76–77 close actual public callback borrowing found during phase13 review.
+Rulings76â€“77 close actual public callback borrowing found during phase13 review.
 The publication's `atomic_replace` call and both repository `publication_guard`
 invocations suppress Shared Visual and core discovery only while evaluating the
 public callback. Exact loaded producer code/globals authenticate these narrow
@@ -515,7 +515,7 @@ If source failure and borrower retirement both fail, the UI retains the original
 exception, exact cleanup token and truthful result on the retirement error; it
 does not turn an unrelated error into publication success or clear uncertainty.
 
-### Task10 phase14 — TTS repository lifecycle foundation (ruling79)
+### Task10 phase14 â€” TTS repository lifecycle foundation (ruling79)
 
 The existing TTSProfileRepository owner loop, lifecycle/state locks and serialized
 executor now supply a private reversible maintenance boundary. Ordinary first-open,
@@ -547,7 +547,7 @@ lifecycle alone. Independent native tests distinguish the TTS profile lock from 
 shared admission lock and keep diagnostic-child startup evidence separate from
 production startup. No repository, startup, responder or Complete promotion follows.
 
-### Task10 phase14b — outer TTS backup native retention (ruling80)
+### Task10 phase14b â€” outer TTS backup native retention (ruling80)
 
 The actual repository now retains each outer `backup_to` operation before native
 allocation, with its source connection, configured/active path, admitted generation,
@@ -579,7 +579,7 @@ reference BLOB/materializer/bundle and actual app/runtime owners remain Task10 w
 No startup release, responder, full repository or Complete qualification follows.
 
 
-### Task10 phase14c — ordinary candidate validation native job (ruling81)
+### Task10 phase14c â€” ordinary candidate validation native job (ruling81)
 
 The standalone synchronous `validate_profile_candidate` API has no repository
 receiver and authenticates no installed source. It now registers its actual call
@@ -613,7 +613,7 @@ finite preselection, restore/publication/materializer/runtime and all-owner star
 remain immediate Task10 work. Successful schema inspection never proves those resources
 retired. No Complete/replacement/responder/startup capability or task AC is promoted.
 
-### Task10 phase14d — configured TTS source and delegated pin ownership (rulings82–88)
+### Task10 phase14d â€” configured TTS source and delegated pin ownership (rulings82â€“88)
 
 Bind only the original repository created by actual app composition to its original
 loaded configuration source/functions, selected profile and exact database path.
@@ -667,7 +667,7 @@ retires, while a successful retry after an unknown allocation cannot erase that
 older uncertainty. Privacy, no-follow, generation/absence retries and source identity
 checks remain unchanged. No new capture/source/descendant permission is introduced.
 
-### Task10 phase14e — outer snapshot and native journal ownership (rulings89–91)
+### Task10 phase14e â€” outer snapshot and native journal ownership (rulings89â€“91)
 
 Use the existing concrete `_BackupNativeState` for both ordinary public backup and
 pre-restore recovery backup. Associate nested snapshot validation uncertainty with
@@ -724,7 +724,7 @@ hold. Keep the remaining actual leases, original error and ordinary positive rel
 no retry, registry or interface is added. Outer association is additional protection,
 not a substitute for standalone native exclusion.
 
-### Task10 phase14f — exact TTS connection and profile-lock retirement (rulings95–99)
+### Task10 phase14f â€” exact TTS connection and profile-lock retirement (rulings95â€“99)
 
 The existing exact-current wrapper is created before pin allocation and retained
 through ordinary source leases in existing strong lease membership. Separate native
@@ -761,7 +761,7 @@ restore publication/rebind, reference materialization, bundles, voices, dirty UI
 service/audio/model/process and app/headless aggregation remain Task10 obligations.
 
 
-### Task10 phase14g: live TTS migration and restore outcomes (rulings100–108)
+### Task10 phase14g: live TTS migration and restore outcomes (rulings100â€“108)
 
 Actual migration/restore/publication/recovery operations retain a concrete ordinary
 native record on existing source leases and repository membership. Exact source,
@@ -795,7 +795,7 @@ convergently after ordinary resume. A journal is not capture readiness, and this
 grants no PONR continuation authority. TTS materializer/bundle/voice/runtime/dirty UI,
 app/headless aggregation and startup release remain mandatory Task10 obligations.
 
-### Task10 phase14h: private clone materializer ownership (rulings109–112)
+### Task10 phase14h: private clone materializer ownership (rulings109â€“112)
 
 Retain actual materializer native outcomes on ordinary source leases and its
 original opaque reference records. Reserve before queued workers; retain known
@@ -832,7 +832,7 @@ corrected runtime-inode fault and observer-disabled counterfactual establish tha
 shared edge; neither is an exported-BASE claim. Native POSIX evidence does not
 promote complete backup/replacement, Windows support, or startup/runtime readiness.
 
-### Task10 phase14i: retained voice bundle operations (rulings113–114)
+### Task10 phase14i: retained voice bundle operations (rulings113â€“114)
 
 The original bundle service retains each concrete native worker operation on
 ordinary storage leases. Fixed runtime and selected caller paths/parents receive
@@ -880,12 +880,12 @@ release, shared voice paths and whole-Task10 review remain required. No Complete
 backup, replacement, startup release, or other-platform qualification is added.
 
 
-### Task10 phase14j ruling118 — original concurrent first initialization
+### Task10 phase14j ruling118 â€” original concurrent first initialization
 
 The same-process first authority initializer reserves its resolved root on its actual pending acquisition record under the existing coordinator condition. Followers wait outside the lock and recheck original cancellation and provenance before proceeding. The initializer runs original startup/native qualification and authority construction outside the coordinator lock and releases its reservation in finally. Same-thread recursion refuses rather than waiting for itself. Incomplete, failed, crashed or foreign-process evidence retains the original fail-closed behavior; this does not repair or retry durable uncertainty, add a registry/mutex, or qualify whole-app startup. Required evidence includes deterministic marker-before-register follower ordering and the supported uninitialized128-sample service case. Exact shared-source BASE reproduces the prior follower refusal at startup_permission; unchanged external dependencies do not make that a whole-repository BASE run.
 
 
-### Task10 phase14j rulings115–117 — profile evidence and Library work
+### Task10 phase14j rulings115â€“117 â€” profile evidence and Library work
 
 Original profile-service admission/drain/resume counts actual PID/Thread/Task callers through final evidence/result work; synchronous evidence legitimately runs on a worker thread. Original same-receiver nested calls can settle while admission closes, preserving artifact coordinator before consumer fence lock order. Fresh sample FD/codec work always reacquires ordinary selected file and required-parent admission before metadata/allocation. Optional private native outcomes preserve known returned resources before late errors, unknown allocations and first uncertain native/lease closes independently of content validity. Original body controls win over cleanup controls while both outcomes stay accounted. Default standalone/shared Settings validators keep their existing API/behavior.
 
@@ -894,12 +894,12 @@ The original lazy app profile-service factory binds its exact original repositor
 Profile Library readiness preserves exact mounted typed input, submitted conflict or maintenance-refused drafts, review handles and their original service sessions. Maintenance neither dismisses nor saves/discards them. It closes new action/page admission, defers late page/search publication, and retains actual result/cleanup lifetimes. Reopened-conflict Cancel preserves submitted text; original refresh/retry Save resolves it. Already submitted text is retained before stale action-target refusal. Sanitized export retains actual queued/running writer and native stream through repeated cancellation, original overwrite bytes/result and first uncertain cleanup; caller destinations are not baseline resources. Service/file completion alone cannot retire the remaining Speech caller's queued/post-thread UI work. Whole-app composition and all other Task10 debts remain open.
 
 
-### Task10 phase14j ruling119 — selected export before truncation
+### Task10 phase14j ruling119 â€” selected export before truncation
 
 A reached output-parent replacement after original path validation redirected the sanitized writer. The exact existing export operation now snapshots selected identities after ordinary admission, owns/verifies the parent descriptor, opens an existing output without truncation and verifies the selected regular-file FD before truncating it. Missing output uses exclusive creation beneath the verified parent; this preserves ordinary new/overwrite behavior without replacing or deleting existing output. Stream and parent/target FDs have explicit separate owning closers and retained first/unknown outcomes. Later pathname replacement cannot redirect writes through the already selected FD. This is one caller-selected writer, not a generic filesystem capability or baseline resource.
 
 
-### Task10 phase14j ruling120 — ordinary platform compatibility
+### Task10 phase14j ruling120 â€” ordinary platform compatibility
 
 Pinned export is selected upfront from original primitive identity, required flags and original dir_fd support. When those primitives are unavailable before allocation, retain the original ordinary pathname stream route and its complete operation/stream outcomes; Library maintenance remains explicitly unqualified. A failed or unknown pinned allocation never selects fallback. OS Independent ordinary use is preserved without a Windows/native-platform qualification claim, mutation of global capability metadata or use of fallback as a capture capability.
 
@@ -922,12 +922,12 @@ replacement; this decision adds no execution/restore feature or global attestati
 framework.
 
 
-### PERF-07/PERF-08 amendment — reusable admission evidence (TASK-33266, TASK-33267)
+### PERF-07/PERF-08 amendment â€” reusable admission evidence (TASK-33266, TASK-33267)
 
 Status: **Approved by the owner on 2026-09-29.** The owner approved the direction
 as decisions D1 and D2 of the
 [2026-09-27 structural perf audit](../../qa/perf-structural-audit-2026-09-27/report.md)
-(§4 PERF-07, PERF-08), then settled the mechanism with a criterion: choose
+(Â§4 PERF-07, PERF-08), then settled the mechanism with a criterion: choose
 whichever option aligns with the planned Python 3.13 then 3.14 migration.
 
 Held descriptors and per-call `lstat` stamps are equally version-neutral, but
@@ -1098,13 +1098,13 @@ weaker than today.
 - The visual native scope's `_check_path` interaction is unverified. Reuse is
   disabled inside that scope unless it is shown harmless.
 
-### TASK-34200 amendment — file identity is path + inode, not the device
+### TASK-34200 amendment â€” file identity is path + inode, not the device
 
 Status: **Approved by the owner on 2026-10-03** (chosen over a volume-UUID
 identity and over filing only).
 
 **Context.** The owner's Mac rebooted on 2026-09-28 and its data volume came
-back with a different `st_dev` (16777234 → 16777230). The admission registry
+back with a different `st_dev` (16777234 â†’ 16777230). The admission registry
 pinned `inode:<st_dev>:<st_ino>`. So the bootstrap marker, the same file with
 the same inode at the same path, no longer matched its own registration, and
 every start of the app, on any profile, failed closed with "Recovery required:
@@ -1131,7 +1131,7 @@ refused before is admitted. A malformed stored token is never normalized, so it
 cannot match. The PERF-08 per-call posture stamps keep
 `st_dev`: they never outlive a process, so a renumbering cannot reach them.
 
-### TASK-34100.17 amendment — first-run setup confirmation and keychain-held provider keys (2026-10-03)
+### TASK-34100.17 amendment â€” first-run setup confirmation and keychain-held provider keys (2026-10-03)
 
 Source: the [first-run setup shape spec](../../Docs/superpowers/specs/2026-10-03-first-run-setup-shape-design.md), approved by the owner on
 2026-10-03, and [TASK-34100.17](../tasks/task-34100.17%20-%20Owner-approved-design-spec-for-the-setup-flow-Quick-track-tldw-server-re-run-dashboard-Say-hello.md).
@@ -1147,7 +1147,7 @@ and 8: excluded from portable export by default, and captured in local rollback
 archives through a typed owner adapter. Under decision 9, isolated restore remaps the
 persisted `credential_scope_id`, so a restored profile never reads or overwrites
 another profile's keys.
-### TASK-34404 amendment — native Windows ordinary admission evidence
+### TASK-34404 amendment â€” native Windows ordinary admission evidence
 
 Status: Owner-authorized implementation, 2026-10-04; merge requires native
 differential and complete-conversation receipts.
@@ -1179,7 +1179,7 @@ native tests pass. Native ownership correction is a separate boundary below;
 a successful admission observation alone never authorizes a foreign SQLite file.
 
 
-### TASK-34404 amendment — proven private custody under Windows TokenOwner
+### TASK-34404 amendment â€” proven private custody under Windows TokenOwner
 
 Native Windows Server 2022 evidence (run 37230513912, job 111518996121)
 shows TokenUser=runneradmin, TokenOwner=BUILTIN Administrators. The facade-created
@@ -1232,7 +1232,7 @@ the only source of refusal. The native oracle changes a related sibling after
 counting and proves rederivation without a leaked count; actual parent-replacement,
 owner/ACL, control-record and pause/maintenance oracles retain their verdict checks.
 
-### TASK-34406 amendment — presentation config lock entry
+### TASK-34406 amendment â€” presentation config lock entry
 
 Console presentation may request nonblocking entry to the existing configuration
 operation. If either the rebuild or file lock is held by another thread, entry
@@ -1270,7 +1270,7 @@ Once an admitted projection body enters, its continuous checked config lifetime
 still encloses every nested synchronous config operation. This preserves the
 existing recovery and send contracts while removing repeated presentation IO.
 
-### TASK-34405 amendment — finite database callback counted intervals (2026-10-04)
+### TASK-34405 amendment â€” finite database callback counted intervals (2026-10-04)
 
 A qualified `run_owned_db_call` owns one complete synchronous callback interval
 for its exact installed, file-backed CharactersRAGDB, AgentRunsDB or WorkspaceDB
@@ -1304,7 +1304,7 @@ service/database identities and request generation after the await. A redirected
 registry database aborts remaining workspace reads and the current receiver is
 captured afresh; no old receiver's cleanup may be redirected to the new receiver.
 
-### TASK-34406 amendment — checked presentation source and defaults handoff (2026-10-04)
+### TASK-34406 amendment â€” checked presentation source and defaults handoff (2026-10-04)
 
 A finite readiness mapping carries the configuration generation and actual
 validated raw selected path observed inside its checked config operation both
@@ -1336,7 +1336,7 @@ historical content requests only the existing coalesced Agent-section repaint.
 The pure mode-bar presentation may use the same disposable readiness scope;
 controller core-state/provider/runtime publication and sends remain live.
 
-### TASK-34404 amendment — bootstrap barriers cover changed directory entries (2026-10-04)
+### TASK-34404 amendment â€” bootstrap barriers cover changed directory entries (2026-10-04)
 
 Pending publication revalidates and fully synchronizes its existing pending record
 and pinned bootstrap directory. It does not reopen and synchronize every unchanged
@@ -1505,7 +1505,7 @@ MCP definition maximum through a separately named asynchronous capture entry.
 Only exact standard service/local/store sources qualify for the worker split.
 The blocking worker reads the real permission payload once and local catalog
 bundle once, with each source retaining independent original raw admission and
-fresh source checks. Missing/corrupt/refused/changed source evidence freezes an
+fresh source checks. Missing/refused/changed source evidence freezes an
 empty maximum. A global kill switch freezes an empty maximum. Default permission
 profile resolution, definition hashing, builtin raw-name exclusions and the
 existing changed-definition marker/audit semantics remain in force. Any blocking
@@ -1539,3 +1539,186 @@ using a cross-request permission cache was also rejected.
 
 
 Display-owner completion clarification: exact session identity and original config mapping references are retained alongside their identity values, preventing field-equal session replacement or identity reuse from inheriting a memo. Readiness default convergence may alter only its own settings revision slot; every source/app/session/workspace/owner field remains compared. Repeated cancellation cannot settle the checked-read completion event or release display coalescing before its finite native worker retires. Custom bridge count callbacks preserve their declared behavior; only the exact standard bridge uses the captured direct AgentRunsDB query. None of these observations supplies action or dispatch authority.
+
+
+TASK-34405 Settings writer completion clarification (2026-10-04): the exact standard ChatPersistenceService generation-settings and same-DB ConsoleContextRepository policy writers are finite Notes callbacks. Capture the original bound writer, persistence adapter and exact file-backed Notes receiver before scheduling; retain one counted repository interval through the complete synchronous CAS callback, then retire only its newly created worker handle after interval exit. Recheck captured source bindings before/after native work and before accepting results. The settings drain retains its native worker through repeated cancellation until actual retirement; existing caller-owned handles, custom/subclass/memory routes, reconciliation and session publication fences remain intact. A global lease clear or a fixture that bypasses the actual persistence writer was rejected because it would hide an ordinary application handle lifetime defect. No cache, cross-source authority or new maintenance capability is introduced.
+
+Async maximum preparation retains the original permission reader's corruption
+recovery (backup plus default ask), rather than treating that recovered payload
+as a persisted deny or bypassing its native source checks. Downgrade marking still
+precedes best-effort audit-log creation. A private captured lazy log receiver
+resolves against the admitted local path, checks the exact service/store/cache
+owner before pure cache publication, and cannot redirect an audit through a
+replacement service. Existing synchronous audit callers keep their original
+lazy receiver contract. The catalog worker qualification is specifically the
+exact installed local service/store, so an inherited Unified facade retains its
+own override dispatch; the separate async maximum route qualifies its standard
+Unified reader contract and preserves custom/subclass synchronous routes.
+
+
+### Rejected raw-parent observation grouping (TASK-34404)
+
+The native permission scope has one named parent. Applying a full tree snapshot increased actual opens1903 to1973 and security reads924 to987, retaining7full checks,14fresh witnesses and13source selections. The prospective1100 bound failed. Keep the original fresh named stat and pin comparison; no grouped raw-parent helper or cross-call observation is introduced. This confirms the earlier isolated6-to12-open observation recorded in the implementation plan.
+
+Settings source capture includes the actual writer body: private expected receivers supplied only by the qualified async route reject body-entry identity drift and anchor every standard generation CAS read/update and context policy transaction to the strong captured Notes receiver. The captured original same-DB policy writer cannot redirect through a replaced repository. Before/after equality alone was rejected after an actual A-to-B-to-A native control wrote B while publishing success for A. Default synchronous/custom calls keep their existing arguments; these private expected receivers grant no admission or permission authority.
+
+
+### Exact checked warm Console display scope (TASK-34403 AC18)
+
+A successfully published standard readiness mapping may render synchronously
+within its original one-second age without opening another enclosing native
+configuration lifetime. The actual standard finite reader alone issues the
+detached display proof after both existing checked source tags match. Its exact
+module, installed raw participant/state, factory reader/loader, mapping and full
+owner/source key plus original UI loop/thread remain retained and compared.
+Issuance, exact active projection/mapping, installed source identity, closure and
+local pause, current source/owner, loop/thread and age are checked before and
+after the synchronous body. Injected, custom, replaced, cold, expired or changed
+state keeps the original native route or existing cold deferral. Failure remains
+visible, including original body and cleanup error precedence.
+
+This proof carries no raw operation, native lease, path authority or lock. Every
+actual nested guarded disk reader or writer still enters its original fresh
+scope; live actions and dispatch do not consume this rendering proof. The
+continuous admitted config lifetime described above remains the default for
+genuine native work and unqualified callbacks. Maintenance/replay ownership and
+the projection worker cancellation/retirement contract remain unchanged.
+
+The distinction addresses measured redundant enclosing display admissions,
+without changing the original one-second age or whole-send/heartbeat budgets.
+Unconditional wrapper removal, injected flags, retired-operation borrowing and
+permission/native caches would lose those boundaries and are rejected.
+
+Startup initializing publication clarification (TASK-34404 AC8): an exact pause-owned startup readmission intentionally has no repository operation while its coordinator pause remains active. After the outside-lock check, the publication lock retains actual issued pending membership and PID/Thread/Task/operation identity plus cancellation. Only the exact _StartupReacquisition with path=None and operation=None rechecks its original class metadata check under that lock. This preserves the current pause, startup worker, retired source selection and original native gate contract; ordinary callers, subclasses, unissued copies and stale/canceled actors cannot claim this route. A blanket operation=None pause refusal was rejected after all three original mounted native controls failed at that new fence despite matching actual custody. No file path, dispatch permission or new maintenance capability is conferred.
+
+
+AC16 exact asynchronous source completion clarification: standard finite worker
+qualification requires real bound methods with the original installed function
+and the exact captured service/local/store/permission/log receiver. A borrowed
+method from another actual receiver retains the previous custom route. Exact
+registry binding objects, governance/manifest owners, arbitrary callback objects
+and the actual app configuration mapping remain strong references across each
+await; bound callback comparison names its function and receiver. One ephemeral
+captured-source keeper spans standard catalog composition's separate kill,
+external catalog and effective-state reads, retaining its original async catalog
+callback. Lazy permission/log publication updates only its own new retained slot
+and immediately rechecks all prior owners. This ledger grants no native source
+or permission authority and expires at composition completion. Standard workers
+require original permission marker and log append callbacks; overrides keep
+synchronous caller-loop compatibility.
+
+The actual UI async boundary also retains attachment IDs alongside strong
+attachment objects before waiting. Any in-place ID mutation refuses custody
+while preserving the draft. The same screen/controller/store/session/runtime,
+settings, draft/stash/prefill/evidence and configuration ownership is rechecked
+before the original synchronous runtime acceptance, without another await.
+
+AC16 nested source contract clarification: callable provenance is captured at
+its defining module/class completion, including the public permission-store and
+execution-log descriptors, permission kill getter, local external-catalog and
+projection callbacks, and the local store load used by the joined reader. Exact
+original bound receiver and descriptor identities are checked before selecting a
+standard finite worker and retained across its await. Lazy absent permission/log
+owners require the same original class contracts before construction; publication
+updates only their newly owned callback slots and cannot accept unrelated drift.
+Custom getters, descriptors, projections and load callbacks keep the preceding
+consumer contract, including the existing provider worker route and synchronous
+maximum/local routes.
+
+The private standard bundle input retains both the original guarded bundle and
+its exact original bound guarded load. It grants no path or permission authority;
+both methods still enter their existing fresh native guards. Proxy, foreign or
+subclass receiver inputs refuse, while default public/custom calls continue to
+resolve load dynamically. A post-publication check alone was rejected because an
+already admitted bundle body can resolve a replaced nested callback before that
+check. The finite catalog worker retains exact local/store source bindings and
+projection/governance owners through retirement; inherited Unified facade and
+custom catalog dispatch remain compatible. No native scope, read or downgrade
+RMW is cached or skipped.
+
+The standard provider composition chooser also requires the original real bound
+Unified async catalog callback, retained at its defining module completion. An
+explicit custom catalog callback retains its preceding late inventory-receiver
+lookup and worker contract. This extra qualification belongs only to catalog
+composition; synchronous maximum/local preparation does not depend on that
+unrelated async callback. It neither accepts changed standard-source publication
+nor constrains legitimate custom callback receiver management.
+
+Only provider composition captures the async catalog callback in its ephemeral
+ledger. Its original class descriptor is checked before a dynamic callback
+lookup across any finite worker await. Maximum and local preparation do not
+dereference the unrelated async callback, preserving custom descriptor contracts
+on those routes. Returning an equal original bound callback from a changed class
+property does not satisfy standard provider publication provenance.
+
+TASK-34404 AC9 fresh finite visual metadata clarification: grouping an original
+fixed set of selected-file and carrying-parent observations may use the existing
+Windows admission snapshot only when its defining original class/function and
+actual native facade/receiver bindings remain exact. Each observation is fresh,
+checks every original identity and retires its native handles before acceptance
+or complete scalar fallback. It grants no source, path, lease or permission
+authority and stores no reusable metadata. The existing 4,096-byte descriptor
+cap and custom/POSIX scalar contracts remain unchanged.
+
+Physical snapshot close uncertainty requires native proof before implementation.
+The planned control protects a real issued metadata handle from CloseHandle
+without replacing guarded functions. If that proves an unretired handle, the
+existing visual state's raw/capture exclusion must retain its exact handle and
+uncertainty before any fallback or attempt retirement; an error alone is not
+proof of physical close. The metadata optimization and any checked-close repair
+remain pending this evidence. Immutable Samira resources and two-commit seed
+semantics remain governed by ADR-067; no deferral or deadline increase applies.
+
+AC9 original native qualification is complete before implementation:
+samira-observation-red.xml has three genuine failures (17,053 opens against
+12,000, actual source replacement accepted and actual Windows pause accepted),
+five original positive/path/custom/large-DACL passes, and one explicitly
+unqualified missing integrated snapshot boundary. The independent original
+snapshot control, samira-observation-close-red.xml, proves that it returned
+metadata while the same protected physical HANDLE and file identity remained
+live. Fixture-only flag removal and positive close were verified; guarded
+functions, eight source hashes and original deadlines stayed unchanged.
+
+The approved checked-close repair tracks each actual opened handle incarnation
+with its captured native owner and fresh identity. Each close is attempted once.
+All remaining handles are retired even on body/ENOTSUP errors; any uncertain
+close raises the specific defining exception carrying failed incarnations.
+The actual issued visual state retains these handles and uncertainty in its
+existing raw/source exclusion before fallback or scope retirement. It never
+retries a failed close. Ordinary unavailable metadata can fall back only after
+positive retirement. This refines existing ADR-126 finite custody; no admission
+cap, other WindowsOS operation, seed semantics or deadline changes apply.
+
+AC9 review refinements, native proof before implementation: the actual held
+standard snapshot accepted a retargeted stat binding, made 59 replacement
+callback calls and returned original bytes (binding-red, one genuine failure).
+After initial stock qualification, recheck its exact bindings before every
+scalar fallback, including successful, ENOTSUP/OSError and ValueError exits;
+mid-read drift refuses without invoking replacements. Preinstalled custom
+facades retain the original scalar contract.
+
+The admitted metadata control uses a real enrolled native profile and installed
+_observe_stamps inside the issued visual source. Its protected physical HANDLE
+survived while bytes were returned and raw/source state retired (one genuine
+failure, 4.91 seconds). Ordinary metadata errors keep prior evidence fallback;
+only the exact defining close-uncertainty exception passes through selector,
+path, reused evidence, candidate observation and public acquisition wrappers.
+The actual visual state retains its failed incarnations before scope retirement.
+
+The original opener's real junction/reparse refusal also leaves its protected
+pre-return HANDLE alive without reporting close uncertainty. Check only that
+validation-failure close; retain the exact native owner/handle (identity may be
+unknown if info failed), preserve the original validation error on successful
+close, and transfer failed incarnations through the snapshot's existing ledger.
+Fixture-owned physical cleanup was positively verified; all guarded functions,
+source hashes and deadlines stayed unchanged. Prior authority-path and absent-
+handle observer errors were setup gaps, never authority RED. Existing ADR-126
+applies; no other native close site, admission cap or deadline changes apply.
+
+
+
+### AC9 scalar close uncertainty refinement (2026-10-04)
+
+ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: preserve the existing finite native resource retirement boundary for the original custom scalar route.
+
+The actual custom-facade scalar reader delegated to the original Windows rejected-junction opener. Its genuine protected HANDLE remained alive after the defining metadata-close exception, but the issued visual state/raw record was removed with uncertainty false (one native RED, 3.77 seconds; guards/network zero, captured source hashes unchanged, physical fixture cleanup verified). Before implementation, scope the repair to catching that exact defining close exception around the existing scalar observation and passing its actual opened-handle records to the existing uncertainty retainer. Ordinary custom/POSIX errors and successful custom/native/large-DACL fallback contracts retain their current behavior. Verify the new native negative with the existing custom positive, standard rejected-open, large-DACL, and unsupported/body-error controls; preserve the original startup 20/45 second bounds.

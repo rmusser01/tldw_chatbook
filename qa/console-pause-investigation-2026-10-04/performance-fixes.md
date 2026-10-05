@@ -1,4 +1,4 @@
-# Console fixes and verification — 2026-10-04
+# Console fixes and verification â€” 2026-10-04
 
 This repair includes the earlier DeepSeek/capture retry changes, the five documented provider audit defects, and the shared/native pause causes from the original investigation. The final combined pull request targets dev. This document records failed integration measurements as well as passing subsystem checks; the earlier investigation remains a historical baseline.
 
@@ -31,7 +31,7 @@ Registered limits were fixed before final measurement: each captured send <=15s,
 | Sixth final-source run with output outside runner root | First send 23.24 | Detailed receipt unavailable | Output qualification failed; original send-budget failure remains recorded |
 | Seventh, corrected output root, final source rebased on dev | 22.17 / 12.93 / 18.90 | 1.62 / 1.40 / 1.39 | Valid RED; three complete calls/links, zero checkpoints |
 
-Every valid integration run completed three actual capture calls, three user/reply pairs, three response links and no dispatch checkpoint. The second and third used the correct two-complete/one-SSE selection. The third exposed provider-settings refresh outside the shared presentation scope and remaining per-method admission inside finite database callbacks. Finite callback ownership and captured availability now pass targeted controls. Readiness publication/source provenance and eligible session-default convergence were reconciled with 18 targeted controls. The fourth receipt is excluded because its observer replaced exact guarded function attributes; two forced/cold-loader passivity controls preserve those attributes in the corrected observer. The fifth valid receipt has warm settings cache hits, main admissions 252/213/253 and all-thread native opens 169358/119920/138514. It remains RED. Further profiling measured one actual installed MCP get_kill_switch at 3003 native opens and 18 nested generation selections (about 0.613s unprofiled); one load used 2561 opens (about 0.520s). Fresh witness queries reread control records three times and the registry twice. Fresh observation bundling and off-loop catalog store reads now have targeted qualification; no fresh witness or permission decision is cached across calls.
+The first, second, third, fifth and seventh integration runs completed three actual capture calls, three user/reply pairs, three response links and no dispatch checkpoint. The later eighth checkpoint is a qualified before-provider functional failure, recorded separately below; it supplies no completed-conversation timing result. The second and third used the correct two-complete/one-SSE selection. The third exposed provider-settings refresh outside the shared presentation scope and remaining per-method admission inside finite database callbacks. Finite callback ownership and captured availability now pass targeted controls. Readiness publication/source provenance and eligible session-default convergence were reconciled with 18 targeted controls. The fourth receipt is excluded because its observer replaced exact guarded function attributes; two forced/cold-loader passivity controls preserve those attributes in the corrected observer. The fifth valid receipt has warm settings cache hits, main admissions 252/213/253 and all-thread native opens 169358/119920/138514. It remains RED. Further profiling measured one actual installed MCP get_kill_switch at 3003 native opens and 18 nested generation selections (about 0.613s unprofiled); one load used 2561 opens (about 0.520s). Fresh witness queries reread control records three times and the registry twice. Fresh observation bundling and off-loop catalog store reads now have targeted qualification; no fresh witness or permission decision is cached across calls.
 
 The seventh source is commit 0ecd8327f79c1b14ea18c15f704850cc41b0ec9f, rebased on dev a78a9a900b4901e33c031f830dd2d80224d5147d. Reviewed Console sources remain byte-equivalent after normalizing line endings. First/second send main admissions fell to 154/103, but all-thread Windows opens remain 170602/104965. Worker configuration entry repeats 13 readiness reads and 14 context reads in the first send, while native directory validation repeats within each operation. These are current investigation targets, not a passing result. The initial elevated CI ran actual ownership negatives successfully but failed one creation-barrier fixture when its cleanup attempted chmod on the Administrator-owned pytest parent. The fixture now creates an explicit TokenUser-owned target; production foreign-owner refusal is unchanged, and the local exact test passes (1.07s). Elevated rerun is pending.
 
@@ -110,3 +110,144 @@ an obsolete character presentation fixture method. The remaining thirteen
 pause-drain failures require independent lifetime investigation; they remain
 reported until their actual source is proved. Linux and Windows full results
 were still pending when this entry was recorded.
+
+
+## Ninth actual native checkpoint and shared lifetime diagnosis
+
+The uncontended Windows checkpoint a8fdda4832f52235f34683bebefe96426fb34737 completes all three provider calls, user/reply pairs, COMPLETE traces and response links, with no dispatch checkpoint. It remains performance RED: send times28.260/25.232/24.847s, maximum heartbeat stalls1.881/2.042/1.767s, and all-thread native opens157339/140124/126019. Main admissions127/114/124 satisfy the existing200 cap. The original15s/1s/40000-open thresholds are unchanged. The interval after durable commit and before trace reservation dominates; repeated readiness reads and finite database calls contribute overlapping measured times. The native receipt console-performance-fix-ninth.json and perf-ninth-local.xml retain actual loaded source hashes.
+
+The second three-host checkpoint bced62b9289a1085f05b598422ec59e281df205f reports the same13 later pause-drain failures on Windows, Linux and macOS. An actual original-code Windows creation/retirement census proves one Settings-worker SQLite lease from the real shared-policy generation-settings mutation remains alive after the fixture closes its main-thread handle. This is an ordinary application worker-lifetime defect, not a Windows-only pause issue. The real persistence fixture and original drain assertions are retained. The finite Settings writer fix and body-time receiver changes are under targeted qualification. Five obsolete Character facade fixture failures are corrected at a8; macOS additionally has three observer-only relative realpath probes, with exact-origin observer qualification pending the next native Mac job.
+
+The second Windows native matrix has907tests:849passed,18failed,40skipped,0errors; Linux907:877passed,18failed,12skipped; macOS907:877passed,21failed,9skipped. The independent Windows mounted restore step fails all three original controls: startup readmission fails on success, and persistent-pending failure reports a different underlying error. These are separate unresolved native results; the earlier local3pass106.10s does not supersede them. The whole Console probe at this checkpoint fails before its first provider call on all three hosts because an agent-wide Notes interval swallowed independent sources; a8 separates finite Notes callbacks from multi-source agent cleanup and passes12native source/pause/cancellation controls. These functional failures cannot be compared as completed-send timings.
+
+A proposed fresh raw-parent tree snapshot failed its native count hypothesis:1903 to1973opens and924 to987security reads, unchanged7checks/14witnesses/13selections. The actual scope has one parent, so the optional helper and prospective1100 bound were withdrawn. This confirms the earlier isolated6-to12 observation. No production raw-parent check change remains, and no permission/path observation is cached across calls.
+
+Settings lifetime final local qualification: the unchanged original 25-test ordered prefix followed by 22 actual native Settings controls passes 47/47, with no skips/errors and normal exit zero (148.196s). The actual original-code observer records transient drain refusal while the accepted worker is alive, then successful drain after physical retirement; final ordinary leases, pending acquisitions, repository/raw operations and retiring holds are all zero. All four owned source/test SHA-256 values remain identical throughout. The earlier native RED establishes both uncounted full writer bodies and a leaked worker-created SQLite handle; an actual copied-library A-to-B-to-A receiver mutation additionally proves the original writer could redirect committed settings. The fix captures the original standard writer/database/repository transaction receiver, retains producer custody through repeated cancellation, and retires only the worker-created handle. Borrowed, custom, subclass and in-memory contracts retain their existing calls. Evidence receipts settings-worker-native-lifetime-red.json and settings-worker-native-lifetime-green.json retain redacted source provenance and counters. Root independently reviewed the final source with no actionable finding. This locally qualifies the shared thirteen drain failures' actual source; final three-host receipts, mounted startup readmission and whole-app performance limits remain separate pending gates.
+
+
+## Exact startup initializing publication qualification
+
+Startup publication qualification at the frozen storage SHA-256 `58f452a282dad4f18fed0108ae99878e106d66d36947c3332c6f3372b4f7ee52` passes the three original mounted restore cases and all fifteen existing coordinator/native-proof race controls. The complete first bundle is 18 passed / 10 failed, zero errors/skips, normal parent exit one (552.294s), with unchanged storage/test bytes and final parent ordinary leases, pending acquisitions, repository/raw operations and retiring holds all zero. Actual original child receipts retain the exact pause-owned startup attempt, current native thread, TokenOwner=TokenUser and zero real-profile guard refusals: both success paths publish ordinary startup, and persistent pending still refuses with `recovery_scope_uncertain`. The original success controls retain their post-resume borrowed Notes connection and startup until normal child exit. The ten added revocation controls fail before their intended revocation: seven time out at the original monitor/finalization wait and three reach the unchanged outer child timeout. They provide no negative publication evidence yet. A matched original/new observer diagnostic will record actual monitor/restoring await chains, worker code stacks and native ownership at that wait, preserving the original 20/45 second limits and every guarded function. Receipts `startup-publication-first-run.json` and `startup-custody-first-run-failures.json` preserve the separate outcomes; the original native startup RED remains `mounted-startup-readmission-red.json`. Startup negative controls, final three-host results and integrated performance/UAT remain pending.
+
+## Actual normal Send input-pump qualification
+
+The original mounted Enter and Send-button routes fail three native controls (39.29s, normal exit one). A passive original-code observer holds the real hook permission snapshot after its native raw-config admission: Enter's app message pump and the button's Console message pump each await dispatch then to_thread and stop delivering callbacks. The repeated-cancellation control confirms no preparation worker exists, despite actual raw operations and leases being present. All held readers drain in cleanup; no guarded callable is replaced. Evidence: native-send-pump-red.xml/log. The correction hands actual pump callers to the existing Send worker before the first native await and retains reader ownership through repeated cancellation; direct and spoken worker callers preserve their original settled result. Final native green qualification follows.
+
+
+An independent review additionally identifies owner drift during synchronous state publication. Two real native controls (30.44s, normal exit one) hold the original source read, then replace the runtime HookPermissions owner or its original bound reader in on_state. Both original-ready continuations still dispatch, proving the missing final receiver fence. The correction rechecks exact owner/reader immediately before consuming the captured Send, including after explicit review. Evidence: native-send-pump-owner-red.xml/log. Existing source guards remain installed; only the downstream dispatcher is recorded to prevent an unintended provider call in a RED run.
+
+The first complete normal-Send bundle settles with 45 passed / 1 failed, zero errors/skips, normal exit one (692.27s). All five new native pump, repeated-cancellation and final hook-owner controls pass. The sole failure is the unchanged eager navigated Send-button allow-all control: its original five-second approved-dispatch wait expires with no dispatch; the continuation later records SENT at 7343ms during cleanup. This is an unresolved approval latency result, not a green bundle or proof of a lost Send. The original deadline stays unchanged while actual approval/read/publication timing is investigated. The receipt names native-send-pump-green.xml/log identify the attempted qualification and do not imply a passing result.
+
+## First-use callable provenance checkpoint
+
+The async MCP first-use controls first settle with seven failures and one positive control (74.73s, normal exit one). Six failures qualify changed calling contracts: class audit replacement before the helper's first import moved onto a worker; proxy, foreign, inherited and class-overridden screen builders were promoted to the standard keyword contract; and a custom catalog retained an obsolete inventory receiver. The seventh is a new expectation error: original native call ancestry proves three required permission loads, including the downgrade read-modify-write, rather than two. All three original fresh reads are retained.
+
+Definition-time callable references, exact real bound methods/concrete screen receiver, and the previous custom catalog's late receiver resolution address those qualified contracts. The attempted focused completion settles with 56 passed / 21 failed / 196 deselected (352.82s, normal exit one) and unchanged source hashes. Its seven new contract controls, required three-load ancestry positive, 22 selected asynchronous controls, twelve original catalog/kill controls and ten queue compatibility controls pass. One additional queued control stops at its original four-second catalog-entry setup deadline; twenty legacy composer failures require isolated baseline comparisons for config aliases and bare-controller construction. They remain classification gaps, not qualified implementation failures or a green bundle. Independent source review also identifies omitted permission/catalog getters and permission/audit properties in the optimized source qualification; their reproduction and narrow custom fallback repairs remain pending.
+
+
+### Hook indicator and complete snapshot producer qualification
+
+The old eager Allow-all Send-button case failed in a 46-case native bundle
+(45 pass, one failure at its unchanged five-second post-answer boundary).
+Passive timing identified overlapping original visit_snapshot and fresh Send
+reads, but accidentally recorded a generic contextmanager helper 52,583 times;
+those wall spans are diagnostic only. They do not qualify performance budgets.
+The original refresh implementation abandoned its to_thread reader on cancel.
+
+Original native held-body controls then reproduce seven specific defects in
+58.03 seconds: duplicate physical visits; premature cancellation completion
+while actual issued configuration leases stay live; publication after owner,
+genuine borrowed reader, accessor or publisher replacement; and indicator work
+competing with an accepted fresh Send. Manual review remains a positive control.
+Strengthened complete original visit-frame retirement, pending join and
+non-error result checks requalify two lifetime failures plus that positive
+control in 36.07 seconds. These receipts retain real guards and actual source
+operation/lease observations, with no guarded callable replacement.
+
+The fix shares only one in-flight presentation producer, captures strong
+source/callback/generation references and drains physical completion through
+repeated cancellation. It has no completed snapshot or permission cache.
+Manual review's required final refresh remains. Ordinary refresh requests
+during Send coalesce into one replay after Send releases its preparation.
+
+Review exposed three correction issues; five custom-worker/callback controls
+reproduce incompatible-owner error inheritance, hidden joined publisher failure
+and deferred scheduler masking sent/original-error/cancel outcomes. Two more
+actual native controls reproduce the same premature retirement in direct Send
+and manual review. All seven fail on their intended assertions in 20.75 seconds.
+All three remaining snapshot callsites now use the physical drain; matching
+joiners retain the original publication error, incompatible source waiters
+recapture after complete retirement, and best-effort presentation scheduling
+preserves actual Send outcome. The current waiter's cancellation remains primary.
+Original synchronous snapshot and complete visit frames are both observed,
+since neither configuration lease exit alone nor coroutine cancellation proves
+callback retirement. Exact source read-only review reports no remaining
+Critical/Important finding at hooks SHA256
+CB5B7AD902C07CAE23A8A6518430B7219B42BDC06839A44F8CBC4AB2F0A528B1.
+Targeted GREEN, unchanged eager timing and whole-app budgets remain pending.
+
+### Source-passive startup metadata measurement
+
+A separate actual native diagnostic completes in 30.188 seconds with unchanged
+source/guards: standard seed18.406 seconds;35 resource reads and35 issued
+witnesses;31 durable assets;16,653 native opens and3,923 fresh security reads.
+_identity has1,482 calls/5.813 seconds and_check_path105 calls/6.029 seconds;
+these nested spans overlap and must not be summed. Final ordinary, pending,
+operations, raw, retiring and visual states are zero; one startup source remains
+until the child exits. This visual metadata code is unchanged from0ecd.
+The preceding original pending-failure stage control timed out at45 seconds
+before startup setup, with the actual native stack inside bundled Samira asset
+security observations. It supplies no qualified publication-race outcome.
+
+Fresh observations over the actual47 distinct paths use529 scalar opens versus
+94 snapshot opens; one selected leaf plus12 fixed ancestors uses78 versus24.
+Whole-set median wall time0.219 versus0.187 seconds and leaf0.047 versus0.047
+seconds do not establish end-to-end seed speed. An actual7,292-byte native DACL
+is accepted by scalar stat and refused by the existing admission snapshot with
+ENOTSUP129. Any finite identity batching must preserve that scalar compatibility
+and every existing identity/check/lease/retirement, without a permission cache
+or changing the admission descriptor cap. Candidate qualification is pending.
+
+Workflow static validation finds61 targeted node references, all real paths,
+three native hosts and three original elevated Windows Python versions, with
+no continue-on-error. The three-host job ceiling is75 minutes to accommodate
+the expanded targeted bundle's measured >52-minute Windows component total;
+individual deadlines,20-minute custody job and15s/1s/40000/16 budgets are unchanged.
+No final six-job result, tenth whole-app result, fresh live UAT or combined PR
+is claimed by these subsystem and diagnostic receipts.
+
+### Qualified complete hook lifetime GREEN
+
+The source-frozen native run hook-refresh-combined-green.xml/log passes all
+24 selected cases in157.53 seconds, normal exit0. All eight before/after source
+hashes match. This includes18 new physical refresh/snapshot/cancellation/error
+controls, five actual mounted Enter/Send/native-owner controls, and the original
+allow-all eager Send-button approval test with its unchanged five-second bound.
+The latter passes (11.50-second complete call including setup and cleanup);
+no approval deadline or assertion was changed. Concurrent visits join one actual
+reader, canceled callers drain its complete original native body, stale source
+publication is refused, manual review keeps its visit, and deferred indicators
+do not mask the actual Send result, reader error or cancellation. Integrated
+performance, startup publication custody and final native matrix remain pending.
+
+
+## Windows workspace-root identity repair (AC22)
+
+A genuine Windows 3.12 root-pin failure was uncovered by the retained original local-review tests: Python reported volume 10718190542197972492 while the same original retained HANDLE projected legacy DWORD volume 3198770700 (same inode 65583669577539523). The original unchanged-root pin refused that complete comparison. The native leaf now reads FileIdInfo from the same retained handle, matching CPython full64-bit volume/128-bit file IDs. It keeps fresh legacy attributes/reparse metadata, CPython-compatible unsupported-query legacy behavior and unchanged full comparison/refusal/cleanup. No expected ID is truncated. Existing ADR 101/32 authority boundaries remain.
+
+Exclusive native evidence: original 3 failures/3 refusal positives became 16 passing cases including actual invalid-HANDLE retirement, changed high identity bits, real junction refusal, all original root-pin controls and the isolated stdlib import gate. Final original local-review module: 58 pass/1 actual Windows 1314 capability skip, with unchanged source hashes; its brief startup overlap is recorded and its duration is not performance evidence. No product loader, primary environment, source guard or watchdog ceiling was changed. The bounded unit harness declares its settings/catalog/prompt inputs at existing consumers and the documented ENV-first unchanged watchdog default.
+
+Source-current isolated-helper verification uses an EvidenceRoot-only same3.12 environment: ordinary -I origins/hashes match managed app/worker/root-pin/filesystem/profile-core and dependency versions match primary. This is a Windows-specific metadata bug; remaining shared performance fixes and exact-head three-host qualification are tracked separately.
+
+Primary sources: [CPython v3.12.10 Windows stat implementation](https://raw.githubusercontent.com/python/cpython/v3.12.10/Python/fileutils.c), [FILE_ID_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info), [GetFileInformationByHandleEx](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfileinformationbyhandleex).
+
+Final startup and native metadata evidence:
+The genuine standard seed read all 35 bundled resources through their actual issued source/repository/file leases and committed all 31 assets. Its native open count fell from the registered 17,053-open RED to 9,490, below the unchanged 12,000 limit. The frozen 16-control receipt is `samira-observation-final-green-fixed.xml` (16 passed, 46.77 seconds), with actual native ownership details in `samira-native-final-controls.json`. This establishes the seed open count; it does not establish whole-app pause or latency budgets.
+
+The additional custom scalar route exposed a genuine uncertainty-retirement gap: the original rejected-junction opener returned the specific metadata-close error with its real protected HANDLE still alive, but the actual issued visual/raw state was removed. After the exact exception retention repair, eight focused native controls passed in 21.66 seconds (`samira-observation-custom-scalar-green.xml`). `samira-native-custom-scalar-controls.json` proves the original custom callback is preserved, uncertain raw/source custody is retained, bytes are refused, guards/network attempts remain zero, and each test-owned protected HANDLE was physically retired before child exit. All captured production/test hashes stayed stable in both frozen runs.
+
+The post-seed startup run `startup-after-samira-summary.json` contains the three original mounted restore passes and all 15 coordinator passes (18 passed, 10 new failures, 529.78 seconds). The original live readmission used the managed storage module, actual TokenUser ownership and unchanged guards. The ten new failures precede the intended publication check: seven fail the original initial-finalization 20-second wait and three reach the original child 45-second bound. They remain fixture/setup qualification gaps, not authority failures or passing custody controls. A one-node passive stage/await/native census and a narrow observer activation draft are ready; the original bounds remain unchanged.
+
+Final startup qualification: the unchanged original pending-failure node passed on the verified same3.12 source-current isolated runtime (20.33 seconds). The new fixture now installs its profile after construction/setup and selects only the exact current pause's actual startup Thread on the first callback; other new threads restore the prior observer immediately. The held native check-return notifies one captured-loop asyncio.Event, replacing preboundary millisecond polling. Every original guard, revocation, finalization body, thirty-second revoker, ten-second native hold, twenty-second initial wait and forty-five-second child bound remains intact. No production implementation changed during this fixture qualification.
+
+The one cancellation control passed with the actual target/source/refusal/retirement receipt (24.41 seconds). The frozen full ten then passed in 209.72 seconds (`startup-owner-event-ten.xml`, `startup-owner-event-ten-receipt.json`). All ten receipts select the exact managed native startup thread, observe exactly one issued check, record the expected original refusal, restore the prior profile on five other new threads, record zero guard refusals, and prove tracked native retirement. Ten captured source/test/guard hashes remained stable and final ordinary/pending/operation/raw/retiring counts were zero. This resolves the earlier ten fixture setup gaps on this actual Windows runtime; final cross-host and integrated whole-app verification remains the root task's responsibility. The combined runtime/fixture changes are qualified without attributing an isolated timing benefit to either change.

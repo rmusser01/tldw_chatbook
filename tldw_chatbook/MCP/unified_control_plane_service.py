@@ -2416,38 +2416,30 @@ class UnifiedMCPControlPlaneService:
 
     @producer_call
     async def local_external_catalog(self) -> list[dict]:
-        from .local_control_service import LocalMCPControlService
-        from .local_store import LocalMCPStore
+        from .console_snapshot import (
+            _CapturedLocalCatalog,
+            _owned_worker,
+            standard_local_catalog_sources,
+        )
 
         local = self.local_service
         store = getattr(local, "store", None)
-        if type(local) is LocalMCPControlService and type(store) is LocalMCPStore:
+        if standard_local_catalog_sources(local, store):
             from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
 
+            captured = _CapturedLocalCatalog(local, store)
+
+            def require_current():
+                if self.local_service is not local:
+                    raise RecoveryRequired("mcp_source_selection_changed")
+                captured.require_current()
+
             local._require_allowed("mcp.external_profiles.list.local")
-            if self.local_service is not local or local.store is not store:
-                raise RecoveryRequired("mcp_source_selection_changed")
-            worker = asyncio.create_task(asyncio.to_thread(store.get_catalog_bundle))
-            try:
-                bundle = await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                # Keep the accepted producer interval live until the finite
-                # worker has retired its own native source scope.
-                while not worker.done():
-                    try:
-                        await asyncio.shield(worker)
-                    except asyncio.CancelledError:
-                        continue
-                    except Exception:
-                        break
-                if not worker.cancelled():
-                    worker.exception()
-                raise
-            if self.local_service is not local or local.store is not store:
-                raise RecoveryRequired("mcp_source_selection_changed")
+            require_current()
+            bundle = await _owned_worker(captured.read_bundle)
+            require_current()
             local._require_allowed("mcp.external_profiles.list.local")
-            if self.local_service is not local or local.store is not store:
-                raise RecoveryRequired("mcp_source_selection_changed")
+            require_current()
             catalog = [
                 {
                     **profile,
@@ -2461,9 +2453,8 @@ class UnifiedMCPControlPlaneService:
             active_sessions = (
                 getattr(client, "sessions", {}) if client is not None else {}
             )
-            records = local._project_external_catalog(
-                catalog, active_sessions=active_sessions
-            )
+            records = captured.projector(catalog, active_sessions=active_sessions)
+            require_current()
             runtime_state_by_profile = bundle["profile_runtime_state"]
         else:
             records = list(local.get_external_servers() or [])
@@ -5410,7 +5401,12 @@ class UnifiedMCPControlPlaneService:
         return self._permission_store
 
     def effective_tool_states(
-        self, tools: list[HubTool], *, profile_id: str = "default"
+        self,
+        tools: list[HubTool],
+        *,
+        profile_id: str = "default",
+        _captured_permission_store: MCPPermissionStore | None = None,
+        _captured_execution_log: Callable[[], MCPExecutionLog | None] | None = None,
     ) -> dict[tuple[str, str], EffectiveToolState]:
         """Resolve the effective allow/ask/deny state for every tool in ``tools``.
 
@@ -5444,7 +5440,11 @@ class UnifiedMCPControlPlaneService:
         `EffectiveToolState(state="ask", origin="global_default")` (fail
         closed).
         """
-        store = self.permission_store
+        store = (
+            _captured_permission_store
+            if _captured_permission_store is not None
+            else self.permission_store
+        )
         if store is None:
             return {
                 (tool.server_key, tool.name): EffectiveToolState(
@@ -5459,11 +5459,24 @@ class UnifiedMCPControlPlaneService:
             effective = resolve_effective_state(payload, tool, profile_id=profile_id)
             results[(tool.server_key, tool.name)] = effective
             if effective.config_changed:
-                self._audit_downgrade_if_fresh(store, tool, profile_id=profile_id)
+                if _captured_execution_log is None:
+                    self._audit_downgrade_if_fresh(store, tool, profile_id=profile_id)
+                else:
+                    self._audit_downgrade_if_fresh(
+                        store,
+                        tool,
+                        profile_id=profile_id,
+                        _captured_execution_log=_captured_execution_log,
+                    )
         return results
 
     def _audit_downgrade_if_fresh(
-        self, store: MCPPermissionStore, tool: HubTool, *, profile_id: str = "default"
+        self,
+        store: MCPPermissionStore,
+        tool: HubTool,
+        *,
+        profile_id: str = "default",
+        _captured_execution_log: Callable[[], MCPExecutionLog | None] | None = None,
     ) -> None:
         # Best-effort, same never-raise contract as `_record_tool_execution`:
         # a persistence/logging failure here must never propagate out of
@@ -5475,7 +5488,11 @@ class UnifiedMCPControlPlaneService:
             )
             if not newly_marked:
                 return
-            log = self.execution_log
+            log = (
+                _captured_execution_log()
+                if _captured_execution_log is not None
+                else self.execution_log
+            )
             if log is None:
                 return
             record = build_record(
@@ -5791,3 +5808,13 @@ class UnifiedMCPControlPlaneService:
         return resolve_effective_state_by_key(
             payload, server_key, tool_name, profile_id=profile_id
         )
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_METHODS = (
+    ("permission_store", UnifiedMCPControlPlaneService.permission_store),
+    ("execution_log", UnifiedMCPControlPlaneService.execution_log),
+    ("get_kill_switch", UnifiedMCPControlPlaneService.get_kill_switch),
+    ("effective_tool_states", UnifiedMCPControlPlaneService.effective_tool_states),
+    ("local_external_catalog", UnifiedMCPControlPlaneService.local_external_catalog),
+    ("_audit_downgrade_if_fresh", UnifiedMCPControlPlaneService._audit_downgrade_if_fresh),
+)

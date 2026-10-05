@@ -447,3 +447,8 @@ class MCPExecutionLog:
             )
         self._remember_migration(path, sanitized)
         return sanitized
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_METHODS = (
+    ("append", MCPExecutionLog.append),
+)

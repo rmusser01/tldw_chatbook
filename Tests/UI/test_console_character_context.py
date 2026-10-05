@@ -269,6 +269,7 @@ async def test_widget_query_validation_preserves_search_and_clear(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_character_mount_loads_groups_without_duplicate_cold_resume_worker(
     monkeypatch,
 ):
@@ -348,6 +349,7 @@ def test_character_disclosure_new_explicit_and_legacy_rules() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_canonical_writer_persists_first_use_close_reopen_and_legacy(
     monkeypatch,
 ) -> None:
@@ -508,6 +510,7 @@ async def test_identity_line_uses_only_owner_current_and_exact_open_state(
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_production_avatar_repaint_never_overwrites_identity_variants() -> None:
     from Tests.UI.test_console_left_rail import make_console_pilot
 

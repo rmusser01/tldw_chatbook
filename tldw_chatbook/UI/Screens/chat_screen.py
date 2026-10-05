@@ -21941,6 +21941,7 @@ class ChatScreen(BaseAppScreen):
             sync,
             maintenance_paused=getattr(self, "_console_sync_maintenance_paused", False),
             request_retry=lambda: self._request_console_control_bar_sync(delayed=True),
+            checked_projection=getattr(self, "_console_readiness_config_projection", None),
         )
 
     def _sync_console_control_bar_under_config(

@@ -265,7 +265,8 @@ class Observation:
         monkeypatch.setattr(config, "_config_file_posture", posture)
         monkeypatch.setattr(config, "_settings_cache_hit", cache_hit)
         # Guarded loader identities are part of the installed-source contract.
-        # Public-loader counts cover module calls, not previously imported aliases.
+        # Keep an unchanged, already-loaded Console public alias in agreement;
+        # other previously imported aliases remain outside these loader counts.
         for name in (
             "load_settings",
             "_invalidate_config_caches",
@@ -311,6 +312,10 @@ class Observation:
                         )
 
                 monkeypatch.setattr(config, name, measured)
+                if name == "load_settings":
+                    screen = sys.modules.get("tldw_chatbook.UI.Screens.chat_screen")
+                    if screen is not None and getattr(screen, name, None) is original:
+                        monkeypatch.setattr(screen, name, measured)
 
             install_one(name, original)
 
@@ -770,3 +775,76 @@ def test_cache_diagnostics_preserve_real_guarded_config_reads(monkeypatch, route
     actual = config.load_settings(force_reload=route == "force")
     assert actual == control
     assert all(getattr(config, name) is function for name, function in guarded.items())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order", ["early", "late"])
+@private_profile_test
+async def test_cache_observer_preserves_checked_display_for_real_import_orders(
+    monkeypatch, tmp_path, request, record_property, order
+):
+    """Public call-through observation keeps the real issued display contract."""
+    from tldw_chatbook import config
+
+    module_name = "tldw_chatbook.UI.Screens.chat_screen"
+    assert module_name not in sys.modules, "control must start before screen import"
+    original_loader = config.load_settings
+    guarded = {
+        name: getattr(config, name)
+        for name in ("_load_settings_guarded", "_load_settings_uncached")
+    }
+    if order == "early":
+        from Tests.UI import test_console_checked_display_scope as actual
+
+        assert sys.modules[module_name].load_settings is original_loader
+    observed = Observation()
+    observed.install_config(monkeypatch, config)
+    if order == "late":
+        from Tests.UI import test_console_checked_display_scope as actual
+
+    screen_module = sys.modules[module_name]
+    database, _store, _controller, screen, tasks = actual._screen(tmp_path)
+    rendered, enclosing, before_nested, serialized = [], [], [], []
+    try:
+        projection = await actual._warm(screen, tasks)
+
+        def render():
+            rendered.append(screen._provider_readiness_app_config())
+            enclosing.append(getattr(actual.raw._local, "operation", None))
+
+        with actual._actual_calls() as warm_calls:
+            for _ in range(6):
+                assert actual.ChatScreen._run_console_config_sync(screen, render)
+
+        def nested_read():
+            before_nested.append(getattr(actual.raw._local, "operation", None))
+            serialized.append(config.read_cli_config_serialized())
+
+        with actual._actual_calls() as nested_calls:
+            assert actual.ChatScreen._run_console_config_sync(screen, nested_read)
+        record_property("import_order", order)
+        record_property("main_config_entries", warm_calls["main_scopes"])
+        record_property("main_native_opens", warm_calls["main_opens"])
+        record_property("nested_config_entries", nested_calls["main_scopes"])
+        assert all(getattr(config, name) is value for name, value in guarded.items())
+        assert screen_module.load_settings is config.load_settings
+        assert projection._display_proof is not None
+        assert len(rendered) == 6 and all(
+            value is projection.value for value in rendered
+        )
+        assert warm_calls["main_scopes"] == 0, warm_calls
+        assert warm_calls["main_opens"] == 0, warm_calls
+        assert enclosing == [None] * 6
+        assert before_nested == [None], "nested reader borrowed display authority"
+        assert len(serialized) == 1 and isinstance(serialized[0], str)
+        assert nested_calls["main_scopes"] == 3, nested_calls
+        assert len(set(nested_calls["owners"])) == 1, nested_calls
+        assert all(owner not in actual.raw._states for owner in nested_calls["owners"])
+        assert nested_calls["main_opens"] > 0, nested_calls
+        assert len(nested_calls["disk_reads"]) == 1
+        assert nested_calls["disk_reads"][0] is not None
+        assert nested_calls["disk_reads"][0] not in actual.raw._states
+        assert not any(state.source is config for state in actual.raw._states.values())
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+        database.close()

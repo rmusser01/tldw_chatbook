@@ -137,7 +137,7 @@ async def _resend_turn(
         copy = await resend_echo(user) if resend_echo else RESEND_NOT_BROKEN_COPY
         return ConsoleSubmitResult(copy is None, False, copy or "")
     if any(attachment.data is not None for attachment in user.attachments):
-        configuration = controller.resolve_turn_configuration_snapshot(session_id)
+        configuration = await controller.capture_turn_configuration_snapshot(session_id)
         block_reason = vision_block_reason(
             configuration.provider_selection.provider,
             configuration.effective_model,

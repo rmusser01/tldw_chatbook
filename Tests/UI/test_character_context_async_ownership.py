@@ -29,6 +29,7 @@ from tldw_chatbook.Widgets.Console.console_character_context import (
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_removed_browser_rejects_late_presentation():
     controller = _controller()
     state = ConsoleCharacterContextState(groups=_groups())
@@ -39,6 +40,42 @@ async def test_removed_browser_rejects_late_presentation():
         widget.sync_state(replace(state, data_revision=999))
         await pilot.pause()
         assert widget.state is state
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+async def test_removed_browser_does_not_wait_for_held_controller_refresh():
+    """Textual removal owns its pump, independently of an unrelated read."""
+    controller = _controller()
+    state = ConsoleCharacterContextState(groups=_groups())
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    read_tasks = []
+    original = controller.refresh_if_scope_changed
+
+    async def held_refresh():
+        read_tasks.append(asyncio.current_task())
+        entered.set()
+        await release.wait()
+        return await original()
+
+    controller.refresh_if_scope_changed = held_refresh
+    app = _CharacterApp(controller, state)
+    async with app.run_test() as pilot:
+        await asyncio.wait_for(entered.wait(), 1)
+        widget = app.screen.query_one(ConsoleCharacterContext)
+        removal = asyncio.ensure_future(widget.remove())
+        try:
+            await asyncio.wait_for(asyncio.shield(removal), 1)
+            assert not release.is_set()
+            assert not widget.is_attached
+            widget.sync_state(replace(state, data_revision=999))
+            await pilot.pause()
+            assert widget.state is state
+        finally:
+            release.set()
+            await asyncio.gather(*read_tasks)
+            await removal
 
 
 @pytest.mark.asyncio

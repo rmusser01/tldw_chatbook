@@ -630,8 +630,16 @@ class _Native:
             self.ntfs(handle)
             return handle.value
         except BaseException:
-            self.kernel.CloseHandle(handle)
-            raise
+            record = _AdmissionMetadataHandle(self, handle.value, name)
+            try:
+                closed = self.kernel.CloseHandle(handle)
+            except BaseException as error:
+                record.close_error = error
+            else:
+                if closed:
+                    raise
+                record.close_error = C.get_last_error()
+            raise _AdmissionMetadataCloseError((record,))
 
     @contextlib.contextmanager
     def reopen(self, handle, access):
@@ -703,6 +711,23 @@ def _parent(path, dir_fd=None):
         yield handle, parts[-1] if parts else None
     finally:
         native.kernel.CloseHandle(handle)
+
+
+class _AdmissionMetadataHandle:
+    """One physical snapshot handle incarnation, retained on uncertain close."""
+
+    def __init__(self, native, handle, path):
+        self.native = native
+        self.handle = handle
+        self.path = path
+        self.identity = None
+        self.close_error = None
+
+
+class _AdmissionMetadataCloseError(OSError):
+    def __init__(self, failed_handles):
+        self.failed_handles = tuple(failed_handles)
+        super().__init__(errno.EIO, "windows_admission_metadata_not_retired")
 
 
 class WindowsOS:
@@ -793,11 +818,10 @@ class WindowsOS:
         return self._named_stat(path, with_descriptor=True)
 
     def stat_many_for_admission(self, paths):
-        """Read one fresh tree snapshot with bottom-up named-binding validation.
+        """Read a fresh tree snapshot and positively retire every native handle.
 
-        Parent handles are shared only within this call. Each named association
-        is reopened after descent, descendants before ancestors, so a renamed
-        or replaced pinned parent cannot hide behind its still-valid handle.
+        Named associations are reopened bottom-up. A failed close keeps its
+        exact handle incarnation in the defining exception; it is never retried.
         """
         selected = tuple(Path(path) for path in paths)
         nodes = sorted(
@@ -817,16 +841,41 @@ class WindowsOS:
         parents = {node.parent for node in nodes if node.parent != node}
         native = _native()
         handles, identities, observations = {}, {}, {}
+        opened, failed = {}, []
 
         def named_handle(node):
-            if node.parent == node:
-                return native.open_handle("\\??\\" + node.drive + "\\", directory=True)
-            return native.open_handle(
-                node.name,
-                parent=handles[node.parent],
-                metadata=True,
-                directory=node in parents,
-            )
+            try:
+                if node.parent == node:
+                    handle = native.open_handle(
+                        "\\??\\" + node.drive + "\\", directory=True
+                    )
+                else:
+                    handle = native.open_handle(
+                        node.name,
+                        parent=handles[node.parent],
+                        metadata=True,
+                        directory=node in parents,
+                    )
+            except _AdmissionMetadataCloseError as error:
+                failed.extend(error.failed_handles)
+                raise
+            record = _AdmissionMetadataHandle(native, handle, node)
+            opened[handle] = record
+            info = native.info(handle)
+            record.identity = (info.volume, (info.index_high << 32) | info.index_low)
+            return handle
+
+        def close_handle(handle):
+            record = opened.pop(handle)
+            try:
+                closed = native.kernel.CloseHandle(handle)
+            except BaseException as error:
+                record.close_error = error
+                failed.append(record)
+            else:
+                if not closed:
+                    record.close_error = C.get_last_error()
+                    failed.append(record)
 
         try:
             for node in nodes:
@@ -839,15 +888,12 @@ class WindowsOS:
                     handles[node] = None
                     continue
                 handles[node] = handle
-                info = native.info(handle)
-                identities[node] = (
-                    info.volume,
-                    (info.index_high << 32) | info.index_low,
-                )
+                identities[node] = opened[handle].identity
                 if node not in parents:
-                    # Only parent handles are needed by later relative lookup.
-                    native.kernel.CloseHandle(handle)
+                    close_handle(handle)
                     handles[node] = None
+                    if failed:
+                        raise _AdmissionMetadataCloseError(failed)
             for node in reversed(nodes):
                 if node.parent != node and handles[node.parent] is None:
                     observations[node] = None
@@ -862,7 +908,9 @@ class WindowsOS:
                     try:
                         observed = self._stat_handle(current, with_descriptor=True)
                     finally:
-                        native.kernel.CloseHandle(current)
+                        close_handle(current)
+                    if failed:
+                        raise _AdmissionMetadataCloseError(failed)
                 identity = (
                     None
                     if observed is None
@@ -876,9 +924,10 @@ class WindowsOS:
                 observations[node] = observed
             return {path: observations[path] for path in selected}
         finally:
-            for handle in reversed(tuple(handles.values())):
-                if handle is not None:
-                    native.kernel.CloseHandle(handle)
+            for handle in reversed(tuple(opened)):
+                close_handle(handle)
+            if failed:
+                raise _AdmissionMetadataCloseError(failed)
 
     def _named_stat(self, path, *, dir_fd=None, with_descriptor=False):
         if isinstance(path, int):
@@ -1272,3 +1321,12 @@ def flush_file(fd: int) -> None:
     # never a reconstructed path, when a verifier holds a read-only descriptor.
     with native.reopen(handle, 0x40000000) as writable:
         native.check(native.kernel.FlushFileBuffers(writable))
+
+
+# Original callable provenance belongs to the defining module, before consumers.
+_WINDOWS_METADATA_CLASS_ORIGINAL = WindowsOS
+_WINDOWS_METADATA_METHODS_ORIGINAL = tuple(
+    (name, vars(WindowsOS)[name])
+    for name in ("stat", "_named_stat", "_stat_handle", "stat_many_for_admission")
+)
+_WINDOWS_METADATA_CLOSE_ERROR_ORIGINAL = _AdmissionMetadataCloseError

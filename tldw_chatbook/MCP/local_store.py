@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (spawn_guard imports at the save-time check.)
 from datetime import datetime, timezone
 from pathlib import Path
-from types import MappingProxyType
-from typing import Any, Literal, Mapping
+from types import MappingProxyType, MethodType
+from typing import Any, Callable, Literal, Mapping
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -1327,7 +1327,11 @@ class LocalMCPStore:
         return profile_runtime_state[normalized_profile_id]
 
     @mcp_sources.guarded
-    def get_catalog_bundle(self) -> dict[str, Any]:
+    def get_catalog_bundle(
+        self,
+        *,
+        _captured_load: Callable[[], LocalMCPStoreState] | None = None,
+    ) -> dict[str, Any]:
         """Return the catalog-relevant state in one read.
 
         Batches the profile list, discovery snapshots, and lifecycle-attempt
@@ -1337,12 +1341,28 @@ class LocalMCPStore:
         (2N+1 total loads across N profiles) can use this single-`load()`
         accessor instead.
 
+        Args:
+            _captured_load: Private finite-worker input naming this exact
+                receiver's original guarded load. Default calls retain dynamic
+                load resolution; this reference supplies no native authority.
+
         Returns:
             Mapping with `profiles` (list of profile dicts via `to_dict()`),
             `discovery_snapshots` (profile_id -> snapshot dict), and
             `profile_runtime_state` (profile_id -> lifecycle record dict).
         """
-        state = self.load()
+        reader = self.load if _captured_load is None else _captured_load
+        if _captured_load is not None and not (
+            type(self) is LocalMCPStore
+            and isinstance(reader, MethodType)
+            and reader.__func__ is _CONSOLE_STANDARD_LOAD
+            and reader.__self__ is self
+        ):
+            from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+            raise RecoveryRequired("mcp_source_selection_changed")
+        # Both this accessor and a captured reader retain their original guards.
+        state = reader()
         return {
             "profiles": [profile.to_dict() for profile in state.profiles],
             "discovery_snapshots": dict(state.discovery_snapshots),
@@ -1670,3 +1690,11 @@ class LocalMCPStore:
             profile.args,
             tuple(sorted(profile.env.items())),
         )
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_LOAD = LocalMCPStore.load
+_CONSOLE_STANDARD_METHODS = (
+    ("load", _CONSOLE_STANDARD_LOAD),
+    ("get_external_catalog", LocalMCPStore.get_external_catalog),
+    ("get_catalog_bundle", LocalMCPStore.get_catalog_bundle),
+)

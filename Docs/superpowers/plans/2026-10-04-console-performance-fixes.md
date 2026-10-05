@@ -303,7 +303,7 @@ macOS relative tracer diagnosis is source-based pending native stack evidence: t
 
 ### Display cadence/live-owner frozen receipts
 
-TASK-34403 AC13/AC15 remain under the combined native matrix/whole-send acceptance. Actual native legacy cadence RED3/7.63s precedes production; initial GREEN3/6.15s. Six warm unchanged Character ticks:6 real paired callbacks/1878opens/0.594s→1/313/0.094s. Active successful count ages0.3s:6callbacks/4164opens/1.109s→1/1124/0.265s, with no 2s TTL change. These are isolated diagnostic timings, not whole-send budget proof. Final new cadence29pass57.89s includes actual owner changes, queued waiter recapture, real SQLite metadata failure/recovery, both pairs+midpoint, actual opened native handle repeated cancellation and fresh action positive controls. Exact standard count callbacks bind the captured AgentRunsDB; custom/file-backed bridge callbacks keep their declared semantics and are captured independently, with the exact receiver/publication fence.
+TASK-34403 AC13/AC15 remain under the combined native matrix/whole-send acceptance. Actual native legacy cadence RED3/7.63s precedes production; initial GREEN3/6.15s. Six warm unchanged Character ticks:6 real paired callbacks/1878opens/0.594sÃ¢â€ â€™1/313/0.094s. Active successful count ages0.3s:6callbacks/4164opens/1.109sÃ¢â€ â€™1/1124/0.265s, with no 2s TTL change. These are isolated diagnostic timings, not whole-send budget proof. Final new cadence29pass57.89s includes actual owner changes, queued waiter recapture, real SQLite metadata failure/recovery, both pairs+midpoint, actual opened native handle repeated cancellation and fresh action positive controls. Exact standard count callbacks bind the captured AgentRunsDB; custom/file-backed bridge callbacks keep their declared semantics and are captured independently, with the exact receiver/publication fence.
 
 Live-empty actual setup and bound running controls reproduce native historical reads (each1145opens) and setup's previous-child leak; actual inline child projection is also RED. The initial real-handle fixture was corrected to use the actual fleet service seam, handle ID and secondary task field; its unchanged positive control separately passes1/4.05s, and its failed draft is excluded from functional RED. Exact standard disk bridge chooses process-owned setup or bound running snapshot after nonempty handles, allowing meaningful empty; terminal/restored/unknown/custom fallback remains native. Final live suite is separately recorded below.
 
@@ -315,3 +315,619 @@ Final live-empty native receipt:8pass10.01s normalexit0, including actual setup/
 
 
 Native macOS observer follow-up (TASK-34404 AC7): run 37244879946 captures exact real-profile audit hook -> _protected -> CPython realpath relative lstat probes, separate from actual descriptor-relative admission reads. Classify only exact installed code identity and the actual raw relative write-open input; retain unknown relative reads (including identical control-like names) in dependency completeness. Add actual macOS descriptor-write and same-name raw-read controls. ADR required: no. ADR path: N/A. Reason: test-only attribution correction, no admission or profile guard behavior changes. Original three native dependency cases are qualified RED; native positive/negative classification and original oracles must pass in the next full three-OS checkpoint.
+
+
+## Character browser message-pump lifetime follow-up (TASK-34403 AC17)
+
+ADR required: no
+ADR path: backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md
+Reason: restore the framework-owned message-pump task without changing the existing controller, presentation, action, or surface ownership contracts. This is a mechanical lifetime bug fix under ADR-120. The design language and component-pattern documents were read; no visual values, CSS, geometry, interaction copy, or keybindings change.
+
+1. Qualify the unchanged removed-browser assertion on actual current and isolated original source, and observe the real Textual task ownership.
+2. Add a controlled suspended controller refresh: awaited removal must finish while that unrelated read remains held, and late state must preserve the exact prior state identity.
+3. Rename only the widget-owned controller-task slot so Textual retains its own message-pump task and removal awaits the correct task.
+4. Verify the original removed-browser assertion plus mounted Character/controller ownership tests. Qualify three real-app config-selection fixture failures and give only those nodes the canonical bootstrap_profile marker; keep their behavioral assertions unchanged.
+5. Record actual regression, fixture qualification, and scoped verification separately; the combined native matrix and whole-send budgets remain open.
+
+
+## Actual finite Settings writer lifetime (TASK-34405 AC8)
+
+ADR required: no new ADR
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: direct implementation of the existing finite Notes callback boundary at the actual generation and context-policy persistence writers.
+
+An original-code native lifetime census reproduces one ordinary worker SQLite lease surviving the new shared-policy settings mutation fixture and causing later pause drains to remain false. The existing Settings generation writer and context-policy writer use raw asyncio.to_thread callbacks; neither closes its newly opened thread-local Notes handle. Keep the actual persistence fixture and all pause assertions.
+
+1. Add typed real Settings submission regression tests and original-code observers for both standard native writers; reproduce live worker handles after successful CAS and native pause/cancellation ownership before production.
+2. Capture the exact standard ChatPersistenceService bound writer and file-backed CharactersRAGDB before scheduling; context writes additionally require the exact same-DB ConsoleContextRepository. Qualify only the original installed writer methods.
+3. Count one complete _core_operation inside operation_owned_connection for each qualified callback. Recheck exact captured persistence/database/repository bindings before and after the body and before accepting its result. Native close follows interval exit and retires only newly opened worker handles.
+4. Shield each qualified native worker through repeated cancellation until physical retirement; the existing settings drain task and lifecycle ownership remain registered. Preserve CAS reconciliation, committed metadata/policy, source/session publication fences and custom/subclass/memory execution contracts.
+5. Verify actual committed rereads, borrowed transactions, same-owner pause continuation and fresh-owner refusal, source replacement, cancellation/error retirement, then rerun the original ordered prefix without global lease clearing. Native Linux/macOS matrix and whole-send budgets remain combined obligations.
+
+
+TASK-34404 raw-parent hypothesis rejected: the actual permission scope has a single named parent. A fresh stat-many ancestry snapshot increased its opens from1903 to1973 and security reads924 to987 while retaining7checks/14witnesses/13selections. The prospective1100 bound failed; the new helper and bound are withdrawn. This repeats the earlier isolated6-to12-open result already recorded above. No production parent-check change remains; the original checks and whole-Console budgets remain unchanged. Accessor setup ImportError receipts are excluded. Native XMLs raw-parent-native-{red,green}.xml preserve the failed experiment.
+
+AC8 body-time source clarification: actual native duplicated-library RED proves that a standard bound writer can dereference persistence.db after a transient A-to-B-to-A retarget and report success under the restored A binding. The eligible async helper supplies private expected captured database/repository receivers to the actual original standard methods. Those methods reject changed identity at entry and hold the strong captured receiver through every CAS read/update or policy transaction; the exact captured policy writer is retained. Default synchronous and custom/subclass/memory calls retain their existing arguments and route. Verify body-entry and repository-entry ABA with actual duplicated native libraries, original installed code observers, no mutation or worker lease on B, and committed rereads from A.
+
+
+### AC17 native removal verification and mounted failure qualification
+
+The installed Textual message pump owns `node._task`; `App._prune` awaits that
+exact task for removal. The Character widget assigned an unrelated controller
+refresh to the same slot. Qualified native current-source controls reproduce the
+unchanged late-presentation state-identity failure and a real removal blocked by
+a suspended controller refresh (2 failures, 3 canonical fixture controls pass,
+52.31s). Identical removal controls against the immutable original
+0ecd8327f79c1b14ea18c15f704850cc41b0ec9f archive reproduce both failures in 7.32s;
+all loaded project modules are confined to that archive. The production repair
+only names the widget-owned slot `_controller_task`, preserving the framework
+message pump, existing action/service contracts and original state assertion.
+
+Three real-app Character nodes require the existing node-specific
+`bootstrap_profile` fixture contract: their unmarked per-case configuration
+redirect conflicts with the actually installed raw source and correctly refuses
+before their behavioral assertions. Those three controls pass with the canonical
+markers before the widget production repair. No native source or identity guard
+is replaced. The native config-sync worker fixture now supplies the exact new
+presentation facade and accepts its declared optional arguments; production
+wiring already constructs the exact service. Its missing-facade RED is one
+failure in 7.06s; the five actual worker/pause/teardown controls pass in 26.76s.
+
+The original broad 79-pass/5-failure receipt is superseded as a classification:
+the exact original archive qualification is 4 failures/1 pass, with all 1,510
+project/test file hashes matching. The badge node passes that original baseline,
+so its current failure remains actionable until a real identical overlap barrier
+qualifies the fixture. The final three targeted mounted modules now give 84
+passes and only that unchanged badge global-call assertion fails (120.97s).
+Its uninstrumented current standalone node passes in 19.70s; that isolated pass
+does not erase the mounted failure. Initial setup errors and faulty diagnostic
+observer attempts are excluded from behavioral proof.
+
+Production widget SHA256 is
+3499dd1f22831f2afd853db308e1709a687c950390748fa449b5a53d52e9e52b.
+Scoped Ruff, edited-method formatting and diff checks pass. Textual teardown
+warnings remain in the mounted receipt; this is not a warning-free whole-suite,
+native-matrix or captured-send budget claim. TASK-34403 remains In Progress.
+
+
+## Exact checked warm configuration display (TASK-34403 AC18)
+
+ADR required: yes.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: clarify the existing detached, checked display contract and its pure
+installed-source identity fence; this supplies no native read or actor authority.
+
+The ninth native receipt identifies 38 general/poll enclosing config entries in
+the first send, 2.793s including waiting and native admission. Including coalesced
+and image/control callers gives 46 entries/3.168s. Under those enclosing display
+stacks, the recorded public warm settings calls cost 0.012s. The selected change
+skips only the redundant outer native lifetime when the exact standard readiness
+reader has already published its own checked mapping within the original one
+second. A stale owner continues the original native route; the projection age,
+refresh worker, cold deferral and live/default helper remain unchanged.
+
+1. Add a genuine installed-source passive code-object RED for repeated actual
+   warm screen entry, retaining the real config/native callable identities.
+2. Only the original standard factory reader may issue a detached display proof
+   after its existing checked source-before/after observation. Retain exact
+   module, installed raw participant/state, factory reader/loader, strong mapping
+   and full owner/source key plus its original UI loop/thread. No operation,
+   lease, path authorization or config lock is retained.
+3. The separately qualified helper route checks issuance and exact active
+   projection/mapping, loop/thread, installed module/raw participant identity,
+   closure/local pause, current source/owner and age before and after the
+   synchronous body. Custom, injected, replaced, cold or expired state never
+   selects this route. Body errors remain visible and post-fence errors retain
+   cleanup precedence/chaining. Maintenance replay remains unchanged.
+4. Keep every genuine nested guarded reader/writer on its own fresh native
+   lifetime. Live actions and dispatch never consume the display proof.
+5. Verify zero redundant scopes/opens for real warm entry, genuine default and
+   nested disk-reader positive controls, and expiry/owner/source/participant/
+   loop/pause/replacement/injected/body-error negatives. Run the unchanged
+   original config lifetime and checked readiness/context control suites, then
+   freeze for independent review and the coordinated full native probe.
+
+Removing the wrapper unconditionally, raising the one-second age, trusting a
+caller flag, borrowing a retired native operation or caching permission/native
+decisions are rejected. The proof selects only rendering of its own detached
+mapping and does not authorize source I/O.
+
+### AC19: native normal-Send message delivery
+
+ADR required: no new ADR
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md; backlog/decisions/148-console-run-hooks.md
+Reason: preserve the existing finite native custody and hook consent contracts while restoring delivery of ordinary keyboard and button messages.
+
+The heartbeat probe measures loop stalls, but Textual separately awaits a coroutine handler on the app or screen message pump. Verify actual Enter and Send-button delivery with the original installed native hook configuration body held in its worker; the source profiler reads original code/receiver identity without replacing a guarded callable. Driver-style input and bounded original pump callbacks must run before the native worker is released. Keep both failed and passing receipts.
+
+If that original path is RED, the standard screen wiring may provide an optional actual-pump task predicate. Only exact app/screen pump callers hand the existing captured snapshot/review/normal Send continuation to a Textual worker before any native await. Direct callers and the spoken worker continue to await their actual outcome. Keep the synchronous busy/dedup gate, original exact chat and draft checks, fresh independent native permission reads, repeated cancellation drain and shutdown ownership. Reuse existing interaction states and worker ownership; no visual, keybinding or permission authority changes. Test default/custom paths and native source lifetime as well as mounted input delivery. Whole-app registered budgets and final native matrix remain pending.
+
+### Badge fixture consumer qualification (TASK-34403, 2026-10-04)
+
+The original badge node passed uninstrumented at exact original `0ecd8327`
+and also passed a current standalone run. The earlier mounted bundle failure
+therefore remained actionable until its ownership was qualified. Identical
+native current and immutable-archive barriers preserved every original
+assertion and made the actual mounted browser's native-ID row query complete
+between the manual AB/A row reads. Both hosts of the same Windows interpreter
+then failed the original last-call assertion, with actual returned mappings
+and both ordering barriers reached (29.40 s current, 26.42 s archive). This
+proves competing legitimate row-set consumers, not a production count loss.
+The archive's 1,510 project/test file hashes had matched exact original source;
+the controlled launcher also confined all 1,505 loaded project/test modules
+to that archive. The initial overbroad trace and observer-None fault attempts
+are excluded from this qualification.
+
+The fixture now supplies only the unrelated mounted browser's declared
+`_subagent_counts_for_rows_fn` dependency with an empty mapping. The manual
+real AB/A AgentRunsDB, bridge, cache, worker, and every calls/value/count
+assertion remain unchanged. Its exact native node is GREEN in the four-node
+`checked-display-scope-red.xml` receipt (12.22 s test call; 21.36 s bundle).
+No production filtering, global spy suppression, or assertion relaxation was
+introduced. The full three-host original module verification remains a final
+matrix requirement; the prior mounted bundle was 84 GREEN plus this race.
+
+
+### Warm display native RED before production (TASK-34403 AC18)
+
+Actual installed-source control `checked-display-scope-red.xml` settled two
+expected failures and two positive controls in 21.36 s on native Windows.
+Six actual warm ChatScreen display entries opened six original configuration
+operations and 1,662 main-thread Windows native handles despite returning
+the same checked readiness mapping. The genuine nested disk reader also
+observed the redundant enclosing raw operation. The direct default helper
+control entered its original fresh native scope and retired normally; the
+approved badge fixture control passed. Observation used original code-object
+profiles without changing installed guard or native callable identities.
+Spend and screen production were unchanged for this RED receipt.
+
+## Exact startup initializing publication fence (TASK-34404 AC8)
+
+ADR required: no.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md (existing startup readmission contract).
+Reason: restore the existing exact pause-owned startup route after a new blanket ordinary-pause refusal; no new native admission authority.
+
+The original three mounted Windows restore nodes all fail in 85.993s at the new initializing publication fence. An original-code observer records storage_locally_paused from initializing line279 in each real readmission thread. The exact _StartupReacquisition, coordinator pause and actual worker match; cancellation is false, TokenOwner equals TokenUser, real-profile refusals are zero, and final native counters are zero. The redacted mounted-startup-readmission-red.json receipt retains actual module/source/script hashes and original exception traceback metadata. Original assertions and timeouts remain unchanged.
+
+Preserve actual cancellation, issued pending membership, PID, Thread, Task and operation identity under the existing coordinator lock. Only type(self) is _StartupReacquisition may recheck the original exact class metadata check with no file path; this route requires path=None and operation=None. Ordinary paused callers and subclass/lookalike attempts remain refused. Keep original native I/O outside the coordinator and original scope/publication checks intact. Add source-aware native controls for post-check actor/pause/cancellation/issuance changes and an exact-type unissued impostor; preserve the original mounted three nodes and coordinator race suite. Source changes wait for root's pump RED release, then freeze before serialized native GREEN and the final native matrix.
+
+
+### AC16 final source and actual UI preparation controls
+
+ADR required: no new ADR. ADR path:
+`backlog/decisions/126-complete-local-backup-and-recovery.md`.
+Reason: completes its existing finite source versus loop-owned projection and
+exact actor contract. No permissions or native authority are cached.
+
+Qualified original-source controls reproduce six borrowed actual method
+receivers and an in-place pending attachment ID mutation (7 failures, 34.05s).
+The standard worker route requires actual bound MethodType plus original function
+and exact receiver. UI preparation captures the attachment IDs before its await
+and compares them before the existing atomic runtime acceptance.
+
+Three further actual catalog-body barriers reproduce inventory callback,
+field-equal governance and copied exact source-registry binding replacement
+being absorbed between separate composition awaits (3 failures, 29.54s).
+One ephemeral captured-source keeper now spans the standard composer, retaining
+its original catalog callback and all source bindings. Private helper inputs
+share that keeper without duplicating reads; only its own lazy permission/log
+publication may update its retained binding slot. Custom routes, actual loop
+inventory/governance, fresh invocation gates and cancellation drain remain.
+
+Receipts: `async-mcp-borrowed-receiver-qualified-red.xml/log` and
+`async-mcp-composition-owner-qualified-red.xml/log` under the authorized
+`deepseek-uat` evidence root. Final native module, compatibility checks and
+independent review remain pending; these RED receipts do not establish final
+performance budgets or cross-platform completion.
+
+
+### Native observer import-order qualification (TASK-34403 AC18)
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: preserves its existing exact checked display/source contract and the
+call-through observer; no runtime interface or authority decision changes.
+
+The public loader observer replaces only config.load_settings. If the actual
+Console screen was imported first, its unchanged public alias no longer
+matches that module attribute, so the display factory cannot issue its proof
+and warm rendering returns to enclosing native scopes. Qualify the real early
+and late imports in separate fresh private-profile children before changing
+the observer. Synchronize only an already-loaded screen alias that is exactly
+the captured original public loader, using monkeypatch restoration. Keep all
+private enrolled guarded loaders, original budgets, heartbeat and whole-probe
+body unchanged. Both controls must warm the original factory, render without
+redundant main-thread native entries, and retain a genuinely fresh nested disk
+reader and complete native retirement. No wrapper introspection, permission
+cache, injected proof flag, source swapping or relaxed identity check qualifies.
+
+
+Native observer RED qualification: the two fresh children settled in 27.52 s.
+Early import retained the old alias and opened 6 warm scopes / 2,058 actual main
+native opens; its nested reader also borrowed the redundant display scope.
+Late import already produced a real proof and 0 warm scopes/opens. Its separate
+failure was a new test expectation error: the original serialized reader enters
+three guarded functions, not one. Preserve all three gates and additionally
+observe their yielded exact raw operation identity: one new owner must be
+shared only inside the real nested read and retired before completion. This
+expectation correction is excluded from production regression evidence.
+Receipt: checked-display-observer-red.xml/log in the private evidence TEMP.
+
+
+### Checked display completion evidence (TASK-34403 AC18)
+
+Native Windows targeted receipt checked-display-final.xml/log settled normally
+with 104 PASS, 0 failures/errors/skips in 440.12 s. The bundle contains 35 new display
+controls, 19 original readiness controls, 18 shared policy controls, 28 original
+configuration lifetime controls and 4 observer controls. Every production/test
+source hash below matched at start and finish. The ordinary native fixture
+launcher restored its actual original TokenOwner on exit; no test process or
+finite native worker remained. Native source guards were not replaced.
+
+Six actual warm display calls now record 0 main configuration entries and 0 native
+opens, versus 6 entries / 1,662 opens in the original installed-source display RED.
+Both genuinely fresh private-profile screen import orders also record 0/0 under
+the public call-through observer. The early-import observer RED had 6 entries /
+2,058 opens; alias synchronization is restricted to its exact captured original
+public loader and monkeypatch restoration. The real nested serialized reader
+keeps all 3 original guarded entries, shares only its own newly issued raw owner,
+performs actual native opens and retires that owner before returning. The
+default helper still owns a fresh native configuration scope.
+
+Qualified identity/view RED receipt checked-display-identity-red.xml/log had
+8 genuine failures and 1 positive control before correction: permissive equality,
+borrowed key reader, replaced app/DB/store receivers, an arbitrary injected
+proof and borrowed/retargeted screen could retain or mis-handle the old view.
+Final controls require exact type and issued membership, original real bound
+MethodType and receiver, element-wise alias identity, strong exact owner/map
+references and the original screen. Spoofed bound attributes keep native
+fallback. Original 1 s age, cold/expiry/foreign-loop fallback, source/owner/pause/
+closure pre-refusal and post-body coalesced retry, actual concurrent saved
+generation invalidation, body-error precedence and repeated worker-cancellation
+drain all pass. Live action/dispatch does not consume the display proof.
+
+The first observer RED's late-import failure was solely a new test expectation
+error, excluded from production-regression evidence: serialized config reading
+has 3 nested original guards, not 1. Its warm display already recorded 0/0. The
+corrected control additionally verifies one fresh exact raw owner and actual
+retirement. Four final report warnings concern pytest record_property/xunit2;
+the existing unset asyncio fixture-loop scope deprecation is also printed.
+No application RuntimeWarning was reported in this bundle.
+
+Frozen SHA256 receipts:
+- console_spend_projection.py: AEBDC7701C3147E7FC696A9AFEFC85A035DEAD782B699F2FE422F992F26E4221
+- chat_screen.py: 283BEAFC8121CEDEEBA121088EF22E0CDDD38FF5E4F4DED3132972A4B91AA2C2
+- test_console_checked_display_scope.py: C2F5F23FB5F07041F419A984B2C3F94A2761E3AEA7C7056671384F303F8EB0DF
+- test_console_native_pause_probe.py: 0AA03FFB0FE7537FE1CAA6639BAEE5A097C88D866B2C55C26B06F98A9C027F45
+
+Whole captured-send and heartbeat budgets, native macOS/Linux/elevated custody
+matrix, final rebased source review and live UAT remain separate pending gates.
+This targeted native receipt establishes this display/lifetime fix, not final
+performance or cross-platform completion. ADR required: existing ADR-126
+amendment applies; no additional ADR is needed for the observer alias repair.
+
+
+### Hook indicator physical-read ownership (TASK-34403 AC20)
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md and
+backlog/decisions/148-console-run-hooks.md.
+Reason: preserves existing finite native producer and independent fresh Send
+authorization contracts. Presentation coalescing is limited to one in-flight
+read, with no permission or settled-snapshot cache.
+
+The unchanged eager Allow-all Send-button control failed once in the native
+46-case bundle (45 pass), with its original five-second post-answer deadline.
+A passive original-code diagnostic also failed: actual visit_snapshot reads
+overlap the required Send and approval reads. Its generic contextmanager
+wrapper was unintentionally observed, generating 52,583 additional events;
+its wall timings therefore remain diagnostic, not performance qualification.
+The source independently shows that cancelling refresh abandons its actual
+asyncio.to_thread producer. Qualify the original real HookPermissions and
+native raw-config body before implementation: concurrent refresh, repeated
+cancellation, owner/reader replacement, refresh during Send, and manual review.
+Coalesce accepted physical reads, retain cancellation until retirement, fence
+strong source identity before publication, and avoid redundant visits while
+Send owns its required read. Preserve custom readers, reader error/cancellation
+precedence and manual review state refresh. Re-run the unchanged eager control
+after the fix; do not change any original deadline or guard.
+
+The three-host CI job ceiling becomes 75 minutes because its expanded targeted
+bundle has measured component runtimes exceeding 52 minutes on this native
+Windows host. Individual test deadlines and all Console performance caps stay
+unchanged; this job ceiling only allows the entire targeted bundle to finish.
+
+
+### Hook snapshot and error completion (TASK-34403 AC21)
+
+ADR required: no new ADR; existing ADR-126 and ADR-148 apply.
+Original-native direct Send/manual review cancellation controls both fail on
+premature task completion while real issued configuration leases remain live.
+Five custom callback controls also fail: an incompatible source inherits the
+old source failure; a surviving joined caller hides publisher failure; and a
+deferred presentation scheduler replaces sent, original-error and cancellation
+outcomes. Receipt hook-refresh-error-red.xml/log: 7 qualified failures in
+20.75 seconds; Native and custom worker controls are distinguished.
+Use the same physical task drain in all three remaining snapshot callsites,
+retain one shared publication error for joined callers, discard only the old
+source's ordinary reader failure after complete incompatible-flight retirement,
+and preserve the current waiter's cancellation. Presentation scheduling stays
+best effort after busy release; its error cannot change Send. Physical witness
+cleanup observes original synchronous snapshot AND complete visit call/return
+frames, since both continue beyond the captured configuration lease's exit.
+Native GREEN, unchanged eager approval timing and the whole performance probe
+remain pending; no original deadline or private source guard is weakened.
+
+
+### AC16 exact-native custom catalog compatibility refinement
+
+ADR required: no new ADR; existing ADR-126 applies.
+Actual exact Unified service with an overridden async local_external_catalog
+swaps its local service during the await. The previous provider contract resolves
+that inventory receiver after the custom catalog completes. The new joined
+source keeper incorrectly treats this as standard-source drift: native RED
+async-mcp-native-custom-catalog-qualified-red.xml/log is one genuine failure
+in 8.79 seconds, with original permission admission retained. Retain the original
+Unified catalog callable at defining-module completion. Use a separate provider
+composition qualifier requiring its real original bound receiver in addition
+to standard source qualification; custom catalog callbacks retain the preceding
+late receiver and worker inventory behavior. Maximum/local snapshot qualifiers
+do not depend on this unrelated async callback. Re-run custom and actual standard
+provider controls with unchanged native guards and finite custody.
+
+The source-frozen 82-case native receipt had 81 pass and one new descriptor-test
+expectation error, 545.82 seconds, with all 15 source hashes unchanged. That test
+supplied global_default=off, which is not an accepted store state. Correct only
+the new control to a valid deny policy and retain its empty MCP maximum,
+alternate actual permission-source/caller-loop and custom-fallback checks.
+The 33.57-second three-case follow-up had one standard positive and two new
+assertion errors: a store-only probe saw no local-store leases on the custom
+catalog route, and a revised assertion confused agent:builtin's independent
+resolver with builtin:tldw_chatbook's MCP resolver. Correct the observer to
+capture actual permission-body leases and keep valid-deny empty semantics;
+these failures provide no additional production-regression evidence.
+
+### AC19-21 focused native hook verification
+
+The native Windows qualification passes all24 selected cases in157.53 seconds
+with normal exit0 and eight unchanged source hashes:18 new Hook lifetime/error
+controls, five actual mounted Send-pump controls and the original unchanged
+allow-all eager Send-button approval node. Cancellation observes complete
+original snapshot and visit retirement, including repeated cancellation and
+surviving joiners. Same-source readers share publication failures; other owners
+wait for physical retirement and recapture; fresh manual/Send review and original
+settled outcomes are preserved. Whole-app budgets and all-platform evidence
+remain separate outstanding gates. Existing ADR-126 and ADR-148 apply.
+
+
+AC16 final catalog ledger refinement: native receipt
+async-mcp-catalog-static-qualified-red.xml/log has three genuine failures in
+23.07 seconds. A class-level async catalog property returning the previously
+captured original bound method executes its getter after an admitted native
+bundle wait and passes callback equality. Actual maximum and local preparation
+also unnecessarily dereference a preexisting unrelated custom catalog property.
+Provider composition alone opts into a catalog keeper; this keeper qualifies
+original class/callback provenance before any dynamic catalog lookup. Maximum
+and local keepers do not resolve that unrelated async callback. Qualify the
+three controls plus original standard provider/lazy custody and custom late
+inventory behavior, without changing guarded reads, callbacks or deadlines.
+
+
+### Proven original local-review unit harness repair
+
+ADR required: no; test-only fixture correction preserves all production contracts.
+The unchanged original missing-master-key and without-bridge composer nodes fail
+identically on the current source and immutable full-package 0ecd8327f79c archive:
+raw_source_selection_changed and missing _character_read_guards respectively.
+Receipt legacy-composer-current-baseline-pair.json records exact base/archive
+identity, both process results and six stable source/test hashes per process.
+Neither failure demonstrates an async preparation regression.
+The unit harness fakes Console settings and MCP but leaves LocalToolProvider's
+documented module-level settings consumer reading a collection-selected real
+config after the test changes profile. Declare supplied tool-setting defaults
+at that existing consumer seam only; retain the actual config module functions,
+guards, profile admission and all native-source controls. Initialize the real
+constructor's existing empty _character_read_guards field in the __new__ bare
+controller. Preserve every original assertion and runtime-source policy test.
+Qualify the complete affected original module after the startup native slot;
+keep it in final CI. No production or binding/authority fallback is changed.
+
+
+AC16 final native qualification receipts: the source-frozen 82-case run completed
+81 pass / 1 newly introduced invalid-off descriptor expectation failure in
+545.82 seconds, all 15 source hashes unchanged. The corrected valid-deny
+descriptor and exact-native custom late catalog receiver controls then passed
+2/2 in 19.55 seconds, with original permission-body issued leases observed and
+retired. Three catalog ledger negatives qualified independently (3 failures in
+23.07 seconds), then the final five-case native bundle passed all 5 in 37.38
+seconds: static descriptor refusal, unrelated custom maximum/local callback
+contracts, exact-native late inventory and standard lazy keeper publication.
+New-file Ruff format/lint pass, formatting preserves AST identity, all 15 owned
+source/test files compile and the scope diff check passes. Frozen hashes are in
+async-mcp-final-frozen-source-static.json.
+No full local 53-case repetition is claimed: final exact-head three-host CI
+retains the full async, first-import, source-contract and original modules.
+Earlier mixed legacy failures remain honestly recorded and have a separate
+immutable/current representative-pair receipt and fixture-only repair plan.
+Whole app timings, source rebase, final native CI and live UAT remain parent
+qualification gates; targeted receipts do not establish those broader outcomes.
+
+### TASK-34404 AC9 finite Samira metadata qualification
+
+ADR required: no new ADR. Existing ADR-126 and ADR-067 apply.
+AC9 is registered before production: cold standard Samira seeding must read
+all 35 resources, persist the complete card and 31-asset pack, and use at most
+12,000 actual Windows native opens. The original source-passive native receipt
+records 18.406 seconds, 16,653 opens, 3,923 security reads and 1,482 identity
+observations. All 35 issued source/repository/resource witnesses matched; guards
+and network attempts were zero and callback-owned resources retired.
+
+First qualify the original seed budget RED and actual selected-file,
+carrying-parent, source, pause, custom-facade, large-DACL and protected-handle
+close controls. The close control uses real HANDLE_FLAG_PROTECT_FROM_CLOSE;
+guarded functions remain installed. Snapshot try/finally currently ignores
+CloseHandle BOOL results, so physical retirement cannot be assumed.
+
+After qualified evidence, use one fresh existing snapshot per original fixed
+identity observation with exact defining-module/class/MethodType receiver and
+function provenance before and after it. Retain every original comparison,
+source/issuance/pause fence and per-file lease. The 4,096-byte descriptor cap
+stays unchanged; unsupported optional metadata requires a complete fresh scalar
+fallback only after confirmed retirement. If a genuine close failure is proved,
+retain exact failed metadata handles and uncertainty on the already-issued
+visual state and its existing raw/capture exclusion; do not retry an uncertain
+close or accept fallback. This proposed repair remains unimplemented pending RED.
+
+Preserve native-open/fstat/named-leaf checks, image/hash/budget validation,
+immutable resources, card-before-pack commits and customized/tombstoned/fork
+states. Verify the count ratchet and boundary controls, then original mounted,
+coordinator and all ten issued startup publication controls under unchanged
+20/45-second limits. Whole-app budgets and three-host gates remain outstanding.
+
+AC9 original native qualification is complete before implementation:
+samira-observation-red.xml has three genuine failures (17,053 opens against
+12,000, actual source replacement accepted and actual Windows pause accepted),
+five original positive/path/custom/large-DACL passes, and one explicitly
+unqualified missing integrated snapshot boundary. The independent original
+snapshot control, samira-observation-close-red.xml, proves that it returned
+metadata while the same protected physical HANDLE and file identity remained
+live. Fixture-only flag removal and positive close were verified; guarded
+functions, eight source hashes and original deadlines stayed unchanged.
+
+The approved checked-close repair tracks each actual opened handle incarnation
+with its captured native owner and fresh identity. Each close is attempted once.
+All remaining handles are retired even on body/ENOTSUP errors; any uncertain
+close raises the specific defining exception carrying failed incarnations.
+The actual issued visual state retains these handles and uncertainty in its
+existing raw/source exclusion before fallback or scope retirement. It never
+retries a failed close. Ordinary unavailable metadata can fall back only after
+positive retirement. This refines existing ADR-126 finite custody; no admission
+cap, other WindowsOS operation, seed semantics or deadline changes apply.
+
+
+### AC16 legacy unit harness qualification after the original 59-case run
+
+The complete unchanged-assertion module exposed 12 failures (47 passed / 12 failed,
+22.59 s); this is retained as RED, not a successful receipt. Eight original
+representatives were then run against current source and the extracted immutable
+0ecd8327f79c1b14ea18c15f704850cc41b0ec9f package with identical original test
+bodies and only the already approved local-provider default consumer / existing
+character-guard fixture corrections. Both sides failed identically (8 / 8,
+10.797 s current / 10.563 s baseline). Ten hashes per side remained stable and
+the archive fixture was restored. Evidence: legacy-composer-unmasked-current-
+baseline-pair.json plus its current/baseline XML and logs in the UAT evidence root.
+
+ADR required: no new ADR for these fixture-only corrections.
+ADR path: backlog/decisions/032-local-agent-tool-permission-boundary.md and
+backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: declare the existing unit harness defaults and constructor fields;
+production producer/permission/native identity contracts remain unchanged.
+
+Before changing the remaining harness, apply these bounded corrections:
+1. Declare supplied defaults at each settings consumer this unit harness calls
+   (controller, LocalToolProvider, BuiltinToolProvider, SubscriptionsDB), preserving
+   the original config readers and all native source guards.
+2. Give the bare controller the existing constructor's empty ConsoleChatStore.
+3. Read the existing ToolReviewDecision verdict through normalize_tool_review;
+   preserve the original proceed, deny-only hook, and approval-round assertions.
+4. Skip the original symlink substitution node only when Windows reports the
+   actual missing symlink capability (WinError 1314); retain every other error
+   and all original assertions on supported hosts.
+5. Keep the three actual fs_list root-pin refusals unresolved by fixture edits:
+   a real original retained Windows pin demonstrated a 64-bit stat volume serial
+   compared against a 32-bit HANDLE volume field. Qualify and repair that existing
+   production defect under AC22 separately, preserving full identity/refusal/close.
+6. Re-run the entire original module on the final source after actual worker
+   origin qualification; do not exclude old cases or raise their deadlines.
+
+AC9 review refinements, native proof before implementation: the actual held
+standard snapshot accepted a retargeted stat binding, made 59 replacement
+callback calls and returned original bytes (binding-red, one genuine failure).
+After initial stock qualification, recheck its exact bindings before every
+scalar fallback, including successful, ENOTSUP/OSError and ValueError exits;
+mid-read drift refuses without invoking replacements. Preinstalled custom
+facades retain the original scalar contract.
+
+The admitted metadata control uses a real enrolled native profile and installed
+_observe_stamps inside the issued visual source. Its protected physical HANDLE
+survived while bytes were returned and raw/source state retired (one genuine
+failure, 4.91 seconds). Ordinary metadata errors keep prior evidence fallback;
+only the exact defining close-uncertainty exception passes through selector,
+path, reused evidence, candidate observation and public acquisition wrappers.
+The actual visual state retains its failed incarnations before scope retirement.
+
+The original opener's real junction/reparse refusal also leaves its protected
+pre-return HANDLE alive without reporting close uncertainty. Check only that
+validation-failure close; retain the exact native owner/handle (identity may be
+unknown if info failed), preserve the original validation error on successful
+close, and transfer failed incarnations through the snapshot's existing ledger.
+Fixture-owned physical cleanup was positively verified; all guarded functions,
+source hashes and deadlines stayed unchanged. Prior authority-path and absent-
+handle observer errors were setup gaps, never authority RED. Existing ADR-126
+applies; no other native close site, admission cap or deadline changes apply.
+
+
+
+### AC9 scalar close uncertainty refinement (2026-10-04)
+
+ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: preserve the existing finite native resource retirement boundary for the original custom scalar route.
+
+The actual custom-facade scalar reader delegated to the original Windows rejected-junction opener. Its genuine protected HANDLE remained alive after the defining metadata-close exception, but the issued visual state/raw record was removed with uncertainty false (one native RED, 3.77 seconds; guards/network zero, captured source hashes unchanged, physical fixture cleanup verified). Before implementation, scope the repair to catching that exact defining close exception around the existing scalar observation and passing its actual opened-handle records to the existing uncertainty retainer. Ordinary custom/POSIX errors and successful custom/native/large-DACL fallback contracts retain their current behavior. Verify the new native negative with the existing custom positive, standard rejected-open, large-DACL, and unsupported/body-error controls; preserve the original startup 20/45 second bounds.
+
+
+## AC22 Windows retained-root identity repair
+
+Proposed outcome: An unchanged admitted Windows workspace root remains usable when Python reports a 64-bit volume identifier or 128-bit file identifier. Complete expected/current identity comparisons still refuse replaced roots, changed high bits and reparse points, and all retained/verification handles retire with the prior directory restored on success or error. Original cross-platform root-pin and isolated-helper controls remain in final native CI.
+
+ADR required: no new ADR.
+ADR paths: backlog/decisions/101-one-shot-pinned-workspace-tool-execution.md and backlog/decisions/032-local-agent-tool-permission-boundary.md.
+Reason: This routine bug fix preserves the existing complete identity tuple, retained-handle lifetime, current-directory verification and local tool authority contract; it corrects the native metadata width used to implement that contract.
+
+The original real Windows diagnostic on Python 3.12.10 measured st_dev=10718190542197972492 and legacy HANDLE volume=3198770700 for the same directory, with identical inode=65583669577539523. The original pin refused that unchanged root. The diagnostic retained original reader/callback bodies and closed the actual native handles; root-pin bytes matched managed, primary and immutable baseline. Receipt: legacy-original-native-root-pin-diagnostic.json.
+
+1. Register the outcome in TASK34403 before production. Preserve the original source hashes and actual mismatch receipt.
+2. Verify the private no-pip/no-network same-3.12 test interpreter imports the managed worker/root-pin/filesystem/profile-core under ordinary -I, with dependency/ABI versions matching the primary interpreter. This isolates tests only; no product loader or primary environment changes.
+3. Run six original-native regression/refusal/retirement controls against the unchanged implementation and retain RED before source edits.
+4. On the same retained HANDLE, keep the existing BY_HANDLE_FILE_INFORMATION attributes/reparse read and additionally attempt GetFileInformationByHandleEx(FileIdInfo). Read its complete unsigned 64-bit volume and little-endian 128-bit file identifier. If the extended query is unavailable, preserve the original fresh legacy projection; the existing complete comparison remains fail closed. Never truncate or normalize an expected identity.
+5. Run the six native controls, all original root-pin controls, stdlib-only worker import closure and the complete original local-review module with approved baseline-qualified fixture corrections. Keep existing deadlines, permissions and source guards intact.
+6. Record static/source receipts and final test results, then freeze for independent parent review and exact-head three-host CI. Do not claim the broader performance task complete from this leaf qualification.
+
+Primary sources: [CPython 3.12 Windows stat changes](https://docs.python.org/3.12/whatsnew/3.12.html), [CPython v3.12.10 fileutils.c](https://raw.githubusercontent.com/python/cpython/v3.12.10/Python/fileutils.c), [FILE_ID_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info), and [GetFileInformationByHandleEx](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getfileinformationbyhandleex). CPython reads complete FileIdInfo volume/ID and retains a legacy fallback when the extended query fails.
+
+
+### AC16 local-review fixture declaration correction
+
+The first exact-managed full-module run stopped at setup with 59 errors because the new fixture named a nonexistent tool_catalog.get_cli_setting alias. This is a harness mistake, not production RED (legacy-composer-complete-source-current-green-source.json; stable 15 source hashes). Source review confirms BuiltinToolProvider imports its getter inside the optional _GATEABLE_BUILTINS iteration; calculator/datetime are separate always-on entries. Before rerunning, remove that nonexistent alias, retain the three actual consumer aliases, and explicitly declare an empty optional catalog for this local/hook unit harness. Optional gates default False and this module does not assert optional built-in availability. Retain the actual constructor, gates, original config readers/native guards and every original outcome assertion, plus only the already qualified Windows1314 capability skip. No production change; existing ADR32/126 contracts apply.
+
+
+The corrected complete unit module reached 57 PASS /1 actual Windows1314 capability SKIP /1 old raw-config failure (legacy-composer-complete-source-current-green-second-source.json; stable15 sources). The sole scripted run_reply hook case supplies an empty session prompt and no overrides; it now reaches the original Internal_Prompts resolver config-override lookup. Resolver bytes match immutable baseline (841fb4d9ae3228fe027a4784682727afbcB803cdbf9bfdd27dd369b2e40abaf1). Before the final complete-module rerun, only that case will declare shipped prompt defaults at the existing console_agent_bridge.get_internal_prompt consumer alias via original CATALOG[id].default. Keep the actual resolver, config guards and compose_agent_system_prompt intact; every hook-before-permission/dispatch assertion remains. This is a unit-input declaration, not a production repair.
+
+
+The third full local-review run retained 57 PASS /1 capability SKIP /1 caught provider error. One bounded passive original-node exception diagnostic (13.94s, five stable source hashes, all original callables retained) observed52 refusals:51 existing caught budget/log/fallback/webhook defaults and one fatal _stall_timeout_seconds configuration read. The helper documents ENV-first TLDW_STREAM_STALL_TIMEOUT_SECONDS before config. Only the scripted hook case will now explicitly set that variable to the original DEFAULT_STALL_TIMEOUT_SECONDS constant; retain the actual watchdog and its unchanged positive ceiling, every other caught path and all guards. This is one documented unit input, not a timeout relaxation or production change. Full original module qualification queues after startup release; no further consumer changes without new failing evidence.
+
+
+### AC22 and final legacy qualification receipt
+
+The original Windows implementation produced three genuine failures and three refusal positives in the six-control RED (pytest 1.08 s; 16 stable source hashes). The minimal FileIdInfo 64/128 projection then passed all 16 controls: six actual Windows identity/refusal/retirement cases, all nine original cross-platform root-pin cases and the stdlib-only isolated-worker import gate (pytest 1.97 s; 18 stable source hashes; normal exit 0). The actual full expected/current comparisons, fresh legacy reparse metadata and original close/cwd semantics remain unchanged. Root-pin source SHA 9808d5404ac84c5d22aaffc8b347cef0ded160f09b92c28e7e36cd33666874ed.
+
+The final complete original local-review module passed 58 cases and skipped only the actual Windows 1314 symlink capability case; every supported original assertion passed. Its15 source hashes stayed stable. A brief overlap with startup31828 is explicitly recorded, so its elapsed time is functional/source evidence only and is not performance qualification. The new actual junction refusal and unchanged root-pin controls passed in the earlier exclusive run. Earlier47/12,59 setup errors and 57/1/1 receipts remain retained and honestly classified; no source guard or timeout budget was changed to satisfy them.
+
+Ordinary private 3.12 -I imports proved five exact managed origins and identical Python/ABI/SQLite plus six dependency versions. The private no-pip/no-network environment changes no primary checkout/environment or product loader. Final static receipt confirms three syntax checks, formatted new leaf/tests, git diff check and no new Ruff diagnostics; existing strict-type E721 and unused-import F401 match HEAD exactly. Receipts: source-current-interpreter-origins.json, workspace-root-native-identity-qualified-red/green.xml and -source.json, legacy-composer-complete-source-current-final.xml/-source.json, workspace-root-identity-final-static.json. Production/fixture source is frozen for parent review and final exact-head native CI; broader performance/UAT completion is not claimed.
+
+
+### AC8 startup observer qualification refinement (2026-10-04)
+
+ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: test-only observation of the existing exact native startup publication contract.
+
+The original three mounted restore checks and all fifteen coordinator controls passed after the seed fix. The ten new controls missed their intended check: seven failed the original initial-finalization 20-second wait and three reached the 45-second child bound. The passive stage receipt showed app construction completed in 17.922 seconds and actual managed restore fingerprint/native admission work still running before the target. The 35-second faulthandler diagnostic exited natively before the ownership receipt; a subsequent metadata-only snapshot had brief contention with the separately authorized legacy module, so neither diagnostic is performance/authority RED evidence. No ownership cycle is claimed.
+
+Before the managed fixture edit, narrow only the test observer. The original `_LocalPause.reacquire_startup` assigns its exact Thread before calling `start` (storage_admission.py lines422â€“427, with no intervening await). Install a first-call profile selector after the original app constructor/setup and before monitor/restoring tasks. Only the exact current thread owned by the current pause selects the existing check-return observer; all other newly created threads immediately restore the previous profile. Preserve every original guard, finalization control, publication revocation, 20-second wait and 45-second child bound. First qualify one cancellation control against the actual issued native attempt; only a genuine GREEN permits the full ten-control run. Record actual source paths, selected target thread, refusal and final native retirement counters. No production change or timeout increase is part of this refinement.
+
+
+### AC8 native observer event handoff qualification (2026-10-04)
+
+The late exact-owner selector's single cancellation control still missed initial finalization (one setup failure, 36.14 seconds), so the ten-control run was not launched. The actual unchanged original pending-failure node on the verified same3.12 source-current isolated runtime passed in 20.33 seconds; all captured source hashes stayed stable and final native counters were zero. No production regression or authority failure is inferred from the new setup miss.
+
+Before this test-only edit, preserve the selector and every original guard/control/deadline, but replace the new fixture's one-millisecond preboundary polling with one captured-loop asyncio.Event handoff. The same actual native check-return observer schedules only the event notification with loop.call_soon_threadsafe, then retains its existing ten-second publication hold; the original revoker still changes the exact captured metadata under the coordinator and has the same thirty-second bound. The actual initial wait remains twenty seconds and the child forty-five seconds. Qualify one cancellation control; full ten requires a genuine target/source/refusal/retirement GREEN. ADR required: no new ADR; existing backlog/decisions/126-complete-local-backup-and-recovery.md native publication contract applies.
+
+Final integration: freeze all owned source and tests; commit, rebase onto latest origin/dev preserving command dispatch and Buddy resume ownership; verify actual isolated helper origins. Run the original committed native performance probe alone, all three host CI jobs and all three genuine elevated Windows custody jobs, then a fresh private-profile DeepSeek/deepseek-chat three-message UAT. Publish one combined PR against dev after reviewing final results. ADR required: no additional ADR; implements the existing ADR126/097/101/32 boundaries.

@@ -7,6 +7,7 @@ stamps, ONE approval round trip per batch, verdicts only ever "proceed".
 import asyncio
 import contextlib
 import json
+import os
 import threading
 import time
 import weakref
@@ -188,6 +189,32 @@ def test_controller_unfollow_survives_view_detach_and_remount():
 
     assert published == [()]
     assert controller._followed_watchlists_operation_ids == ()
+
+
+@pytest.fixture(autouse=True)
+def _default_tool_settings(monkeypatch):
+    """Declare this unit harness's settings at the existing consumer seams.
+
+    Real config readers and native source guards stay installed; these tests
+    supply their MCP policy, tool defaults, and controller settings explicitly.
+    Individual settings tests may override the relevant consumer afterward.
+    """
+    for consumer in (
+        "tldw_chatbook.Agents.local_tool_provider",
+        "tldw_chatbook.Chat.console_chat_controller",
+        "tldw_chatbook.DB.Subscriptions_DB",
+    ):
+        monkeypatch.setattr(
+            f"{consumer}.get_cli_setting",
+            lambda section, key=None, default=None: default,
+        )
+
+    # Optional built-ins default to disabled. This local/hook review harness
+    # does not assert their availability; calculator/datetime stay always on.
+    # Keep the real provider constructor, permission gates and config readers.
+    import tldw_chatbook.Agents.tool_catalog as tool_catalog
+
+    monkeypatch.setattr(tool_catalog, "_GATEABLE_BUILTINS", ())
 
 
 @pytest.fixture(autouse=True)
@@ -753,6 +780,7 @@ def _bare_controller(app):
     """A controller instance with only what _compose_local_provider touches."""
     controller = object.__new__(ConsoleChatController)
     controller.app = app
+    controller.store = ConsoleChatStore()
     from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
 
     controller.set_pending_question = None
@@ -760,6 +788,7 @@ def _bare_controller(app):
     controller._agent_bridge = None
     controller._pending_approval_event = None
     controller._pending_approval_decisions = None
+    controller._character_read_guards = {}
     scratch_spaces = ConsoleScratchSpaceManager()
     scratch_snapshot = scratch_spaces.snapshot("test-chat")
     controller._scratch_spaces = scratch_spaces
@@ -1427,7 +1456,12 @@ def test_selected_root_swap_fails_closed_before_local_invoke(monkeypatch, tmp_pa
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "secret.txt").write_text("outside")
-    selected.symlink_to(outside, target_is_directory=True)
+    try:
+        selected.symlink_to(outside, target_is_directory=True)
+    except OSError as error:
+        if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows account lacks the actual symlink creation capability")
+        raise
 
     assert {
         key: normalize_tool_review(value).verdict
@@ -1827,13 +1861,13 @@ def test_pretooluse_hook_denies_before_permission_store(tmp_path):
     )
     assert verdicts["fs_list"] != "proceed"
     assert verdicts["fs_list"].startswith("hook: ")
-    assert verdicts["git_status"] == "proceed"
+    assert normalize_tool_review(verdicts["git_status"]).verdict == "proceed"
     # ONE approval round trip, carrying only the non-matching call: the
     # hook-denied call never reaches the permission store.
     assert rounds == [["git_status"]]
 
 
-def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
+def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path, monkeypatch):
     """Task 6 bridge wiring: run_reply must wrap the caller's review chain
     with the engine's PreToolUse layer when the bridge was built with an
     ``ensure_run_hooks`` accessor.
@@ -1849,7 +1883,10 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
 
     from tldw_chatbook.Agents.agent_models import STEP_TOOL_RESULT
     from tldw_chatbook.Agents.local_tool_provider import _default_specs
+    import tldw_chatbook.Chat.console_agent_bridge as bridge_module
     from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+    from tldw_chatbook.Internal_Prompts.catalog import CATALOG
+
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.Chat.console_provider_gateway import (
@@ -1857,6 +1894,16 @@ def test_run_reply_wraps_the_review_chain_with_pretooluse_hooks(tmp_path):
         ProviderToolCalls,
     )
     from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.Chat.stream_stall_watchdog import DEFAULT_STALL_TIMEOUT_SECONDS
+
+    # This scripted local/hook case has no user prompt overrides.
+    monkeypatch.setattr(
+        bridge_module, "get_internal_prompt", lambda prompt_id: CATALOG[prompt_id].default
+    )
+    # Declare the documented ENV-first default; keep the real watchdog ceiling.
+    monkeypatch.setenv(
+        "TLDW_STREAM_STALL_TIMEOUT_SECONDS", str(DEFAULT_STALL_TIMEOUT_SECONDS)
+    )
 
     engine = _deny_fs_tools_engine(tmp_path)
 

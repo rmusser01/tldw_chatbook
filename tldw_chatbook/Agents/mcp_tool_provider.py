@@ -598,6 +598,19 @@ class MCPToolProvider:
     # -- composition (main loop, once per registration) -------------------
 
     async def compose_catalog(self) -> None:
+        """Compose on the actual supplied loop with finite standard custody."""
+        from tldw_chatbook.MCP.console_snapshot import standard_console_catalog_sources
+
+        service = self._service
+        if standard_console_catalog_sources(service):
+            if asyncio.get_running_loop() is not self._main_loop:
+                raise PermissionError("mcp_catalog_owner_loop_changed")
+            with service._producer_lifetime.operation():
+                await self._compose_catalog()
+        else:
+            await self._compose_catalog()
+
+    async def _compose_catalog(self) -> None:
         """Build the eligible tool catalog. MAIN LOOP, called once at registration.
 
         Kill switch on -> empty catalog (the provider is effectively inert;
@@ -619,14 +632,43 @@ class MCPToolProvider:
         with self._decisions_lock:
             self._stamped_decisions.clear()
 
-        if await asyncio.to_thread(self._service.get_kill_switch):
+        from tldw_chatbook.MCP.console_snapshot import (
+            capture_console_effective_states,
+            read_console_kill_switch,
+            standard_console_catalog_sources,
+            _CapturedSources,
+        )
+
+        service = self._service
+        local = getattr(service, "local_service", None)
+        standard = standard_console_catalog_sources(service)
+        captured = _CapturedSources(service, capture_catalog=True) if standard else None
+
+        def require_current():
+            if self._service is not service:
+                raise PermissionError("mcp_catalog_owner_changed")
+            if captured is not None:
+                captured.require_current()
+
+        kill_switch = (
+            await read_console_kill_switch(service, _captured_sources=captured)
+            if standard
+            else await asyncio.to_thread(service.get_kill_switch)
+        )
+        require_current()
+        if kill_switch:
             self._catalog = []
             self._entry_by_llm_name = {}
             self._not_connected_count = 0
             return
 
         hub_tools: list[HubTool] = []
-        records = await self._service.local_external_catalog()
+        records = await (
+            captured.catalog_callback()
+            if captured is not None
+            else service.local_external_catalog()
+        )
+        require_current()
         for record in records:
             if (
                 record.get("plugin_owner") is not None
@@ -635,15 +677,29 @@ class MCPToolProvider:
                 continue
             hub_tools.extend(local_tools_from_record(record))
 
-        local_service = getattr(self._service, "local_service", None)
-        get_inventory = getattr(local_service, "get_inventory", None)
+        local_service = local if standard else getattr(service, "local_service", None)
+        get_inventory = (
+            captured.inventory_reader
+            if captured is not None
+            else getattr(local_service, "get_inventory", None)
+        )
         if callable(get_inventory):
             try:
-                inventory = await asyncio.to_thread(get_inventory)
+                from tldw_chatbook.MCP.local_control_service import LocalMCPControlService
+
+                if (
+                    standard
+                    and getattr(get_inventory, "__func__", None)
+                    is LocalMCPControlService.get_inventory
+                ):
+                    if asyncio.get_running_loop() is not self._main_loop:
+                        raise PermissionError("mcp_catalog_owner_loop_changed")
+                    inventory = get_inventory()
+                else:
+                    inventory = await asyncio.to_thread(get_inventory)
+                require_current()
             except Exception as exc:  # noqa: BLE001 -- never abort composition
-                logger.warning(
-                    f"MCPToolProvider: built-in inventory read failed: {exc}"
-                )
+                logger.warning(f"MCPToolProvider: built-in inventory read failed: {exc}")
                 inventory = None
             if isinstance(inventory, Mapping):
                 builtin_tools = builtin_tools_from_inventory(inventory)
@@ -666,9 +722,16 @@ class MCPToolProvider:
         # Only the documented worker-safe file read crosses the await. The
         # invocation gate still re-reads its current permission store.
         profile_kwargs = self._profile_kwargs()
-        effective = await asyncio.to_thread(
-            self._service.effective_tool_states, hub_tools, **profile_kwargs
+        effective = (
+            await capture_console_effective_states(
+                service, hub_tools, _captured_sources=captured, **profile_kwargs
+            )
+            if standard
+            else await asyncio.to_thread(
+                service.effective_tool_states, hub_tools, **profile_kwargs
+            )
         )
+        require_current()
         from tldw_chatbook.MCP.permission_store import definition_hash
 
         eligible = [
@@ -676,9 +739,7 @@ class MCPToolProvider:
             for tool in hub_tools
             if effective.get((tool.server_key, tool.name), _FAIL_CLOSED_STATE).state
             != "deny"
-            and (
-                self._maximum_tool_ids is None or tool.tool_id in self._maximum_tool_ids
-            )
+            and (self._maximum_tool_ids is None or tool.tool_id in self._maximum_tool_ids)
             and (
                 self._maximum_definition_hashes is None
                 or self._maximum_definition_hashes.get(tool.tool_id)
@@ -711,6 +772,7 @@ class MCPToolProvider:
             )
             entry_by_llm_name[llm_name] = (tool, state)
 
+        require_current()
         self._catalog = catalog
         self._entry_by_llm_name = entry_by_llm_name
 

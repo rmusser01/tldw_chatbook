@@ -18490,3 +18490,10 @@ checked data; identity equality alone cannot satisfy the latter.
 ### A second cancellation can escape a single shielded cleanup await
 
 TASK-34403's checked readiness warm regression held the original checked_config_identity return while its real raw operation and two native leases remained active. The first cancellation entered its shielded cleanup await; a second cancellation escaped it, set pendingFalse/settledTrue and allowed a warmer to finish before native retirement. A loop that preserves cancellation precedence until the worker actually completes repairs this. The same control must hold an actual opened handle or live raw operation: a callback-entry barrier can precede physical connection allocation and cannot prove premature native close.
+
+
+### Isolated worker launches must prove their worktree source origin
+
+In TASK-34403 AC22, pytest loaded the managed worktree but the actual filesystem executor launched sys.executable with -I. That isolated worker resolved the editable primary checkout, so adding a managed root-pin fix alone could not qualify the actual helper. An original -I origin/hash probe proved the primary root-pin and filesystem identity bytes still matched the immutable baseline; this supported the genuine Windows stat/HANDLE mismatch without claiming a changed worker was tested.
+
+A private EvidenceRoot-only interpreter of the same Python 3.12 ABI then exposed the managed app and profile-core paths before the existing dependency environment. Ordinary -I probes verified five managed module origins/hashes and matching dependency versions before regression qualification. The native identity controls passed afterward. A pytest working directory or parent sys.path insertion does not establish child source identity; verify the actual isolated helper launch before attributing its outcome to the worktree. Preserve the shipping loader and primary environment when test-only isolation is sufficient.

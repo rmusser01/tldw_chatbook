@@ -3712,7 +3712,7 @@ class ConsoleSessionController:
         }
 
     def _build_console_turn_execution_context(
-        self, session_id: str
+        self, session_id: str, *, mcp_definition_maximum: Mapping[str, str] | None = None
     ) -> ConsoleTurnConfigurationSnapshot:
         """Capture one detached configuration snapshot for an owning session."""
         from ...Chat.attachment_core import max_history_images
@@ -3724,9 +3724,7 @@ class ConsoleSessionController:
 
         app_config = self._provider_readiness_app_config()
         selection = self._build_provider_selection_fn(session_id)
-        settings = self._ensure_console_chat_store().effective_session_settings(
-            session_id
-        )
+        settings = self._ensure_console_chat_store().effective_session_settings(session_id)
         model = selection.explicit_model or selection.configured_model
         console_config = (
             app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
@@ -3784,7 +3782,8 @@ class ConsoleSessionController:
         tool_policy_profile_id = self._resolve_turn_tool_policy_profile_id(workspace_id)
         persona_policy_rules = self._resolve_turn_persona_policy_rules(session_id)
 
-        mcp_definition_maximum = capture_mcp_definition_maximum(app_instance)
+        if mcp_definition_maximum is None:
+            mcp_definition_maximum = capture_mcp_definition_maximum(app_instance)
         return ConsoleTurnConfigurationSnapshot.capture(
             session_id=session_id,
             provider_selection=selection,
@@ -5899,3 +5898,8 @@ class ConsoleSessionController:
             store.active_session_id is not None
             and self._console_visible_draft_session_id == store.active_session_id
         )
+
+# Preserve the concrete builder contract before any custom class replacement.
+_CONSOLE_TURN_CONTEXT_BUILDER = (
+    ConsoleSessionController._build_console_turn_execution_context
+)

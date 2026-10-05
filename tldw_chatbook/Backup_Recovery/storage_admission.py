@@ -11,6 +11,7 @@ import asyncio
 import atexit
 import sqlite3
 import stat
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -275,9 +276,18 @@ class _Acquisition:
                     or self.operation is not operation
                 ):
                     raise bootstrap.RecoveryRequired("acquisition_provenance_invalid")
-                if self.cancel.is_set() or operation is None and _pause is not None:
+                if self.cancel.is_set():
                     raise bootstrap.RecoveryRequired("storage_locally_paused")
-                if operation is not None:
+                if type(self) is _StartupReacquisition:
+                    if path is not None or operation is not None:
+                        raise bootstrap.RecoveryRequired(
+                            "startup_reacquisition_invalid"
+                        )
+                    _StartupReacquisition.check(self)
+                elif operation is None:
+                    if _pause is not None:
+                        raise bootstrap.RecoveryRequired("storage_locally_paused")
+                else:
                     _check_operation_state(operation, proof, path)
                 leader = next(
                     (
@@ -874,6 +884,19 @@ def _content(path: Path) -> tuple | None:
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
+_METADATA_NATIVE_MODULE = sys.modules.get("tldw_chatbook.Utils.windows_files")
+_METADATA_CLOSE_ERROR = (
+    vars(_METADATA_NATIVE_MODULE).get("_WINDOWS_METADATA_CLOSE_ERROR_ORIGINAL")
+    if _METADATA_NATIVE_MODULE is not None
+    else None
+)
+
+
+def _metadata_close_uncertain(error):
+    # Provenance is retained at the defining native module's completion.
+    return type(error) is _METADATA_CLOSE_ERROR  # noqa: E721 - exact defining exception.
+
+
 def _observe_stamps(posture_paths, content_paths) -> tuple:
     """Observe each named path once for one fresh evidence snapshot.
 
@@ -1020,7 +1043,9 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
     posture = sorted({p for target in walked for p in _chain(Path(target))})
     try:
         evidence = _Evidence(names, posture, (*content, selector))
-    except (OSError, ValueError):
+    except (OSError, ValueError) as error:
+        if _metadata_close_uncertain(error):
+            raise
         return None  # Native unobservable paths never become admission evidence.
     posture_ok = all(
         s is not None and not stat.S_ISLNK(s[2]) for _, s in evidence.posture
@@ -1037,7 +1062,9 @@ def _path_evidence(names, selected: Path) -> _Evidence | None:
     """Stamp the admitted path's chain (the containment check's only input)."""
     try:
         evidence = _Evidence(names, _chain(selected), ())
-    except (OSError, ValueError):
+    except (OSError, ValueError) as error:
+        if _metadata_close_uncertain(error):
+            raise
         return None
     return evidence if _no_links(evidence) else None
 
@@ -1135,8 +1162,10 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
             _observe_evidence(entries) == tuple(entry.stamps() for entry in entries)
             and evidence.epoch == bootstrap._admission_epoch
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError) as error:
         token.close()
+        if _metadata_close_uncertain(error):
+            raise
         return None  # Only the unchanged full derivation decides refusal codes.
     except BaseException:
         token.close()  # as the derivation does: a counted lease never leaks
@@ -1166,7 +1195,9 @@ def _observe_candidates(root, selector, path, related_paths):
         if entry is not None:
             try:
                 observations[name] = (entry, entry.observe(), now)
-            except (OSError, ValueError):
+            except (OSError, ValueError) as error:
+                if _metadata_close_uncertain(error):
+                    raise
                 continue  # A candidate that cannot be observed cannot confirm.
     return epoch, observations
 
@@ -1305,7 +1336,9 @@ def acquire_storage(
         return _acquire_storage(path, attempt, related_paths=related_paths)
     except bootstrap.RecoveryRequired:
         raise
-    except (OSError, ValueError, RuntimeError):
+    except (OSError, ValueError, RuntimeError) as error:
+        if _metadata_close_uncertain(error):
+            raise
         raise bootstrap.RecoveryRequired("storage_admission_unavailable") from None
     finally:
         attempt.close()
@@ -1364,7 +1397,9 @@ def _acquire_storage(
             # each owner path to its verified scope. Native unavailability is not a
             # conflict with an unrelated operation and never qualifies maintenance.
             _scope(
-                root, selector, lexical_path(path) if path is not None else None,
+                root,
+                selector,
+                lexical_path(path) if path is not None else None,
                 related_paths=related_paths,
             )
             allowed, reason = bootstrap.startup_permission(selector, root)
@@ -1427,8 +1462,14 @@ def _acquire_storage(
                 raise bootstrap.RecoveryRequired("storage_scope_changed")
         if before is not None:
             _note_evidence(
-                hold, root, selector, path, related_paths, names,
-                attempt.scope_roots, before,
+                hold,
+                root,
+                selector,
+                path,
+                related_paths,
+                names,
+                attempt.scope_roots,
+                before,
             )
         return token
     except BaseException:
@@ -1859,7 +1900,8 @@ class _DiscoveryScope:
         self.active = True
         self.sqlite_copies = (
             _PreviewScope(limits, byte_budget, native_scope=self)
-            if private_sqlite else None
+            if private_sqlite
+            else None
         )
 
     def check(self):
@@ -2168,11 +2210,10 @@ class MaintenanceSession:
             not set(row["namespaces"]) <= set(self._names) for row, _ in bindings
         ):
             raise bootstrap.RecoveryRequired("capture_config_scope_changed")
-        self._config_capture_sources = _config_capture_sources(root, selectors, bindings)
-        if any(
-            not _contains_capture_path(self._roots, path)
-            for path in selectors
-        ):
+        self._config_capture_sources = _config_capture_sources(
+            root, selectors, bindings
+        )
+        if any(not _contains_capture_path(self._roots, path) for path in selectors):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
         with self._discovery_reads():
             current = discover(selectors, selections=selections)
@@ -2183,9 +2224,9 @@ class MaintenanceSession:
             if item.status != "included" or item.path is None:
                 continue
             path = lexical_path(item.path)
-            if not _contains_capture_path(self._roots, path) and not _config_capture_item(
-                item, current, self._config_capture_sources
-            ):
+            if not _contains_capture_path(
+                self._roots, path
+            ) and not _config_capture_item(item, current, self._config_capture_sources):
                 raise bootstrap.RecoveryRequired("capture_source_outside_scope")
             info = os.stat(path)
             if not stat.S_ISREG(info.st_mode):
@@ -2209,7 +2250,10 @@ class MaintenanceSession:
             if type(limits) is not ArchiveLimits:
                 raise TypeError("invalid_preview_limits")
             byte_budget = limits.expanded_bytes if byte_budget is None else byte_budget
-            if type(byte_budget) is not int or not 0 < byte_budget <= limits.expanded_bytes:
+            if (
+                type(byte_budget) is not int
+                or not 0 < byte_budget <= limits.expanded_bytes
+            ):
                 raise ValueError("invalid_preview_budget")
         elif limits is not None or byte_budget is not None:
             raise ValueError("invalid_discovery_copy_options")
@@ -2507,14 +2551,16 @@ class _CaptureFileDescriptors:
             self.scope.resources.remove(self)
 
 
-def _check_capture_file_identity(scope, selected, info, *, source_only=False, owner_id=None):
+def _check_capture_file_identity(
+    scope, selected, info, *, source_only=False, owner_id=None
+):
     scope.check()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
         raise bootstrap.RecoveryRequired("capture_file_not_regular")
     if type(scope) is _DiscoveryScope:
-        if not _contains_capture_path(scope.session._roots, selected) and not _config_capture_file(
-            scope.config_sources, selected, owner_id, info
-        ):
+        if not _contains_capture_path(
+            scope.session._roots, selected
+        ) and not _config_capture_file(scope.config_sources, selected, owner_id, info):
             raise bootstrap.RecoveryRequired("capture_source_outside_scope")
         return
     if type(scope) is _PreviewScope:

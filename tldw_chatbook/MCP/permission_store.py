@@ -2639,3 +2639,10 @@ def cycle_global(current: str) -> str:
         The next state in the cycle: Allow -> Ask -> Off -> Allow.
     """
     return _CYCLE_GLOBAL_STATES[current]
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_METHODS = (
+    ("load", MCPPermissionStore.load),
+    ("get_kill_switch", MCPPermissionStore.get_kill_switch),
+    ("mark_config_changed", MCPPermissionStore.mark_config_changed),
+)

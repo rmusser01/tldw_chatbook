@@ -8946,6 +8946,109 @@ class ConsoleChatStore:
         if self._settings_persistence_lifecycles.get(session_id) is lifecycle:
             self._cleanup_console_settings_lifecycle_if_idle(session_id)
 
+    async def _run_console_settings_writer(
+        self,
+        persistence: object,
+        writer: Callable[..., Any],
+        **kwargs: Any,
+    ) -> Any:
+        """Retain one captured standard Notes writer until native retirement."""
+        from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+        from tldw_chatbook.Chat.console_context_repository import (
+            ConsoleContextRepository,
+        )
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        database = getattr(persistence, "db", None)
+        function = getattr(writer, "__func__", None)
+        generation = ChatPersistenceService.update_conversation_generation_settings
+        context = ChatPersistenceService.update_conversation_context_policy
+        context_repository = getattr(persistence, "context_repository", None)
+        context_function = ConsoleContextRepository.save_policy_if_revision
+        repository_writer = getattr(context_repository, "save_policy_if_revision", None)
+        qualified = bool(
+            type(persistence) is ChatPersistenceService
+            and type(database) is CharactersRAGDB
+            and not database.is_memory_db
+            and getattr(writer, "__self__", None) is persistence
+            and function in (generation, context)
+            and (
+                function is not context
+                or (
+                    type(context_repository) is ConsoleContextRepository
+                    and context_repository.db is database
+                    and getattr(repository_writer, "__self__", None)
+                    is context_repository
+                    and getattr(repository_writer, "__func__", None) is context_function
+                )
+            )
+        )
+        if not qualified:
+            return await asyncio.to_thread(writer, **kwargs)
+
+        def sources_current() -> bool:
+            current = getattr(persistence, function.__name__, None)
+            return bool(
+                self.persistence is persistence
+                and persistence.db is database
+                and getattr(current, "__self__", None) is persistence
+                and getattr(current, "__func__", None) is function
+                and (
+                    function is not context
+                    or (
+                        persistence.context_repository is context_repository
+                        and context_repository.db is database
+                        and getattr(
+                            context_repository.save_policy_if_revision, "__self__", None
+                        )
+                        is context_repository
+                        and getattr(
+                            context_repository.save_policy_if_revision, "__func__", None
+                        )
+                        is context_function
+                    )
+                )
+            )
+
+        def invoke() -> Any:
+            from tldw_chatbook.Backup_Recovery.participants import _core_operation
+            from tldw_chatbook.DB.base_db import operation_owned_connection
+
+            with operation_owned_connection(database):
+                with _core_operation(database):
+                    if not sources_current():
+                        raise RuntimeError("console_settings_writer_source_changed")
+                    options = dict(kwargs, _expected_database=database)
+                    if function is context:
+                        options.update(
+                            _expected_context_repository=context_repository,
+                            _expected_context_writer=repository_writer,
+                        )
+                    result = writer(**options)
+                    if not sources_current():
+                        raise RuntimeError("console_settings_writer_source_changed")
+                    return result
+
+        worker = asyncio.create_task(asyncio.to_thread(invoke))
+        try:
+            result = await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            # A Settings lifecycle may retire only after its actual writer and
+            # worker-created handle retire, including repeated cancellation.
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+                except BaseException:
+                    break
+            with suppress(BaseException):
+                worker.result()
+            raise
+        if not sources_current():
+            raise RuntimeError("console_settings_writer_source_changed")
+        return result
+
     async def _run_console_settings_persistence_drain(
         self,
         session_id: str,
@@ -9064,14 +9167,16 @@ class ConsoleChatStore:
                 else:
                     written.discard(generation)
                     snapshot = snapshot_from_session_settings(current.settings)
+                    persistence = self.persistence
                     writer = getattr(
-                        self.persistence,
+                        persistence,
                         "update_conversation_generation_settings",
                         None,
                     )
                     try:
                         result = (
-                            await asyncio.to_thread(
+                            await self._run_console_settings_writer(
+                                persistence,
                                 writer,
                                 conversation_id=drain.persisted_conversation_id,
                                 snapshot=snapshot,
@@ -9174,14 +9279,16 @@ class ConsoleChatStore:
                 else:
                     written.discard(context)
                     overrides = current.context_policy_overrides
+                    persistence = self.persistence
                     writer = getattr(
-                        self.persistence,
+                        persistence,
                         "update_conversation_context_policy",
                         None,
                     )
                     try:
                         result = (
-                            await asyncio.to_thread(
+                            await self._run_console_settings_writer(
+                                persistence,
                                 writer,
                                 conversation_id=drain.persisted_conversation_id,
                                 overrides=overrides,

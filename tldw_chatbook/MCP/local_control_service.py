@@ -1753,3 +1753,10 @@ class LocalMCPControlService:
             action_id=action_id,
             runtime_state_override=RuntimeSourceState(active_source="local"),
         )
+
+# Callable provenance captured at definition time; no native authority is retained.
+_CONSOLE_STANDARD_METHODS = (
+    ("get_external_servers", LocalMCPControlService.get_external_servers),
+    ("_project_external_catalog", LocalMCPControlService._project_external_catalog),
+    ("get_inventory", LocalMCPControlService.get_inventory),
+)

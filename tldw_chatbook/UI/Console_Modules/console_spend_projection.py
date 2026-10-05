@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import sys
 import threading
 import time
+import weakref
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import wraps
+from types import MethodType
 from typing import Any
 
 from ...Chat.assistant_generation_state import assistant_state_allows_provider_history
@@ -107,6 +110,33 @@ def provider_readiness_app_config(
     return resolved
 
 
+@dataclass(frozen=True, eq=False)
+class _CheckedDisplayProof:
+    """Detached display provenance; no operation, lease, or disk authority."""
+
+    projection: Any
+    screen: Any
+    reader: Callable
+    key_reader: Callable
+    value: Mapping
+    source: tuple[int, str]
+    owner: tuple
+    config: Any
+    participants: Any
+    raw: Any
+    storage: Any
+    aliases: tuple
+    participant: Any
+    participant_state: Any
+    loop: Any
+    thread: Any
+    at: float
+
+
+_checked_display_proofs = weakref.WeakSet()
+_standard_readiness_projections = weakref.WeakSet()
+
+
 @dataclass(frozen=True)
 class ConsoleReadinessConfigRead:
     """Source tags captured inside the same checked finite mapping read."""
@@ -115,6 +145,7 @@ class ConsoleReadinessConfigRead:
     value: Mapping
     source_after: tuple[int, str]
     context_policy: ConsoleContextPolicyOverrides | None = None
+    _display_proof: _CheckedDisplayProof | None = None
 
 
 class ConsoleReadinessConfigProjection:
@@ -130,25 +161,40 @@ class ConsoleReadinessConfigProjection:
         self.at = 0.0
         self.pending = False
         self.context_policy = None
+        self._display_proof = None
+        self._read_request = None
         self._settled = asyncio.Event()
         self._settled.set()
 
     @classmethod
     def for_screen(cls, screen: Any) -> ConsoleReadinessConfigProjection:
         projection = getattr(screen, "_console_readiness_config_projection", None)
-        if projection is None:
+        if projection is None or (
+            type(projection) is ConsoleReadinessConfigProjection
+            and projection.screen is not screen
+        ):
 
             def read_current():
                 from tldw_chatbook import config
-                from tldw_chatbook.Backup_Recovery.config_participants import (
-                    checked_config_identity,
-                    operation,
+                from tldw_chatbook.Backup_Recovery import (
+                    config_participants as participants,
+                    raw_participants as raw,
+                    storage_admission as storage,
                 )
-                from ..Screens.chat_screen import load_settings
+                from ..Screens import chat_screen
 
-                with operation(config) as active:
-                    before = checked_config_identity(config, active)
-                    value = copy.deepcopy(load_settings())
+                request = projection._read_request
+                loader = chat_screen.load_settings
+                aliases = (
+                    config.current_config_identity,
+                    config._get_effective_config_path,
+                    participants.binding,
+                    raw._participant_identity,
+                    loader,
+                )
+                with participants.operation(config) as active:
+                    before = participants.checked_config_identity(config, active)
+                    value = copy.deepcopy(loader())
                     # Match live get_cli_setting's sparse CLI lookup, rather
                     # than deriving policy from the merged application map.
                     console = config.load_cli_config_and_ensure_existence().get(
@@ -162,11 +208,44 @@ class ConsoleReadinessConfigProjection:
                         # The existing display reader treats invalid policy as
                         # unavailable; provider readiness still has its mapping.
                         policy = None
-                    return ConsoleReadinessConfigRead(
-                        before, value, checked_config_identity(config, active), policy
+                    after = participants.checked_config_identity(config, active)
+                    with storage._lock:
+                        participant = raw._states[active].participant
+                        participant_state = raw._participant_identity(participant)
+                proof = None
+                if (
+                    type(projection) is ConsoleReadinessConfigProjection
+                    and projection in _standard_readiness_projections
+                    and projection.read_current is read_current
+                    and request is not None
+                    and loader is config.load_settings
+                    and before == after == request[2][0]
+                ):
+                    proof = _CheckedDisplayProof(
+                        projection,
+                        screen,
+                        read_current,
+                        _standard_readiness_key,
+                        value,
+                        before,
+                        request[2],
+                        config,
+                        participants,
+                        raw,
+                        storage,
+                        aliases,
+                        participant,
+                        participant_state,
+                        request[0],
+                        request[1],
+                        time.monotonic(),
                     )
+                    _checked_display_proofs.add(proof)
+                return ConsoleReadinessConfigRead(before, value, after, policy, proof)
 
             projection = cls(screen, read_current=read_current)
+            if type(projection) is ConsoleReadinessConfigProjection:
+                _standard_readiness_projections.add(projection)
             screen._console_readiness_config_projection = projection
         return projection
 
@@ -200,7 +279,7 @@ class ConsoleReadinessConfigProjection:
         """Defer a cold owner; use only its own last mapping during expiry."""
         screen = self.screen
         key = self._key()
-        current = key == self.key and self.value is not None
+        current = _same_readiness_key(key, self.key) and self.value is not None
         if (
             not current or time.monotonic() - self.at >= self.max_age
         ) and not self.pending:
@@ -212,7 +291,11 @@ class ConsoleReadinessConfigProjection:
         if not current:
             return False
         previous = getattr(screen, "_console_readiness_projection_active", None)
-        screen._console_readiness_projection_active = threading.get_ident(), self.value
+        screen._console_readiness_projection_active = (
+            threading.get_ident(),
+            self.value,
+            self,
+        )
         try:
             with screen._console_derivation_scope():
                 return body() is not False
@@ -226,13 +309,16 @@ class ConsoleReadinessConfigProjection:
         if self.pending:
             await self._settled.wait()
         return (
-            key == self._key() == self.key
+            _same_readiness_key(key, self._key())
+            and _same_readiness_key(key, self.key)
             and self.value is not None
             and time.monotonic() - self.at < self.max_age
         )
 
     async def _refresh(self, key: tuple) -> None:
-        worker = asyncio.create_task(asyncio.to_thread(self.read_current))
+        reader = self.read_current
+        self._read_request = asyncio.get_running_loop(), threading.current_thread(), key
+        worker = asyncio.create_task(asyncio.to_thread(reader))
         try:
             try:
                 result = await asyncio.shield(worker)
@@ -253,7 +339,7 @@ class ConsoleReadinessConfigProjection:
                 not isinstance(result, ConsoleReadinessConfigRead)
                 or result.source_before != key[0]
                 or result.source_after != key[0]
-                or key != self._key()
+                or not _same_readiness_key(key, self._key())
             ):
                 return
             value = result.value
@@ -271,18 +357,36 @@ class ConsoleReadinessConfigProjection:
             # Convergence may change this same owner's settings revision. It
             # cannot authorize publishing to a different profile or owner.
             current_key = self._key()
-            if (*current_key[:7], *current_key[8:]) != (*key[:7], *key[8:]):
+            if not _same_readiness_key(current_key, key, ignore_settings=True):
                 return
             changed = (
-                self.key != current_key
+                not _same_readiness_key(self.key, current_key)
                 or self.value != value
                 or self.context_policy != result.context_policy
             )
             self.key, self.value, self.at = current_key, value, time.monotonic()
             self.context_policy = result.context_policy
+            proof = result._display_proof
+            self._display_proof = None
+            if (
+                type(proof) is _CheckedDisplayProof
+                and proof in _checked_display_proofs
+                and proof.projection is self
+                and proof.screen is self.screen
+                and proof.reader is reader is self.read_current
+                and proof.value is value
+                and _same_readiness_key(proof.owner, key)
+            ):
+                # The existing pristine-default handoff may change only this
+                # owner's settings revision. Bind the issued display copy to
+                # that final exact owner and its original one-second clock.
+                published = replace(proof, owner=current_key, at=self.at)
+                _checked_display_proofs.add(published)
+                self._display_proof = published
         except Exception:  # noqa: BLE001 - remain cold and retryable.
             return
         finally:
+            self._read_request = None
             self.pending = False
             self._settled.set()
         if changed:
@@ -291,6 +395,170 @@ class ConsoleReadinessConfigProjection:
                 exclusive=False,
                 group="console-readiness-publication",
             )
+
+
+def _same_readiness_key(
+    left: Any, right: Any, *, ignore_settings: bool = False
+) -> bool:
+    """Compare semantic tokens only after exact retained owner references."""
+    if (
+        type(left) is not tuple
+        or type(right) is not tuple
+        or len(left) != 11
+        or len(right) != 11
+    ):
+        return False
+    # App, database, store, session owner, and app mapping are receivers,
+    # not values. Keep revision index 7's existing pristine-default exception.
+    if any(left[index] is not right[index] for index in (1, 3, 4, 9, 10)):
+        return False
+    if ignore_settings:
+        return (*left[:7], *left[8:]) == (*right[:7], *right[8:])
+    return left == right
+
+
+_standard_readiness_key = ConsoleReadinessConfigProjection._key
+
+
+def _checked_display_status(projection: Any) -> bool | None:
+    """Return fresh display acceptance, owner refusal, or native fallback.
+
+    All checks here are in-memory identity or lexical source checks. The
+    coordinator lock protects only installed participant mappings, never IO.
+    """
+    if type(projection) is not ConsoleReadinessConfigProjection:
+        return None
+    proof = projection._display_proof
+    key_reader = projection._key
+    if (
+        type(proof) is not _CheckedDisplayProof
+        or proof not in _checked_display_proofs
+        or projection not in _standard_readiness_projections
+        or proof.projection is not projection
+        or proof.reader is not projection.read_current
+        or proof.value is not projection.value
+        or type(key_reader) is not MethodType
+        or key_reader.__func__ is not proof.key_reader
+        or key_reader.__self__ is not projection
+        or proof.thread is not threading.current_thread()
+    ):
+        return None
+    try:
+        if asyncio.get_running_loop() is not proof.loop:
+            return None
+    except RuntimeError:
+        return None
+    active = getattr(projection.screen, "_console_readiness_projection_active", None)
+    if (
+        active is None
+        or len(active) != 3
+        or active[0] != threading.get_ident()
+        or active[1] is not proof.value
+        or active[2] is not projection
+    ):
+        return None
+    if projection.screen is not proof.screen or getattr(
+        projection.screen, "_closing", False
+    ):
+        return False
+    from ..Screens import chat_screen
+
+    config, participants, raw, storage = (
+        proof.config,
+        proof.participants,
+        proof.raw,
+        proof.storage,
+    )
+    if (
+        sys.modules.get("tldw_chatbook.config") is not config
+        or sys.modules.get("tldw_chatbook.Backup_Recovery.config_participants")
+        is not participants
+        or sys.modules.get("tldw_chatbook.Backup_Recovery.raw_participants") is not raw
+        or sys.modules.get("tldw_chatbook.Backup_Recovery.storage_admission")
+        is not storage
+        or config._config_participants is not participants
+        or not all(
+            current is issued
+            for current, issued in zip(
+                (
+                    config.current_config_identity,
+                    config._get_effective_config_path,
+                    participants.binding,
+                    raw._participant_identity,
+                    chat_screen.load_settings,
+                ),
+                proof.aliases,
+            )
+        )
+        or chat_screen.load_settings is not config.load_settings
+    ):
+        return False
+    # These lexical checks include the current generation and raw selected path.
+    # An expired same-owner mapping may use the original native fallback; a
+    # different owner/source may never enter a body around that old mapping.
+    if (
+        not _same_readiness_key(projection._key(), projection.key)
+        or not _same_readiness_key(projection.key, proof.owner)
+        or projection.key[0] != proof.source
+    ):
+        return False
+    bound = participants.binding(config)
+    if bound is None or str(bound[1]) != proof.source[1]:
+        return False
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    with storage._lock:
+        try:
+            state = raw._participant_identity(proof.participant)
+        except RecoveryRequired as error:
+            if error.args != ("raw_participant_not_installed",):
+                raise
+            return False
+        if (
+            state is not proof.participant_state
+            or state.source() is not config
+            or state.owner != "config"
+            or str(state.selected) != proof.source[1]
+            or state.closed
+            or storage._pause is not None
+        ):
+            return False
+    if not _same_readiness_key(projection._key(), projection.key):
+        return False
+    if projection.at != proof.at or time.monotonic() - proof.at >= min(
+        1.0, projection.max_age
+    ):
+        return None
+    return True
+
+
+def _run_checked_display_sync(
+    projection: Any,
+    sync: Callable[[], None],
+    request_retry: Callable[[], None],
+) -> bool | None:
+    status = _checked_display_status(projection)
+    if status is None:
+        return None
+    if not status:
+        request_retry()
+        return False
+    failure = None
+    try:
+        sync()
+    except BaseException as error:  # noqa: BLE001 - preserve the body exception.
+        failure = error
+    try:
+        accepted = _checked_display_status(projection) is True
+        if not accepted:
+            request_retry()
+    except BaseException as error:
+        if failure is not None and error is not failure:
+            raise error from failure
+        raise
+    if failure is not None:
+        raise failure
+    return accepted
 
 
 def console_readiness_presentation(function: Callable) -> Callable:
@@ -313,8 +581,9 @@ def run_console_config_sync(
     *,
     maintenance_paused: bool,
     request_retry: Callable[[], None],
+    checked_projection: ConsoleReadinessConfigProjection | None = None,
 ) -> bool:
-    """Keep one checked native config lifetime through a synchronous projection."""
+    """Keep fresh native authority; accept only issued warm display provenance."""
     from tldw_chatbook import config
     from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
     from tldw_chatbook.Backup_Recovery.config_participants import (
@@ -325,6 +594,9 @@ def run_console_config_sync(
     if maintenance_paused:
         request_retry()
         return False
+    displayed = _run_checked_display_sync(checked_projection, sync, request_retry)
+    if displayed is not None:
+        return displayed
     failure: BaseException | None = None
     entered = False
     try:
@@ -446,7 +718,7 @@ class ConsoleContextReadSnapshot:
         if owner is None or projection is None:
             return owner
         if (
-            projection.key != projection._key()
+            not _same_readiness_key(projection.key, projection._key())
             or projection.value is None
             or getattr(projection.screen, "_console_chat_store", None)
             is not controller.store

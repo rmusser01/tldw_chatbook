@@ -45,9 +45,11 @@ hand back the same object. Patch a controller on the module that defines it;
 do not reintroduce a re-export in `chat_screen.py` to patch through.
 """
 
+import asyncio
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from types import MethodType
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -254,35 +256,47 @@ def _raw_cli_run_log_root() -> Path:
     return get_user_data_dir()
 
 
-def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> str:
+def _admit_console_turn_to_runtime(
+    screen: Any,
+    draft: str,
+    session_id: str,
+    *,
+    _prepared_request: ConsoleTurnCustodyRequest | None = None,
+    _captured_runtime: Any = None,
+    _captured_store: Any = None,
+) -> str:
     """Freeze view inputs and synchronously transfer one turn to the runtime."""
     from tldw_chatbook.Chat.console_send_diagnostics import record_send_stage
 
     record_send_stage("ui_submit")
     store = None
     try:
-        store = screen._ensure_console_chat_store()
-        one_shot_prefill, one_shot_prefill_revision = (
-            store.session_one_shot_prefill_snapshot(session_id)
-        )
-        request = ConsoleTurnCustodyRequest(
-            turn_id=str(uuid4()),
-            session_id=session_id,
-            draft=draft,
-            configuration=screen._session._build_console_turn_execution_context(
-                session_id
-            ),
-            attachment_ids=tuple(
-                attachment.attachment_id
-                for attachment in store.pending_attachments(session_id)
-            ),
-            one_shot_prefill=one_shot_prefill,
-            one_shot_prefill_revision=one_shot_prefill_revision,
-            staged_evidence_launch=screen._console_runtime().snapshot_console_staged_evidence()[
-                0
-            ],
-        )
-        turn_id = screen._console_runtime().accept_turn(request)
+        if _prepared_request is not None:
+            store = _captured_store
+            turn_id = _captured_runtime.accept_turn(_prepared_request)
+        else:
+            store = screen._ensure_console_chat_store()
+            one_shot_prefill, one_shot_prefill_revision = (
+                store.session_one_shot_prefill_snapshot(session_id)
+            )
+            request = ConsoleTurnCustodyRequest(
+                turn_id=str(uuid4()),
+                session_id=session_id,
+                draft=draft,
+                configuration=screen._session._build_console_turn_execution_context(
+                    session_id
+                ),
+                attachment_ids=tuple(
+                    attachment.attachment_id
+                    for attachment in store.pending_attachments(session_id)
+                ),
+                one_shot_prefill=one_shot_prefill,
+                one_shot_prefill_revision=one_shot_prefill_revision,
+                staged_evidence_launch=screen._console_runtime().snapshot_console_staged_evidence()[
+                    0
+                ],
+            )
+            turn_id = screen._console_runtime().accept_turn(request)
     except KeyError as error:
         if store is not None:
             try:
@@ -298,6 +312,131 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> 
         raise
     record_send_stage("ui_submit", "accepted")
     return turn_id
+
+
+async def _capture_console_configuration_async(
+    screen: Any, session_id: str, expected_controller: Any = None
+) -> Any:
+    """Compose screen inputs on this loop after finite native source preparation."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    app = screen.app_instance
+    app_config = getattr(app, "app_config", None)
+    runtime = screen._console_runtime()
+    store = screen._ensure_console_chat_store()
+    controller = screen._ensure_console_chat_controller()
+    if expected_controller is not None and controller is not expected_controller:
+        raise RecoveryRequired("console_snapshot_owner_changed")
+    queue = screen._prompt_queue
+    session_controller = screen._session
+    provider = session_controller._build_console_turn_execution_context
+    context = await controller.capture_turn_configuration_snapshot(
+        session_id, context_provider=provider
+    )
+    current_provider = session_controller._build_console_turn_execution_context
+    if (
+        screen.app_instance is not app
+        or getattr(app, "app_config", None) is not app_config
+        or screen._console_runtime() is not runtime
+        or runtime._chat_store is not store
+        or runtime._chat_controller is not controller
+        or screen._session is not session_controller
+        or screen._prompt_queue is not queue
+        or not (
+            current_provider is provider
+            or (
+                isinstance(current_provider, MethodType)
+                and isinstance(provider, MethodType)
+                and current_provider.__func__ is provider.__func__
+                and current_provider.__self__ is provider.__self__
+            )
+        )
+    ):
+        raise RecoveryRequired("console_snapshot_owner_changed")
+    return context
+
+
+async def _prepare_console_turn_to_runtime(
+    screen: Any,
+    draft: str,
+    session_id: str,
+    stash: Any = None,
+    expected_controller: Any = None,
+) -> str:
+    """Prepare one exact UI turn, then transfer custody without another await."""
+    from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+    runtime = screen._console_runtime()
+    store = screen._ensure_console_chat_store()
+    session = next(item for item in store.sessions() if item.id == session_id)
+    stored_draft = store.session_draft(session_id)
+    prefill = store.session_one_shot_prefill_snapshot(session_id)
+    attachments = tuple(store.pending_attachments(session_id))
+    attachment_ids = tuple(item.attachment_id for item in attachments)
+    evidence = runtime.snapshot_console_staged_evidence()
+    visible = screen._console_visible_draft_session_id == session_id
+    composer = screen._console_composer_or_none() if visible else None
+    composer_snapshot = (
+        composer.capture_draft_snapshot() if composer is not None else None
+    )
+    stash_identity = (
+        (stash.text, stash.edit_serial, stash.generation, tuple(stash.segments))
+        if stash is not None
+        else None
+    )
+    configuration = await _capture_console_configuration_async(
+        screen, session_id, expected_controller
+    )
+    current_attachments = tuple(store.pending_attachments(session_id))
+    current_evidence = runtime.snapshot_console_staged_evidence()
+    if (
+        screen._console_runtime() is not runtime
+        or runtime._chat_store is not store
+        or next((item for item in store.sessions() if item.id == session_id), None)
+        is not session
+        or store.session_draft(session_id) != stored_draft
+        or store.session_one_shot_prefill_snapshot(session_id) != prefill
+        or tuple(item.attachment_id for item in current_attachments) != attachment_ids
+        or len(current_attachments) != len(attachments)
+        or any(
+            current is not original
+            for current, original in zip(current_attachments, attachments)
+        )
+        or current_evidence[0] is not evidence[0]
+        or current_evidence[1:] != evidence[1:]
+        or (
+            stash is not None
+            and (stash.text, stash.edit_serial, stash.generation, tuple(stash.segments))
+            != stash_identity
+        )
+        or (
+            composer is not None
+            and screen._console_visible_draft_session_id == session_id
+            and (
+                screen._console_composer_or_none() is not composer
+                or composer.capture_draft_snapshot() != composer_snapshot
+            )
+        )
+    ):
+        raise RecoveryRequired("console_snapshot_owner_changed")
+    request = ConsoleTurnCustodyRequest(
+        turn_id=str(uuid4()),
+        session_id=session_id,
+        draft=draft,
+        configuration=configuration,
+        attachment_ids=attachment_ids,
+        one_shot_prefill=prefill[0],
+        one_shot_prefill_revision=prefill[1],
+        staged_evidence_launch=evidence[0],
+    )
+    return _admit_console_turn_to_runtime(
+        screen,
+        draft,
+        session_id,
+        _prepared_request=request,
+        _captured_runtime=runtime,
+        _captured_store=store,
+    )
 
 
 async def _resend_refused_console_echo(screen: Any, echo: Any) -> str | None:
@@ -2240,6 +2379,14 @@ def build_console_controllers(
                 session_id
             )
         ),
+        capture_configuration_async=(
+            lambda session_id, controller=None: _capture_console_configuration_async(screen, session_id, controller)
+        ),
+        launch_chain_async=(
+            lambda draft, session_id, stash=None, controller=None: _prepare_console_turn_to_runtime(
+                screen, draft, session_id, stash, controller
+            )
+        ),
         ensure_active_session=(
             lambda: screen._session._ensure_active_console_session_settings()
         ),
@@ -2335,6 +2482,23 @@ def build_console_controllers(
         # the review's keys.
         start_worker=lambda continuation: screen.run_worker(
             continuation, group="console-hook-send-review"
+        ),
+        # Match actual mounted host pumps; inherited worker context is
+        # not the task delivering Enter or the Send button.
+        defer_preparation=lambda: (
+            asyncio.current_task() is screen._task
+            or asyncio.current_task() is screen.app._task
+        ),
+        on_send_settled=lambda: (
+            screen.call_after_refresh(
+                lambda: screen.run_worker(
+                    screen._refresh_console_hooks,
+                    group="console-hook-refresh",
+                    exclusive=True,
+                )
+            )
+            if screen.is_mounted
+            else None
         ),
     )
     screen._review_selection = ConsoleReviewSelectionController(
