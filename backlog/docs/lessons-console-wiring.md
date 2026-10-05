@@ -306,3 +306,21 @@ observation and exact final readiness/transcript capture. The strict 50-test
 run passes without retained DB files; fresh scale qualification is still
 required. Removing observer allocation is not evidence that application GC
 pauses disappeared, and moving a collection is not retiring its heap owners.
+
+## Textual shutdown and executor join are different ownership checkpoints
+
+**TASK-31966 / TASK-31245, 2026-10-05, clean d7b1e915dc.** The ordinary
+native quit returned with 37 database descriptors. A separate guarded real-app
+headless probe still retained native-open Chat connections after their default
+executor threads actually exited, plus original constructor caches. One attempt
+had a storage operation and three acquisitions live immediately after Textual
+shutdown but none after the runner joined. Neither a cancelled worker nor an
+unmounted app proves all physical work has stopped or all database owners closed.
+
+Keep the census read-only and distinguish these boundaries. Match allocation
+origins with weak, monotonically assigned tokens for the actual connection;
+scalar object IDs can be reused after close. The final probe matched ten retained
+native handles with no dropped registrations, while explicitly preserving the
+headless/native distinction and a still-present separate theme executor. Retire
+finite callbacks on their own thread through the installed owner boundary; do
+not turn the fixture's blanket retirement into a production lifetime policy.

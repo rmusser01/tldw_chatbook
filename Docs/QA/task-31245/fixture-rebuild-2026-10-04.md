@@ -1158,3 +1158,77 @@ closes the calling thread only, reporting other live-thread caches; its name
 does not promise cross-thread retirement. This is why the native 37-descriptor
 receipt cannot justify a blanket cleanup or a fixture-based production claim.
 An ownership-specific shutdown remedy is not yet established.
+
+## Shutdown-owner census and exact opening identities — clean `d7b1e915dc`
+
+This is a **headless ownership diagnostic**, not native, performance, Windows
+or participant qualification. The existing guarded small native fixture was
+prepared at `d7b1e915dc7ecd27d16bee8d21eac7979feeff19` under
+`/tmp/task31966-shutdown-owner-qyE6oG/prepared`: 30 conversations, 60 messages,
+28 Keyword documents, zero registered handles after preparation. Corpus digest:
+`e3cff3d6140fdd094d2ea0a1a7a7f6b95fd54182966b2d21180efaec1945411b`.
+Every completed attempt retained clean/exact source and an unchanged corpus.
+
+The throwaway driver uses the real synthetic app, actual saved-chat preparation,
+`App.run_test`, ordinary `action_quit`, Textual shutdown and `asyncio.run`'s
+default-executor join. The census reads the already-installed storage registry,
+native transaction flags and owned descriptors. It never closes a handle,
+collects garbage, changes GC/cache policy, suppresses warnings, reads real
+profiles or touches the other checkout. Normal CLI entry points were also
+inspected: both arm the exit watchdog after `App.run`; neither contains an
+additional database cleanup that the native fixture omitted.
+
+Retained headless receipts, all below that temporary container:
+
+| Attempt | After Textual: connections / DB descriptors | After runner join: connections / DB descriptors | Limit |
+| --- | --- | --- | --- |
+| `headless` | Not captured | 13 / 38 | Invalid quit driver: awaited synchronous `action_quit`, raising TypeError; not normal-quit evidence |
+| `headless-corrected` | 12 / 37 | 12 / 37 | Correct actual quit; initial registry inspection skipped absent repository referents |
+| `headless-all-repositories` | 14 / 39 | 14 / 39 | Includes absent referents; none found in this run |
+| `headless-first-open` | 15 / 42 | 15 / 42 | Scalar object-ID origin matches are insufficient because IDs can be reused |
+| `headless-weak-identity` | 10 / 34 | 10 / 34 | Exact weak-key connection tokens; final origin receipt below |
+
+The scalar-origin attempt still observed one active storage operation and three
+pending acquisitions immediately after Textual shutdown; both were zero after
+the runner joined. In the final weak-identity run, both counters were zero at
+both end snapshots. These boundaries are not interchangeable physical-settlement
+proofs. Counts differ across separately scheduled runs; this is not a controlled
+speedup or resource-reduction comparison.
+
+The final probe uses monotonically assigned tokens in a WeakKeyDictionary keyed
+by the actual installed native connection. It retains only scalar stack metadata,
+not frame or connection references. All ten retained connections have distinct
+nonnull tokens, each matched to an observed successful original registration;
+108 registrations were retained, none dropped. Original call arguments, return
+identities and exceptions remain forwarded. The final script is retained as
+`owner-probe-weak-identity.py`, SHA-256
+`c31e69b6519d76c56d144e4f891ad62305ccdd1f3ccc5de480dbd4bfa3652fc7`.
+Raw receipt: `headless-weak-identity/owner-shutdown-diagnostic.json`; normal fixture
+return receipt alongside it. Log: `/tmp/task31966-shutdown-owner-weak-identity.log`.
+
+| Retained installed owner | Native connections after runner join | Proven origin / thread |
+| --- | --- | --- |
+| Shared Chat DB | 6 | Main-thread citation-service construction; five exited workers: two local-marks `unread_ids_for`, one local-marks `unread_token`, one world-book summary, one cached RAG conversation metadata read |
+| Evaluation DB | 1 | Main-thread evaluation-service construction / schema setup |
+| Library collections DB | 1 | Main-thread app constructor / schema setup |
+| Subscriptions DB | 1 | Main-thread app constructor / schema setup |
+| Workspace DB | 1 | Main-thread app constructor / schema setup |
+
+All ten remain native-open, with live leases and no active native transaction.
+The five retained Chat worker threads have actually exited. Chat is the exact
+instance referenced by both `app.chachanotes_db` and the config cache; the
+Library/Subscriptions/Workspace rows match the app's original attributes.
+No absent-repository participant was found. Evaluation is reached through its
+service rather than a direct app DB attribute. This identifies held connection
+owners, not a one-to-one attribution of every SQLite/WAL/SHM descriptor or the
+rendering heap scanned by GC. One separate theme executor is still present in
+the final thread census; default-executor join does not prove every producer
+has stopped.
+
+The next resource correction must distinguish finite worker reads from
+constructor-held app caches and the shared process cache. Existing finite-worker
+retirement is a candidate only where its real callback/borrower contract holds;
+an app-wide blanket close is not justified. No production remedy, fourth
+performance correction, new global lifecycle/GC/cache policy, qualification
+waiver or PR was introduced by this diagnosis. All remaining native/resource,
+latency, Windows and participant gates stay open.
