@@ -172,3 +172,35 @@ This is failed retirement, not a constructor cache allowance or terminal pass.
 Raw receipts: `affected-complete.log` and `four-failures-isolated.log` in the
 same private root. Draft publication must retain these failures and the separate
 native/Windows/participant/latency HOLD gates.
+
+Follow-up review separated three fixture-boundary defects from a genuine
+emergency-ownership bug. The live-loop test now releases its paired store root
+after every shutdown assertion; the store's handoff callback legitimately owns
+the controller. The closed-loop setup waits boundedly for actual history entry
+or submit completion, instead of assuming 20 zero-delay ticks complete real
+off-thread admission. Failed setup cancels and awaits its tasks before closing
+the owned loop. Two postdispatch injections now invoke the real
+`before_provider_dispatch` checkpoint callback; every original generation,
+unknown-delivery and exact-owner assertion remains.
+
+That corrected readiness revealed TASK-34402: permanent emergency detachment
+removed a closed task from the submit ledger but retained it in maintenance
+admission, whose coroutine finalizer can never run on that closed loop. The
+production fix is one exact-task removal inside the existing proven-closed
+branch. Strengthened actual closed-submit and mixed closed/live controls fail
+before it (**2 failed, 1 warning in 0.98s**) and verify that live maintenance
+ownership is preserved afterward. Independent review finds no scoped blocker;
+no blanket clear, callback detachment, task-state mutation, diagnostic filter,
+or global runtime/GC policy change.
+
+Affected shutdown/postcommit/maintenance controls: **25 passed, 2 warnings in
+9.68s**, strict process exit **1**. Both warnings retain cross-context token
+reset failures from deliberately abandoned coroutines. All 25 teardown census
+observations remain; the 12 file-backed durable controls retain up to **48**
+SQLite descriptors. This is body GREEN, not strict retirement or qualification
+GREEN. Earlier correction attempts at 13 pass/1 failure/1 warning are retained
+as `four-fixture-corrections*.log`; final raw receipts are
+`maintenance-ledger-{red,green}.log`. Both changed tests format clean; five
+inherited test lint diagnostics and 182 production diagnostics are unchanged.
+Normalized controller formatting debt exactly matches dev; no bulk format ran.
+The complete seven-file batch has not been rerun after this follow-up.

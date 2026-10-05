@@ -1,0 +1,46 @@
+---
+id: TASK-34402
+title: >-
+  Console: detach closed submit tasks from the maintenance ledger at emergency
+  shutdown
+status: In Progress
+assignee:
+  - '@codex'
+created_date: '2026-10-05 19:14'
+updated_date: '2026-10-05 19:20'
+labels:
+  - console
+  - resource-ownership
+  - bugfix
+dependencies: []
+references:
+  - 'https://github.com/rmusser01/tldw_chatbook/pull/3024'
+documentation:
+  - Docs/QA/task-33620.9/README.md
+priority: high
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Permanent emergency shutdown promises to drop volatile ownership for submit tasks whose event loops are already closed. The maintenance admission ledger currently retains those same unreachable tasks after the submit registry releases them, preventing collection and contaminating later verification. Preserve the existing fail-closed and live-loop drain contracts.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 Emergency detachment removes each exact closed-loop submit task from both volatile task ledgers without trying to cancel or await a closed loop.
+- [x] #2 A live-loop peer remains tracked through normal cancellation and awaited shutdown, including when it shares the closed task preparation.
+- [x] #3 Deterministic closed/live controls retain original cleanup and recovery assertions and raw warning/resource outcomes without blanket clears, diagnostic suppression, or a global lifetime policy change.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Retain the complete and isolated failure receipts, then strengthen the actual closed-submit and mixed closed/live regression assertions to expose maintenance-ledger ownership before changing production. 2. In the existing closed-submit detachment boundary, remove only each exact task already proven to have a closed loop from the maintenance ledger alongside its submit/preparation entries. Do not clear live tasks, detach callbacks, change task state, or suppress emergency diagnostics. 3. Run targeted RED/GREEN and existing shutdown/maintenance controls, static and artifact guards, independent review, and record separate warning/resource results before publishing to draft PR3024. ADR required: no. ADR path: N/A; existing ADR085/120/198 apply. Reason: restore an existing exact-owner emergency-detachment contract with no new service, storage, runtime boundary, or global lifetime policy.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented one exact Task-key removal from maintenance admission in the existing closed-loop submit detachment branch. Strengthened actual closed-submit and mixed closed/live controls produce RED: 2 failed, 1 warning in 0.98s. Targeted shutdown, durable postcommit, and existing maintenance live-binding controls: 25 passed, 2 ContextVar warnings in 9.68s; strict process exit 1 retains up to 48 SQLite descriptors. Independent scoped review found no blocker. Fixture corrections preserve all original behavioral assertions; no background/callback/global policy or diagnostic suppression change. QA and incident lesson record failed attempts and limits. Existing ADR085/120/198; no new ADR for restoring this exact-owner contract. Keep In Progress: resource/warning and broader qualification DoD remain unmet, not waived.
+<!-- SECTION:NOTES:END -->

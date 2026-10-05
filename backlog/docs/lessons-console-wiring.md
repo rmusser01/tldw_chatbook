@@ -342,3 +342,15 @@ Test both event orders and the shared successful-send publication helper, not
 only cancellation inside the rename worker. Also recheck sanitized title input
 before writing: a raw nonblank control byte can become blank during sanitization
 and otherwise erase the saved title before live publication rejects it.
+## Closed-loop submit retirement includes maintenance admission
+
+During PR3024 qualification, the closed-loop fixture initially assumed 20
+zero-delay ticks reached COMMITTING despite real off-thread hook admission.
+Waiting for the actual history event exposed a real ownership leak: permanent
+shutdown removed the Task from submit/preparation maps but maintenance admission
+still retained it until an impossible closed-loop finalizer. TASK-34402's two
+RED controls prove that path; one exact-key removal under the existing closed
+loop guard preserves the live-loop peer. Check every admission ledger when
+retiring an unreachable owner, not only its ticket's original registry. The
+25-body-pass receipt still reports two ContextVar warnings and retained SQLite
+files; ledger retirement is not normal shutdown or resource qualification.

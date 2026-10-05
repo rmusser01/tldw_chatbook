@@ -454,6 +454,7 @@ async def test_postcommit_settlement_rollback_uses_issued_generation_token(
     issued: dict[str, int | str | None] = {}
 
     async def fail_after_token(*_args: Any, **kwargs: Any):
+        await kwargs["before_provider_dispatch"]()
         assistant_id = str(kwargs["assistant_message_id"])
         issued["assistant_id"] = assistant_id
         issued["replacement"] = store.begin_generation_attempt(assistant_id)
@@ -604,6 +605,7 @@ def _install_real_effect_failure(
 
         async def stream(*args: Any, **kwargs: Any):
             if should_fail():
+                await kwargs["before_provider_dispatch"]()
                 raise RuntimeError("injected provider_entry")
             result = await original_stream(*args, **kwargs)
             counts["successes"] += 1

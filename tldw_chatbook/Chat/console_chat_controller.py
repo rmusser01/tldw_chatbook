@@ -8940,6 +8940,7 @@ class ConsoleChatController:
                 if not task.get_loop().is_closed():
                     continue
                 self._active_submit_tasks.pop(task, None)
+                self._maintenance_calls.pop(task, None)
                 preparation_id = self._active_submit_preparations.pop(task, None)
                 if preparation_id is not None:
                     closed_preparations.append(preparation_id)

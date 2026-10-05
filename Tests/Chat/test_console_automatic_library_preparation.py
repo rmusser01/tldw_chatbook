@@ -2875,6 +2875,8 @@ def test_live_loop_shutdown_cancels_and_awaits_submit_without_asyncio_diagnostic
                 owner_loop.close()
             del exercise_supported_shutdown
             del controller
+            # The paired store owns the handoff callback until its own release.
+            store = None
             gc.collect()
 
     diagnostic_text = loop_errors + [str(item.message) for item in captured_warnings]
@@ -2910,14 +2912,20 @@ def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch):
     submit = closed_loop.create_task(
         controller.submit_draft("unreachable draft", session_id=session.id)
     )
+    history_ready = closed_loop.create_task(held.wait())
     submit_ref = weakref.ref(submit)
     with warnings.catch_warnings(record=True) as captured_warnings:
         warnings.simplefilter("always")
         try:
-            for _ in range(20):
-                closed_loop.run_until_complete(asyncio.sleep(0))
-                if held.is_set():
-                    break
+            done, _pending = closed_loop.run_until_complete(
+                asyncio.wait(
+                    (submit, history_ready),
+                    timeout=5,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            )
+            assert history_ready in done
+            del done, _pending
             preparation = store.preparation_for_session(session.id)
             assert held.is_set()
             assert preparation is not None
@@ -2931,6 +2939,7 @@ def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch):
             controller.begin_shutdown()
 
             assert controller._active_submit_tasks == {}
+            assert controller._maintenance_calls == {}
             assert store.preparation_for_session(session.id) is None
             assert controller._preparation_outcomes == {}
             assert controller._prepared_send_continuations == {}
@@ -2939,6 +2948,13 @@ def test_closed_loop_pending_submit_is_emergency_detachment(monkeypatch):
             assert loop_errors == []
         finally:
             if not closed_loop.is_closed():
+                submit.cancel()
+                history_ready.cancel()
+                closed_loop.run_until_complete(
+                    asyncio.gather(submit, history_ready, return_exceptions=True)
+                )
+                closed_loop.run_until_complete(closed_loop.shutdown_asyncgens())
+                closed_loop.run_until_complete(closed_loop.shutdown_default_executor())
                 closed_loop.close()
             del submit
             gc.collect()
@@ -2995,6 +3011,7 @@ async def test_closed_loop_peer_never_blocks_same_session_live_submit_shutdown(
     closed_submit_ref = weakref.ref(closed_submit)
     controller._register_submit_task(closed_submit, session.id)
     controller._bind_submit_preparation(closed_submit, preparation.preparation_id)
+    controller._maintenance_calls[closed_submit] = 1
     closed_loop.close()
     with warnings.catch_warnings(record=True) as captured_warnings:
         warnings.simplefilter("always")
@@ -3003,6 +3020,8 @@ async def test_closed_loop_peer_never_blocks_same_session_live_submit_shutdown(
 
             assert closed_submit not in controller._active_submit_tasks
             assert live_submit in controller._active_submit_tasks
+            assert closed_submit not in controller._maintenance_calls
+            assert live_submit in controller._maintenance_calls
             live_preparation = store.preparation_for_session(session.id)
             assert live_preparation is not None
             assert live_preparation.preparation_id == preparation.preparation_id
