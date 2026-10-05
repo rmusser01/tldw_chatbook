@@ -614,3 +614,69 @@ native/Windows/participant/terminal retirement gaps. TASK31966 and TASK31245
 remain In Progress; dependent TASK31246 and the final combined PR remain pending.
 No further voice/attachment fix or global policy remedy is authorized by this
 bounded correction's approval.
+
+### Same-source residual-stall attribution after the Send-reason fix
+
+The documentation-only `cb95979312` successor preserves all production, test,
+script and package inputs from the measured `ca793ee190` head. Rather than
+rebuild identical scale data or restamp old receipts, three existing throwaway
+observers ran serially at the exact clean measured commit against its original
+verified corpus/Keyword receipt. Only this isolated worktree was temporarily
+detached; its original branch and `cb95979312` head were restored after each run,
+including failure exits. No source edits, real-profile access, forced GC,
+threshold change, dependency change or guard bypass occurred. Each matrix
+retained clean-source/corpus completion proof, all 60 exact searches and eight
+exact opened activations, no app exception. These are failed diagnostics,
+not replacement acceptance receipts or native/resource passes.
+
+The unmodified low-allocation GC observer retained **30 matched generation-2
+collections**, no dropped/unmatched events, default thresholds 700/10/10 and
+maximum callback overhead **0.021166 ms**. No event reported uncollectable
+objects. Wide activations 2/3/4 contained collections lasting roughly **66–79
+ms**, supporting GC contribution. But wide activation 1 had a **58.262666 ms**
+loop gap and **no generation-2 collection** in its window. Its paint observer
+maximum was 1.298125 ms. Narrow activation 1 had a 70.906333 ms gap with two
+collections of 12.560708 and 22.264833 ms. Window overlap is not exact attribution
+of the longest individual scheduler interval; GC does not explain every stall.
+One narrow activation interval was 47.215541 ms in this diagnostic; the run
+still fails, and that single sample does not supersede the ordinary matrix.
+Root `ui-gc-diagnostic`, script digest
+`24b49690b2e10619f85b4175c77efa96317beb9a5c79836c95fa13823cc442df`.
+
+The existing bounded synchronous observer retained **66 spans >=20 ms**, with
+zero dropped span or GC records. Within activation windows, the shared
+`ChatScreen._run_console_config_sync` boundary retained **20–60 ms** spans
+without generation-2 overlap. This boundary includes guarded entry, rendering
+and guarded exit; it does **not** isolate config IO from the rendered body.
+Selected reflows lasted 80.145750, 125.053166 and 105.855250 ms, with measured
+generation-2 overlap of 58.913625, 104.265250 and 99.471875 ms respectively.
+Activation paint-observer maxima were 0.930458–3.244083 ms. Thus neither the
+paint observer alone nor generation-2 alone accounts for the residual problem.
+Wrappers still alter allocation/scheduling; inclusive spans must not be added
+as independent costs or promoted to pure production timings. Root
+`ui-sync-spans-diagnostic`, script digest
+`44ecf448f4aede9c37ac3d2b0413833bc2fb66036c9bbe755e662f07d18ae1b5`.
+
+The existing first-activation cProfile observer captured its real activation
+await and retained the binary profile and diagnostic receipt. However, nine
+profile rows have cumulative time below internal time, and some caller edges
+report zero calls despite attributed time. Do **not** infer exclusive cost,
+subprocess/DNS caller ownership, or a safe config/memo/cache remedy from those
+inconsistent tables. The async scope also includes interleaved loop work and
+substantially perturbs timing. Raw profile is retained for audit, not relied on
+to select a production fix. Root `ui-first-activation-profile`, script digest
+`a287fd4cf4ef5084665494e057699fd0bb5c0ad39282a7c8a8778f3806e96339`;
+summary `/tmp/task31966-send-activation-profile-summary.log`.
+
+Next diagnostic design: time **entry, synchronous rendering body and exit** of
+the existing checked config lifetime separately, plus its rendering substeps.
+Every original context-manager/lock/source check must still execute, with no
+await or retained config snapshot added. This is a throwaway bounded probe,
+not permission to change authority, introduce a cache policy or patch Textual.
+The existing derivation helper is only a candidate; cost/freshness must be proven
+before extending it. Existing ADR120/150/161/198 remain controlling; a global
+GC/cache/authority remedy requires its separate architectural review.
+All qualification criteria remain open. Logs:
+`/tmp/task31966-send-ui-gc.log`, `/tmp/task31966-send-ui-sync-spans.log` and
+`/tmp/task31966-send-activation-profile.log`; roots share the retained
+`/tmp/task31966-send-measure-v0Z4Cs` container.
