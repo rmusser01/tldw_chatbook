@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 22:43'
+updated_date: '2026-10-05 01:18'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -505,6 +505,18 @@ Reason: preserve accepted implementations and use existing protected merge behav
 3. Authenticate the complete expected tree/index/disk blobs, prior nonoverlap and incoming nonfeature bytes. Run only necessary affected CI composition checks on this distinct source; retain incoming task states. Obtain immutable independent source/evidence review and explicit original-budget carry assessment; if relevant measured sources require a new original FIVE run, run it ONCE after all activity settles, never replaying previous measurements.
 4. After independent Ready, close AC3 through CLI/AC4 checked and append only the four owned canonical Markdown records, preserving all approved source and every historical positive/NON-GREEN/baseline/interrupted/unexecuted/metadata/warning/FD/style/optional/physical/wider limit. Publish once with exact observed21ead lease; verify actual GitHub/remote/body.
 5. Arm normal protected auto-merge for the verified published head so GitHub merges immediately once strict up-to-date status and required checks allow it. Address any newly actionable feedback without claiming stale Qodo approval. Do not weaken protection, use admin bypass, alter queue mode, dispatch/retry jobs or repeatedly rebase queued/running CI. Verify actual MERGED parents/tree/concurrency before pausing the heartbeat and reporting completion.
+
+## Required protected-base command handoff integration — October 5, 2026
+
+ADR required: no
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; backlog/decisions/211-ephemeral-provider-failure-presentation.md; existing ADR031 and ADR150.
+Reason: preserve landed TASK33622.16 and previously approved orchestration without introducing a runtime owner, permission, schema, dependency, visual value, budget or merge policy.
+
+1. All FOUR b47 gates and all THREE UI shards passed, exact-head Qodo is clear, and live strict/admin/conversation protection requires the newer dev8c4dfe59a243ce0cec8e131aff3935646c64b298. Auto-merge was explicitly disabled before source/task changes. Prospectively reopen AC3/In Progress with AC4 checked and commit this append, retaining every plan and note. Capture3862 approved records/full28020 tree and19 incoming paths.
+2. Rebase ONCE onto exact8c4. Preserve five shared paths by independent clean three-way composition: diagnostic inventory, generation-action tests, message docstring, wiring and chat_screen. Preserve all prior nonoverlap bytes and14 incoming nonfeature files exactly, including both lazy command helpers, draft custody, chat-origin refusal, repeat protection, cancelled-worker handling and incoming Done task/live evidence as shipped. Keep all runtime/SQL/recovery/wake/refund/tool scopes/typed presentation/close custody/three Resend imports and deletions; no new live generation or physical-key certificate.
+3. Authenticate full tree/index/disk and exact function/import composition. Run only the new command-draft, mounted origin/freeze and affected generation-action tests on this distinct source, with private outer profile/cwd/PYTHONPATH and untouched fixtures/markers. Check affected diagnostic reproduction, fatal/new static and task/whitespace guards proportionately. Preserve every NON-GREEN result; no full sweep, old test/budget replay, retry, provider, installation, pin/ceiling/warmup/work/time change.
+4. Obtain immutable independent preservation/functional review and explicit original-budget carry assessment against authenticated fb14 raw/XML, measured source/guard/MAX/profile identities. Prior measured FIVE112.657s remains historical, never a new measurement. If changed guarded execution genuinely needs a new-source measurement, run original cases ONCE only after all activity settles, preserving limits. No completed-run replay.
+5. Only after Ready, close AC3 through CLI/AC4 checked and append the four owned canonical Markdown records while preserving all approved source/history/separate incoming statuses/limitations. Publish once with EXACT observedb47 lease, factual body and actual local/remote/GH/body verification. Re-arm normal protected head-matched auto-merge. Require fresh exact-head Qodo/all FOUR/all THREE UI and strict protection; verify actual MERGED parents/tree/concurrency before stopping the heartbeat. Never update an armed PR or rebase queued/running CI.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
