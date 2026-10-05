@@ -144,6 +144,7 @@ from ...Chat.console_session_settings import (
     _custom_endpoint_declared_credential,
     build_console_settings_readiness,
     build_target_default_console_session_settings,
+    chat_defaults_held_fields,
     normalize_console_model_value,
     readiness_words,
     settings_provider_catalog,
@@ -996,7 +997,8 @@ CLOSED_ENUM_SELECT_OPTIONS = {
 }
 # Tri-state profile streaming (inherit/on/off) is a closed 3-value enum, so
 # it also renders as a Select; the console-default streaming fallback is a
-# strict boolean and uses the standard Checkbox toggle idiom.
+# strict boolean and offers the same two options without the blank
+# (TASK-33007.7).
 MODEL_PROFILE_STREAMING_SELECT_OPTIONS = (("On", "true"), ("Off", "false"))
 # Model-profile fields rendered as Select instead of free-text Input.
 MODEL_PROFILE_SELECT_FIELD_KEYS = frozenset(
@@ -1312,6 +1314,9 @@ CONSOLE_DEFAULT_FIELD_NAMES = {
     f"settings-console-default-{name.replace('_', '-')}": name
     for name in GENERATION_FIELD_REQUEST_KEYS
 }
+# The fallbacks with a built-in value: their controls are never blank at
+# rest, and Save refuses a blank (TASK-33007.7).
+CONSOLE_BUILT_IN_FALLBACK_FIELDS = ("streaming", "temperature", "top_p")
 
 
 # TASK-18600: the Console agent's run budget, driven by ONE spec table
@@ -7354,21 +7359,6 @@ class SettingsScreen(BaseAppScreen):
             return ""
         return str(value).strip().lower() == "true"
 
-    def _console_default_enum_select(self, key: str) -> Select:
-        """Build the staged closed-enum Select for a console-default field."""
-        return Select(
-            [(value, value) for value in CLOSED_ENUM_SELECT_OPTIONS[key]],
-            value=self._select_option_value(
-                self._console_behavior_value(key),
-                CLOSED_ENUM_SELECT_OPTIONS[key],
-            ),
-            id=f"settings-console-default-{key.replace('_', '-')}",
-            classes="settings-compact-select",
-            allow_blank=True,
-            prompt="Provider default",
-            compact=True,
-        )
-
     def _model_profile_enum_select(
         self, provider: object, draft_key: str, values: dict[str, object]
     ) -> Select:
@@ -10366,16 +10356,32 @@ class SettingsScreen(BaseAppScreen):
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
 
+    def _console_unsaved_built_in_fallbacks(self) -> frozenset[str]:
+        """Name the built-in fallbacks ``[chat_defaults]`` holds no value for.
+
+        Returns:
+            The fields whose controls show tldw's own value, not a saved one.
+        """
+        return frozenset(CONSOLE_BUILT_IN_FALLBACK_FIELDS) - chat_defaults_held_fields(
+            self._app_config_mapping(), CONSOLE_BUILT_IN_FALLBACK_FIELDS
+        )
+
     def _stage_console_default_value(self, key: str, value: object) -> None:
         category = SettingsCategoryId.CONSOLE_BEHAVIOR
+        loaded = self._console_behavior_loaded_values().get(key)
+        if key in self._console_unsaved_built_in_fallbacks():
+            # TASK-33007.7: nothing is saved for this field, so its control
+            # shows the built-in value and Save would add the key. Going back
+            # to that value (Off, then On) is therefore still an edit: it
+            # pins On over a provider's own Off. Only a control repeating
+            # what it already shows (mount, a Revert sync) stages nothing.
+            if value == self._console_behavior_value(key):
+                return
+            loaded = None
         draft = self._settings_drafts.setdefault(
             category, SettingsDraft(category=category)
         )
-        draft.set_value(
-            key,
-            self._console_behavior_loaded_values().get(key),
-            value,
-        )
+        draft.set_value(key, loaded, value)
         if not draft.is_dirty:
             self._settings_drafts.pop(category, None)
 
@@ -10725,15 +10731,20 @@ class SettingsScreen(BaseAppScreen):
     def _refresh_console_behavior_field_guidance(self) -> None:
         if self._active_category_id() is not SettingsCategoryId.CONSOLE_BEHAVIOR:
             return
-        for index, (label, value) in enumerate(
+        shown, config_key = self._split_config_key_row(
             self._console_behavior_field_guidance_rows()
-        ):
+        )
+        # task-1716: compose-time rows fold via _detail_row; this in-place
+        # path must fold too or dotted keys break mid-word.
+        for index, (label, value) in enumerate(shown):
             self._set_static_text(
                 f"#settings-console-behavior-field-guide-{index}",
-                # task-1716: compose-time rows fold via _detail_row; this
-                # in-place path must fold too or dotted keys break mid-word.
                 f"{label}: {_fold_long_tokens(value)}",
             )
+        self._set_static_text(
+            "#settings-console-behavior-config-key-saved-as",
+            f"{CONFIG_KEY_ROW_LABEL}: {_fold_long_tokens(config_key)}",
+        )
 
     @staticmethod
     def _normalise_library_rag_int(value: object) -> int | str:
@@ -19045,11 +19056,6 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-console-default-user-display-name-help",
                 classes="settings-detail-row",
             )
-            yield Static(
-                "Reasoning and thinking controls are sent only to providers that support them.",
-                id="settings-console-reasoning-help",
-                classes="settings-detail-row",
-            )
             # TASK-33007.7: the same rows, orders and streaming Select family
             # as Model defaults; imported here so the Settings route's
             # pre-import payload does not grow (ADR-097).
@@ -22700,17 +22706,24 @@ class SettingsScreen(BaseAppScreen):
                 "Minimum pasted chunk size before collapse",
             )
             yield Static("Focused field guide", classes="destination-section")
-            for index, (label, value) in enumerate(
+            shown, config_key = self._split_config_key_row(
                 self._console_behavior_field_guidance_rows()
-            ):
+            )
+            for index, (label, value) in enumerate(shown):
                 yield self._detail_row(
                     label,
                     value,
                     identifier=f"settings-console-behavior-field-guide-{index}",
                 )
-            # TASK-33007.7: the streaming key fact left the card's copy for
-            # the same closed "config key" disclosure Providers & Models has.
+            # TASK-33007.7: the focused field's config key and the streaming
+            # key fact sit in the same closed "config key" disclosure
+            # Providers & Models has, not in the guide's own copy.
             yield self._config_key_disclosure(
+                self._detail_row(
+                    CONFIG_KEY_ROW_LABEL,
+                    config_key,
+                    identifier="settings-console-behavior-config-key-saved-as",
+                ),
                 self._detail_row(
                     MODEL_FIELD_LABELS["streaming"],
                     STREAMING_CONFIG_KEY_FACT,

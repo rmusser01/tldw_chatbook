@@ -5815,7 +5815,9 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
         # TASK-33007.7, rewritten on purpose: global streaming is an On/Off
         # Select now, not a Checkbox; any other fallback field serves here.
         other_field = screen.query_one("#settings-console-default-streaming", Select)
-        guide_ids = [f"#settings-console-behavior-field-guide-{i}" for i in range(4)]
+        # TASK-33007.7 (review M6), rewritten on purpose: the guide is three
+        # rows now; "Saved as" moved into the closed "config key" disclosure.
+        guide_ids = [f"#settings-console-behavior-field-guide-{i}" for i in range(3)]
 
         # Measure the REAL (focused) guide's total span first, so the pane
         # can be grown to hold it end to end.
@@ -5882,8 +5884,8 @@ async def test_settings_console_behavior_focus_reveals_full_guide_when_purpose_s
         )
 
         # Trigger: focusing "Max parallel runs" swaps the guide's CONTENT
-        # in place (same 4 ids) to the real Purpose/Consequences/Saved as/
-        # Applies text and must re-scroll to reveal all of it.
+        # in place (same 3 ids) to the real Purpose/Consequences/Applies
+        # text and must re-scroll to reveal all of it.
         field.focus()
         await pilot.pause()
         await pilot.pause()

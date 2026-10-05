@@ -4816,6 +4816,31 @@ literal default needs a separate, direct assertion (stub the accessor, assert
 the literal argument passed to it), not an inference from observed runtime
 behavior.
 
+## A label that names a value's source must be computed from that source, and tested with the key absent
+
+**TASK-33007.7 review, 2026-10-04.** Console Behavior's new field rows printed
+the Source word "Console Behavior" (meaning `[chat_defaults]` holds the value)
+for every control that was not blank. Three controls are never blank, because
+their Settings loaders return a value when the key is absent: streaming `True`,
+temperature 0.7, top_p 0.95. The shipped `[chat_defaults]` has no `streaming`
+key and the provider tables sit below it in the default chain, so on a fresh
+install the row read "Streaming | On | Console Behavior" while a new OpenAI
+chat streamed Off and Model defaults, one category away, read "inherits Off ·
+provider". Nothing caught it. Every test seeded an explicit key or asserted
+only that the word was non-empty, and the live-capture procedure itself wrote
+`streaming = true` into the scratch profile before the "at rest" capture.
+
+**What to do.**
+1. A source word is a claim about one layer. Derive it from that layer's own
+   data with the resolver's coercion (`chat_defaults_held_fields`), never from
+   "the control shows something": a loader's fallback makes an unset key look
+   saved.
+2. For every config-backed row, write one case with the key absent and compare
+   it with the neighbouring surface that reads the same key.
+3. Take the "at rest" capture on the shipped template. List every key the
+   capture procedure writes; a written key that the feature displays is a
+   hidden fixture.
+
 ## A guard test must be PROVEN to discriminate — twice in one day it wasn't (2026-08-08, tasks 1359/2832)
 
 Two review-verified tests, written by the same controller, both passed while

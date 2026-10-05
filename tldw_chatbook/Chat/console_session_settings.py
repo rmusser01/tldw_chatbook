@@ -1222,6 +1222,31 @@ def _value_from_source(source: Mapping[str, object], name: str) -> object:
     return _optional_float_setting_from_sources((source,), name)
 
 
+def chat_defaults_held_fields(
+    app_config: Mapping[str, object], names: Sequence[str]
+) -> frozenset[str]:
+    """Name the generation fields ``[chat_defaults]`` holds a usable value for.
+
+    Reads that one layer as the default chain does (legacy
+    ``enable_streaming`` bridged, the builder's own coercion), so Settings
+    says "Console Behavior" only for a value a new chat would take from
+    there (TASK-33007.7).
+
+    Args:
+        app_config: The configuration snapshot the default chain reads.
+        names: Generation fields to check.
+
+    Returns:
+        The names ``[chat_defaults]`` sets to a usable value.
+    """
+    chat_defaults = _chat_defaults_with_streaming_compat(
+        _mapping_value(app_config, "chat_defaults")
+    )
+    return frozenset(
+        name for name in names if _value_from_source(chat_defaults, name) is not None
+    )
+
+
 def resolve_console_value_layers(
     app_config: Mapping[str, object],
     provider: str | None,
