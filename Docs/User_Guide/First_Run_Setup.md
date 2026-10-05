@@ -123,21 +123,42 @@ so ("Nothing is saved. Set up a voice any time in Settings ▸ Speech & TTS.").
 On a re-run the step starts from the voice you saved, for example "Current
 voice: OpenAI · tts-1-hd · shimmer — unchanged unless you edit it.", and Next
 leaves it exactly as it was unless you change something, test a sample, or
-change **Use this voice when Chatbook reads replies aloud**.
+change **Use this voice when Chatbook reads replies aloud**. Choosing **No
+voice for now** over a saved voice keeps that voice and says so ("Keeps your
+current voice (OpenAI · tts-1-hd · shimmer); Next changes nothing. Replies are
+read aloud only while Speak replies is on in Console."). When another provider
+reads your replies (for example kokoro, set up in Settings), the step starts on
+**No voice for now** and names it ("Current voice: kokoro — kept as it is").
+A profile that still holds the PocketTTS address an earlier version of setup
+wrote (`127.0.0.1:8765/v1/audio/speech`, which pocket-tts never serves) also
+starts on **No voice for now**, with a line saying that voice can't speak; pick
+a service to replace it.
 
 A line under the service choice says whether it will work: "PocketTTS — not
 running at 127.0.0.1:8000" (one quick connection check), "OpenAI — uses your
 OpenAI key (key found)", and so on. That check only shows that something is
 listening at the address, so when it is, the line says "a server is listening"
 and leaves it to **Test and Hear** to confirm the server is PocketTTS (port
-8000 is a common default for other local servers). **Test and Hear** plays a
+8000 is a common default for other local servers). It only connects to an IP
+address or `localhost`; for a host name the line says **Test and Hear** checks
+it, so typing an address never waits on a name lookup. **Test and Hear** plays a
 short sample; Enter in **Sample text** runs it too (the hint line says so). A
 failed test starts "Test failed —" and names the cause: the server isn't
 running at that address, the key was rejected, there is no speech endpoint at
 that host, it timed out, or the reply wasn't audio. A PocketTTS address on
-another port counts as Custom, but its failures still name PocketTTS. A
-successful test ticks **Use this voice when Chatbook reads replies aloud**;
-untick it to save the service without making it your default voice. The
+another port counts as Custom, but its failures still name PocketTTS and say
+how to start it there (`pocket-tts serve --port 8766`). After a test, focus
+goes back to **Test and Hear**, unless you moved it while the test ran.
+
+PocketTTS, OpenAI and Custom share one OpenAI-compatible voice slot. While no
+other provider reads your replies, a voice saved there *is* the one replies
+use, so **Use this voice when Chatbook reads replies aloud** is ticked and
+can't be unticked, and the line under it says so ("Replies will use this voice
+— no other voice is set up.", or "This becomes the voice replies use — it
+replaces OpenAI · tts-1-hd · shimmer."). When another provider reads replies,
+the box is yours: a successful test ticks it, and unticked the service is
+saved for later while replies keep using that provider ("Saved for later;
+replies keep using kokoro."). The
 endpoint, authentication, model, voice and format sit under "Advanced" (the
 **API key** option uses your OpenAI key, from the Provider step, this step,
 Settings or `OPENAI_API_KEY`); Voice and Format are pickers with an "Other…"
@@ -175,9 +196,11 @@ saved — and if the connection check failed while you were setting up (a
 rejected API key, an unreachable local server), the summary says so instead
 of showing a ✓, the progress tracker marks those steps with !, and moving
 past the model step asks for an explicit "Continue anyway". The Voice line names
-the saved service, model and voice (for example "✓ Voice — OpenAI · tts-1-hd ·
-shimmer"), says when a voice was saved without being made the default, and
-reads "not set up (optional)" when no voice is saved.
+the voice replies use — service, model and voice (for example "✓ Voice —
+OpenAI · tts-1-hd · shimmer") — or another provider that reads them, adding a
+voice saved beside it ("kokoro (default voice); PocketTTS also saved"). It
+reads "not set up (optional)" when no voice is saved, and flags the old
+`127.0.0.1:8765` PocketTTS address as unable to speak instead of showing a ✓.
 
 The Summary's exits are **Review provider setup**, **Add your first document**
 (lands on Library's Import canvas — this is where your content lives),

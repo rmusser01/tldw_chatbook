@@ -92,6 +92,12 @@ it with `pip install pocket-tts` and start its server with `pocket-tts serve`
 The first-run setup's Voice step has a **PocketTTS** choice that fills in
 exactly these values.
 
+pocket-tts streams its WAV with placeholder sizes in the header, so Chatbook
+holds the whole reply to correct them before playing it; a reply longer than
+64 MB of audio is refused ("Generated audio is too long to buffer. Shorten
+the text and try again."), as for the other engines that send one complete
+file.
+
 ## If you run an AllTalk server
 
 AllTalk has its own first-class provider — use it instead of the OpenAI
