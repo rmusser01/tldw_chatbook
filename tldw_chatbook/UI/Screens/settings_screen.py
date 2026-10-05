@@ -7279,8 +7279,12 @@ class SettingsScreen(BaseAppScreen):
 
     @staticmethod
     def _select_option_value(value: object, allowed: tuple[str, ...] = ()) -> object:
-        """Map a staged enum string to a Select value (blank/unknown -> NULL)."""
-        text = str(value or "").strip().lower()
+        """Map a staged enum string to a Select value (blank/unknown -> NULL).
+
+        Only an exact option: a saved "High" is no choice, not "high", because
+        a new chat takes "High" as written (TASK-33007.7 review round 4).
+        """
+        text = str(value or "").strip()
         if not text or (allowed and text not in allowed):
             return Select.NULL
         return text
@@ -13276,10 +13280,40 @@ class SettingsScreen(BaseAppScreen):
             provider, model, self._app_config_mapping()
         )
         options = [(value, value) for value in offered]
-        saved_text = str(saved or "").strip().lower()
+        saved_text = str(saved or "").strip()
         if saved_text in REASONING_EFFORT_OPTIONS - {""} - set(offered):
             options.append((f"{saved_text} (not supported here)", saved_text))
         return options
+
+    def _unshown_model_profile_choice(
+        self, provider: str, model: str, draft_key: str
+    ) -> object | None:
+        """Return a saved model-default choice its Select has no option for.
+
+        A hand-edited ``reasoning_effort = "High"`` shows as a blank Select,
+        yet a new chat takes "High"; the row names it, a blank Select over it
+        is no edit, and Save keeps it, as Console Behavior's fallbacks do.
+
+        Args:
+            provider: The provider the card holds.
+            model: The default model the card holds.
+            draft_key: The field's draft key, e.g. ``"model_profile_verbosity"``.
+
+        Returns:
+            The saved value, or ``None`` when the field is no closed choice,
+            nothing is saved, or an option shows it.
+        """
+        name = PROVIDER_MODEL_PROFILE_FIELD_KEYS.get(draft_key)
+        if name not in CLOSED_ENUM_SELECT_OPTIONS:
+            return None
+        saved = self._provider_model_profile(provider, model).get(name)
+        if not str(saved or "").strip():
+            return None
+        options = self._model_profile_enum_options(provider, model, draft_key, saved)
+        allowed = tuple(value for _label, value in options)
+        if self._select_option_value(saved, allowed) is not Select.NULL:
+            return None
+        return saved
 
     def _model_profile_field_supported(
         self, provider: object, draft_key: str, model: object
@@ -14992,6 +15026,13 @@ class SettingsScreen(BaseAppScreen):
                 # value saved for it earlier stays exactly as it was.
                 continue
             value = values.get(draft_key, "")
+            if value == "" and (
+                self._unshown_model_profile_choice(provider, model_name, draft_key)
+                is not None
+            ):
+                # A blank Select over a saved choice it has no option for (a
+                # hand-edited "High") shows that value; Save keeps it.
+                continue
             if value == "":
                 next_profile.pop(profile_key, None)
             else:
@@ -29964,27 +30005,19 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-model-profile-temperature")
     def handle_model_profile_temperature_changed(self, event: Input.Changed) -> None:
-        if self._syncing_provider_model_profile:
-            return
-        try:
-            value = self._normalise_model_profile_temperature(event.value)
-        except ValueError:
-            value = event.value
-        self._stage_provider_value("model_profile_temperature", value)
-        self._update_provider_dynamic_widgets()
-        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+        self._stage_model_profile_input(
+            "model_profile_temperature",
+            event.value,
+            self._normalise_model_profile_temperature,
+        )
 
     @on(Input.Changed, "#settings-model-profile-top-p")
     def handle_model_profile_top_p_changed(self, event: Input.Changed) -> None:
-        if self._syncing_provider_model_profile:
-            return
-        try:
-            value = self._normalise_model_profile_top_p(event.value)
-        except ValueError:
-            value = event.value
-        self._stage_provider_value("model_profile_top_p", value)
-        self._update_provider_dynamic_widgets()
-        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+        self._stage_model_profile_input(
+            "model_profile_top_p",
+            event.value,
+            self._normalise_model_profile_top_p,
+        )
 
     @on(Input.Changed, "#settings-model-profile-min-p")
     def handle_model_profile_min_p_changed(self, event: Input.Changed) -> None:
@@ -30095,10 +30128,29 @@ class SettingsScreen(BaseAppScreen):
     ) -> None:
         if self._syncing_provider_model_profile:
             return
+        current = self._provider_setting_values_mapping()
+        draft = self._provider_draft()
+        saved = (draft.originals if draft is not None else {}).get(
+            key, current.get(key)
+        )
         try:
             value = normalizer(raw_value)
         except ValueError:
-            value = raw_value
+            # An Input repeating a saved value its normaliser refuses (a
+            # hand-edited seed = -1, shown as a new chat reads it) is no edit.
+            value = (
+                saved if raw_value == self._profile_input_value(saved) else raw_value
+            )
+        else:
+            provider = str(current.get("provider") or "")
+            model = str(current.get("model") or "")
+            if (
+                value == ""
+                and self._unshown_model_profile_choice(provider, model, key) is not None
+            ):
+                # A blank Select over a saved choice it has no option for (a
+                # hand-edited "High") is how that value shows, so is no edit.
+                value = saved
         self._stage_provider_value(key, value)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)

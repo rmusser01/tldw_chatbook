@@ -9620,13 +9620,21 @@ async def test_settings_provider_category_saves_openai_generation_profile(
     }
 
 
-def test_settings_enum_select_value_clamps_case_and_unknown_values():
+def test_settings_enum_select_value_takes_only_an_exact_option():
     screen = SettingsScreen(_build_test_app())
 
-    # Case-insensitive: a hand-edited valid value still renders (not nulled).
+    # Task 7 review round 4: a hand-edited "High" is no option. A new chat
+    # takes "High" as written, so showing "high" said something false; the
+    # row names the saved value instead (as Console Behavior's fallbacks do).
     assert (
         screen._select_option_value(
             "High", settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
+        )
+        is Select.NULL
+    )
+    assert (
+        screen._select_option_value(
+            " high ", settings_screen_module.REASONING_EFFORT_SELECT_OPTIONS
         )
         == "high"
     )
@@ -9646,7 +9654,9 @@ def test_settings_enum_select_value_clamps_case_and_unknown_values():
 
 
 @pytest.mark.asyncio
-async def test_settings_profile_enum_select_clamps_saved_values():
+async def test_settings_profile_enum_select_shows_only_exact_saved_values():
+    """Task 7 review round 4: neither hand edit is an option, so both Selects
+    are blank and both rows name the value a new chat still takes."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     app.app_config["api_settings"] = {
@@ -9662,14 +9672,13 @@ async def test_settings_profile_enum_select_clamps_saved_values():
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
-        assert (
-            screen.query_one("#settings-model-profile-reasoning-effort", Select).value
-            == "high"
-        )
-        assert (
-            screen.query_one("#settings-model-profile-verbosity", Select).value
-            is Select.NULL
-        )
+        for field, saved in (("reasoning-effort", "High"), ("verbosity", "extreme")):
+            selector = f"#settings-model-profile-{field}"
+            assert screen.query_one(selector, Select).value is Select.NULL
+            assert (
+                str(screen.query_one(f"{selector}-source", Static).renderable),
+                str(screen.query_one(f"{selector}-help", Static).renderable),
+            ) == ("model default", f"saved '{saved}' is not a choice")
 
 
 def test_settings_generation_controls_allow_openai_none_reasoning_effort():

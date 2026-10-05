@@ -4843,7 +4843,10 @@ only that the word was non-empty, and the live-capture procedure itself wrote
    rows had their own loader and the Select its own mapping, both lowercased,
    so `reasoning_effort = "High"` showed "high" while a new chat got "High"
    (round 3). Grep every loader and control mapping of the table, not only
-   the ones the finding names.
+   the ones the finding names. Round 3's fix then landed on the fallback rows
+   only: Model defaults, which the guide calls "the same rows", still folded
+   case through a shared helper and refused a typed minus (round 4). A fix to
+   one surface of a pair goes on its twin in the same commit.
 2. For every config-backed row, write one case with the key absent and compare
    it with the neighbouring surface that reads the same key.
 3. Take the "at rest" capture on the shipped template. List every key the
@@ -4855,6 +4858,12 @@ only that the word was non-empty, and the live-capture procedure itself wrote
    tests kept asserting "Saved as: ..." as visible text after it moved into
    the closed "config key" disclosure (review round 2). Read it inside the
    disclosure (`_console_config_key_saved_as`).
+5. A Textual `Input` posts `Changed` with its initial value once mounted. A
+   staging handler that keeps a refused value as raw text compares `"-1"`
+   with the saved `-1` and marks an untouched row "edited *": Model defaults
+   did this for a hand-edited `seed = -1` and `temperature = 3.0` until the
+   round-4 fix treated text repeating the saved value as no edit. Assert
+   "nothing staged" at rest in every hand-edited-value test.
 
 ## A guard test must be PROVEN to discriminate — twice in one day it wasn't (2026-08-08, tasks 1359/2832)
 

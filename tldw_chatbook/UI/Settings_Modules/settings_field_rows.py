@@ -85,6 +85,9 @@ INHERIT_PROMPT = "Inherit"
 SAMPLING_TITLE_CELLS = 113
 _TITLE_CHROME_CELLS = 4
 _INTEGER_FIELDS = frozenset({"top_k", "max_tokens", "seed", "thinking_budget_tokens"})
+#: A leading minus is typeable so a shown hand-edited ``seed = -1`` can be
+#: backspaced away; Save refuses it with the field's message.
+_INTEGER_RESTRICT = r"^-?[0-9]*$"
 _EDITED = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.EDITED_DRAFT]
 _MODEL_DEFAULT = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.MODEL_DEFAULT]
 _PROVIDER = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
@@ -412,7 +415,7 @@ def _model_default_control(
         id=control_id(name),
         classes="settings-compact-input",
         placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS[key],
-        restrict=r"^[0-9]*$" if name in _INTEGER_FIELDS else None,
+        restrict=_INTEGER_RESTRICT if name in _INTEGER_FIELDS else None,
         disabled=not supported,
     )
 
@@ -488,6 +491,9 @@ def refresh_model_defaults(screen: SettingsScreen, provider: str, model: str) ->
 
     Runs after any field edit, a provider or model change and the first
     layout. Rows are already shown or hidden by the screen's support sync.
+    A blank choice over a saved value it has no option for (a hand-edited
+    "High") reads "model default" and names that value, as the global
+    fallbacks do.
 
     Args:
         screen: The Settings screen that owns the card.
@@ -520,6 +526,14 @@ def refresh_model_defaults(screen: SettingsScreen, provider: str, model: str) ->
         if name in SAMPLING_FIELDS:
             shown_sampling[name] = text
         word, help_line = row_copy(name, text, key in dirty, inherited[name])
+        unshown = (
+            None
+            if text or key in dirty
+            else screen._unshown_model_profile_choice(provider, model, key)
+        )
+        if unshown is not None:
+            # A new chat takes the saved value the blank Select cannot show.
+            word, help_line = _MODEL_DEFAULT, NOT_A_CHOICE_HELP.format(value=unshown)
         screen._set_static_text(f"#{control_id(name)}-source", word)
         screen._set_static_text(f"#{control_id(name)}-help", help_line)
     display = screen._provider_display_label(provider) or "this provider"
@@ -588,9 +602,7 @@ def _console_fallback_control(screen: SettingsScreen, name: str) -> Widget:
         id=console_fallback_id(name),
         classes="settings-compact-input",
         placeholder=MODEL_PROFILE_INPUT_PLACEHOLDERS[draft_key(name)],
-        # A leading minus is typeable so a shown hand-edited ``seed = -1``
-        # can be backspaced away; Save refuses it with the field's message.
-        restrict=r"^-?[0-9]*$" if name in _INTEGER_FIELDS else None,
+        restrict=_INTEGER_RESTRICT if name in _INTEGER_FIELDS else None,
     )
 
 
