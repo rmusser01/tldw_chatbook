@@ -348,11 +348,6 @@ from ...Chat.Chat_Deps import (
     ChatProviderError,
     ChatRateLimitError,
 )
-from ...Chat.console_provider_endpoints import (
-    first_configured_endpoint,
-    normalize_generic_endpoint_for_compare,
-    safe_endpoint_display,
-)
 from ...Chat.console_display_state import (
     CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
     CONSOLE_INSPECTOR_REVIEW_APPROVAL_ID,
@@ -465,7 +460,6 @@ from ...config import (
     get_cli_setting,
     load_settings,
     save_setting_to_cli_config,
-    save_settings_to_cli_config,
 )
 from ...Library.library_rag_service import LibraryRagSearchRequest
 from ...Library.library_rag_state import (
@@ -2737,10 +2731,15 @@ class ChatScreen(BaseAppScreen):
         self,
         provider: str,
         model: str | None,
+        app_config: Mapping[str, object] | None = None,
     ) -> ConsoleSettingsReadiness:
-        """Resolve future-chat readiness through the target default chain."""
+        """Resolve future-chat readiness through the target default chain.
 
-        app_config = self._provider_readiness_app_config()
+        ``app_config`` stands in for the saved configuration (TASK-33008.3:
+        the Get started card reads a detected server's endpoint in memory).
+        """
+
+        app_config = app_config or self._provider_readiness_app_config()
         settings = build_target_default_console_session_settings(
             app_config,
             provider,
@@ -4669,7 +4668,9 @@ class ChatScreen(BaseAppScreen):
         elif action_id == "provider-recovery":
             await self._open_console_provider_recovery()
         elif action_id == CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION:
-            self._apply_detected_local_server()
+            from ..Console_Modules.model_switcher import open_setup_card_switcher
+
+            open_setup_card_switcher(self, self._console_detected_local_server)
         elif action_id == CONSOLE_SETUP_MODAL_NOTES_WORKBENCH_ACTION:
             # task-32140: the "Get started" card's needs-no-provider action
             # -- same destination as the command-palette "new_note" quick
@@ -14118,125 +14119,6 @@ class ChatScreen(BaseAppScreen):
         self._console_detected_local_server = servers[0]
         self._sync_console_transcript_guidance()
 
-    def _apply_detected_local_server(self) -> None:
-        """Adopt the detected local server as the Console provider.
-
-        Persists ``chat_defaults.provider``/``model`` and the provider's
-        ``api_settings`` endpoint via ``save_settings_to_cli_config``, then
-        applies the same selection to the active session as an explicit user
-        choice (mirroring the settings-modal apply path) and re-evaluates the
-        setup card from the fresh on-disk config (task-177 mechanics; no
-        boot-time snapshots).
-
-        task-16476: a provider that already has a DIFFERENT user-configured
-        endpoint keeps it -- the endpoint write fills only when absent, and
-        the detected endpoint is applied to the session instead, so "Use
-        detected ..." stays effective without clobbering persisted config
-        (discovery is loopback-only and can never see the LAN server the
-        configured endpoint may point at).
-        """
-        server = self._console_detected_local_server
-        if server is None:
-            return
-        model_id = server.model_ids[0] if server.model_ids else None
-        app_config = self._provider_readiness_app_config()
-        provider_key = provider_config_key(server.provider_key)
-        provider_settings = self._config_section(
-            self._config_section(app_config, "api_settings"),
-            provider_key,
-        )
-        configured_endpoint = first_configured_endpoint(provider_settings)
-        provider_values: dict[str, object] = {}
-        # Qodo review (PR #1720): compare connection identities, not raw
-        # strings -- a configured endpoint differing only by a trailing
-        # slash (or a llama.cpp endpoint-path suffix) is the SAME server and
-        # must not warn or skip the canonicalizing write. Same vocabulary
-        # ``_endpoint_differs_for_provider`` uses.
-        if configured_endpoint and self._adoption_endpoints_differ(
-            provider_key, configured_endpoint, server.base_url
-        ):
-            self.app_instance.notify(
-                "Keeping the saved endpoint "
-                f"{safe_endpoint_display(configured_endpoint) or configured_endpoint} "
-                f"for {provider_key}; using the detected "
-                "server for this session only.",
-                severity="warning",
-            )
-        else:
-            provider_values["api_url"] = server.base_url
-        chat_defaults: dict[str, object] = {"provider": server.provider_key}
-        if model_id:
-            provider_values["model"] = model_id
-            chat_defaults["model"] = model_id
-        if provider_values:
-            try:
-                saved = save_settings_to_cli_config(
-                    {
-                        f"api_settings.{server.provider_key}": provider_values,
-                        "chat_defaults": chat_defaults,
-                    }
-                )
-            except Exception:
-                saved = False
-        else:
-            try:
-                saved = save_settings_to_cli_config({"chat_defaults": chat_defaults})
-            except Exception:
-                saved = False
-        if not saved:
-            logger.warning(
-                "Could not persist detected local server defaults to config; "
-                "applying to this session only"
-            )
-        settings = build_default_console_session_settings(
-            self._provider_readiness_app_config(),
-            server.provider_key,
-            model_id,
-        )
-        settings = replace(settings, base_url=server.base_url)
-        self._session._replace_active_console_session_settings(
-            replace(settings, source="user")
-        )
-        self._sync_console_transcript_guidance()
-        self.run_worker(
-            self._sync_native_console_chat_ui(), exclusive=True, group="console-sync"
-        )
-
-    @staticmethod
-    def _adoption_endpoints_differ(
-        provider_key: str,
-        configured_endpoint: str,
-        detected_endpoint: str,
-    ) -> bool:
-        """Return whether adoption endpoints differ by connection identity.
-
-        Qodo review (PR #1720): raw string inequality treats a trailing
-        slash (or a llama.cpp endpoint-path suffix) as a different server,
-        warning and skipping the write for what is the same connection. Uses
-        the same normalization vocabulary as
-        ``_endpoint_differs_for_provider``.
-
-        Args:
-            provider_key: Normalized provider readiness key.
-            configured_endpoint: Persisted endpoint for the provider.
-            detected_endpoint: Discovered server base URL.
-
-        Returns:
-            ``True`` only when the two endpoints normalize to different
-            connection identities.
-        """
-        if provider_key in {"llama_cpp", "local_llamacpp"}:
-            configured = normalize_generic_endpoint_for_compare(
-                normalize_llamacpp_base_url(configured_endpoint)
-            )
-            detected = normalize_generic_endpoint_for_compare(
-                normalize_llamacpp_base_url(detected_endpoint)
-            )
-            return configured != detected
-        return normalize_generic_endpoint_for_compare(
-            configured_endpoint
-        ) != normalize_generic_endpoint_for_compare(detected_endpoint)
-
     def _console_setup_modal_blocking(self) -> bool:
         """Return True when the first-run setup modal is covering the workbench."""
         try:
@@ -19727,6 +19609,10 @@ class ChatScreen(BaseAppScreen):
 
             return await retry_console_connection(self)
         if target in {"console", "hidden"} and getattr(self, "is_mounted", False):
+            from ..Console_Modules.model_switcher import open_card_recovery_switcher
+
+            if open_card_recovery_switcher(self):  # The card's Choose provider/model.
+                return
             await self._open_console_settings(
                 focus_model=(
                     target == "hidden" or self._is_console_choose_model_action(_label)

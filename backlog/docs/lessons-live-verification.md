@@ -402,6 +402,29 @@ Mount handler, after Textual sets `is_mounted`, passed the four controls and
 original failing hook-review journey; mounted missing controls still raise.
 Queryability and a guard alone do not replace a current-state mount replay.
 
+## A card with no detected server may mean discovery never ran: count the server's requests
+
+**TASK-33008.3, 2026-10-04.** The live check of the Get started card's "Use
+detected \<server\>" ran at 211x44 on a scratch profile, with a stub listing
+models on `127.0.0.1:8080`. On four launches, at base `fba5026064` and with the
+task's change, the card never offered the action and the stub logged zero
+requests. The same `discover_local_servers(load_settings())` call in a bare
+interpreter found the stub at once. A scratch launcher that wrapped the call
+showed the cause: the first attempt, made by the card's mount-time worker,
+raised `ProviderReconnectRequired`, caused by
+`RecoveryRequired('raw_operation_provenance_invalid')` from
+`raw_participants._check`; a retry 1.7 s later succeeded. Discovery runs once
+per screen and its `except` logs at debug level, so the refusal reads as "no
+server found". The mounted tests inject `app.console_local_server_discovery`,
+which bypasses the refused function, so they stay green.
+
+**What to do.** Count the stub's requests before reading the card: zero means
+discovery did not run, not that nothing answered. A test that injects the
+discovery seam does not cover the real entry point. Until that defect is fixed,
+drive the detected-server flow from a scratch launcher that retries
+`chat_screen.discover_local_servers`, never committed, and say so with the
+capture.
+
 ## Send synthetic Paste through the app, not directly to TextArea
 
 **TASK-31645, 2026-09-04.** The Chunking Lab viewport harness posted an

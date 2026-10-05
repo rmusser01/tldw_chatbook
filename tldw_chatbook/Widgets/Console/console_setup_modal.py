@@ -489,11 +489,21 @@ class ConsoleSetupModal(Vertical):
         return escape_markup(self._detected_action.tooltip)
 
     def focus_primary_action(self) -> None:
-        """Move focus to the modal's primary action button while blocking."""
+        """Focus the card's first action while blocking.
+
+        That is "Use detected <server>" while one is offered (TASK-33008.3:
+        Enter, Enter is the local first run), and the primary action
+        otherwise. The button order on the card does not change.
+        """
         if not (self.is_mounted and self.is_blocking):
             return
+        action_id = (
+            CONSOLE_SETUP_MODAL_ACTION_ID
+            if self._detected_action is None
+            else CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID
+        )
         try:
-            self.query_one(f"#{CONSOLE_SETUP_MODAL_ACTION_ID}", Button).focus()
+            self.query_one(f"#{action_id}", Button).focus()
         except Exception:
             return
 

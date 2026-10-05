@@ -4890,7 +4890,7 @@ async def _select_llamacpp_console(console: ChatScreen) -> None:
     when the screen mounted its first session (before this helper ever
     runs). Without also pushing the selection through
     ``_replace_active_console_session_settings`` (the same call the real
-    Console Settings modal apply path and ``_apply_detected_local_server``
+    Console Settings modal apply path and ``adopt_detected_local_server``
     use), the already-existing session stays on its mount-time default
     provider and every send this helper is meant to unblock stays gated
     behind the first-run setup modal.

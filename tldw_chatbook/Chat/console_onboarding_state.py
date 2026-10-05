@@ -116,8 +116,9 @@ def build_console_detected_server_action(
             exists while the blocking ``card`` is showing.
 
     Returns:
-        The action (label, tooltip, and the values to persist) or ``None``
-        when no detected server should be offered.
+        The action (label, tooltip, and the detected provider, endpoint and
+        first listed model) or ``None`` when no detected server should be
+        offered.
     """
     if server is None or card_mode != "card":
         return None
@@ -143,15 +144,14 @@ def build_console_detected_server_action(
         if isinstance(model_id, str) and model_id.strip()
     )
     model_id = model_ids[0].strip() if model_ids else None
-    if model_id:
-        tooltip = f"Sets provider to {display_name} at {host_display} and model to {model_id}."
-    else:
-        tooltip = (
-            f"Sets provider to {display_name} at {host_display}. Pick a model next."
-        )
     return ConsoleDetectedServerAction(
         label=f"Use detected {display_name} ({host_display})",
-        tooltip=tooltip,
+        # TASK-33008.3: the action opens Switch model on this provider; it no
+        # longer adopts the first listed model, so the tooltip names none.
+        tooltip=(
+            f"Opens Switch model on {display_name} at {host_display}. "
+            "The model you pick becomes the default for new chats."
+        ),
         provider_key=provider_key,
         base_url=base_url,
         model_id=model_id,

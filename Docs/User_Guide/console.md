@@ -266,14 +266,24 @@ marked with ● (current) and ○ (pending) glyphs, plus the note "Composer
 unlocks after setup". Behind the card, the workbench dims under a still
 field of scattered snow glyphs — a purely decorative backdrop that holds
 one frame (it re-scatters only when the window resizes) and costs nothing
-while the card waits. Its button follows the current step (**Set up
-provider**, then **Choose model**) and opens **Chat settings**.
-The composer stays locked until a provider and model are configured; once
-they are, the empty transcript names what is connected, for example
-"Setup complete — OpenAI · gpt-4.1-mini. Ready — type a message to begin."
-(a model saved as a file path, as llama.cpp models often are, shows its file
-name). That line is the arrival receipt: it shows until your first-ever send,
-and nothing about it is sent to the model.
+while the card waits. Its button follows the current step. **Set up
+provider** opens **Settings ▸ Providers & Models**; **Choose provider** and
+**Choose model** open **Switch model**, where a model is always picked as a
+provider·model pair; an endpoint step (**Configure endpoint**) opens **Chat
+settings**. The composer stays locked until a provider and model are
+configured; once they are, the empty transcript names what is connected, for
+example "Setup complete — OpenAI · gpt-4.1-mini. Ready — type a message to
+begin." (a model saved as a file path, as llama.cpp models often are, shows
+its file name). That line is the arrival receipt: it shows until your
+first-ever send, and nothing about it is sent to the model.
+
+A pair picked in Switch model from the card applies to this chat. While no
+default for new chats works yet (none is saved, or the saved one cannot
+send), it also becomes that default, so the next new chat is not blocked
+again. The switcher's scope line says which before you press Enter:
+"Applies to: this chat · also the default for new chats", or "Applies to:
+this chat only". A pair that cannot send is refused there with the reason,
+and Esc returns to the card with nothing saved.
 
 **Arriving from setup.** Finishing first-run setup with **Start chatting**
 opens one chat on the saved provider and model, with no notice. Notices that
@@ -328,9 +338,19 @@ New note view directly. A local-first user who came for notes is not stuck
 behind a provider-only card. A third action joins them when a loopback
 server is found on this machine — "Use detected \<provider\> (\<host:port\>)",
 naming what it found and where (only `127.0.0.1` and `localhost` are ever
-offered, and the endpoint is shown without credentials or scheme). Every
-action on the card is drawn as a button with a rounded edge, one under the
-other; Tab moves between them and the focused one grows heavy side rails, so
+offered, and the endpoint is shown without credentials or scheme). It takes
+focus when it appears, so a local first run is two keys. **Enter** opens
+Switch model on that provider: Find holds the provider's name, the rows are
+the models the server listed (up to 30; type to narrow a longer list), read
+from the address it answered on, and the first one is highlighted. **Enter**
+again applies the highlighted model to this chat, makes the pair the default
+for new chats and saves the server's address; move the highlight first to
+pick another. Nothing is saved until that second Enter, and Esc returns to
+the card. If a different address is already saved for that provider, it is
+kept: the detected server is used for this chat only, and a notice says so.
+
+Every action on the card is drawn as a button with a rounded edge, one under
+the other; Tab moves between them and the focused one grows heavy side rails, so
 which one Enter will press is visible without reading the text. *(Was "Both
 actions" — superseded by task-32558 below: the count contradicted this page's
 own task-32555 stamp, which names three.)*
@@ -1006,10 +1026,12 @@ and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-b
 
 ## Common tasks
 
-1. **Set up a provider from the Get started card.** Click **Set up
-   provider**, pick a provider in "Provider and model" (for a local server,
-   enter its Endpoint, then **Discover models**), pick a model, and press
-   **Save**. The card's steps tick off and the composer unlocks.
+1. **Set up a provider from the Get started card.** With a local server
+   running, press **Enter** on "Use detected …", then **Enter** on one of
+   its models in Switch model. Otherwise press the card's button: **Configure
+   API key** opens Settings ▸ Providers & Models, and **Choose provider** or
+   **Choose model** opens Switch model. The card's steps tick off and the
+   composer unlocks.
 2. **Switch model for just this session.** Press **Alt+M**, type part of
    the model's name, and press **Enter** — or open **Settings** and press **Save**
    (not "Save as default"). Other tabs and future launches are unaffected.

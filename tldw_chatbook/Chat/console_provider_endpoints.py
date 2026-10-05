@@ -93,6 +93,30 @@ def first_configured_endpoint(provider_settings: Mapping[str, object]) -> str | 
     return None
 
 
+def with_configured_endpoint(
+    provider_settings: Mapping[str, object], endpoint: str
+) -> dict[str, object]:
+    """Return a copy of provider settings whose one configured endpoint is ``endpoint``.
+
+    Every endpoint alias is dropped first, so no higher-ranked alias outranks
+    the new value. The input is not changed.
+
+    Args:
+        provider_settings: Provider-specific configuration mapping.
+        endpoint: The endpoint the copy is configured with.
+
+    Returns:
+        The copied settings with ``api_url`` set to ``endpoint``.
+    """
+    settings = {
+        key: value
+        for key, value in provider_settings.items()
+        if key not in _ENDPOINT_SETTING_KEYS
+    }
+    settings["api_url"] = endpoint
+    return settings
+
+
 def effective_provider_endpoint(
     provider_key: str,
     selected_endpoint: str | None,

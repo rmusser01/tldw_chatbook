@@ -2435,7 +2435,7 @@ class ProviderStep(SetupStep):
 
     @staticmethod
     def _display_value_for(provider_key: str) -> str:
-        # chat_screen._apply_detected_local_server (line ~9137) persists the
+        # model_switcher.adopt_detected_local_server persists the
         # RAW provider_key into chat_defaults["provider"] (e.g. "llama_cpp",
         # "openai") — not a human display name. Mirror that exact string
         # form here so this step's commit and the live Console apply path
