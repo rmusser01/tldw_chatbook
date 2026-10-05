@@ -112,6 +112,13 @@ class TraceSettlementWitness:
         self.installed_modules = {}
         self.installed_sources_before = None
         self.terminal_line = self._terminal_line()
+        self.discovery = dict(
+            initial_store_loaded=type(sys.modules.get(STORE_NAME)) is ModuleType,
+            initial_coordinator_loaded=type(sys.modules.get(COORDINATOR_NAME))
+            is ModuleType,
+            qualified_bindings=[],
+            original_terminal_seen=False,
+        )
 
     def _loaded_source_records(self):
         """Record actual already loaded child origins; never import a source."""
@@ -224,6 +231,13 @@ class TraceSettlementWitness:
                     ("_drain_provider_trace_settlement_work", "store_drain"),
                 ):
                     self._retain_function(module, self.store_type, name, label)
+                self.discovery["qualified_bindings"].append(
+                    dict(
+                        source="store",
+                        phase=self.observation.phase,
+                        time=time.perf_counter(),
+                    )
+                )
         if self.coordinator_type is None:
             module = sys.modules.get(COORDINATOR_NAME)
             if type(module) is ModuleType:
@@ -236,6 +250,13 @@ class TraceSettlementWitness:
                     ("_enqueue_locked", "enqueue"),
                 ):
                     self._retain_function(module, self.coordinator_type, name, label)
+                self.discovery["qualified_bindings"].append(
+                    dict(
+                        source="coordinator",
+                        phase=self.observation.phase,
+                        time=time.perf_counter(),
+                    )
+                )
 
     def _actor(self):
         actor = threading.current_thread()
@@ -407,6 +428,22 @@ class TraceSettlementWitness:
         self.handlers.append(event)
 
     def _snapshot(self, boundary, result):
+        if boundary == "original_terminal_assertion":
+            self._bind_loaded()
+            self.discovery["original_terminal_seen"] = True
+            complete = (
+                self.store_type is not None
+                and self.coordinator_type is not None
+                and bool(self.stores)
+                and bool(self.coordinators)
+                and {item["source"] for item in self.discovery["qualified_bindings"]}
+                == {"store", "coordinator"}
+            )
+            if not complete:
+                self.invalid.append(
+                    "original_terminal_source_or_owner_coverage_incomplete"
+                )
+            assert complete, "original terminal witness requires qualified stock sources and observed owners"
         stores = []
         for owner in self.stores.values():
             values = owner.__dict__
@@ -508,7 +545,8 @@ class TraceSettlementWitness:
                 )
             self._enable(self.test_code, only_line=True)
             self._bind_loaded()
-            assert self.store_type is not None
+            # New dev imports the store lazily. Original test LINE/selected
+            # frame callbacks retry only already-loaded source qualification.
             assert self.monitor.get_events(self.tool) == 0
         except BaseException:
             self.stop({})
@@ -576,6 +614,14 @@ class TraceSettlementWitness:
                 row["id"] for row in self.live.values()
             ),
             "original_coordinator_bound": self.coordinator_type is not None,
+            "lazy_source_discovery": self.discovery,
+            "original_terminal_source_and_owner_coverage_complete": self.discovery[
+                "original_terminal_seen"
+            ]
+            and not any(
+                item == "original_terminal_source_or_owner_coverage_incomplete"
+                for item in self.invalid
+            ),
             "source_hashes": self.module_hashes,
             "actual_child_installed_sources_before": self.installed_sources_before,
             "actual_child_installed_sources_after": installed_sources_after,

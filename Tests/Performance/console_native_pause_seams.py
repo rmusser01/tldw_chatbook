@@ -7,8 +7,10 @@ elapsed time exists only for a supported original return/first context yield.
 Exceptional timing gaps stay explicit. No config/argument bodies are recorded.
 """
 
+import collections
 import inspect
 import os
+from pathlib import Path
 import sys
 import threading
 import time
@@ -22,10 +24,14 @@ class PassivePauseProbeSeams:
         self.lock = threading.Lock()
         self.local = threading.local()
         self.codes, self.bindings, self.bodies, self.contexts = {}, [], [], []
-        self.frames, self.gaps = {}, []
+        self.states, self.actors = {}, {}
+        self.gaps, self.gap_counts = [], collections.Counter()
         self.modules, self.overflow = [], 0
         self.tool, self.active, self.restoration = None, False, None
         self.installed = []
+        self.config_only = config_only
+        self.sensitive_code = None
+        self.sensitive_coverage = "not_observed"
         self.mask = self.monitor.events.PY_START | self.monitor.events.PY_RETURN
         self.context_mask = (
             self.mask | self.monitor.events.PY_YIELD | self.monitor.events.PY_RESUME
@@ -92,8 +98,21 @@ class PassivePauseProbeSeams:
             ) == os.path.normcase(os.path.normpath(defining.__file__))
             code = function.__code__
             assert code not in self.codes
+            assert not code.co_flags & (
+                inspect.CO_COROUTINE | inspect.CO_ASYNC_GENERATOR
+            )
+            if not context:
+                assert not code.co_flags & (
+                    inspect.CO_GENERATOR
+                    | inspect.CO_COROUTINE
+                    | inspect.CO_ASYNC_GENERATOR
+                )
             self.codes[code] = dict(
-                label=label, context=context, native=native, config=config
+                label=label,
+                context=context,
+                native=native,
+                config=config,
+                namespace=defining.__dict__,
             )
             return code
 
@@ -151,6 +170,79 @@ class PassivePauseProbeSeams:
             for name in ("open_handle", "security", "ntfs", "_token_sid"):
                 select(native_cls, name, windows, "_Native." + name, native=True)
 
+    def _bind_sensitive_loaded(self):
+        """No forced import: qualify the actual completed module and code once."""
+        if self.config_only or self.sensitive_code is not None:
+            return
+        name = "tldw_chatbook.Utils.sensitive_paths"
+        module = sys.modules.get(name)
+        if type(module) is not ModuleType:
+            self.sensitive_coverage = "module_not_loaded"
+            return
+        if type(module.__dict__.get("_SENSITIVE_INPUT_ORIGINALS")) is not tuple:
+            self.sensitive_coverage = "module_definition_not_completed"
+            return
+        function = inspect.getattr_static(module, "_stock_sensitive_config_bundle")
+        assert (
+            type(function) is FunctionType and function.__globals__ is module.__dict__
+        )
+        original = function.__code__
+        assert os.path.normcase(
+            os.path.normpath(original.co_filename)
+        ) == os.path.normcase(os.path.normpath(module.__file__))
+        compiled = compile(
+            Path(module.__file__).read_text(encoding="utf-8"),
+            original.co_filename,
+            "exec",
+            dont_inherit=True,
+        )
+        expected = next(
+            code
+            for code in compiled.co_consts
+            if type(code) is CodeType
+            and code.co_name == "_stock_sensitive_config_bundle"
+        )
+        assert (
+            original == expected
+        ), "stock-bundle code differs from its defining source"
+        assert not original.co_flags & (
+            inspect.CO_GENERATOR | inspect.CO_COROUTINE | inspect.CO_ASYNC_GENERATOR
+        )
+        self.modules.append((name, module))
+        self.bindings.append((module, "_stock_sensitive_config_bundle", function))
+        self.bodies.append((function, original, module.__dict__))
+        self.codes[original] = dict(
+            label=name + "._stock_sensitive_config_bundle",
+            context=False,
+            native=False,
+            config="_stock_sensitive_config_bundle",
+            namespace=module.__dict__,
+        )
+        self.sensitive_code = original
+        self.sensitive_coverage = (
+            "defining_module_body_qualified_before_original_return"
+        )
+        if self.active:
+            assert self.monitor.get_local_events(self.tool, original) == 0
+            self.monitor.set_local_events(self.tool, original, self.mask)
+            self.installed.append(original)
+
+    def _gap(self, state, reason):
+        """Keep bounded scalar evidence; never retain an exceptional body/frame."""
+        with self.lock:
+            self.gap_counts[(state["label"], state["phase"], reason)] += 1
+            if len(self.gaps) < 32:
+                self.gaps.append(
+                    dict(label=state["label"], phase=state["phase"], reason=reason)
+                )
+
+    def _frame_key(self, frame):
+        # Strong Thread identity prevents thread-id ABA; no selected receiver,
+        # argument, frame, parent or return object is kept by this scalar state.
+        actor = threading.current_thread()
+        self.actors[id(actor)] = actor
+        return id(actor), frame.f_code, id(frame)
+
     def _elapsed(self, state, label, started, ended):
         if started is None:
             return
@@ -177,8 +269,8 @@ class PassivePauseProbeSeams:
             parent = frame.f_back
             if parent is not None and parent.f_code is self.hit_code:
                 with self.lock:
-                    hit = self.frames.get(id(parent))
-                    if hit is not None and hit["frame"] is parent:
+                    hit = self.states.get(self._frame_key(parent))
+                    if hit is not None and parent.f_globals is self.config.__dict__:
                         hit["observed_posture"] = value
             return
         if frame.f_code is not self.hit_code:
@@ -227,8 +319,9 @@ class PassivePauseProbeSeams:
         assert frame.f_code is code
         spec = self.codes[code]
         observed = self.observation
+        if not spec["native"]:
+            self._bind_sensitive_loaded()
         state = dict(
-            frame=frame,
             phase=observed.phase,
             started=time.perf_counter(),
             actor_ident=threading.get_ident(),
@@ -248,11 +341,18 @@ class PassivePauseProbeSeams:
                 cache_missing=self.config._SETTINGS_CACHE is None,
                 selected_path=frame.f_locals["active_config_path"],
             )
+        assert frame.f_globals is spec["namespace"]
+        key = self._frame_key(frame)
         with self.lock:
-            if len(self.frames) >= 32768:
+            previous = self.states.pop(key, None)
+            if len(self.states) >= 32768:
                 self.overflow += 1
             else:
-                self.frames[id(frame)] = state
+                self.states[key] = state
+        if previous is not None:
+            # START creates an invocation; a suspended context resumes through
+            # PY_RESUME instead. A new START cannot reuse a still-live frame id.
+            self._gap(previous, "frame_reused_without_observed_return")
         label = spec["label"] + ".enter" if spec["context"] else spec["label"]
         observed.record(label, state["phase"], 0.0, state["caller"])
         name = spec["config"]
@@ -294,15 +394,14 @@ class PassivePauseProbeSeams:
         frame = sys._getframe(1)
         assert frame.f_code is code and self.codes[code]["context"]
         with self.lock:
-            state = self.frames.get(id(frame))
+            state = self.states.get(self._frame_key(frame))
             if state is None:
                 return
-            if state["entered"]:
-                self.gaps.append(
-                    dict(label=state["label"], reason="context_yielded_more_than_once")
-                )
-                return
+            repeated = state["entered"]
             state["entered"] = True
+        if repeated:
+            self._gap(state, "context_yielded_more_than_once")
+            return
         self._elapsed(
             state, state["label"] + ".enter", state["started"], time.perf_counter()
         )
@@ -311,7 +410,7 @@ class PassivePauseProbeSeams:
         frame = sys._getframe(1)
         assert frame.f_code is code and self.codes[code]["context"]
         with self.lock:
-            state = self.frames.get(id(frame))
+            state = self.states.get(self._frame_key(frame))
             if state is None:
                 return
             state["exit_started"] = time.perf_counter()
@@ -322,11 +421,11 @@ class PassivePauseProbeSeams:
     def _return(self, code, offset, value):
         frame = sys._getframe(1)
         assert frame.f_code is code
+        assert frame.f_globals is self.codes[code]["namespace"]
         with self.lock:
-            state = self.frames.pop(id(frame), None)
+            state = self.states.pop(self._frame_key(frame), None)
         if state is None:
             return
-        assert state["frame"] is frame
         if state["context"]:
             if not state["entered"]:
                 self._elapsed(
@@ -343,14 +442,17 @@ class PassivePauseProbeSeams:
                     time.perf_counter(),
                 )
             else:
-                self.gaps.append(
-                    dict(
-                        label=state["label"],
-                        reason="normal_context_return_without_supported_resume",
-                    )
-                )
+                self._gap(state, "normal_context_return_without_supported_resume")
         else:
             self._elapsed(state, state["label"], state["started"], time.perf_counter())
+        if code is self.sensitive_code:
+            self.observation.config_record(
+                "_stock_sensitive_config_bundle",
+                "custom" if value is None else "stock",
+                state["phase"],
+                {},
+                state["caller"],
+            )
         if self.codes[code]["config"] in {
             "_settings_cache_hit",
             "_config_file_posture",
@@ -358,6 +460,7 @@ class PassivePauseProbeSeams:
             self._cache_metadata_return(frame, state, value)
 
     def start(self):
+        self._bind_sensitive_loaded()
         assert self.bindings_current()
         self.tool = next(
             (number for number in (5, 4, 3) if self.monitor.get_tool(number) is None),
@@ -370,7 +473,7 @@ class PassivePauseProbeSeams:
             assert self.monitor.register_callback(self.tool, event, callback) is None
         self.active = True
         try:
-            for code, spec in self.codes.items():
+            for code, spec in tuple(self.codes.items()):
                 assert self.monitor.get_local_events(self.tool, code) == 0
                 self.monitor.set_local_events(
                     self.tool, code, self.context_mask if spec["context"] else self.mask
@@ -411,22 +514,14 @@ class PassivePauseProbeSeams:
         self.monitor.free_tool_id(self.tool)
         assert self.monitor.get_tool(self.tool) is None
         self.restoration = "selected_local_callbacks_removed_tool_freed_global0"
-        # Preserve only scalar metadata for gaps; release actual frames/locals.
+        # Unmatched scalar entries are explicit unknown exits. No receiver,
+        # argument, selected frame or parent frame can be retained by them.
         with self.lock:
-            for state in self.frames.values():
-                frame = state["frame"]
-                self.gaps.append(
-                    dict(
-                        label=state["label"],
-                        phase=state["phase"],
-                        reason="no_supported_original_return",
-                        source=frame.f_code.co_filename,
-                        definition_line=frame.f_code.co_firstlineno,
-                        last_source_line=frame.f_lineno,
-                        entry_yield_seen=state["entered"],
-                    )
-                )
-            self.frames.clear()
+            unmatched = list(self.states.values())
+            self.states.clear()
+            self.actors.clear()
+        for state in unmatched:
+            self._gap(state, "scalar_without_supported_original_return")
 
     def receipt(self):
         return dict(
@@ -439,6 +534,16 @@ class PassivePauseProbeSeams:
             all_attempt_counts_from_original_START=True,
             elapsed_only_from_supported_return_or_first_context_yield=True,
             exceptional_timing_gaps_not_invented_as_returns=list(self.gaps),
+            exceptional_timing_gap_counts=[
+                dict(label=label, phase=phase, reason=reason, count=count)
+                for (label, phase, reason), count in self.gap_counts.items()
+            ],
+            gap_sample_limit=32,
+            sensitive_bundle_return_coverage=self.sensitive_coverage,
+            sensitive_bundle_return_records_only_stock_or_custom=True,
+            all_selected_states_keep_no_frame_receiver_argument_or_return_objects=True,
+            all_returns_match_exact_thread_code_and_frame_id=True,
+            frame_reuse_records_unknown_exit_never_healthy_return=True,
             no_production_callable_or_alias_replacement=True,
             no_global_monitoring_or_new_task_thread_frame_enumeration=True,
             native_source_and_whole_probe_qualification_pending=True,
