@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 17:06'
+updated_date: '2026-10-05 17:20'
 labels:
   - console
   - performance
@@ -180,6 +180,16 @@ Reason: routine finite materialized-reader correction within standing resource-f
 ADR required: no new ADR.
 ADR path: N/A; existing ADR120 and finite native callback ownership apply.
 Reason: test-only finite measurement-reader ownership correction under the approved scale/resource verification repair; not a fourth production performance remedy.
+
+### Approved Console-only allocation/refresh diagnostic — 2026-10-05
+
+1. Freeze this documentation-only successor; preserve byte-identical production/test/package inputs and the preceding failed normal matrix. Prepare new guarded synthetic scale and small native-source corpora at the exact head.
+2. Reuse the existing forwarding-tested config/native-refresh/GC trigger observers once against the real-owner matrix; retain exact search/activation outcomes, absolute interval overlaps, observer limits and failures. Separate synchronous entry/body/exit, native rendering and paired main-thread collections without subtracting acceptance time.
+3. Reuse the separate untimed small-fixture widget/Strip cache census; record unfrozen/frozen counts and actual mounted owners before/after cold/warm activation. Treat partial traversal, census allocation and late boot freezes as causal limits, not a leak or speedup proof.
+4. Record provenance and recommend the smallest evidenced next step. Do not implement a fourth production correction, new GC/cache/lifetime policy, blanket close, dependency, threshold change or qualification waiver. Native/Windows/participants remain separate.
+ADR required: no new ADR for this diagnostic.
+ADR path: N/A; existing ADR120 and ADR198 apply.
+Reason: approved throwaway/read-only attribution through existing real-owner tools; no production contract or architectural policy changes.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
