@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from loguru import logger
-from textual import on
+from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.css.query import NoMatches
@@ -194,6 +194,17 @@ class OmniVoiceStepBase(SetupStep):
             return
         if not test.disabled:
             test.focus()
+
+    def on_mouse_down(self, _event: events.MouseDown) -> None:
+        """A click during a test is the user choosing where focus goes.
+
+        Disabling Test and Hear drops focus into Sample text, so clicking
+        Sample text mid-test leaves focus exactly where the drop put it and
+        looks untouched to ``_restore_test_focus`` (found live, review round
+        1 F5). The click that starts a test lands before its press, so it
+        never cancels the restore it is about to ask for.
+        """
+        self._refocus_test = False
 
     def _compose_omnivoice_panel(self) -> ComposeResult:
         with Vertical(id="setup-voice-omnivoice-panel") as panel:

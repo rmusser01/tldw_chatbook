@@ -333,9 +333,9 @@ async def test_a_rerun_pick_over_the_openai_reply_voice_says_it_replaces_it(
     async def pick_custom_pocket(step, pilot):
         step._select_preset_button("setup-voice-preset-pocket")
         await pilot.pause()
-        step.query_one("#setup-voice-endpoint", Input).value = (
-            "http://127.0.0.1:8766/tts"
-        )
+        step.query_one(
+            "#setup-voice-endpoint", Input
+        ).value = "http://127.0.0.1:8766/tts"
         await pilot.pause()
         shown.append(_default_box(step))
 
@@ -448,9 +448,7 @@ async def test_no_voice_for_now_over_a_saved_voice_says_it_is_kept(
         _WORKING_OPENAI_APP_TTS, _WORKING_OPENAI_TTS_SETTINGS, act=choose_no_voice
     )
 
-    assert lines[0].startswith(
-        "Keeps your current voice (OpenAI · tts-1-hd · shimmer)"
-    )
+    assert lines[0].startswith("Keeps your current voice (OpenAI · tts-1-hd · shimmer)")
     assert "Nothing is saved" not in lines[0]
     assert app.saves == []
     assert after == before
@@ -478,9 +476,7 @@ async def test_a_voice_saved_earlier_this_run_is_the_one_no_voice_keeps() -> Non
 
             step._select_preset_button("setup-voice-preset-none")
             await pilot.pause()
-            line = str(
-                step.query_one("#setup-voice-service-status", Static).render()
-            )
+            line = str(step.query_one("#setup-voice-service-status", Static).render())
             assert line.startswith(
                 "Keeps your current voice (PocketTTS · pocket-tts · alba)"
             )
@@ -591,7 +587,9 @@ async def test_a_failed_test_names_the_cause() -> None:
         # The edit made the service Custom; a /tts address is still
         # pocket-tts's own API, so the advice names it.
         assert step._preset == voice_state.VOICE_PRESET_CUSTOM
-        assert status.startswith(f"Test failed — PocketTTS isn't running at 127.0.0.1:{port}.")
+        assert status.startswith(
+            f"Test failed — PocketTTS isn't running at 127.0.0.1:{port}."
+        )
         assert "Not tested yet" not in status
 
 
@@ -776,6 +774,51 @@ async def test_focus_stays_where_the_user_moved_it_during_a_test(monkeypatch) ->
         await pilot.pause(0.2)
         assert test.disabled is False
         assert step.app.focused is moved_to
+
+
+@pytest.mark.asyncio
+async def test_a_click_during_a_test_keeps_focus_where_it_landed(monkeypatch) -> None:
+    """Review round 1 (F5), found live: disabling Test and Hear drops focus
+    into Sample text, so a user who clicks Sample text during a test leaves
+    focus exactly where the drop put it. Comparing focus alone took that for
+    "untouched" and pulled focus back to Test and Hear, so the next keys went
+    nowhere. A click during a test is the user choosing where focus goes."""
+    release = asyncio.Event()
+
+    async def sample(*_args, **_kwargs):
+        await release.wait()
+        return voice_state.VoiceSampleResult(b"valid", "audio/wav", "wav", True)
+
+    monkeypatch.setattr(voice_state, "run_voice_sample", sample)
+    step = _step()
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause()
+        test = step.query_one("#setup-voice-test", Button)
+        sample_input = step.query_one("#setup-voice-sample", Input)
+        await pilot.click("#setup-voice-test")
+        await pilot.pause()
+        assert test.disabled is True
+        assert step.app.focused is sample_input  # where the drop put it
+
+        await pilot.click("#setup-voice-sample")
+        await pilot.pause()
+        release.set()
+        await pilot.pause(0.2)
+
+        assert test.disabled is False
+        assert step.app.focused is sample_input
+
+        # The click that starts a test is not a click "during" it: with no
+        # other click, focus still comes back to Test and Hear.
+        release.clear()
+        await pilot.click("#setup-voice-test")
+        await pilot.pause()
+        assert test.disabled is True
+        release.set()
+        await pilot.pause(0.2)
+        assert step.app.focused is test
 
 
 @pytest.mark.asyncio
@@ -1028,7 +1071,12 @@ async def test_a_successful_test_on_an_untouched_rerun_still_saves(monkeypatch) 
     ("select_id", "field_id", "typed", "attribute"),
     (
         ("#setup-voice-voice-select", "#setup-voice-voice", "verse", "voice_id"),
-        ("#setup-voice-format-select", "#setup-voice-format", "flac", "response_format"),
+        (
+            "#setup-voice-format-select",
+            "#setup-voice-format",
+            "flac",
+            "response_format",
+        ),
     ),
 )
 @pytest.mark.asyncio
