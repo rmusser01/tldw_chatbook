@@ -239,6 +239,29 @@ async def test_enter_commits_single_keyboard_filtered_result():
 
 
 @pytest.mark.asyncio
+async def test_enter_on_an_exactly_typed_id_selects_it_so_the_next_key_searches_afresh():
+    """TASK-33007.9 (review round 3): Enter on text that already equals the
+    chosen id leaves the field's text unchanged, and that choice is selected
+    too, so the next key replaces it."""
+    app = PickerTestApp(
+        {"OpenRouter": []},
+        _entries("OpenRouter", ["anthropic/claude-x", "openai/gpt-y"]),
+    )
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        search_input = app.query_one("#model-search-picker-input", Input)
+        app.set_focus(search_input)
+        await pilot.pause()
+        await pilot.press(*"openai/gpt-y", "enter")
+        await pilot.pause()
+
+        assert app.selected_models == ["openai/gpt-y"]
+        assert search_input.value == "openai/gpt-y"
+        await pilot.press("o")
+        assert search_input.value == "o"
+
+
+@pytest.mark.asyncio
 async def test_keyboard_result_commit_restores_visible_input_focus():
     """Enter from a focused flat result cannot strand focus on the hidden list."""
     app = PickerTestApp(
@@ -1136,6 +1159,28 @@ async def test_a_returning_window_focus_selects_the_model_unless_text_is_being_t
         assert field.value == "cl"
         assert field.selection == Selection.cursor(2)
         assert _result_prompts(_results(app)) == ["anthropic/claude-x"]
+
+        # Round 3: a filter that matches nothing hides the list, and is still
+        # being typed: it keeps its caret, the hidden list and its status, on
+        # a short window blur and on Tab out to Custom ID and Shift+Tab back.
+        no_match = "No matching models. Clear the filter or use Custom ID."
+        await pilot.press("backspace", "backspace", "z", "z", "z")
+        assert field.value == "zzz" and not _results(app).display
+        app.post_message(events.AppBlur())
+        app.post_message(events.AppFocus())
+        await pilot.pause(0.3)
+        assert field.has_focus and field.value == "zzz"
+        assert field.selection == Selection.cursor(3)
+        assert not _results(app).display and _status_text(app) == no_match
+        await pilot.press("q")
+        assert field.value == "zzzq"
+        await pilot.press("tab")
+        await _until(pilot, lambda: not field.has_focus)
+        await pilot.press("shift+tab")
+        await _until(pilot, lambda: field.has_focus)
+        await pilot.pause()
+        assert field.value == "zzzq" and not _results(app).display
+        assert _status_text(app) == no_match
 
         app.post_message(events.AppBlur())
         await _until(

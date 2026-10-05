@@ -104,7 +104,7 @@ class PickerSearchInput(Input):
 
         Returns:
             False here. A subclass says True while its owner has not put the
-            committed value back, e.g. while its list is open.
+            committed value back, e.g. while it holds a typed filter.
         """
         return False
 
@@ -145,11 +145,11 @@ class ModelPickerInput(PickerSearchInput):
         """Posted before Input consumes Escape as an edit rollback."""
 
     def _typing(self) -> bool:
-        # A Custom ID stays as typed; an open list holds a filter until the
-        # picker's blur timer drops it.
+        # A Custom ID stays as typed; a filter (even one that matches nothing
+        # and so hides the list) is held until the picker's blur timer puts
+        # the committed model back.
         picker = self.query_ancestor(ModelSearchPicker)
-        results = picker.query_one("#model-search-picker-results", OptionList)
-        return picker.custom_mode or bool(results.display)
+        return picker.custom_mode or self.value != (picker.value or "")
 
     async def _on_key(self, event: events.Key) -> None:
         if event.key == "escape":
@@ -726,7 +726,6 @@ class ModelSearchPicker(Widget):
         if not self.is_mounted:
             return
         input_widget = self.query_one("#model-search-picker-input", Input)
-        changed = input_widget.value != value
         self._suppress_input_events = True
         try:
             with input_widget.prevent(Input.Changed):
@@ -735,9 +734,10 @@ class ModelSearchPicker(Widget):
             self._suppress_input_events = False
         if not input_widget.has_focus:
             self._rest_at_head(input_widget)
-        elif changed:
-            # As the Provider control: after a choice or Esc the next key
-            # replaces the id, not lands at the filter's caret (TASK-33007.9).
+        else:
+            # Every focused caller is a choice, an Esc or a mode switch: the
+            # next key replaces the id, even when Enter chose exactly the text
+            # typed, not lands at the filter's caret (TASK-33007.9).
             input_widget.select_all()
 
     @staticmethod
@@ -911,14 +911,15 @@ class ModelSearchPicker(Widget):
             return
         if self._custom_mode:
             return
-        # An open list on a typed filter is the filter's own: a window refocus
-        # inside the blur timer keeps it (TASK-33007.9).
-        results = self.query_one("#model-search-picker-results", OptionList)
-        if results.display and event.control.value != (self._selected_model or ""):
-            return
         # TASK-33001.7: keep the committed model painted. The input selects
-        # it on focus, so the first keystroke replaces it.
-        self._render_matches("", show_empty_query=True)
+        # it on focus, so the first keystroke replaces it. A typed filter the
+        # blur timer has not dropped yet (a short window blur, Tab to Custom
+        # ID and back) keeps its own list, empty or not (TASK-33007.9).
+        value = event.control.value
+        self._render_matches(
+            "" if value == (self._selected_model or "") else value,
+            show_empty_query=True,
+        )
 
     def on_descendant_blur(self, event: events.DescendantBlur) -> None:
         """Restore committed copy after focus leaves the compound picker."""
