@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 05:09'
+updated_date: '2026-10-05 06:24'
 labels:
   - console
   - performance
@@ -110,6 +110,16 @@ Reason: the approved change only narrows a DOM lookup to its current mounted own
 ADR required: no new ADR.
 ADR path: N/A; existing ADR120 and ADR198 apply.
 Reason: this test-only correction removes artificial descendant callback fan-out while preserving the same installed native key dispatch and every real-owner acceptance boundary. It changes no application authority, lifecycle, UI or GC/cache policy. The user’s standing approval to fix scale verification covers this bounded correction, not any new architectural policy.
+
+### Bounded first-busy observation correction
+
+1. Retain the clean 81c0d22 failed matrix and GC-trigger receipt. Normal activation windows make 3–18 full modal captures; the diagnostic locates an allocating GC trigger in the benchmark capture. This is observer contribution, not heap ownership or a production latency fix.
+2. With the real native compositor, prove RED that later native paints still cause redundant full-frame captures after the first actual activation busy frame. Preserve searches, first-busy paint, screen identity and all existing final readiness/loop checks.
+3. Stop only subsequent activation modal captures after the first actual busy receipt. The app still paints normally; the sentinel watches the entire activation, and the exact settled transcript remains captured separately after OPENED and modal unregister.
+4. Run affected measurement/fixture tests with the strict descriptor gate, static/derived-artifact guards and independent review; freeze source and generate fresh scale/Keyword/UI receipts under unchanged limits. Preserve all residual failures and native/resource/Windows/participant gaps.
+ADR required: no new ADR.
+ADR path: N/A; existing ADR120 and ADR198 apply.
+Reason: bounded test-only observer allocation reduction, covered by the user's approval to repair scale verification, preserves all native dispatch, actual first-paint proof and production ownership/GC/cache boundaries. No fourth production remedy is authorized.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -134,4 +144,8 @@ Frozen correction a0772b7c2a75cb1127f6138e9360402c6765f5b7 independently reviewe
 Current-dev integration at ac3a4f1: 288 affected tests pass, strict parent/private-file gates contain no database files. Fresh 10k/250k Keyword passes all 300 queries (P95 117.960333ms); normal UI retains seven activation and one search failures. Native trigger attribution proves a 73.944541ms gen-2 pause inside Pilot whole-screen Enter barrier with up to 751 callbacks, not scanned-object ownership or every production stall. Implemented bounded test-only same-native App._press_keys dispatch, retaining exact OPENED, modal unregister, exposure, focus, transcript, corpus/source and unchanged limits. Mounted RED receives native submission but detects four barrier callbacks; GREEN 48 affected tests in 10.84s, no warnings, strict private-file gate clean. Independent review finds no actionable issue. Existing ADR120/198; no new production, GC/cache policy or waiver. Fresh corrected-source scale/UI measurements and native/Windows/participant/terminal retirement remain pending; all AC open. Raw failures, hashes and causal limits retained in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
 
 Pre-commit correction gate: all eleven derived-artifact guards pass (/tmp/task31966-pilot-preflight.log); both changed benchmark Python files Ruff/format clean and git diff whitespace clean. No full sweep run. The reviewed helper and settlement checks are unchanged since the 48-test strict GREEN.
+
+Fresh corrected-driver source 81c0d22: 10k/250k Keyword passes 300 queries (P95 128.429459ms; loop 16.524ms; zero DB descriptors after cleanup). Normal UI completes 60 searches/eight exact activations but six activation intervals exceed unchanged 50ms, max 116.870292ms; preparation/search/busy gates pass. Native trigger observer confirms zero measured Pilot-barrier overlaps, but native layout/rendering and an extra benchmark full-frame capture remain contributors; no fourth production or global GC/cache fix selected. Partial actual macOS at 244x73 verifies MRU and cold/warm History exact reuse, not required compact/Character/Windows/participant qualification. Normal native Ctrl+Q returns zero but retains 37 database descriptors at app return; source/corpus guards pass. Full raw paths, failures and limits appended to Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. All AC remain open.
+
+Implemented bounded first-busy observation correction in the benchmark only: actual native display and first busy proof remain; redundant later activation modal captures stop, search/preparation and full-operation loop/readiness/final transcript gates unchanged. Mounted RED sees two captures instead of one with real repaint continuing; search control passes (original output excerpt /tmp/task31966-busy-capture-red-excerpt.txt). Initial 50-test GREEN observed rather than enforced resources; strict rerun 50 passed9.15s, no pytest warnings, FILE-RETIREMENT-REQUIRED True, all50 census rows have no DB files (/tmp/task31966-busy-capture-strict.log). Independent read-only review has no actionable issue. Eleven artifact guards, changed Python Ruff/format and whitespace pass. No production, GC/cache policy, threshold or qualification change; freeze and fresh full matrix next. Existing ADR120/198, no new ADR.
 <!-- SECTION:NOTES:END -->

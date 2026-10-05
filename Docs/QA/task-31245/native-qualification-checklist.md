@@ -1,6 +1,13 @@
 # Character navigation: native qualification checklist
 
-Status: **HOLD — protocol prepared, no new native or participant pass.**
+Status: **HOLD — partial macOS evidence retained; qualification incomplete.**
+
+The clean `81c0d22ff9538f75135c09eb0c43a3f31b7a0ccc` walkthrough observed
+Active MRU switching, cold/warm History reuse and normal Ctrl+Q at 244×73.
+It did not qualify the required viewports, Character workflows, Windows or
+participants. At app return, 37 database descriptors remained open. See
+`fixture-rebuild-2026-10-04.md` for exact outcomes and raw receipt paths; do not
+promote this partial walkthrough into a complete native or resource pass.
 
 This closes the external evidence gaps in TASK-31243/31244/31245. Pilot,
 PTY dependency probes, old screenshots and service timings do not substitute
@@ -31,7 +38,7 @@ Use actual native keyboard/pointer input, not injected Pilot events.
    Reopen it and confirm current-tab marking differs from the highlighted target.
 2. Type an Active query, use arrows and Enter. Only the highlighted exact chat
    activates. Zero matches widen only through the visible explicit action.
-3. Cycle Active → History → Character chats with F3. Current mode, selected row
+3. Cycle Active → History → Character chats with Shift+F3. Current mode, selected row
    and Enter destination must be visible. Active/History share their per-visit
    query; Character chats keeps its own query and never silently widens.
 4. In History, resume one saved chat cold, then resume it again warm. Repeat

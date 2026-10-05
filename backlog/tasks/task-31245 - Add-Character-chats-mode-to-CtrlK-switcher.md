@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:09'
-updated_date: '2026-10-04 21:50'
+updated_date: '2026-10-05 06:13'
 labels:
   - console
   - switcher
@@ -36,7 +36,7 @@ and dependency references.
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Ctrl+K exposes Active, History, and Character chats with F3 cycling and truthful visible hints.
+- [ ] #1 Ctrl+K exposes Active, History, and Character chats with Shift+F3 cycling and truthful visible hints.
 - [ ] #2 Blank Active Enter still targets the most recently used other tab; explicit navigation and nonblank queries activate only the committed highlighted identity.
 - [ ] #3 Active and History share their per-visit query and labeled zero-match widening; Character chats owns a separate query and never widens.
 - [ ] #4 Character rows use the approved two-line grammar plus one stable selected-only detail region, with no unselected snippets.
@@ -137,6 +137,8 @@ PR3009 Qodo follow-up: direct cancellation during transcript publication reprodu
 2026-10-04 user-approved fixture rebuild: checked-in test-only fresh-root/source guards, offline private environment and existing profile/network backstops; production-API selected-branch corpus and independent 30-query oracle; drained cancellation worker, integrity/descriptor checks, nearest-rank receipt; separate small native dataset/manual launcher. Independent review findings for missing-head acceptance, completion source drift and nondeterministic timestamps reproduced and fixed; re-review clean. Final bounded fixture+measurement contracts 41 passed8.70s/no warnings/strict0/zero DB files after every teardown. Latest-dev repair integration85 passed317.79s/no warnings/strict0. Tooling checkpoint Docs/QA/task-31245/fixture-rebuild-2026-10-04.md; current full-scale/native/external evidence remains unqualified and semantics dependency is not waived. Existing ADR120/198, no new ADR or production policy. Freeze/clean-process smoke/full corpus measurement next; no PR yet.
 
 Fixture tooling frozen at f7b4227e36, synthetic first-send profile corrected at c25ea51e57. Fresh c25 standalone Keyword: 300 samples correct, P95 131.421958ms, loop max6.3825ms, zero retained DB resources. Full UI matrix:60 searches+8 exact activations, busy max34.928375ms, all8 activation loop gaps fail50ms limit (69–134ms); post-run-test handles18, not final native retirement. Read-only observer diagnostics retained with causal limits. Confirmed separate untimed setup-frame race; narrow actual-frame wait corrected,47 targeted tests17.94s/no warnings/strictzeroDB, independent review clean. Details Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. No GC/cache policy change, no acceptance waived; native/Windows/participants/resource/performance and TASK31246 dependency remain open.
+
+Retained partial native macOS evidence at clean 81c0d22: actual 244x73 dedicated Terminal, synthetic-only profile, exact MRU Amber-07 and cold/warm History Amber-01 reuse with expected three-to-four tabs and no warm duplicate. Normal native Ctrl+Q returns zero, source/corpus unchanged, but 37 DB descriptors remain at app return. Shift+F3/Character, required viewports, Context/Roleplay/recovery/rename/cancellation boundaries, Windows and actual participants remain unqualified; background capture lag and unsuccessful AX insertion retained, not passed. Checklist and AC1 now name Shift+F3, following ADR031 without production binding changes. Fresh 10k/250k Keyword passes, UI still has six activation loop failures; no qualification waiver. Evidence inventory: Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
 <!-- SECTION:NOTES:END -->
 
 ### Approved native follow-up — 2026-09-07

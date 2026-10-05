@@ -295,3 +295,14 @@ pass; fresh source-bound latency qualification is still required. Trace the
 driver as well as the app before choosing a production remedy. Never subtract
 observer cost from failed timings, weaken real settlement, or confuse an
 allocating trigger with ownership of the heap a collection scans.
+
+At clean 81c0d22, the corrected driver still made 3–18 benchmark full-modal
+captures per activation. A trigger trace found gen-2 allocation inside an extra
+`render_strips()` capture. A real mounted RED proved a later native repaint
+increased full captures from one to two even after the first busy receipt;
+search remained a separate control. Stop redundant activation captures only
+after actual busy paint, while retaining native display, whole-operation loop
+observation and exact final readiness/transcript capture. The strict 50-test
+run passes without retained DB files; fresh scale qualification is still
+required. Removing observer allocation is not evidence that application GC
+pauses disappeared, and moving a collection is not retiring its heap owners.

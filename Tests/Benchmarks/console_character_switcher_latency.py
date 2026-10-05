@@ -68,6 +68,24 @@ class PaintWindow:
             self.busy_ns = now_ns
             self.busy_text = text
 
+    def capture_frame(self, screen: Any, now_ns: int) -> str | None:
+        """Capture only native frames still needed by this observation window.
+
+        Args:
+            screen: The screen whose native display just completed.
+            now_ns: Timestamp of that actual display observation.
+
+        Returns:
+            Current compositor text, or None when no capture is needed.
+        """
+        if self.screen is not None and screen is not self.screen:
+            return None
+        if self.operation == "activation" and self.busy_ns is not None:
+            return None
+        frame = "\n".join(strip.text for strip in screen._compositor.render_strips())
+        self.observe(frame, now_ns, screen=screen)
+        return frame
+
     def summary(self) -> dict[str, Any]:
         """Serialize raw observations and separate busy from total latency."""
         return {
@@ -396,10 +414,9 @@ async def run(
                 ):
                     return
                 observed_ns = time.perf_counter_ns()
-                frame = "\n".join(
-                    strip.text for strip in screen._compositor.render_strips()
-                )
-                window.observe(frame, observed_ns, screen=screen)
+                frame = window.capture_frame(screen, observed_ns)
+                if frame is None:
+                    return
                 if (
                     window.operation != "activation"
                     and not screen._query_pending

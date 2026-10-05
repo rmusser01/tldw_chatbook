@@ -961,3 +961,126 @@ Keyword receipts, and rerun the unchanged real-owner UI matrix. The ac3a4f1
 receipts cannot be retagged as evidence for this changed source. Native,
 Windows, participant and terminal resource qualification remain unwaived;
 TASK31966/TASK31245 remain In Progress and their open criteria are unchanged.
+
+## Corrected-driver qualification at clean 81c0d22
+
+Fresh source-bound container: `/tmp/task31966-pilot-measure-PKKkEE`, measured
+head `81c0d22ff9538f75135c09eb0c43a3f31b7a0ccc`. The scale receipt records
+10,000 conversations, 250,000 eligible selected-branch messages plus four
+excluded canaries, and 10,000 index documents. Corpus SHA256:
+`cfaefa4ead2e1f7d844c3354498a391e58b1cb9f4a5b6a4689a43b22752ad54b`.
+The fresh Keyword receipt passes all 300 timed manifest queries: warm P95
+128.429459ms, maximum loop interval 16.524ms, no correctness failures, zero
+owned database descriptors and zero registered handles after cleanup.
+Source-clean/exact and unchanged-corpus guards pass. Raw roots: `scale` and
+`keyword`; logs `/tmp/task31966-pilot-scale.log` and
+`/tmp/task31966-pilot-keyword.log`. This is Keyword-only evidence, not Meaning
+or UI latency qualification.
+
+The unchanged real-owner UI matrix completes both preparations, all 60
+searches and eight exact OPENED activations, with no app exception. Preparation,
+search and busy-paint limits pass; maximum busy paint is 74.517042ms. Six of
+eight activation loop intervals still fail the unchanged 50ms limit:
+
+| Viewport | Activation loop intervals (ms), in order |
+| --- | --- |
+| 52×20 | 72.963958 FAIL; 51.315000 FAIL; 47.356833 PASS; 48.625583 PASS |
+| 120×50 | 60.630625 FAIL; 90.121500 FAIL; 79.306833 FAIL; 116.870292 FAIL |
+
+Raw failed receipt: `ui/ui-evidence/ui-latency-evidence.json`; log
+`/tmp/task31966-pilot-ui.log`. The retained post-test app still has 16 registered
+handles, not terminal ownership retirement. Do not retag these receipts to a
+later documentation head or infer a controlled whole-app speedup.
+
+The same external GC-trigger diagnostic is retained under `ui-gc-caller`
+(`/tmp/task31966-pilot-gc-caller.log`). It records 16 Pilot waits, 27 paired
+generation-2 collections (54 start/stop records), zero dropped wait/GC records
+and unchanged 700/10/10 thresholds. No measured activation overlaps a Pilot
+descendant barrier, confirming that contribution was removed. Remaining
+collections occur inside native layout/rendering; one allocating trigger is the
+benchmark's extra full-frame `render_strips()` capture. This identifies a
+candidate observer contribution, not scanned/dead-object ownership or a proven
+production remedy. Inclusive spans are not additive, timings are not corrected
+by subtraction, and the instrumented matrix remains failed. No fourth
+production correction or global GC/cache policy is selected.
+
+## Partial native macOS walkthrough at clean 81c0d22
+
+The approved dedicated Terminal window (PID 2934, window 118726) ran a freshly
+prepared disposable profile at the same frozen head. Actual observed viewport
+was **244×73**, not any required qualification viewport. Host: macOS 26.5.2
+arm64, Python 3.12.11, Textual 8.2.8. Font/zoom/remapping and exact Terminal
+version were not recorded. Native source digest:
+`dfbdfa4fc80e5a22f4a13fa383df85486e3baa01953cd01b74ef52ef11202ee1`;
+30 conversations, 60 messages and 28 Keyword index documents. Synthetic
+Amber/Indigo/Cedar/Copper, Unavailable and empty-character fixtures were used;
+no real profile or provider requests. Screenshot directory: `native-shots`
+(00–65) under the named container.
+
+| Native case | Observed result at 244×73 | Evidence |
+| --- | --- | --- |
+| Blank Active MRU Enter | Switched Indigo-07 to exact Amber-07 marker, composer focused, three tabs unchanged. Reopening distinguished CURRENT Amber-07 from highlighted MRU Indigo-07. | Screenshots 21–27 |
+| History cold open | Pointer selected History; native digit keys accepted query `01`. Enter opened exact `NATIVE_MARKER_AMBER_01`, with composer focus; tabs increased once from three to four. | 33–43 |
+| History warm reuse | History Enter reopened the exact Amber-01 marker; four tabs unchanged and composer focused. | 44–50 |
+| Mode-cycle/Character pointer | Shift+F3, shifted Fn+F3 and Character-pointer attempts did not yield an observed Character-mode frame. Not passed. | 28–32, 51–56 |
+| Text insertion | CUA AX `type_text` reported insertion but no query change was observed. Native individual digit keys worked separately. Not a text-entry pass. | 37–41 |
+| Escape | Later capture returned to unchanged Amber-01 and four tabs. Delayed background captures do not identify a controlled pre/postcommit boundary. | 57–62 |
+| Normal quit | Actual native Ctrl+Q, then settled Terminal `[Process completed]`; receipt return code zero. No controller signal was used. | 63–65; `native-macos/native-return.json` |
+
+Immediate background captures sometimes retained an older frame, so CUA action
+acknowledgements alone are not counted as observed results. Required 52×20,
+120×50, 72×35 and 80×24 native checks remain unrun; the earlier resize attempt
+did not change actual cells. Character/Context/Roleplay/recovery/rename and
+controlled cancellation cases, Windows and three actual unfamiliar
+participants remain unqualified. ADR031 moved mode cycling to **Shift+F3**;
+the stale checklist and task wording are corrected, without changing bindings.
+
+The native receipt's status is `returned-not-qualified`: source-clean/exact and
+unchanged-corpus guards pass, but **37 owned database descriptors remain open
+at `App.run()` return**. They include Chat, evaluation, collections,
+subscriptions and workspace databases and WAL/SHM files. Later OS process exit
+is not app-owner retirement evidence. Startup's optional missing
+`python-frontmatter` notice is separate from this finding; no warning was
+suppressed. Read-only shutdown tracing found no general app-cache retirement
+in the installed lifecycle; database `close_connection()` is current-thread
+only, whereas existing file-owner quiescence is a separate stronger boundary.
+Do not blindly close global/foreign owners or use test-fixture cleanup to claim
+a production lifecycle fix. Preserve this failed resource receipt while tracing
+the actual ownership and worker-settlement contract.
+
+TASK31966 and TASK31245 stay In Progress. No qualification waiver, semantic
+work, full test sweep or follow-up PR is implied by this partial evidence.
+
+## First-busy observation correction: targeted receipt
+
+Clean 81c0d22 normal activation windows captured the full modal 3–18 times
+apiece although the contract retains only the first actual busy frame. The
+native trigger diagnostic separately located a gen-2 allocation trigger in
+this extra benchmark full-frame rendering. This is not proof that removing
+captures eliminates all production pauses; a collection can move elsewhere.
+
+The bounded test-only correction keeps actual native display and all owner/
+mode/batch gates, captures until the first activation busy frame, then stops
+only subsequent redundant activation modal captures. Search/preparation paint
+capture continues. The entire-operation sentinel, typed OPENED, strict exact
+readiness, actual modal unregister and final Chat compositor capture remain
+unchanged; no time is subtracted and no limits or production policies change.
+
+The real mounted RED forwards compositor output unchanged and observes a later
+native repaint, but fails because full captures increase from one to two after
+the first actual busy frame. The search control passes. Original tool-output
+excerpt retained at `/tmp/task31966-busy-capture-red-excerpt.txt` (explicitly an
+excerpt, not a full log): one failed, one passed, 20 deselected in 0.60s.
+
+Initial GREEN: 50 tests pass in 8.65s with an observation-only census; that run
+did **not** enforce retirement. Corrected strict rerun: **50 pass in 9.15s**, no
+pytest warnings, `FILE-RETIREMENT-REQUIRED True`, all 50 read-only census rows
+contain no database files. Log: `/tmp/task31966-busy-capture-strict.log`.
+Both changed Python files are Ruff/format clean; whitespace is clean.
+Independent read-only review finds no actionable issue and confirms all
+existing acceptance boundaries remain. This is a harness correction, not full
+branch qualification. Fresh frozen-head scale evidence is required next.
+
+All eleven derived-artifact guards pass
+(`/tmp/task31966-busy-capture-preflight.log`). Both Backlog integrity guards
+pass again after the final task-note edits. No full suite was run.

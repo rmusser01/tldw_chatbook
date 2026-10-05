@@ -55,6 +55,64 @@ async def test_activation_key_dispatch_delivers_enter_without_per_widget_barrier
         assert registrations == [], registrations
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["activation", "search"])
+async def test_activation_observer_stops_recapturing_after_actual_busy_paint(
+    monkeypatch, operation
+):
+    """Catch redundant full renders while retaining actual native repainting."""
+    from textual._compositor import Compositor
+    from textual.app import App
+    from textual.widgets import Static
+
+    class PaintedApp(App):
+        window = None
+        paints = 0
+
+        def compose(self):
+            yield Static("Previous result", id="status")
+
+        def _display(self, screen, renderable):
+            super()._display(screen, renderable)
+            if renderable is not None:
+                self.paints += 1
+                if self.window is not None:
+                    self.window.capture_frame(screen, self.paints)
+
+    app = PaintedApp()
+    original_render = Compositor.render_strips
+    captures = []
+
+    def counted_render(self, *args, **kwargs):
+        captures.append(self)
+        return original_render(self, *args, **kwargs)
+
+    async with asyncio.timeout(5), app.run_test() as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(Compositor, "render_strips", counted_render)
+        window = app.window = PaintWindow(operation, "query", 0, screen=app.screen)
+        status = app.query_one("#status", Static)
+        status.update(
+            "Opening…" if operation == "activation" else "Searching local chats…"
+        )
+        await pilot.pause()
+        assert window.busy_ns is not None
+        assert (
+            "Opening…" if operation == "activation" else "Searching local chats…"
+        ) in window.busy_text
+        first_busy_ns = window.busy_ns
+        captures_after_busy, paints_after_busy = len(captures), app.paints
+
+        status.update("Finishing…" if operation == "activation" else "Next result")
+        await pilot.pause()
+        assert app.paints > paints_after_busy
+        assert window.busy_ns == first_busy_ns
+        if operation == "activation":
+            assert len(captures) == captures_after_busy
+        else:
+            assert len(captures) > captures_after_busy
+
+
 @pytest.mark.parametrize(
     "pending,query,entries,frame,expected",
     [
