@@ -4849,6 +4849,37 @@ that mattered: does the widget eventually appear at all?
 
 ---
 
+## A full GC pause can fill a fixed sub-second wait — adding tests upstream moves it onto a fixed victim (TASK-33008.5, 2026-10-05)
+
+**Incident.** TASK-33008.5 added one parametrized test (six cases) to
+`Tests/Wizards/test_first_run_setup_wizard.py`. A test 3,600 lines further down,
+`test_optional_step_failure_is_removed_and_reported_in_summary`, then failed with
+`assert 'RAG' in ''` in 5 of 5 file-level runs at head. It passed in 3 of 3 runs
+without the new test (base, base plus the production change, head with the new test
+deselected), passed standalone, and passed in a pair run with the new test. So it was
+not a state leak, not the production change, and not load: the same test lost every
+time. That is the opposite of the rotating victim in "Removing a per-test
+gc.collect()" above.
+
+A scratch pytest plugin found the cause in one run. It logged `gc.callbacks` pauses
+over 50 ms and wrapped `SummaryStep._render_rows`. The file runs on one xdist worker
+(`--dist loadfile`), and once it has built a few hundred Textual apps a
+generation-2 collection takes about 340 ms and up to 600 ms (199 pauses over 50 ms
+in a 288 s run, one every 1.4 s at the median). The
+victim shows the Summary and then waits a fixed `pilot.pause(0.4)`. A 359 ms pause
+landed inside that window, the rows were still empty, and teardown cancelled the
+render. Collections fire on allocation counts, so the test order fixes where they
+land. Six more app runs upstream moved one onto this test.
+
+**What to do.** When a test fails only at file level, always the same test, and a
+pair run with the suspected predecessor passes, log `gc.callbacks` before bisecting
+for shared state. Fix the victim, not the trigger: wait on the condition (here, the
+rows are non-empty) with a bound of seconds. Moving the new tests elsewhere only
+hides it until the next person adds a test. Expect it wherever a file this large has
+a fixed wait under about half a second.
+
+---
+
 ## A keyboard funnel through `Button.press()` dies silently when the button gains a real disabled state
 
 **The trap.** A key handler that "clicks" a button via `Button.press()` inherits

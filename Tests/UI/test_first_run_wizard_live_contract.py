@@ -59,6 +59,7 @@ from textual.widgets import (
 
 from Tests.private_profile import private_profile_test
 from Tests.app_module_patches import patch_app_global
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_product_maturity_phase1_first_run import (
     _prepare_clean_environment,
@@ -3707,19 +3708,27 @@ def _recorded_auth_failure_result():
 
 @pytest.mark.parametrize("handoff", ["models_mapping", "outcome_unavailable"])
 @pytest.mark.asyncio
+@private_profile_test
 async def test_model_step_renders_auth_copy_on_both_handoff_branches(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, handoff: str
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    handoff: str,
 ) -> None:
     """A rejected key must read as a rejected key on either handoff path.
 
     Both _load_models branches previously hardcoded the generic category, so
     a 401 rendered as "Couldn't reach the server ... Check it's running" --
     pointing away from the fix, which lives one step Back. This drives the
-    real wizard to the Model step and asserts the rendered radio copy, so
+    real wizard to the Model step and asserts the rendered status line, so
     reverting either call site fails here even though the helper's own unit
     tests would still pass.
 
+    TASK-33008.5: the status is one plain text line, not a disabled radio
+    option, so a failure no longer draws like a choice.
+
     Args:
+        request: Pytest fixture the private-profile wrapper reads.
         monkeypatch: Pytest fixture used to isolate config/HOME state and,
             for the second branch, to force the outcome-unavailable path.
         tmp_path: Pytest fixture providing the throwaway profile directory.
@@ -3728,8 +3737,10 @@ async def test_model_step_renders_auth_copy_on_both_handoff_branches(
     app = _build_fresh_wizard_app(monkeypatch, tmp_path)
     with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
         async with app.run_test(size=(140, 45)) as pilot:
+            # The private-profile child starts cold, so the wizard screen can
+            # be current before it has composed: wait for the container.
             await _wait_until(
-                pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                pilot, lambda: bool(app.screen.query(SetupWizardContainer))
             )
             container = app.screen.query_one(SetupWizardContainer)
             await _wait_until(pilot, lambda: container.can_proceed)
@@ -3796,27 +3807,25 @@ async def test_model_step_renders_auth_copy_on_both_handoff_branches(
                 lambda: _current_step_id(container) == STEP_MODEL,
             )
             model_step = container.steps[container.current_step]
-            # The placeholder is a non-empty label too, so waiting on
-            # "any text" can read the loading state and pass by accident.
+            choice = model_step.query_one("#setup-model-choice", RadioSet)
+            # The loading placeholder is a line too, so waiting on "any
+            # child" can read the loading state and pass by accident.
             await _wait_until(
                 pilot,
                 lambda: (
-                    (
-                        labels := [
-                            str(button.label)
-                            for button in model_step.query(
-                                "#setup-model-choice RadioButton"
-                            )
-                        ]
-                    )
-                    and all("loading models" not in label for label in labels)
+                    bool(choice.children)
+                    and not model_step.query("#setup-model-loading")
                 ),
             )
-            rendered = " ".join(
-                str(button.label)
-                for button in model_step.query("#setup-model-choice RadioButton")
-            )
+            lines = list(choice.children)
+            rendered = " ".join(str(line.renderable) for line in lines)
 
+    # type(...) is, not isinstance: RadioButton is itself a Static subclass.
+    assert [type(line) for line in lines] == [Static], (
+        f"the status must be one plain text line, not radio options: {lines!r}"
+    )
+    assert lines[0].id == "setup-model-connection-failed"
+    assert lines[0].disabled and not lines[0].can_focus
     assert "Authentication failed" in rendered, (
         f"a rejected key rendered as something else on the {handoff!r} branch: "
         f"{rendered!r}"

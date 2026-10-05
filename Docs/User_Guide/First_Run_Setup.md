@@ -52,6 +52,20 @@ press **Retry** on the Model step. A model list that arrives after a failed
 **Test connection** replaces that test's result. A different key or address
 always counts as a new check.
 
+When the Model step has no models to list, the list box shows one line of
+plain text instead:
+
+- "(loading models…)" while it asks the server.
+- "Pick a provider first — or type a model name below" when no provider is chosen.
+- "(no models found — enter one below)" when the server lists none.
+- "Model listing unavailable; enter the model ID used by this endpoint." when the server has no model list.
+- "Authentication failed — this API key was rejected. Go Back to fix it, or enter a model ID below." when the key is rejected. This one shows no **Retry**, because retrying cannot fix a key.
+- The server that could not be reached, with **Retry**, when the check failed for another reason.
+
+The line is a message, not an option: it has no radio marker, and the arrow
+keys, Space and Enter cannot select it. The **Or enter a model name** field
+below always works.
+
 The Provider step lists the same providers as Settings ▸ Providers & Models:
 Popular first, then Cloud, Local and Other. Every row can be picked with the
 arrow keys and set up here, hosted presets included (Together, Fireworks,

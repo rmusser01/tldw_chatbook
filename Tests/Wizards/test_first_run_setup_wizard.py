@@ -3933,15 +3933,9 @@ async def test_mounted_models_404_then_manual_model_never_reports_verified(monke
         model_step = container.steps[model_index]
         assert isinstance(model_step, ModelStep)
         await pilot.pause(0.1)
-        status_rows = list(
-            model_step.query_one("#setup-model-choice", RadioSet).query(RadioButton)
-        )
-        assert len(status_rows) == 1
-        assert str(status_rows[0].label) == (
+        assert _model_status_line(model_step, "setup-model-listing-unavailable") == (
             "Model listing unavailable; enter the model ID used by this endpoint."
         )
-        assert status_rows[0].disabled
-        assert getattr(status_rows[0], "_model_id", None) is None
         assert not model_step.query_one("#setup-model-custom", Input).disabled
         model_step.query_one("#setup-model-custom", Input).value = "manual-model"
         await pilot.pause()
@@ -8349,6 +8343,24 @@ def _model_step(wizard, discover_models=None):
     )
 
 
+def _model_status_line(step, line_id: str) -> str:
+    """The model step's status copy, pinned as one plain text line.
+
+    TASK-33008.5: a status used to be a disabled radio row, so a failure drew
+    like a choice. It is now the picker's only child and plain text: no radio
+    glyph, no focus, no pick, and never beside model rows. ``type(...) is``,
+    not ``isinstance``: RadioButton is itself a Static subclass. ``disabled``
+    is load-bearing inside the RadioSet -- an enabled non-radio child becomes
+    the set's highlighted node and Space then asserts inside Textual.
+    """
+    [line] = list(step.query_one("#setup-model-choice", RadioSet).children)
+    assert type(line) is Static, type(line)
+    assert line.id == line_id, line.id
+    assert line.disabled and not line.can_focus
+    assert getattr(line, "_model_id", None) is None
+    return str(line.renderable)
+
+
 @pytest.mark.asyncio
 async def test_model_step_provider_change_resets_selection():
     from unittest.mock import AsyncMock
@@ -8673,10 +8685,82 @@ async def test_model_step_no_provider_shows_pick_a_provider_copy():
         await pilot.pause()
         step.on_show()
         await pilot.pause(0.1)
+        assert _model_status_line(step, "setup-model-no-provider") == (
+            "Pick a provider first — or type a model name below"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("render_kwargs", "line_id", "expected_copy"),
+    [
+        ({"discovery_state": "loading"}, "setup-model-loading", "(loading models…)"),
+        (
+            {"no_provider": True},
+            "setup-model-no-provider",
+            "Pick a provider first — or type a model name below",
+        ),
+        ({}, "setup-model-empty", "(no models found — enter one below)"),
+        (
+            {"discovery_state": "listing_unavailable"},
+            "setup-model-listing-unavailable",
+            "Model listing unavailable; enter the model ID used by this endpoint.",
+        ),
+        (
+            {
+                "discovery_state": "connection_failed",
+                "failure_category": "authentication",
+            },
+            "setup-model-connection-failed",
+            "Authentication failed — this API key was rejected. Go Back to fix it, or enter a model ID below.",
+        ),
+        (
+            {"discovery_state": "connection_failed", "failure_category": "timeout"},
+            "setup-model-connection-failed",
+            "Couldn't reach the server (timeout). Check it's running, then Retry — or enter a model ID below.",
+        ),
+    ],
+)
+async def test_model_status_is_plain_text_that_space_and_enter_cannot_pick(
+    render_kwargs, line_id: str, expected_copy: str
+):
+    """TASK-33008.5: every status reads as text, and the picker's keys stay inert.
+
+    The line lives inside the RadioSet, which keeps its Tab stop. Space and
+    Enter on the focused set must neither pick the status nor crash: Textual's
+    ``RadioSet.action_toggle_button`` asserts its highlighted child is a
+    RadioButton, so an enabled text child there exits the app.
+    """
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        wizard_data={},  # no provider: the discovery key is None throughout
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = _model_step(wizard)
+    app = _StepHost(step)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        # Fence on_show's own no-provider render, so a slow one cannot land
+        # after the state under test and replace it.
+        step._cancel_model_discovery()
+        await step._render_models([], **render_kwargs)
+        assert _model_status_line(step, line_id) == expected_copy
+
         radio_set = step.query_one("#setup-model-choice", RadioSet)
-        labels = [str(b.label) for b in radio_set.query(RadioButton)]
-        assert "(loading models…)" not in labels
-        assert any("pick a provider" in label.lower() for label in labels)
+        radio_set.focus()
+        await pilot.pause()
+        assert app.focused is radio_set
+        await pilot.press("space", "enter", "down", "space")
+        await pilot.pause()
+
+        assert app.is_running and app.focused is radio_set
+        assert radio_set.pressed_button is None
+        assert step._effective_model_id() == ""
+        assert _model_status_line(step, line_id) == expected_copy
 
 
 @pytest.mark.asyncio
@@ -8991,18 +9075,16 @@ async def test_model_listing_unavailable_is_disabled_and_manual_entry_remains_en
 
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.1)
-        rows = list(step.query_one("#setup-model-choice", RadioSet).query(RadioButton))
-        assert len(rows) == 1
-        assert str(rows[0].label) == (
+        assert _model_status_line(step, "setup-model-listing-unavailable") == (
             "Model listing unavailable; enter the model ID used by this endpoint."
         )
-        assert rows[0].disabled
-        assert getattr(rows[0], "_model_id", None) is None
         manual = step.query_one("#setup-model-custom", Input)
         assert not manual.disabled and manual.focusable
         assert step.selected_model_id == ""
 
-        step.set_selected_model_from_button(rows[0])
+        step.set_selected_model_from_button(
+            step.query_one("#setup-model-listing-unavailable")
+        )
         assert step.selected_model_id == ""
 
 
@@ -9131,11 +9213,10 @@ async def test_mounted_provider_handoff_preserves_typed_discovery_outcome(
             ),
             "calls": scope_service.discover_models.await_count,
         }
-        status = status_matches[0]
-        assert isinstance(status, RadioButton)
-        assert status.disabled
-        assert str(status.label) == expected_copy
-        assert getattr(status, "_model_id", None) is None
+        assert (
+            _model_status_line(model_step, status_selector.removeprefix("#"))
+            == expected_copy
+        )
         assert "curated-model-must-not-appear" not in app.export_screenshot()
         manual = model_step.query_one("#setup-model-custom", Input)
         assert not manual.disabled and manual.focusable
@@ -9275,10 +9356,10 @@ async def test_mounted_real_transport_preserves_404_server_and_payload_categorie
                     break
                 await pilot.pause(0.05)
 
-            row = model_step.query_one(status_selector, RadioButton)
-            assert row.disabled
-            assert str(row.label) == expected_copy
-            assert getattr(row, "_model_id", None) is None
+            assert (
+                _model_status_line(model_step, status_selector.removeprefix("#"))
+                == expected_copy
+            )
             assert "curated-must-not-appear" not in app.export_screenshot()
             manual = model_step.query_one("#setup-model-custom", Input)
             assert not manual.disabled and manual.focusable
@@ -9350,9 +9431,7 @@ async def test_model_connection_failure_shows_bounded_category_and_retry():
 
     async with _StepHost(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.1)
-        failure = step.query_one("#setup-model-connection-failed", RadioButton)
-        failure_copy = str(failure.label)
-        assert failure.disabled
+        failure_copy = _model_status_line(step, "setup-model-connection-failed")
         assert "request failed" in failure_copy
         assert len(failure_copy) < 120
         assert "x" * 20 not in failure_copy and "y" * 20 not in failure_copy
@@ -9572,11 +9651,9 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
             release_late_result.set()
             await asyncio.wait_for(late_result_returned.wait(), timeout=2)
             pytest.fail("Model owner timeout did not render bounded failure")
-        status = model_step.query_one("#setup-model-connection-failed", RadioButton)
-        assert str(status.label) == (
+        assert _model_status_line(model_step, "setup-model-connection-failed") == (
             "Couldn't reach the server (timeout). Check it's running, then Retry — or enter a model ID below."
         )
-        assert status.disabled
         assert cancelled.is_set()
         assert provider_step._selected_discovery_state == "cancelled"
         assert "curated-timeout-must-not-appear" not in app.export_screenshot()
@@ -9593,8 +9670,9 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
         assert provider_step._selected_provider_outcomes == {}
         assert container._first_run_selected_provider_models == {}
         assert container._first_run_selected_provider_outcomes == {}
-        status = model_step.query_one("#setup-model-connection-failed", RadioButton)
-        assert "timeout" in str(status.label)
+        assert "timeout" in _model_status_line(
+            model_step, "setup-model-connection-failed"
+        )
         assert "late-timeout-model" not in app.export_screenshot()
 
 
@@ -9870,24 +9948,16 @@ async def test_model_step_discovery_timeout_keeps_manual_entry_and_retry(monkeyp
         # Wait on the condition, not one fixed 0.3 s pause, which flaked under
         # load (TASK-34100.1 review round 2, as the owner-timeout test above).
         def timeout_rendered() -> bool:
-            rows = list(step.query_one("#setup-model-choice", RadioSet).query(RadioButton))
             retry = step.query_one("#setup-model-retry", Button)
-            return (
-                len(rows) == 1
-                and "timeout" in str(rows[0].label)
-                and not retry.has_class("hidden")
-            )
+            failed = bool(step.query("#setup-model-connection-failed"))
+            return failed and not retry.has_class("hidden")
 
         deadline = asyncio_module.get_running_loop().time() + 10
         while asyncio_module.get_running_loop().time() < deadline:
             if timeout_rendered():
                 break
             await pilot.pause(0.05)
-        radio_set = step.query_one("#setup-model-choice", RadioSet)
-        [status] = list(radio_set.query(RadioButton))
-        assert status.disabled
-        assert "timeout" in str(status.label)
-        assert getattr(status, "_model_id", None) is None
+        assert "timeout" in _model_status_line(step, "setup-model-connection-failed")
         assert not step.query_one("#setup-model-custom", Input).disabled
         retry = step.query_one("#setup-model-retry", Button)
         assert retry.display and not retry.has_class("hidden")
@@ -12444,8 +12514,15 @@ class TestComposeCrashPolicy:
                 step for step in container.steps if isinstance(step, SummaryStep)
             )
             container.show_step(container.steps.index(summary))
-            await pilot.pause(0.4)
-            rendered = str(summary.query_one("#setup-summary-rows", Static).render())
+            rows = summary.query_one("#setup-summary-rows", Static)
+            # Wait on the rows, not a fixed 0.4 s. A full GC pause in this
+            # 400-test file runs 340-600 ms, and one landing in that window
+            # left the rows empty once TASK-33008.5 added tests upstream.
+            for _ in range(200):
+                if str(rows.render()):
+                    break
+                await pilot.pause(0.05)
+            rendered = str(rows.render())
             assert "RAG" in rendered
             assert "couldn't be shown" in rendered
 
@@ -13197,9 +13274,10 @@ async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
 
         # M-1/M-4: auth copy points Back; Retry is hidden (it cannot fix a
         # rejected key).
-        row = model_step.query_one("#setup-model-connection-failed")
-        row_text = str(row.label)
-        assert "Authentication failed" in row_text and "Back" in row_text
+        assert _model_status_line(model_step, "setup-model-connection-failed") == (
+            "Authentication failed — this API key was rejected. Go Back to fix it, "
+            "or enter a model ID below."
+        )
         assert model_step.query_one("#setup-model-retry", Button).has_class("hidden")
         assert container.provider_probe_failure() == "authentication"
 

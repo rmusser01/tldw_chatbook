@@ -54,6 +54,18 @@ from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker
 _PICKER_MODEL_LIMIT = 20
 
 
+def _status_line(text: str, line_id: str) -> Static:
+    """A model-step status as plain text: no radio glyph, no focus, no pick.
+
+    TASK-33008.5: a status used to be a disabled radio row, so a failure drew
+    like a choice. disabled=True still matters -- an enabled non-radio child
+    becomes the RadioSet's highlighted node, and Space then asserts inside
+    Textual and exits the app. A status is never mounted beside model rows.
+    markup=False: the copy can carry a typed endpoint such as http://[::1].
+    """
+    return Static(text, id=line_id, disabled=True, markup=False)
+
+
 class ModelStep(SetupStep):
     """Pick a default model for the chosen provider.
 
@@ -182,16 +194,7 @@ class ModelStep(SetupStep):
             yield Static("Pick a default model", classes="setup-title")
             yield Static("", id="setup-model-provider-line", classes="setup-subtitle")
             with SetupRadioSet(id="setup-model-choice", classes="setup-choice-list"):
-                # disabled=True: an un-disabled placeholder is a real,
-                # toggleable RadioButton -- pressing Enter/Space while it is
-                # the only/highlighted option (e.g. an impatient user, or
-                # discovery that never resolves) would fire RadioSet.Changed
-                # and commit the literal placeholder text as the model id
-                # (see _on_model_chosen). Same reasoning applies to the two
-                # other placeholders this step ever mounts, below.
-                yield SetupRadioButton(
-                    "(loading models…)", id="setup-model-loading", disabled=True
-                )
+                yield _status_line("(loading models…)", "setup-model-loading")
             yield Label("Or enter a model name", classes="setup-field-label")
             yield Input(id="setup-model-custom", placeholder="model-id")
             yield Button(
@@ -316,7 +319,7 @@ class ModelStep(SetupStep):
         elif not provider_key:
             # F-F fix: with no provider chosen yet there is nothing to
             # discover against, so the old code simply skipped this branch
-            # and left the initial "(loading models…)" RadioButton in place
+            # and left the initial "(loading models…)" status line in place
             # forever -- a permanently-stuck loading indicator for a state
             # that was never actually loading. Replace it with copy that
             # tells the user what to do instead.
@@ -572,10 +575,9 @@ class ModelStep(SetupStep):
                 self._restore_model_radio_selection(discovery_key)
         elif discovery_state == "listing_unavailable":
             await radio_set.mount(
-                SetupRadioButton(
+                _status_line(
                     "Model listing unavailable; enter the model ID used by this endpoint.",
-                    id="setup-model-listing-unavailable",
-                    disabled=True,
+                    "setup-model-listing-unavailable",
                 )
             )
         elif discovery_state == "connection_failed":
@@ -615,35 +617,22 @@ class ModelStep(SetupStep):
                         "running, then Retry — or enter a model ID below."
                     )
             await radio_set.mount(
-                SetupRadioButton(
-                    failed_text,
-                    id="setup-model-connection-failed",
-                    disabled=True,
-                )
+                _status_line(failed_text, "setup-model-connection-failed")
             )
         elif discovery_state == "loading":
             await radio_set.mount(
-                SetupRadioButton(
-                    "(loading models…)",
-                    id="setup-model-loading",
-                    disabled=True,
-                )
+                _status_line("(loading models…)", "setup-model-loading")
             )
         elif no_provider:
             await radio_set.mount(
-                SetupRadioButton(
+                _status_line(
                     "Pick a provider first — or type a model name below",
-                    id="setup-model-no-provider",
-                    disabled=True,
+                    "setup-model-no-provider",
                 )
             )
         else:
             await radio_set.mount(
-                SetupRadioButton(
-                    "(no models found — enter one below)",
-                    id="setup-model-empty",
-                    disabled=True,
-                )
+                _status_line("(no models found — enter one below)", "setup-model-empty")
             )
         if not self.is_attached:
             return
@@ -913,10 +902,9 @@ class ModelStep(SetupStep):
         """F-A fix: fall back to the RadioSet's own ``pressed_button`` when
         this step's own bookkeeping (``selected_model_id``, updated only by
         ``_on_model_chosen``/``_on_custom_model``) has nothing -- same
-        reasoning as ``ProviderStep._effective_provider_key``. The three
-        placeholder rows this step ever mounts (loading / no-provider /
-        no-models-found) are all ``disabled=True`` and so can never actually
-        become ``pressed_button``.
+        reasoning as ``ProviderStep._effective_provider_key``. The status
+        lines this step mounts (see ``_status_line``) are plain text, not
+        radio rows, and so can never become ``pressed_button``.
 
         F1 fix: the fallback goes through ``_live_pressed_radio()`` rather
         than reading ``pressed_button`` directly, so a stale press left over
