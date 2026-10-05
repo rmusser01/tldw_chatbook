@@ -819,3 +819,13 @@ def _json_safe_payload(payload: Any) -> Any:
     if isinstance(payload, float) and not math.isfinite(payload):
         raise ValueError("skill trust JSON numbers must be finite")
     return payload
+
+
+# TASK-34404: defining-module originals, retained before helper lazy import.
+_SENSITIVE_INPUT_ORIGINALS = (
+    globals(),
+    tuple(
+        (name, globals()[name], globals()[name].__globals__, globals()[name].__code__)
+        for name in ("default_trust_store_dir",)
+    ),
+)

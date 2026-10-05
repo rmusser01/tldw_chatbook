@@ -2886,3 +2886,13 @@ class LocalSkillsService:
         if blocked:
             result["blocked"] = blocked
         return result
+
+
+# TASK-34404: defining-module originals, retained before helper lazy import.
+_SENSITIVE_INPUT_ORIGINALS = (
+    globals(),
+    tuple(
+        (name, globals()[name], globals()[name].__globals__, globals()[name].__code__)
+        for name in ("default_local_skills_store_dir",)
+    ),
+)

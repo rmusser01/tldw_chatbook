@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+from _thread import LockType
+
 import asyncio
 import copy
 import sys
 import threading
 import time
 import weakref
+from collections import OrderedDict
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from functools import wraps
-from types import MethodType
+from functools import partial, wraps
+from inspect import getattr_static
+from types import FunctionType, MethodType, ModuleType
 from typing import Any
 
 from ...Chat.assistant_generation_state import assistant_state_allows_provider_history
@@ -532,6 +536,157 @@ def _checked_display_status(projection: Any) -> bool | None:
     return True
 
 
+class _ContextCapacityDisplayRefused(Exception):
+    """A captured metadata source changed before display publication."""
+
+
+def _original_capacity_method(owner: Any, module: Any, entry: tuple) -> Any:
+    name, function, code = entry
+    if (
+        type(function) is not FunctionType
+        or function.__globals__ is not vars(module)
+        or function.__code__ is not code
+        or getattr_static(type(owner), "__getattribute__")
+        is not object.__getattribute__
+        or getattr_static(owner, name, None) is not function
+    ):
+        return None
+    method = getattr(owner, name, None)
+    if (
+        type(method) is not MethodType
+        or method.__self__ is not owner
+        or method.__func__ is not function
+    ):
+        return None
+    return method
+
+
+def _context_capacity_display_sources(gateway: Any, app: Any) -> Any:
+    """Capture only the standard synchronous metadata route, without IO."""
+    module = sys.modules.get("tldw_chatbook.Chat.console_provider_gateway")
+    runtime = sys.modules.get("tldw_chatbook.Chat.console_runtime")
+    if type(module) is not ModuleType or type(runtime) is not ModuleType:
+        return None
+    namespace, runtime_namespace = vars(module), vars(runtime)
+    originals = namespace.get("_CONTEXT_CAPACITY_DISPLAY_ORIGINALS")
+    provider_original = runtime_namespace.get("_PROVIDER_CONFIG_FOR_APP_ORIGINAL")
+    if (
+        type(originals) is not tuple
+        or len(originals) != 3
+        or originals[0] is not vars(module)
+        or originals[1] is not namespace.get("ConsoleProviderGateway")
+        or type(gateway) is not originals[1]
+        or getattr_static(type(gateway), "__getattribute__")
+        is not object.__getattribute__
+        or type(provider_original) is not tuple
+        or len(provider_original) != 3
+        or provider_original[0] is not vars(runtime)
+    ):
+        return None
+    provider_function, provider_code = provider_original[1:]
+    missing = object()
+    provider = getattr_static(gateway, "_config_provider", missing)
+    cache_lock = getattr_static(gateway, "_context_windows_lock", missing)
+    cache = getattr_static(gateway, "_context_windows", missing)
+    environ = getattr_static(gateway, "_environ", missing)
+    if (
+        type(provider_function) is not FunctionType
+        or runtime_namespace.get("_provider_config_for_app") is not provider_function
+        or provider_function.__globals__ is not vars(runtime)
+        or provider_function.__code__ is not provider_code
+        or type(provider) is not partial
+        or provider.func is not provider_function
+        or len(provider.args) != 1
+        or provider.args[0] is not app
+        or provider.keywords
+        or type(cache_lock) is not LockType
+        or (environ is not None and type(environ) is not dict)  # noqa: E721 - custom maps stay fresh.
+    ):
+        return None
+    methods = tuple(
+        _original_capacity_method(gateway, module, entry) for entry in originals[2]
+    )
+    if len(methods) != 3 or any(method is None for method in methods):
+        return None
+    refs = (
+        module,
+        runtime,
+        originals,
+        provider_original,
+        provider,
+        provider.keywords,
+        cache_lock,
+        environ,
+        cache,
+    )
+    read_cached = None
+    if cache is not None:
+        cache_module = sys.modules.get("tldw_chatbook.Chat.console_context_window")
+        if type(cache_module) is not ModuleType:
+            return None
+        cache_namespace = vars(cache_module)
+        cache_original = cache_namespace.get("_CONTEXT_CAPACITY_CACHE_ORIGINAL")
+        if (
+            type(cache_original) is not tuple
+            or len(cache_original) != 4
+            or cache_original[0] is not vars(cache_module)
+            or cache_original[1] is not cache_namespace.get("ContextWindowCache")
+            or type(cache) is not cache_original[1]
+            or getattr_static(type(cache), "__getattribute__")
+            is not object.__getattribute__
+        ):
+            return None
+        read_cached = _original_capacity_method(
+            cache, cache_module, ("cached", cache_original[2], cache_original[3])
+        )
+        if read_cached is None:
+            return None
+        serving_lock = getattr_static(cache, "_lock", missing)
+        serving_records = getattr_static(cache, "_cache", missing)
+        if (
+            type(serving_lock) is not LockType
+            or type(serving_records) is not OrderedDict
+        ):
+            return None
+        refs += (cache_module, cache_original, serving_lock, serving_records)
+    # Bound method objects are ephemeral; retain their exact function/receiver.
+    refs += tuple(
+        item for method in methods for item in (method.__func__, method.__self__)
+    )
+    if read_cached is not None:
+        refs += (read_cached.__func__, read_cached.__self__)
+    return refs, methods[2], methods[1], cache, read_cached
+
+
+def cached_context_window_for_display(screen: Any, gateway: Any, settings: Any) -> Any:
+    """Use an issued copy for metadata only; custom/direct routes stay fresh."""
+    projection = getattr(screen, "_console_readiness_config_projection", None)
+    if _checked_display_status(projection) is not True:
+        return gateway.cached_context_window(settings)
+    proof = projection._display_proof
+    captured = _context_capacity_display_sources(gateway, proof.owner[1])
+    if captured is None:
+        return gateway.cached_context_window(settings)
+    refs, display, project_target, cache, read_cached = captured
+    value = display(
+        settings,
+        proof.value,
+        cache=cache,
+        project_target=project_target,
+        read_cached=read_cached,
+    )
+    current = _context_capacity_display_sources(gateway, proof.owner[1])
+    if (
+        current is None
+        or len(current[0]) != len(refs)
+        or any(now is not before for now, before in zip(current[0], refs))
+        or projection._display_proof is not proof
+        or _checked_display_status(projection) is not True
+    ):
+        raise _ContextCapacityDisplayRefused()
+    return value
+
+
 def _run_checked_display_sync(
     projection: Any,
     sync: Callable[[], None],
@@ -556,6 +711,10 @@ def _run_checked_display_sync(
         if failure is not None and error is not failure:
             raise error from failure
         raise
+    if type(failure) is _ContextCapacityDisplayRefused:
+        if accepted:
+            request_retry()
+        return False
     if failure is not None:
         raise failure
     return accepted

@@ -730,3 +730,16 @@ class ConversationLocalMarksService:
         if has_unseen and len(outcomes) == 1:
             return next(iter(outcomes))
         return None
+
+
+# Capture the defining stock body before UI imports can learn a custom reader.
+# This is refusal metadata; it grants no database or storage authority.
+_CONSOLE_UNREAD_READER_ORIGINAL = (
+    globals(),
+    ConversationLocalMarksService,
+    ConversationLocalMarksService.unread_ids_for,
+    ConversationLocalMarksService.unread_ids_for.__globals__,
+    ConversationLocalMarksService.unread_ids_for.__code__,
+    ConversationLocalMarksService.unread_ids_for.__defaults__,
+    ConversationLocalMarksService.unread_ids_for.__kwdefaults__,
+)

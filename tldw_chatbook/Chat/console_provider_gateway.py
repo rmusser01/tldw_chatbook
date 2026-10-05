@@ -4016,10 +4016,19 @@ class ConsoleProviderGateway:
         )
         return target
 
-    def _project_context_window_target(self, settings: Any) -> ContextWindowTarget:
+    def _project_context_window_target(
+        self,
+        settings: Any,
+        *,
+        _display_config: Mapping[str, Any] | None = None,
+    ) -> ContextWindowTarget:
         from tldw_chatbook.Chat.console_context_window import ContextWindowTarget
 
-        config = self._config_provider() or {}
+        config = (
+            self._config_provider() or {}
+            if _display_config is None
+            else _display_config
+        )
         entry = entry_for(config, settings.provider)
         family = family_execution_key(entry.family) if entry else settings.provider
         identity = resolve_console_provider_identity(family)
@@ -4079,6 +4088,31 @@ class ConsoleProviderGateway:
                 identity.readiness_key or family, settings.model or ""
             )
         return cache.cached(self._context_window_target(settings))
+
+    def _cached_context_window_from_display(
+        self,
+        settings: Any,
+        config: Mapping[str, Any],
+        *,
+        cache: Any,
+        project_target: Callable,
+        read_cached: Callable | None,
+    ) -> ContextWindowResolution:
+        """Consume one checked display copy without retaining a live target."""
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        if cache is None:
+            # Preserve first paint's original family/model fallback. Creating
+            # the serving cache or projecting credentials here would change it.
+            entry = entry_for(config, settings.provider)
+            family = family_execution_key(entry.family) if entry else settings.provider
+            identity = resolve_console_provider_identity(family)
+            return resolve_context_window(
+                identity.readiness_key or family, settings.model or ""
+            )
+        # This projection deliberately bypasses the live target memo. A detached
+        # display value cannot become an input to a later network/Send route.
+        return read_cached(project_target(settings, _display_config=config))
 
     async def resolve_context_window(self, settings: Any) -> ContextWindowResolution:
         """Refresh optional serving metadata without running a generation."""
@@ -7650,3 +7684,25 @@ def _first_string(*values: object) -> str | None:
         if stripped:
             return stripped
     return None
+
+
+# Retain provenance at defining-module completion, before a lazy UI helper can
+# observe a class callback replacement and mistake it for the standard route.
+_CONTEXT_CAPACITY_DISPLAY_ORIGINALS = (
+    globals(),
+    ConsoleProviderGateway,
+    tuple(
+        (name, method, method.__code__)
+        for name, method in (
+            ("cached_context_window", ConsoleProviderGateway.cached_context_window),
+            (
+                "_project_context_window_target",
+                ConsoleProviderGateway._project_context_window_target,
+            ),
+            (
+                "_cached_context_window_from_display",
+                ConsoleProviderGateway._cached_context_window_from_display,
+            ),
+        )
+    ),
+)

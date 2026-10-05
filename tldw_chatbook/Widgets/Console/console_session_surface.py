@@ -707,6 +707,27 @@ class ConsoleSessionSurface(Vertical):
         except Exception:
             return
 
+    def _session_strip_is_attached(self, tab_strip: HorizontalScroll) -> bool:
+        """Check that an awaited tab update still owns the attached strip."""
+        if (
+            not self.is_attached
+            or not tab_strip.is_attached
+            or self._closing
+            or self._closed
+            or self._pruning
+            or tab_strip._closing
+            or tab_strip._closed
+            or tab_strip._pruning
+        ):
+            return False
+        try:
+            return (
+                self.query_one("#console-native-tab-strip", HorizontalScroll)
+                is tab_strip
+            )
+        except NoMatches:
+            return False
+
     async def sync_sessions(
         self,
         *,
@@ -726,13 +747,24 @@ class ConsoleSessionSurface(Vertical):
                 controller), falls back to the legacy ``streaming_session_id``
                 single-session cursor for the RUNNING glyph only.
         """
+        if not self.is_attached or self._closing or self._closed or self._pruning:
+            return
         active_session = next(
             (session for session in sessions if session.id == active_session_id),
             None,
         )
         self.set_session_title(active_session.title if active_session else None)
         async with self._session_sync_lock:
-            tab_strip = self.query_one("#console-native-tab-strip", HorizontalScroll)
+            if not self.is_attached or self._closing or self._closed or self._pruning:
+                return
+            try:
+                tab_strip = self.query_one(
+                    "#console-native-tab-strip", HorizontalScroll
+                )
+            except NoMatches:
+                return
+            if not self._session_strip_is_attached(tab_strip):
+                return
             desired_ids = self._desired_tab_child_ids(
                 sessions=sessions,
                 active_session_id=active_session_id,
@@ -753,6 +785,8 @@ class ConsoleSessionSurface(Vertical):
             mounted_count = (len(sessions) * 2) + 2
             for child in list(tab_strip.children):
                 await child.remove()
+                if not self._session_strip_is_attached(tab_strip):
+                    return
             for session in sessions:
                 is_active = session.id == active_session_id
                 marker = self._resolve_tab_marker(
@@ -768,9 +802,19 @@ class ConsoleSessionSurface(Vertical):
                         queued_count=(queue_counts or {}).get(session.id, 0),
                     )
                 )
+                if not self._session_strip_is_attached(tab_strip):
+                    return
                 await tab_strip.mount(self._build_close_tab_button(session))
+                if not self._session_strip_is_attached(tab_strip):
+                    return
+            if not self._session_strip_is_attached(tab_strip):
+                return
             await tab_strip.mount(self._build_new_tab_button())
+            if not self._session_strip_is_attached(tab_strip):
+                return
             await tab_strip.mount(self._build_new_temporary_tab_button())
+            if not self._session_strip_is_attached(tab_strip):
+                return
             self._record_mount_churn(mounted=mounted_count, removed=removed_count)
         # TASK-28028: mounted/removed tabs change what is hidden past each
         # edge even when scroll_x does not move; refresh the ‹ › hints once

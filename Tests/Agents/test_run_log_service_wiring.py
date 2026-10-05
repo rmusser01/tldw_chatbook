@@ -29,6 +29,10 @@ from tldw_chatbook.Chat.console_scratch_space import ConsoleScratchSpaceManager
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 
+# Real prompt/config readers retain their admitted collection profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 @pytest.fixture
 def wired(tmp_path, monkeypatch):
     monkeypatch.setattr(run_log_module, "resolve_log_root", lambda: tmp_path)

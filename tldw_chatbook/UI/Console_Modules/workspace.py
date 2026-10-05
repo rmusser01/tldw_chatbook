@@ -26,7 +26,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from functools import partial
-from types import MappingProxyType
+from types import MappingProxyType, MethodType
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
@@ -34,6 +34,7 @@ from tldw_chatbook.Utils.input_validation import escape_markup
 from textual.css.query import NoMatches
 
 from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_call
+from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
 
 from ...Character_Chat.character_conversation_navigation import (
@@ -57,6 +58,8 @@ from ...Chat.console_conversation_hydration import (
 )
 from ...Chat.console_display_state import evidence_bundle_from_launch
 from ...Chat.console_live_work import ConsoleLiveWorkLaunch
+from ...Chat import conversation_local_marks_service as _manual_unread_source
+from ...Chat.conversation_local_marks_service import ConversationLocalMarksService
 from ...Chat.console_session_settings import blank_console_session_settings
 from ...Chat.console_switcher_state import (
     CONSOLE_SWITCHER_PAGE_LIMIT,
@@ -562,6 +565,50 @@ class ConsoleTickWorkspaceBuilds:
         self._fingerprint = controller._console_workspace_build_fingerprint()
         self._state = state
         return state
+
+_STOCK_MANUAL_UNREAD_READER = _manual_unread_source._CONSOLE_UNREAD_READER_ORIGINAL
+
+
+def _manual_unread_reader_current(service: object, reader: object) -> bool:
+    """Qualify the defining reader, rather than learning a current UI binding."""
+    defining, owner, original, body_globals, code, defaults, kwdefaults = (
+        _STOCK_MANUAL_UNREAD_READER
+    )
+    return (
+        _manual_unread_source.__dict__ is defining
+        and _manual_unread_source._CONSOLE_UNREAD_READER_ORIGINAL
+        is _STOCK_MANUAL_UNREAD_READER
+        and defining.get("ConversationLocalMarksService") is owner
+        and ConversationLocalMarksService is owner
+        and type(service) is owner
+        and owner.__dict__.get("unread_ids_for") is original
+        and type(reader) is MethodType
+        and reader.__self__ is service
+        and reader.__func__ is original
+        and original.__globals__ is body_globals
+        and original.__code__ is code
+        and original.__defaults__ is defaults
+        and original.__kwdefaults__ is kwdefaults
+    )
+
+
+async def _read_manual_unread_ids(service: object, ids: Iterable[str]) -> frozenset[str]:
+    """Retire the connection opened by one stock unread-marker worker read."""
+    reader = service.unread_ids_for
+    database = getattr(service, "db", None)
+    if (
+        type(database) is not CharactersRAGDB
+        or database.is_memory_db
+        or not _manual_unread_reader_current(service, reader)
+    ):
+        return await asyncio.to_thread(reader, ids)
+
+    def read_captured_owner() -> frozenset[str]:
+        if service.db is not database or not _manual_unread_reader_current(service, reader):
+            raise RuntimeError("manual_unread_source_changed")
+        return reader(ids)
+
+    return await run_owned_db_call(database, read_captured_owner)
 
 
 class ConsoleWorkspaceController:
@@ -2884,7 +2931,7 @@ class ConsoleWorkspaceController:
 
     async def _load_manual_unread_rows(self, service, state, ids) -> None:
         try:
-            unread = await asyncio.to_thread(service.unread_ids_for, ids)
+            unread = await _read_manual_unread_ids(service, ids)
             values = {cid: cid in unread for cid in ids}
         except Exception:  # noqa: BLE001 - contain local mark service failures
             values = dict.fromkeys(ids)
@@ -3632,8 +3679,8 @@ class ConsoleWorkspaceController:
         marks = getattr(self.app_instance, "conversation_local_marks_service", None)
         if callable(getattr(marks, "unread_ids_for", None)):
             try:
-                unread = await asyncio.to_thread(
-                    marks.unread_ids_for, (entry.conversation_id for entry in entries)
+                unread = await _read_manual_unread_ids(
+                    marks, (entry.conversation_id for entry in entries)
                 )
             except Exception:  # noqa: BLE001 - history remains navigable if local marks fail
                 unread = set()

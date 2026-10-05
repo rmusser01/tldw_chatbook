@@ -978,3 +978,284 @@ Before additional implementation, record scoped source-fence design and native R
 ADR required: yes for changed runtime source selection or finite configuration interfaces.
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md (narrow amendment before implementation).
 Reason: retain existing actual-source recovery, actor and native custody boundaries while removing equivalent work. Routine mirroring/reporting fixes require no new ADR.
+
+## Remaining refresh attribution and hidden Console lifecycle
+
+TASK-34404 AC12 covers the source-proven hidden credential timer candidate before implementation. A suspended Console stops transcript, survivor, cost and draft timers, while its credential timer remains. The presentation decorator schedules readiness work before the credential body's hidden-screen guard. Require an original mounted hidden-versus-visible native RED before a minimal lifecycle fix; preserve original timers, visible freshness, source/owner/recovery checks, resume and retirement. Separately attribute actual run_owned_db_call callbacks and native work; overlapping diagnostic profiler durations do not prove wall time or that all database calls come from readiness.
+
+ADR required: no for a routine timer lifecycle repair preserving existing authority and UI structure.
+ADR path: N/A; existing finite custody remains governed by backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: scheduling only when the original presentation target is active repairs the existing hidden-body contract. Any broader runtime-boundary change requires an ADR amendment before code.
+
+
+## AC10 original reader body binding qualification
+
+The cold-bundle native candidate cannot yet be accepted: its first targeted
+verification exits during collection because the existing cached effective-path
+resolver is a concrete lru wrapper, without a function's `__globals__`. Preserve
+that original wrapper invocation/cache contract and qualify its definition-time
+wrapped-body metadata before rerunning the fifteen cases. This is an import
+regression, not a fifteen-case native result.
+
+Separately, exact FunctionType identity and globals alone do not distinguish a
+replaced `__code__` body on the same unguarded accessor. Add two bounded private
+native controls before accepting an ordinary-function anchor completion: a
+replacement before the sensitive helper's first import retains the original
+custom no-added-scope contract; a replacement at the original single-file
+builder return refuses before invoking the changed body or publishing a memo.
+Retain original seeded SQLite physical close, actual native census, source
+hashes, guards, hook restoration and the existing 45-second child bound.
+The positive cloned original must preserve keyword-only defaults as well as
+positional defaults; its literal 13-database path assertion qualifies the test.
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: complete the already approved exact defining-reader/custom-source
+qualification; no new operation, permission, source lifetime or cache.
+
+
+### Original run-log regression fixture qualification
+
+ADR required: no. ADR path: N/A. Routine test fixture repairs preserve the existing configuration admission boundary. The original two-node code-local witness confirms `raw_source_selection_changed` before provider entry, with source identities unchanged and global monitoring events zero. Keep the real admitted collection profile for the survivor and service-wiring modules using the existing `bootstrap_profile` marker; keep all provider, logging, survivor and privacy assertions unchanged. The activation subprocess writes a TOML literal with an unescaped Windows path; render that same path with `as_posix()`. Rerun the original six affected modules with original timeouts and no guard replacement.
+
+
+### Hidden credential poll regression and native cleanup
+
+ADR required: no. ADR path: N/A (routine lifecycle correction under existing screen reuse). The actual native RED observed two original credential readers while Home was current, plus positive visible and same-instance resumed native reads. Original reader/guard/source identities and monitoring retirement passed. A final zero-lease fixture assertion also found seven ordinary App-held caches after screen shutdown; this is not evidence that the credential reader owns those caches. Preserve the final zero census by retiring the actual installed current-thread private SQL caches using the original coordinator cleanup after original App shutdown. Capture each real repository/participant/connection/lease pair and prove native SQLite closure; leave unknown leases visible. Then stop credential polling on suspend and restart the same cadence on reconciled resume, retaining visible expiry/source/recovery behavior. No cache TTL, native guard, deadline or performance budget changes.
+
+
+## Registered whole-launch startup outcomes
+
+Root accepted the measured proposal below before further startup production changes. These are acceptance targets, not achieved results. Existing Send/UI/custody budgets and deadlines remain. The original unobserved liveness route decides timing; code-local observer time is diagnostic.
+
+
+Evidence-only proposal for root review. No production behavior, test deadline, or acceptance criterion is changed by this file.
+
+ADR required: no new ADR.
+ADR path: existing `backlog/decisions/126-complete-local-backup-and-recovery.md` (profile ownership and native custody).
+Reason: preserve the existing permission, source, actor, cancellation, recovery, and physical-retirement contracts while reducing redundant startup work. The proposed limits below describe outcomes, not permission-result caching.
+
+## Retained baseline
+
+Both launch pairs use the original App and Pilot, a pristine private profile for cold startup, the same durable profile in a second fresh interpreter for warm startup, and original shutdown. No App/global cache survives between launches. OS page cache is uncontrolled.
+
+The unobserved liveness pair is `startup-liveness-baseline-2`. The code-local diagnostic pair is `startup-code-local-baseline-1`. Both cold/warm processes exited normally; the code-local pair retained original source hashes, all twelve original body anchors, no source mismatch, and original monitoring cleanup.
+
+| Observation | Cold | Warm |
+|---|---:|---:|
+| Liveness Pilot-return upper bound from parent spawn | 21.578 s | 16.883 s |
+| Code-local first original key/composer insertion entry from child entry | 24.428 s | 17.390 s |
+| Code-local Pilot-return upper bound from child entry | 24.992 s | 19.327 s |
+| Selected original Native entered calls through that upper-bound phase | 103,586 | 78,138 |
+| Selected original Native successful HANDLE returns, main | 51,770 | 44,292 |
+| Selected original Native successful HANDLE returns, worker | 42,224 | 26,042 |
+| Selected original Native successful HANDLE returns, total | 93,994 | 70,334 |
+| Observed lexical unique paths through that upper-bound phase | 2,641 | 2,442 |
+| Samira original buffer returns / unique lexical resource paths | 35 / 35 | 0 / 0 |
+| Samira original returned resource bytes | 5,390,397 | 0 |
+| Pixel original buffer returns / unique lexical resource paths | 3 / 3 | 0 / 0 |
+| Pixel original returned resource bytes | 12,883 | 0 |
+| Original pack activation entries | 2 | 0 |
+| Original seed-both entries / normal returns | 1 / 1 | 1 / 1 |
+| Path.read_text normal returned buffers / lexical unique paths | 1,042 / 150 | 840 / 92 |
+| Unfinished selected frames at observer stop | 27 | 30 |
+| Exception or phase-crossing completion gap rows | 16 | 15 |
+
+Warm seed entry is a preflight invocation, not evidence of rereading or reseeding bundled content. The actual observed warm resource bytes and pack activations are zero.
+
+The counter boundary is conservative: `mount_until_first_input` ends when the unchanged Pilot call returns. The original insertion body entered 0.564 s / 1.938 s earlier. The current receipt does not contain an exact I/O counter snapshot at that original input event. A future separately qualified Evidence-only observer can copy its existing in-memory counters at the expected composer's first original insertion normal return. This does not require changing App/Pilot behavior.
+
+## Proposed outcome limits for review before implementation
+
+1. Unobserved fresh-process startup reaches the unchanged normal Pilot key path and preserves the one-character draft delta within 15 s cold and 10 s warm from parent spawn. These require approximately 30% / 41% improvement against the retained liveness baseline; they are proposed targets, not results.
+2. For the Windows selected-original-Native coverage window above, entered calls are at most 60,000 cold / 45,000 warm, and successful HANDLE returns are at most 55,000 cold / 40,000 warm. Both categories remain independently visible. These require roughly 40% or greater reductions, not a cap restricted to the seed helper alone.
+3. Once the real mounted input surface is available, continuous original-loop heartbeat gaps are at most 0.200 s, and a delivered original key reaches original composer insertion within 0.500 s. Import/constructor time before a usable loop is separately reported and cannot qualify this heartbeat gate.
+4. An unchanged ordinary warm profile performs zero original Samira/pixel bundled buffer reads, zero returned bundled bytes, and zero pack activations. Changed files, permission revocation, recovery, cancellation, and failed-close cases remain fresh and fail closed under their existing limits.
+5. Cold/warm ordinary launch measurements are obtained on Windows, Linux, and macOS. The existing three elevated Windows Python custody jobs retain their original role; startup need not be duplicated there absent evidence. All existing six jobs must pass.
+
+Limits must be accepted and registered in the appropriate task/plan before new startup production code. Timing acceptance uses the unobserved liveness route; observer timing is diagnostic only.
+
+## Coverage and remaining questions
+
+Successful Native facade returns are actual observed HANDLE returns. They are not total kernel I/O, SQLite/WAL/SHM/mmap I/O, helper-process I/O, or all direct native APIs. Relative HANDLE-parent paths are explicitly unresolved, not reconstructed from a reusable numeric-HANDLE ledger. Unique paths are observed lexical spellings only.
+
+Code-local PY_START/PY_RETURN has no exceptional unwind completion on Python 3.12. Unfinished frames and phase-crossing/exception gaps remain explicit; no successful interval or completed refusal is fabricated. Distinct read APIs can observe overlapping work, so buffer/byte categories must not be summed as a unique total.
+
+POSIX facade/audit helper counts must not be described as actual syscall totals. Platform-specific native-open limits require an actually qualified open observer on that platform. Until then, report coverage gaps and the observed categories alongside liveness.
+
+The whole-launch pressure is proved by the measured counts. Which repeated reads/validation chains are unnecessary still requires selected original-code ownership and call ancestry evidence. The warm asset-reread hypothesis is not supported by these receipts.
+
+
+### Session-tab publication after parent disposal
+
+ADR required: no. ADR path: N/A. This repairs the existing Textual parent lifecycle without changing UI structure or authority. Actual Windows CI reports three stock tab-strip MountErrors after parent removal. The original sync awaits its lock, child removal and each mount, then publishes against a retained strip without checking whether the same parent is still attached. Add four bounded real-Textual controls at these actual await boundaries, requiring disposed sync to retire without mounting and a fresh attached surface to retain normal tabs. Verify RED before a minimal attachment/source fence at each continuation. Preserve tab order, mounted controls, overflow hints, counters, session state and original navigation deadlines; rerun the original tab-strip tests and failed command/Home nodes. These controls refine existing AC12 lifecycle and AC10 performance acceptance.
+
+
+## AC10 scoped run-log original body binding qualification
+
+The revised two-case native RED is genuine: scoped-body-native-red-2 settled
+with two failures in 11.55 seconds (17.453-second driver), source unchanged.
+Both same-function code replacements ran after scoped qualification; the
+original provider completed, seeded SQLite physically closed, guarded callbacks
+and modified unguarded bodies were restored, and every final ordinary/core/raw/
+pending/retiring count was zero. The initial source-drift-native-red-1 scoped
+failures were fixture precondition errors before mutation and are explicitly
+excluded from product RED. The separate tuple-source failures remain genuine.
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
+Reason: complete the existing original producer/body and custom callback
+qualification, without a new source operation, permission or native lifetime.
+
+Before production, complete definition-time stock service wrapper/body, writer
+method and selector metadata with exact original code/globals. Retain supported
+finite function/MethodType/partial callback bodies and strong receivers. The
+actual contextmanager factory is recognized only by the original stdlib helper
+code/globals and its one original wrapped-function closure; retain and compare
+that wrapped body too, with no arbitrary unwrap or recursive closure authority.
+Preinstalled changed stock bodies preserve the original fallback; drift after
+issuance refuses before invocation/publication. A dispatch checkpoint must follow
+the caller's original check-return boundary, because that boundary itself can
+change the mutable function code. Keep publication refusal outside the optional
+publisher exception handler and original nonfatal binder behavior.
+
+Actual-root/root-object admission, thread/task/source/live-bit retirement,
+partial-keyword checks, unsupported custom/default routes and independent
+foreign-worker/survivor authority remain. No guarded activation body, callback,
+source cap, deadline or cache is replaced. Root must run the unchanged original
+nine source controls and both revised body controls on frozen source; native
+GREEN and integrated budgets remain pending.
+
+
+## Literal Windows hook argv serialization repair
+
+Root registered this bounded existing persistence/consent repair before production code. Product RED must precede the new helper.
+
+# Preserve literal Windows argv in config serialization
+
+> Evidence-only implementation plan for parent review. No managed source or tests have been changed and no regression draft has been run.
+
+**Goal:** Save and reload valid command arguments containing literal `\\x` without changing their characters, order, keys, permission fingerprints, or config ownership.
+
+**Architecture:** Keep the existing TOML encoder for all ordinary types, keys, and string values. Select a per-call encoder only when a nested string value contains literal backslash followed by lowercase x. Its string formatter uses TOML basic-string escaping only for those affected values; every other formatter remains the original formatter. Both the canonical writer and the literal Hook Save preflight use the same serializer. All native admission, actor/source checks, write locks, parse-back validation, atomic replacement, encryption, and publication remain in their existing owners.
+
+**Tech stack:** Python 3.12+, existing toml 0.10.2 and stdlib tomllib. No new dependency or runtime.
+
+**Spec / evidence:** Parent's retained `qualify-windows-toml-command.json`, CI run 37273707121 Windows hook failures, and this task's existing authorized UAT/failure repair scope. Proposed task outcome must be registered by root before managed implementation.
+
+ADR required: no new ADR.
+ADR paths: `backlog/decisions/033-settings-commit-models-three-honestly-labeled.md`, `backlog/decisions/126-complete-local-backup-and-recovery.md`, and `backlog/decisions/197-console-hook-configuration-review.md`.
+Reason: routine codec repair within the existing config persistence and exact-argv consent contracts. No new owner, storage format, permission rule, or public persistence route is introduced. Original section-stamp hashing and raw-text restore paths remain unchanged.
+
+## Evidence and distinction
+
+The actual CI executable `C:\\hostedtoolcache\\windows\\Python\\3.12.10\\x64\\python.exe` fails original tomllib parse-back after original toml.dumps. The original encoder `_dump_str` splits repr text at `\\x` and collapses doubled backslashes in the preceding prefix, introducing unescaped Windows separators. The retained pure witness proves the installed encoder/reader pair, without App import.
+
+Product `_write_raw_cli_config_unlocked` at config.py:7426/7472 performs parse-back before atomic commit: the product refuses the valid Save rather than committing malformed config. Literal/Hook Save additionally parses stock serialization at config.py:8770 before calling that writer, so repairing only line7472 is insufficient. `HookPermissions.save_configuration` delegates to `replace_hooks_config_snapshot`; the command's ordered argv is the original fingerprint input.
+
+The shared `Tests/Agents/test_hook_permissions.py` fixture writes stock toml.dumps directly, so it commits malformed test data. Converting the executable to forward slashes in that fixture would conceal the product problem and change the exact argv under review. After qualified product repair, use the same corrected serializer in its three direct fixture serialization sites, retaining actual sys.executable and every original assertion/deadline/source guard.
+
+## Proposed acceptance outcomes
+
+- A valid literal backslash-x string survives canonical config replacement and Hook Save unchanged, including ordered argv, Unicode, quotes, repeated backslashes, and nested list/table values.
+- An execution-definition change still invalidates consent; a purely cosmetic re-save of the same command preserves its exact original fingerprint and grant.
+- Ordinary values/types and quoted keys retain the original serializer's output. Keys are never normalized or renamed. Existing section-stamp hashes are unchanged.
+- Existing malformed-output parse refusal, stale snapshot/profile refusal, encryption rejection, publication failure, cancellation, and native ownership controls remain intact.
+- The shared hook fixture stays valid on the actual Windows CI executable path while retaining all original tests, original argv, and original deadlines.
+
+## Review focus
+
+- Uppercase backslash-X and ordinary Windows paths continue through the original codec; the qualified lowercase branch is the repair target.
+- Control characters and Unicode scalar handling follow TOML basic-string escaping only within the affected value; no general fidelity rewrite is claimed.
+- A literal backslash-x in a mapping key is not rewritten by the value encoder. Its existing failure remains guarded; fixing arbitrary key serialization is outside this measured command defect.
+- No global monkeypatch of toml.encoder or toml.dumps is introduced. A separate encoder instance prevents unrelated serializers from changing behavior.
+- No command process is launched by the dedicated regression; exact definitions, original fingerprints, and actual consent persistence establish the behavior.
+
+## Files and sequence
+
+1. [ ] Root registers the outcome and plan before implementation. Publish the Evidence draft `test_config_windows_argv_roundtrip_draft.py` to a dedicated Tests module, unchanged product body/encoder/guards.
+2. [ ] Run only its three actual product cases first. Expected qualified RED: canonical replacement rejects parse-back; replace_hooks_config_snapshot and actual HookPermissions.save_configuration do not replace the file. Preserve pre/post source/config receipts and unchanged bytes on refusal. A setup failure is not product RED.
+3. [ ] Add one pure shared leaf (proposed `tldw_chatbook/Utils/toml_serialization.py`, `dumps_cli_config`) after RED. Inspect nested built-in dict/list/tuple values with a cycle-safe predicate. Ordinary input calls original toml.dumps with the same single argument, retaining existing one-argument fault-injection controls. For affected input, construct a per-call original TomlEncoder and replace only its string-value formatter with the conditional formatter.
+4. [ ] Use that helper at config.py:7472 canonical serialization and config.py:8770 literal mutation expected_raw parse-back. Use it at8257 only for the same missing-file snapshot serialization fallback; exact existing raw file snapshot copying remains unchanged. Leave7671 hook section-stamp hash, encrypted rollback bytes, raw text replacement, and unrelated serializers unchanged.
+5. [ ] After product GREEN, replace only the shared hook fixture's stock dumps calls at test_hook_permissions.py:41/71/1191 with the same helper. Do not normalize sys.executable, change command input, patch guards, or relax assertions.
+6. [ ] Run pure conditional-encoder cases, all three actual product cases, and targeted original config parse-back/participant/encryption controls plus the original Hook permission/admission/review/lifetime modules. Keep existing native serialization and exact-source receipts. Final three-host CI retains the original failed modules; no full-suite sweep is authorized by this plan.
+7. [ ] Review resulting diff and write exact qualification notes. Preserve the old CI and pure witness as RED evidence. Record fixture bypass versus product guarded rejection separately.
+
+## Draft locations
+
+- `test_config_windows_argv_roundtrip_draft.py`: actual canonical writer, Hook expected_raw preflight, and consent regression. Imports no proposed helper, so these are suitable for original product RED.
+- `test_conditional_toml_serializer_draft.py`: independent pure round-trip and ordinary-codec compatibility tests, to publish after the helper's intended API is accepted.
+
+No implementations or test results are asserted by this document.
+
+
+### Context-capacity display metadata inside the issued snapshot
+
+# Keep context-capacity rendering inside the checked display snapshot
+
+Evidence-only proposal; no production or managed test changes and no native launch.
+
+The callback98158 receipt identifies an actual second configuration route inside an accepted display body: `ChatScreen._console_settings_context_estimate_for_session` calls the runtime's gateway `cached_context_window`; both its cold metadata branch and `_context_window_target` call the gateway's original `functools.partial(_provider_config_for_app, app)` source. That source calls original `config.load_settings`. This bypasses `provider_readiness_app_config`, which already returns the issued display mapping in the same synchronous body. One selected main load took 1.123 seconds inside the settings-summary render. The duration is diagnostic, but the original caller ancestry is concrete.
+
+The finite callback diagnostic does not attribute readiness Native opens: the observer failed to bind the lazily published spend module. No readiness open savings or permission-caching opportunity is claimed from that gap.
+
+## Proposed outcome and boundary
+
+An exact standard gateway's context-capacity rendering uses only the same freshly issued display mapping while its original owner/source/actor proof is valid. This pure serving-metadata projection opens no second config scope or native path merely to derive the same model/endpoint/credential identity. Direct actions, dispatch, provider readiness, metadata network refresh, and arbitrary injected/custom gateway callbacks keep their existing fresh reads and signatures. Source replacement, app mapping/session/settings change, pause, retirement, expiry and post-body drift preserve the original refusal/fallback behavior.
+
+ADR required: no new ADR if implemented only as an explicit synchronous metadata projection under the already issued display proof.
+ADR path: existing `backlog/decisions/126-complete-local-backup-and-recovery.md` and the registered Console presentation plan.
+Reason: this extends the existing detached display value consumption to its identified context-capacity consumer. It must not introduce a thread-local ambient authority or change the gateway's live configuration provider contract. Root must register the precise outcome before production changes.
+
+## Qualified RED first
+
+The companion test draft constructs the actual original `ConsoleRuntime`, gets its actual standard gateway via `ensure_provider_gateway`, and runs the original screen context estimate inside `ChatScreen._run_console_config_sync`. It reuses the original checked-display fixture's real private Notes/store/controller and original native observation helper. It tests both no metadata cache and an existing original metadata cache. No config/native/permission reader is replaced. Expected RED is actual redundant main Native opens inside an otherwise warm accepted render, not an attribute/setup failure.
+
+Original native profiling in this bounded control is an observer only. App startup is not used. Runtime/gateway, selected worker tasks and the actual DB are explicitly retired. Existing checked-display owner/expiry/copy/custom/foreign-loop controls remain required; do not raise their deadlines.
+
+## Minimal design to review after RED
+
+1. Add a named presentation-only consumer helper in `console_spend_projection`. It verifies the existing issued `_CheckedDisplayProof` in the active projection, including the same app, mapping, screen, loop/thread, source/participant, session/settings/recovery owner and before/after freshness. Only an exact `ConsoleProviderGateway` with its original bound metadata methods and the actual runtime-produced original `functools.partial(_provider_config_for_app, same_app)` qualifies. Class/instance/custom/subclass/borrowed callback paths retain the original one-argument `cached_context_window` invocation.
+2. Add a narrowly named private gateway metadata projection accepting that supplied mapping. Thread this mapping through cold capacity fallback, target memo-key derivation and target projection, so it is consumed once without calling `_config_provider`. The original live `cached_context_window`, `_context_window_target` default route, `resolve_context_window` and `resolve_for_send` keep their existing provider getter. Endpoint/custom credential and serving-cache keys remain identical.
+3. Change only the two original screen context-estimate call sites to the helper. The helper may fall back to the original gateway callback when no current proof qualifies. Never supply the mapping as a final provider or permission decision, invoke a whole coroutine in a worker, or retain it beyond this display interval.
+4. Qualify the actual native RED nodes, both cold/warm metadata positives, injected callback/subclass compatibility and the original checked-display/source drift/expiry/foreign-loop refusal suite. Add a direct/live read control and original gateway send/config tests. A post-body owner change must not publish an accepted estimate.
+
+The exact API naming is provisional. Root review must resolve callable provenance before implementing it; no existing reader or guard is to be weakened.
+
+
+### Tab retirement before physical detach
+
+ADR required: no. ADR path: N/A. The disposed-parent leaf passed four controls, but real Textual pruning keeps attachment while stock mount becomes a no-op. Add exact original App._prune controls and same-ID strip replacement before a minimal retirement-state fence; preserve real pump retirement, tab order and mount-churn evidence. Initial is_mounted-only fixture failures remain excluded.
+
+
+### Original Ubuntu trace-settlement observation
+
+ADR required: no. ADR path: N/A; existing ADR126 and the original trace settlement contract apply. Passive test-only diagnosis preserves every production owner, guard, test assertion, three messages, .25-second settle, and original deadlines. Before tracked installation, root reviewed the exact source-fenced local observer and finite launcher plus pure controls. Use a separate opted-in Ubuntu CI job; the original six native jobs and three-platform probe remain the acceptance route. Hash all managed application, test and bundled profile-core sources and actual installed helper/plugin origins before and after, including failures. Actual child loaded sources must match that manifest. Retain real pending/failed/owned settlement state and handled exception categories at the original assertion and teardown, with nonblocking snapshots and explicit coverage gaps. Diagnostic timings cannot establish performance acceptance. Native qualification and cause classification are pending.
+
+The old original Windows activation failures stopped before their intended effect boundary. The corrected fixture waits for actual effect entry under the already existing ten-second effect/release bound, retaining original .2/.5-second waiter timeouts, abandonment/cancellation result, .04-second maintenance refusal, native close and fresh reopening. Native corrected original three cases pass 14.049 seconds; the other 119 original run-log regression cases already passed on the preceding frozen source. The original tab-strip module needs the existing bootstrap-profile marker because its imported guarded config otherwise points at a different per-test profile. Original 18 plus new six lifecycle cases pass 10.299 seconds; the three real close journey failures remain distinct and unresolved.
+
+The hidden Console reader check passes visible native expiry, hidden zero reader/schedule starts and same-instance native resume, but ordinary SQL coverage still fails. A supported-local observer installed after actual App construction missed getter acquisition because it selected the original decorator wrapper's self-less frame; its clean callbacks and physical-close records do not qualify acquisition attribution. Preserve that receipt and observe the exact original getter body before identifying or changing an owner. No unknown connection is closed or excluded. Original config compatibility run is also retained: 15 pass/34 fail, with explicit retarget and Windows pipe-monitor fixture failures under investigation. These are not claimed as codec regressions or passing compatibility.
+
+
+### Finite unread-row worker connection ownership
+
+ADR required: no. ADR path: existing ADR126. Qualified native observation hidden-sql-original-getter-acquisition-1 observes the exact getter wrapper, body and registration with no missing spans/global hooks: ConversationLocalMarksService.unread_ids_for opens a worker connection that an unrelated later browser callback closes on the reused executor actor. Earlier hidden lifecycle runs leave one such worker lease live. The later passing observer run does not establish deterministic retirement. Before production, exercise the original _load_manual_unread_rows with the actual service/file DB in a dedicated single-worker executor, observe original registration and physical close, and prove new-versus-borrowed lifetimes. Preserve its result/profile/revision publication and use the existing run_owned_db_call boundary only for qualified stock unread-row producers. Add the same finite ownership to the browser-history unread producer sharing this original service route, preserving original custom/in-memory calls. Run targeted RED/GREEN, existing manual-mark service controls and the actual hidden/resume lifecycle; no unknown foreign connection is closed and no timer/deadline/budget changes.
+
+
+Context-display refinement after qualified RED: project an ephemeral serving target from the issued mapping without reading or writing the live target memo. Preserve the original cold family/model fallback and original one-argument direct/custom gateway routes. Pin defining gateway/runtime/cache method bodies, original partial receiver, static owner method slots and plain instance fields before any dynamic method binding. Attribute cold73 native opens to first-use tokenizer initialization, not the provider getter. Original cold/warm controls fail on one actual redundant getter/load each; direct route passes its original fresh getter/load. Exact post-body source/cache/partial changes refuse display publication through the existing coalesced retry. Source review complete; focused native GREEN remains pending.
+
+
+Current-source native verification update: context display55PASS51.94s; finite unread-row2PASS16.97s with physical inspection before cleanup plus original manual service42PASS39.26s. Original tab navigation with a passive diagnostic1PASS47.33s and actual replay recovery,13 selected local codes/global0/overflow0/live0. Original nearest40 CI prefix40PASS66.66s/source stable, obstruction not yet reproduced. Keep these distinct from the final unobserved original three journeys, six-job matrix, whole performance/startup budgets and live UAT. Supplemental CI matrix and real Linux3.10 bundle controls qualify new leaves; they do not replace original acceptance. Raw and normalized installation/source hashes are labelled distinctly.
+
+
+Unread reader provenance follow-up (before implementation): TASK-34404 retains the original custom/memory worker lifetime. Qualify pre-UI class replacement and same-function body replacement with actual worker/SQLite lifetime checks, then retain stock class/function/code/globals/defaults in the defining marks-service module before UI import. Stock file-backed producer closure and borrowed-owner preservation remain required. ADR required: no; ADR path: existing ADR-126; reason: routine refusal-metadata repair within the existing ownership boundary.
+
+
+Original tab deadline observation refinement: retain the exact original-sync Task and root coroutine at entry; observe supported local yield/resume for that code only and capture its actual CPython await chain at the unchanged original settle deadline. The actual 3.12 Task/Future/coroutine mechanism controls pass and all six synthetic tasks settle; no global tasks/frames/payload enumeration. Production holding await remains pending the native original case.
+
+Startup and shared-CI cohort diagnostics (registered before installation): track the reviewed original-prefix observer/launcher and the separately qualified complete cold/fresh-process warm liveness helpers. Original six acceptance jobs, original 240/900 second App/process bounds and all performance budgets remain unchanged. Source snapshots independently enumerate app, Tests and profile_core at each edge. Add separate Ubuntu original-prefix diagnosis and ordinary three-OS startup liveness; diagnostics do not replace acceptance. Normal selected Windows redirector ancestry/exits are qualified; forced-timeout descendant custody remains explicitly unqualified pending a separate no-App mechanism check. ADR required: no; ADR path: existing ADR-126; reason: test-only source/cohort observation retaining original authority and process boundaries.
+
+
+2026-10-05 source checkpoint: genuine wrapped-getter body2RED then2GREEN (9.040s/9.621s XML; source stable); integrated sensitive-config21PASS155.59s with original native5000 ceiling and physical/census retirement. Defining getter metadata now pins actual body/code/globals/defaults plus body/wrapper closure cells at decoration time; custom prior replacements retain the ungrouped original route and qualified mid-build changes refuse before execution/memo publication. Unread source provenance2FAIL/2PASS21.80s then4PASS20.172s XML/source stable proves pre-UI class replacement and same-function body mutation no longer inherit stock worker closure. The stock reader is retained in its defining module and rechecked at actual worker entry; memory and instance overrides retain their original lifetime. Both repairs reviewed without remaining concrete source blockers. First unread4setup errors are excluded and its parent-only bootstrap marker correction does not alter the independent real child profile or native guards.
+
+Original whole tab journeys remain1PASS2FAIL236.63s; no GREEN is inferred from the prior observed navigation pass. At the original failure/retry ten-second deadline, actual original sync Task is alive, uncancelled, global0/source stable and awaiting character_context.refresh_presentation_if_scope_changed at the shielded owned-task await. Original task/await-chain attribution is qualified; the owned child stage remains pending. The actual source-bound observer retains original assertions/deadlines, strong task/actor/code refs and explicit unmatched exception gaps. Separate exact-prefix Ubuntu/shared-startup and ordinary cold/warm three-OS diagnostics are now tracked; original six acceptance jobs remain unchanged. Installed tiny startup helper/process qualifier passes8.08s/noApp/source unchanged. Forced timeout descendant custody remains unqualified, so no complete startup-custody acceptance is claimed. Differential AST/Ruff against dev179Python files:639baseline/639current diagnostics, zero new. All final integrated budgets, remaining original failures, native matrix and real private DeepSeek UAT remain required; PR3023 remains draft.

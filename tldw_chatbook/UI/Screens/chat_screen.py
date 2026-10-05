@@ -8297,7 +8297,9 @@ class ChatScreen(BaseAppScreen):
             )
             staged_text = console_prompted_evidence_text(pending_launch)
             context_window = (
-                self._ensure_console_provider_gateway().cached_context_window(settings)
+                spend.cached_context_window_for_display(
+                    self, self._ensure_console_provider_gateway(), settings
+                )
             )
             cache_key = (
                 history_key,
@@ -8378,8 +8380,8 @@ class ChatScreen(BaseAppScreen):
             # no extra DB round trip. The actual send may shrink this after
             # its authority check.
             staged_text=console_prompted_evidence_text(pending_launch),
-            context_window=self._ensure_console_provider_gateway().cached_context_window(
-                settings
+            context_window=spend.cached_context_window_for_display(
+                self, self._ensure_console_provider_gateway(), settings
             ),
         )
         return remember(estimate)
@@ -11912,6 +11914,20 @@ class ChatScreen(BaseAppScreen):
             self._console_credential_snapshot = snapshot
             self._sync_console_settings_summary()
             self._sync_console_control_bar()
+
+    def _start_console_credential_poll_timer(self) -> None:
+        """Poll credentials only during a reconciled, visible Console visit."""
+        if (
+            self._console_credential_poll_timer is not None
+            or not self._console_attach_reconciled
+            or not self.is_attached
+            or not self.is_current
+        ):
+            return
+        self._console_credential_poll_timer = self.set_interval(
+            0.25, self._poll_console_credential_readiness
+        )
+        self._record_ui_timer_created("console-credential-poll")
 
     def _stop_console_credential_poll_timer(self) -> None:
         """Stop completion polling when the mounted Console view goes away."""
@@ -16878,6 +16894,7 @@ class ChatScreen(BaseAppScreen):
                     self._console_attach_resume_in_progress = False
                 self._console_resume_after_reconcile = False
             self._console_attach_reconciled = True
+            self._start_console_credential_poll_timer()
             self._console_attach_reconcile_retry_count = 0
             self._console_attach_reconcile_retry_exhausted = False
         except Exception as exc:  # noqa: BLE001 -- a repaint never kills the app
@@ -17003,10 +17020,7 @@ class ChatScreen(BaseAppScreen):
             CONSOLE_ENVIRONMENT_POLL_SECONDS, self._poll_console_environment
         )
         self._record_ui_timer_created("console-environment-poll")
-        self._console_credential_poll_timer = self.set_interval(
-            0.25, self._poll_console_credential_readiness
-        )
-        self._record_ui_timer_created("console-credential-poll")
+        # Credential polling starts after attach reconciliation publishes.
         # task-15475: claim this visit's refreshes; the ScreenResume Textual
         # posts for this very mount consumes the token and skips its own copy.
         self._console_mount_visit_refreshed = True
@@ -23821,6 +23835,7 @@ class ChatScreen(BaseAppScreen):
         self._stop_console_transcript_sync_timer()
         self._fleet._stop_console_fleet_survivor_tick()
         self._stop_console_cost_ttl_timer()
+        self._stop_console_credential_poll_timer()
         self._console_draft_spend_refresh.stop()
         self._hands_free.teardown()
         self._console_suspend_flush_tasks = [
@@ -23858,6 +23873,7 @@ class ChatScreen(BaseAppScreen):
         apply_status_chips_position(self)
         # Settings can save while this cached Console is outside the screen stack.
         self._refresh_console_background_effects()
+        self._start_console_credential_poll_timer()
         # TASK-31520: re-arm what on_screen_suspend quiesced. mount() is
         # idempotency-guarded, so the first visit's mount+resume pair does
         # the wiring once. A run left active while the user was away needs

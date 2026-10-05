@@ -77,6 +77,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_trace_maintenance import TraceCompactionPolicy
     from tldw_chatbook.Chat.console_trace_custom_pii import CustomPIIRuleset
 from tldw_chatbook.provider_registry import ALL_RECORDS, CLOUD_PROVIDER_CONFIG_KEYS
+from tldw_chatbook.Utils.toml_serialization import dumps_cli_config
 from tldw_chatbook.Utils.adaptive_reader_state import (
     ITEMS_MAX_WIDTH,
     ITEMS_MIN_WIDTH,
@@ -524,7 +525,7 @@ def get_console_ssh_settings() -> ConsoleSshSettings:
 
 SERVER_CLIENT_ID = "SERVER_API_V1"
 # Client ID for the CLI application instance for its local databases
-from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id
+from tldw_chatbook.Backup_Recovery.isolated_restore import installation_client_id  # noqa: E402 - startup identity follows config/provider setup
 
 CLI_APP_CLIENT_ID = installation_client_id()
 
@@ -7469,7 +7470,7 @@ def _write_raw_cli_config_unlocked(
     """
 
     application_directory = _prepare_config_parent(config_path)
-    serialized = toml.dumps(dict(config_data))
+    serialized = dumps_cli_config(dict(config_data))
     try:
         parsed_back = tomllib.loads(serialized)
     except tomllib.TOMLDecodeError as exc:
@@ -8254,7 +8255,7 @@ def export_cli_config_snapshot(
         if serialized is None:
             if config_data is None:
                 raise FileNotFoundError(config_path)
-            serialized = toml.dumps(_config_data_for_persistence(config_data))
+            serialized = dumps_cli_config(_config_data_for_persistence(config_data))
         result_path = _write_serialized_config_artifact_unlocked(
             snapshot_path,
             serialized,
@@ -8767,7 +8768,7 @@ def _apply_literal_settings_transaction_locked(
             expected_raw: Mapping[str, Any] | None = None
             try:
                 persisted = _config_data_for_persistence(config_data)
-                expected_raw = tomllib.loads(toml.dumps(dict(persisted)))
+                expected_raw = tomllib.loads(dumps_cli_config(dict(persisted)))
                 raw_written = _write_raw_cli_config_unlocked(config_path, persisted)
             except Exception as error:
                 committed_content_visible = False
@@ -11550,3 +11551,101 @@ def create_mcp_credential_service(data_root: Path | None = None):
     return CredentialBindingService(
         KeyringCredentialBackend(data_root or get_user_data_dir())
     )
+
+
+# TASK-34404: defining-module originals, retained before helper lazy import.
+_SENSITIVE_INPUT_ORIGINALS = (
+    globals(),
+    tuple(
+        (name, globals()[name], globals()[name].__globals__, globals()[name].__code__)
+        for name in (
+            "get_user_data_dir",
+            "_get_effective_config_path",
+            "_get_custom_database_path",
+            "get_cli_setting",
+            "load_cli_config_and_ensure_existence",
+            "lexical_path",
+            "validate_path_simple",
+            "get_chachanotes_db_path",
+            "get_prompts_db_path",
+            "get_media_db_path",
+            "get_library_collections_db_path",
+            "get_library_ingest_jobs_db_path",
+            "get_workspaces_db_path",
+            "get_subscriptions_db_path",
+            "get_notifications_db_path",
+            "get_research_db_path",
+            "get_writing_db_path",
+            "get_scheduled_tasks_db_path",
+            "get_evals_db_path",
+            "get_rag_indexing_db_path",
+        )
+    ),
+)
+
+_SENSITIVE_INPUT_ORIGINALS = (
+    _SENSITIVE_INPUT_ORIGINALS[0],
+    _SENSITIVE_INPUT_ORIGINALS[1]
+    + (
+        (
+            "_config_participants",
+            _config_participants,
+            _config_participants.__dict__,
+            None,
+        ),
+        ("profile_paths", profile_paths, profile_paths.__dict__, None),
+    ),
+)
+
+_SENSITIVE_INPUT_OWNERS = (
+    (
+        _config_participants,
+        _config_participants.__dict__,
+        tuple(
+            (
+                name,
+                getattr(_config_participants, name),
+                getattr(_config_participants, name).__globals__,
+                getattr(_config_participants, name).__code__,
+            )
+            for name in (
+                "operation",
+                "checked_config_identity",
+                "verified_user_data_directory",
+                "_sensitive_input_publication_owner",
+                "_check_sensitive_input_publication",
+            )
+        ),
+    ),
+    (
+        profile_paths,
+        profile_paths.__dict__,
+        tuple(
+            (
+                name,
+                getattr(profile_paths, name),
+                getattr(profile_paths, name).__globals__,
+                getattr(profile_paths, name).__code__,
+            )
+            for name in ("lexical_path", "custom_database_input", "database_leaf")
+        ),
+    ),
+)
+
+# Capture the guarded getter's actual body and closure at definition time,
+# before sensitive_paths is lazily imported or custom readers are installed.
+_SENSITIVE_INPUT_GUARDED_READERS = (
+    ("get_user_data_dir", get_user_data_dir, get_user_data_dir._config_guarded_body),
+)
+
+# This original selector is a concrete lru wrapper, not a Python function.
+_SENSITIVE_INPUT_CACHED_READERS = (
+    (
+        "_resolve_effective_config_path",
+        _resolve_effective_config_path,
+        type(_resolve_effective_config_path),
+        _resolve_effective_config_path.__wrapped__,
+        _resolve_effective_config_path.__wrapped__.__code__,
+        _resolve_effective_config_path.__wrapped__.__globals__,
+    ),
+)

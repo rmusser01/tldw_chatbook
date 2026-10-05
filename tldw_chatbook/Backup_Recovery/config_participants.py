@@ -49,6 +49,48 @@ def checked_config_identity(source: object, active: object) -> tuple[int, str]:
     return source._CONFIG_GENERATION, str(state.selected)
 
 
+def _sensitive_input_publication_owner(source, active):
+    """Capture refusal metadata from the actual issued config reader."""
+    from . import raw_participants as raw
+
+    with storage._lock:
+        state = raw._live_state(active, None, False)
+        if state.source is not source or state.route not in {
+            "config",
+            "config_snapshot",
+        }:
+            raise bootstrap.RecoveryRequired("config_operation_source_invalid")
+        participant = state.participant
+        if participant is None:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        gate = raw._participant_identity(participant)
+        if gate.source() is not source or gate.owner != "config":
+            raise bootstrap.RecoveryRequired("config_operation_source_invalid")
+        return participant, gate, gate.source, gate.selected, storage._lock
+
+
+def _check_sensitive_input_publication(source, owner):
+    """Refuse unavailable publication; never admit another read or native work."""
+    from . import raw_participants as raw
+
+    participant, gate, source_ref, selected, lock = owner
+    if lock is not storage._lock:
+        raise bootstrap.RecoveryRequired("config_publication_source_changed")
+    with lock:
+        if storage._pause is not None:
+            raise bootstrap.RecoveryRequired("storage_locally_paused")
+        if (
+            gate.source is not source_ref
+            or gate.selected is not selected
+            or raw._participant_identity(participant) is not gate
+            or source_ref() is not source
+            or gate.owner != "config"
+        ):
+            raise bootstrap.RecoveryRequired("config_publication_source_changed")
+        if gate.closed:
+            raise bootstrap.RecoveryRequired("storage_locally_paused")
+
+
 def binding(source):
     module = sys.modules.get("tldw_chatbook.config")
     if module is not None and source is module:
@@ -440,6 +482,20 @@ def guarded(function):
         with operation(source, target=target):
             return function(*args, **kwargs)
 
+    # Definition-time body/closure provenance is refusal metadata only. It is
+    # retained before consumers can install custom readers; the guard itself
+    # keeps its preceding direct-call behavior.
+    wrapped._config_guarded_body = (
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        wrapped.__closure__,
+        tuple((cell, cell.cell_contents) for cell in wrapped.__closure__ or ()),
+    )
     return wrapped
 
 

@@ -978,3 +978,19 @@ expansion_prompt_template = "default"
 combine_results = true
 cache_expansions = true
 """
+
+
+# TASK-34404: defining-module originals, retained before helper lazy import.
+_SENSITIVE_INPUT_ORIGINALS = (
+    globals(),
+    tuple(
+        (name, globals()[name], globals()[name].__globals__, globals()[name].__code__)
+        for name in (
+            "default_chroma_persist_directory",
+            "_cleaned_path_setting",
+            "_explicit_rag_setting",
+            "get_cli_setting",
+            "get_user_data_dir",
+        )
+    ),
+)

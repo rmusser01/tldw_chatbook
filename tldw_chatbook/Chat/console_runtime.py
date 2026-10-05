@@ -531,6 +531,11 @@ def _provider_config_for_app(app: Any) -> Mapping[str, Any]:
     return fresh if isinstance(fresh, Mapping) and fresh else snapshot
 
 
+_PROVIDER_CONFIG_FOR_APP_ORIGINAL = (
+    globals(), _provider_config_for_app, _provider_config_for_app.__code__
+)
+
+
 def _native_tools_enabled_for_app(app: Any) -> bool:
     """Read the native-tools gate from app-owned configuration."""
     console = _provider_config_for_app(app).get("console", {})

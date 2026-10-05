@@ -1722,3 +1722,141 @@ applies; no other native close site, admission cap or deadline changes apply.
 ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: preserve the existing finite native resource retirement boundary for the original custom scalar route.
 
 The actual custom-facade scalar reader delegated to the original Windows rejected-junction opener. Its genuine protected HANDLE remained alive after the defining metadata-close exception, but the issued visual state/raw record was removed with uncertainty false (one native RED, 3.77 seconds; guards/network zero, captured source hashes unchanged, physical fixture cleanup verified). Before implementation, scope the repair to catching that exact defining close exception around the existing scalar observation and passing its actual opened-handle records to the existing uncertainty retainer. Ordinary custom/POSIX errors and successful custom/native/large-DACL fallback contracts retain their current behavior. Verify the new native negative with the existing custom positive, standard rejected-open, large-DACL, and unsupported/body-error controls; preserve the original startup 20/45 second bounds.
+
+### TASK-34404 amendment: scoped run-log source admission (2026-10-04)
+
+The original Console bridge already selects a run's explicit workspace/scratch
+root and supplies a RunLogWriter with a real scratch access scope. The installed
+AgentService guard must freshly admit that same source under agents.history,
+before its first run/history mutation, rather than discover an unrelated global
+workspace/sandbox root a second time. Existing family source observations and
+the original recovery/native execution gates remain in place.
+
+Only the exact installed service, definition-time original run_turn and writer
+class/methods, original root selector, and real bound receivers qualify. Capture
+the injected writer, immutable Path object, access-scope and publisher objects
+before admission. A finite current PID/Thread/Task metadata record retains these
+strong owners until the original turn exits; it carries no lease, permission,
+resolved sensitive context or reusable verdict. Fresh current-root admission
+is independently required. Custom/subclass/borrowed/overridden producers retain
+the complete original selection and call contract.
+
+Recheck the captured producer/source before the original turn's first effect,
+before and after access-scope entry, and before binding/publication. Bind consumes
+the captured root; it never recaptures a changed mutable field as authority. A
+changed writer/root/callback/module/actor refuses or disables logging at the
+existing boundary. Publication checks occur outside the optional publisher's
+exception-swallowing block. The record resets in finally and never transfers to
+another run or surviving worker. Scratch authority, native storage containment,
+sensitive-path checks, hidden .agent-runs, legacy migration/no-overwrite and
+physical retirement remain governed by their existing original checks.
+
+Meaningful native RED evidence: an actual private AgentRunsDB, exact service and
+writer, real scratch snapshots/leases and scripted provider reproduced one
+unrelated global selector and no actual-root extra admission; actual scope entry
+retargeted the root/publisher and was allowed to bind. Three expected failures
+and one unchanged custom-selector pass completed in 28.65s, source hashes stable,
+without guarded-callable replacement. Counter reductions are mechanism evidence;
+the original whole-Send/UI limits and three-platform verification remain required.
+
+The finite record has an issued live bit cleared on exit, so copied contexts cannot use retired source metadata. Exact stock partial callback bindings retain function, positional tuple and keyword-owner objects; in-place keyword retargeting refuses. Invocation consumes captured binding values, with no arbitrary callable introspection. An actual in-place partial publisher retarget reproduced another native RED in8.23s with original source unchanged. Unsupported callable objects or unbounded partial bindings preserve the original custom route.
+
+
+Scoped dispatch amendment: native late-return metadata faults reproduced three
+failures in 17.39s after actual DB creation, source checking and containment.
+The qualified route invokes retained original bind, under-bind and migration
+functions with the checked receiver, including a first-effect migration fence.
+The default/custom route retains its dynamic calls. Writer selection consumes
+the captured writer after another service fence. Source owner fields are frozen;
+only the issued live bit retires in finally.
+
+A copied-context native worker reproduced writer deactivation in 8.38s.
+Foreign PID/Thread/Task metadata is inapplicable and supplies neither roots nor
+admission: original worker, scratch and storage guards reacquire independently.
+Same-actor retired metadata refuses, and explicit scope entry always checks the
+full actor/live fence. Original child/survivor append and close remain unchanged.
+
+### TASK-34404 AC10 cold raw-sensitive-input finite config operation (2026-10-04)
+
+ADR required: yes, clarification of this existing interface. A new synchronous reader grouping must preserve finite native source, actor and publication custody; it supplies no permission or maintenance capability.
+
+Two source-passive native controls ran serially in separate fresh private processes. The original stock cold context made 7,176 Windows Native.open_handle calls; enclosing the same original resolver in the supported `config_participants.operation(config)` made 2,627. All 20 original user-directory bodies ran, fresh raw checks rose from 40 to 123, the normalized exact derived pathset matched, nine production hashes/protected callbacks stayed unchanged, the seeded SQLite handle physically closed, and all ordinary/pending/core/raw/retiring resources reached zero. Warm grouping increased opens from 356 to 377. These finite hypothesis receipts are not whole Send timings, a whole-HEAD baseline or cross-host performance completion.
+
+Only an actual natural `_raw_inputs` memo miss may add the finite operation. The initial original key read and warm memo return remain outside it. Every original getter, native source/path check, additive failure counter, whole environment/cwd and strong cache-object/generation/source key stays intact. No public accessor or resolved-path/permission algorithm is replaced. The original resolved SensitivePathContext remains invocation-local; unresolved raw tuples retain their existing memo contract.
+
+Exact stock qualification is refusal-only metadata. Retain direct original functions/accessors/helpers at their defining module completion before helper lazy import, require installed module/globals and concrete function identity, keep strong callback/source/actor owners, and compare by `is`. A config guard wrapper is owned by its actual defining `config_participants` globals; copied metadata does not turn those globals into config. The original wrapper continues checking its original config body and installed source. Preinstalled custom/bound/borrowed/proxy and remote/stub paths retain their preceding ungrouped zero-argument callback route. Standard callbacks/source/pause drift after qualification refuses without invoking replacement callbacks under the added scope or silently retrying custom fallback. All getters still run their own guards; admitted source identity is freshly checked at both operation edges.
+
+The sensitive module owns its memo, not config rollback. Evaluate the original final whole-key/failure comparison while the finite operation remains active, retain eligibility locally, and defer publication until the finite operation has exited with positively retired resources and final source/callback fences hold. A failed entry, body or final custody check publishes nothing from that build and must not remove an independently published successor. Ordinary accessor failures and environment/cwd drift retain their additive return and non-memoization semantics. A private optional refusal checkpoint before each original DB accessor may protect dynamic callback lookup without altering preceding no-argument/custom call shapes.
+
+Native TDD must precede production: stock cold ≤5,000 actual opens with all 20 getters and literal protected paths; unchanged warm one-getter/two-check hit; original custom/first-import/bound/proxy/helper routes; mid-read callback/source/pause refusal; failed final exit leaving no memo; environment/cwd and failure non-memoization; actual finite native retirement and original POSIX/stdlib worker contracts. All integrated Send/UI/open/helper budgets and deadlines remain unchanged.
+
+Cold-input wrapper contract clarification (2026-10-05): the first candidate
+failed actual config import before test collection because the original cached
+selector has no function globals (exit 4, 4.687s, unchanged source). Definition-
+time metadata must retain this concrete original lru wrapper and its original
+wrapped function/code/globals. Qualification compares those exact objects;
+wrapper invocation and cache behavior remain original. Arbitrary unwrap results
+never become authority; unsupported custom objects use the preceding route,
+and drift after stock qualification refuses. Ordinary function-body mutation
+coverage remains pending its separate native RED, with no completion claim.
+
+Ordinary reader body clarification (2026-10-05): two real native code-only
+mutations retained the original function/global identity but wrongly entered or
+completed the cold stock scope (2 failures, 8.04s; seeded SQLite physically
+closed, native/hash/guard/body/hook cleanup passed). Definition-time ordinary
+reader and direct-owner metadata must also retain exact code objects. Pre-first-
+helper-import body changes preserve the original ungrouped custom route;
+post-qualification changes refuse before invocation or memo publication. This
+completes the existing refusal-only metadata contract without unwrapping current
+callbacks, changing original getters or accepting a cached permission verdict.
+Original key, failure, final-custody/publication and deadline semantics remain.
+
+### Cold tuple and pause publication refinement (2026-10-05)
+
+The stock cold input grouping must retain the defining original DB-name tuple
+as well as the original reader functions/codes. Two real native controls failed
+after a preinstalled or actual mid-build tuple addition (source-drift bundle
+17.39s total, unchanged source, exact native/issued boundary, original guards and
+zero finite census). A custom name tuple takes the preceding ungrouped route;
+tuple drift after qualification refuses before added reader invocation or memo
+publication. Per-lookup checkpoint membership is the captured original set, not
+the just-read name/callback pair. Original additive custom/no-argument behavior
+and every original getter remain.
+
+Both original pause/final-pause controls reached their declared barriers in the
+17-case candidate (15 PASS / 2 FAIL, 126.60s), but published the new memo. An
+installed native config operation may legitimately retire after local pause;
+that existing protocol is not changed. This leaf must separately check current
+publication availability. Retain invocation-local refusal metadata for the actual
+admitted participant/state, original weak source reference/selection and actual
+coordinator lock. Exact definition-time private helper functions/codes capture
+and recheck this metadata. After physical operation retirement, the final local/
+participant pause and same installed participant check shares the coordinator
+interval with the unresolved memo write. Full source/path observations stay
+outside the lock; in-lock checks repeat only pure actor/binding/cache/key fields.
+This record holds no operation/lease/verdict and grants no permission. Failure
+publishes nothing and does not erase an independently completed successor.
+
+The previous scope/guards, raw source/recovery protocol, custom/remote contracts,
+natural warm hit, cold <=5000 guard, original integrated budgets/deadlines and all
+native refusal/publication assertions remain unchanged. Bounded native GREEN and
+final cross-host/Console/UAT evidence are still required.
+
+
+Scoped run-log body binding clarification (TASK-34404 AC10, 2026-10-05): the
+revised actual native two-case RED executed both same-identity changed bodies
+after qualification (two failures, 11.55 seconds; original provider completed,
+physical SQLite close and final zero native census, guarded callbacks/source
+unchanged). Earlier scoped fixture precondition failures are not product RED.
+Before implementation, retain definition-time exact stock service wrapper/body,
+writer method and selector code/globals as well as their function/module owners.
+Finite supported function/MethodType/partial callbacks retain code/globals and
+strong bound receivers. Recognize the actual contextmanager factory only by
+original stdlib helper code/globals and its one exact wrapped-function closure;
+retain the wrapped body without arbitrary unwrap or recursive authority.
+Preinstalled changed stock bodies preserve fallback; issued-source body drift
+refuses. Check at actual captured dispatch after the caller's original check
+return, and retain publication refusal outside optional observer handling.
+Actual fresh root admission, native retirement, custom/default/foreign-worker/
+survivor contracts and existing budgets/deadlines remain. This is refusal-only
+finite metadata, not permission or a resolved sensitive-context cache.

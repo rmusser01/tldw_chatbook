@@ -351,7 +351,7 @@ def main():
     elif outcome in ('mid_read_binding', 'mid_read_binding_unsupported'):
         assert isinstance(error, ValueError) and loaded is None and not custom_calls, ('changed native binding accepted or called', result)
     elif outcome not in ('positive', 'large_dacl', 'custom_facade'):
-        expected = 'visual_identity_asset_unavailable' if outcome in ('source', 'pause') else 'visual_identity_path_invalid'
+        expected = 'visual_identity_asset_unavailable' if outcome in ('source', 'pause') and os.name == 'nt' else 'visual_identity_path_invalid'
         assert isinstance(error, ValueError) and str(error) == expected, ('stale native visual read accepted', result)
 
 with user_fixture_default_owner(): main()

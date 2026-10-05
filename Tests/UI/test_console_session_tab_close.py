@@ -1588,3 +1588,82 @@ async def test_session_close_pending_race_and_fleet_journeys(
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", ResourceWarning)
                 gc.collect()
+
+
+@pytest.fixture(autouse=True)
+def _observe_original_tab_sync_lifetime(request):
+    """Opt-in passive child-only observation; original journeys stay intact."""
+    import hashlib
+    import json
+    import os
+    import sys
+
+    from Tests.private_profile import is_private_profile_child
+
+    if (
+        os.environ.get("TLDW_TEST_TAB_SYNC_LIFETIME") != "1"
+        or request.node.name not in {
+            "test_session_close_navigation_journeys",
+            "test_session_close_failure_and_retry_journeys",
+            "test_session_close_pending_race_and_fleet_journeys",
+        }
+        or not is_private_profile_child(request)
+    ):
+        yield
+        return
+
+    from Tests.UI._tab_sync_original_lifetime import OriginalTabSyncLifetime
+
+    # Keep the diagnostic beside this exact original child's XML unless the
+    # root supplies an explicit metadata-only Evidence receipt destination.
+    output = Path(
+        os.environ.get("TLDW_TEST_TAB_SYNC_RECEIPT")
+        or str(
+            Path(os.environ["TLDW_TEST_CONFIG_ROOT"]).parent
+            / (request.node.name + ".tab-sync-lifetime.json")
+        )
+    )
+    observer = OriginalTabSyncLifetime()
+    source_paths = {
+        name: Path(module.__file__)
+        for name, module in observer.modules
+    }
+    helper_module = sys.modules[OriginalTabSyncLifetime.__module__]
+    source_paths[helper_module.__name__] = Path(helper_module.__file__)
+    before = {
+        name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for name, path in source_paths.items()
+    }
+    stop_error = None
+    try:
+        observer.start()
+        yield
+    finally:
+        try:
+            if observer.active:
+                observer.stop()
+        except BaseException as error:
+            stop_error = type(error).__name__
+            raise
+        finally:
+            facts = observer.receipt()
+            after = {
+                name: hashlib.sha256(path.read_bytes()).hexdigest()
+                for name, path in source_paths.items()
+            }
+            facts.update(
+                original_selected_node=request.node.nodeid,
+                source_hashes_before=before,
+                source_hashes_after=after,
+                all_source_hashes_stable=(before == after),
+                observer_stop_error_type=stop_error,
+                original_test_bodies_assertions_and_deadlines_unchanged=True,
+            )
+            output.write_text(json.dumps(facts, indent=2) + "\n", encoding="utf-8")
+            print(
+                "tab-sync-lifetime receipt=" + str(output)
+                + " events=" + str(len(facts["events"]))
+                + " overflow=" + str(facts["overflow"])
+                + " unmatched=" + str(facts["live_original_frames"])
+                + " restored=" + str(facts["restoration"])
+            )
