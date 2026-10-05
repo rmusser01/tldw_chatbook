@@ -295,6 +295,34 @@ with no hold in front of it, and run the candidate implementations against the
 test. Where the harness cannot separate two candidates, poll the live terminal
 for the deciding case instead of keeping or deleting code on the test alone.
 
+---
+## A round-robin shard is not "total minutes / shards" — replay per-file seconds from a job log
+
+**TASK-33007.9 review round 2, 2026-10-05.** The UI Fast Lane splits its census
+round-robin (`census[i::total]`), and its slow files do not fall evenly. Three
+finished three-shard runs on dev's 138-file census (37241246559, 37232480746,
+37240371461) took 3.9-4.4, 10.2-11.9 and 14.5-14.8 min of pytest per shard,
+not three thirds of 31 min, and each job ran about 1.2 min longer than its
+pytest. This phase added five Settings files costing 10.8 min in the lane's
+serial recipe locally (CI ran private-profile census files at 1.05-1.46 times
+this machine). Replayed over dev's census with the five inserted, the heaviest
+shard was 19.1-20.4 min with three shards, 16.6-17.5 with four, 13.3-14.5 with
+five, and 15.9-17.1 with six: one more shard can be slower, because every
+inserted or removed line moves each later file to another shard.
+
+**What to do.** Before adding census files or picking a shard count, take
+per-file seconds from finished job logs (`gh run view --job <id> --log`).
+GitHub stamps a line when it ends and pytest ends a file's progress line when
+the next file starts, so a file costs its line's stamp minus the previous
+line's; checked here, the replay gave dev's three shards as 3.9/12.5/14.7 min.
+Replay every shard count you are considering with the new files in place, and
+compare the heaviest shard plus the job's ~1.2 min outside pytest with
+`timeout-minutes`. Price files from CI logs, not from this machine: some cost
+far more there (`test_enhanced_file_dialog_bundle_css.py` 212 s in CI, 4 s
+locally). Run each new census file once in the lane's recipe too: that is how
+an app-building test with no `bootstrap_profile` mark was found red
+(`RecoveryRequired`) in a census file, under the real HOME and an empty one.
+
 ## A prompt that tells the model where things are must be tested by doing what it says
 
 **TASK-33940.1, 2026-10-02.** The workspace system-prompt note listed bound folders "relative

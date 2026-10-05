@@ -201,7 +201,15 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Connect's one-row rows -- the Provider control's name after a choice or
 # Revert, painted from its head, its open list's box at both full-screen
 # sizes, the key's source words, the Key check row and the Tab budget to Model.
-MINIMUM_FILES = 167
+# TASK-33007.9 (review round 2) raised it to 140:
+# test_settings_default_model_picker.py (12 mounted cases, ~2.1 min serial)
+# gates the Default model picker -- one row, ids grouped by where they came
+# from, Custom ID and its rollback, and a wide id read from its head. The lane
+# went to five shards in the same commit: this phase's five Settings files
+# cost ~10.8 min serial, and replaying per-file seconds from three-shard job
+# logs over dev's census plus them put 19-20.5 min of pytest in one of three
+# shards and 16.6-17.5 in one of four; five give 13.3-14.5 at most.
+MINIMUM_FILES = 168
 
 
 def read_census(path: Path) -> list[str]:

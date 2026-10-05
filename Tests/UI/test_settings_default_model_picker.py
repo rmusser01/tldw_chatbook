@@ -17,6 +17,7 @@ import httpx
 import pytest
 import toml
 from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets.input import Selection
 
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
@@ -255,8 +256,18 @@ async def test_changing_provider_rescopes_the_picker_to_that_providers_default(
     request,
 ):
     """AC#6: the new provider's own default is staged and shown; nothing from
-    the previous provider stays in the field or the list."""
-    app = _app("openai", "gpt-4o", saved=("llama-local-1",), catalog=("gpt-4o",))
+    the previous provider stays in the field or the list.
+
+    TASK-33007.9 (review round 2): the id here is wider than the field even
+    while focus widens it across the row (92 cells at 211x44). The field
+    selects from the head as Provider does on the row above, so the id keeps
+    its head when focused and comes to rest on it wherever the caret was left.
+    """
+    local = (
+        "hf.co/bartowski/Qwen2.5-Coder-32B-Instruct-abliterated-GGUF/"
+        "Qwen2.5-Coder-32B-Instruct-abliterated-Q4_K_M.gguf"
+    )
+    app = _app("openai", "gpt-4o", saved=(local,), catalog=("gpt-4o",))
     host = _SettingsCssHarness(app, "settings")
 
     async with host.run_test(size=_SIZE) as pilot:
@@ -264,17 +275,37 @@ async def test_changing_provider_rescopes_the_picker_to_that_providers_default(
         await _settle(host, pilot)
         picker, field, results, adapter = _widgets(screen)
 
+        def paints_the_head() -> bool:
+            cells = field.content_region.width
+            assert len(local) > cells, cells
+            return local[:cells] in _region_rows(screen, field)[0]
+
         screen.query_one("#settings-provider-value", Select).value = "llama_cpp"
         await _settle(host, pilot)
 
-        assert adapter.value == field.value == picker.value == "llama-local-1"
-        assert screen._provider_setting_values_mapping()["model"] == "llama-local-1"
+        assert adapter.value == field.value == picker.value == local
+        assert screen._provider_setting_values_mapping()["model"] == local
+        assert paints_the_head(), _region_rows(screen, field)[0]
         field.focus()
         await pilot.pause()
         assert results.display
         listed = _rows(results)
-        assert f"llama-local-1  {CURRENT_MARK}" in listed
+        assert f"{local}  {CURRENT_MARK}" in listed
         assert not any("gpt-4o" in row for row in listed), listed
+
+        assert field.selection == Selection(len(local), 0)
+        assert paints_the_head(), _region_rows(screen, field)[0]
+        await pilot.press("end")  # the caret is the user's to move
+        await pilot.pause()
+        assert not paints_the_head()
+        await pilot.press("escape")  # leaves the field (task-1560)
+        for _ in range(100):
+            if not field.has_focus:
+                break
+            await pilot.pause(0.05)
+        await pilot.pause(0.2)  # the picker's blur timer
+        assert not field.has_focus and not results.display
+        assert paints_the_head(), _region_rows(screen, field)[0]
 
 
 @pytest.mark.asyncio

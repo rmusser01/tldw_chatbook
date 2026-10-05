@@ -202,6 +202,10 @@ async def test_saved_model_list_counts_and_each_row_says_selected_and_saved(requ
 
 
 @pytest.mark.asyncio
+# The app is built in-process and both config calls are patched, so the node
+# keeps the collection-time profile: under the per-test sandbox the app's
+# config read raises RecoveryRequired, here and in the UI Fast Lane.
+@pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("startup", [True, False])
 async def test_catalog_refresh_rows_say_on_off_and_whether_choices_apply(startup):
     """AC#5, AC#6: one row per provider with On/Off words, the instant-apply
