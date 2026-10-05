@@ -812,8 +812,79 @@ Independent read-only review found no Critical, Important or Minor finding in
 this bounded production/test patch. It confirmed native mutation-versioned
 lookup freshness and declined to judge the still-pending full qualification.
 
-Fresh clean-head scale and query-attribution measurements remain pending. This
-does not close the 50ms/100ms limits or any native, Windows, participant or final
-application-owner resource gap. TASK31966/TASK31245 remain In Progress with all
-qualification acceptance criteria open. Existing ADR120/150/161/198 apply; no
-new architectural decision or semantic gate waiver.
+Fresh clean-head results follow below. Mounted verification alone does not close
+the 50ms/100ms limits or any native, Windows, participant or final application-owner
+resource gap. TASK31966/TASK31245 remain In Progress with all qualification
+acceptance criteria open. Existing ADR120/150/161/198 apply; no new architectural
+decision or semantic gate waiver.
+
+## Frozen Model-value scale and query-cost receipts
+
+Measured clean source: **a0772b7c2a75cb1127f6138e9360402c6765f5b7**.
+Fresh fixture container: `/tmp/task31966-model-measure-l9EZAY`. Every build,
+Keyword and UI receipt verifies the exact clean source again at CLI settlement;
+the original corpus digest remains unchanged:
+`9f3395e3cb692987d08c3270b36394bcc93cb4bf488c4ed527e51a71108cb27f`.
+This is not evidence for a future rebase or changed production head.
+
+- `scale`: 10,000 conversations, 250,000 eligible selected-branch messages plus
+  four exclusions, 10,000 indexed documents; seed 107.645329s, index build
+  3.090368s, ready, zero registered handles after cleanup.
+- `keyword`: all 300 exact manifest queries pass after five warmups per query;
+  P95 **128.731708ms**, max loop interval **15.789042ms**, no correctness failure,
+  zero registered handles and no owned database descriptors after cleanup.
+- `ui`: both real-owner viewports complete all 60 exact searches and eight exact
+  OPENED activations, no app exception. Both preparation windows pass
+  (43.377250/41.134000ms); all busy-paint limits pass. Seven of eight activation
+  windows still fail 50ms; wide `unicode-long-1` search also fails at
+  **60.254791ms**. The ordinary paint observer's maximum duration is
+  **52.958875ms**, retained as an overhead limitation rather than attributed
+  entirely to production. The retained post-unmount app has 16 registered
+  handles and open database descriptors: not terminal application retirement.
+
+Activation maximum event-loop intervals (ms), unchanged 50ms limit:
+
+| Viewport | First open | Other chat | Unicode chat | Reuse first chat |
+| --- | ---: | ---: | ---: | ---: |
+| 52x20 | 85.193250 | 51.468708 | 44.424708 | 51.794166 |
+| 120x50 | 64.160042 | 70.511458 | 81.063958 | 111.111000 |
+
+The unchanged throwaway native-query observer then ran at the same exact source
+and corpus under `ui-summary-query-cost`. Its entrypoint and parent hashes remain
+the previously recorded `6b9d72a7…` / `f3d7d560…`; forwarding self-check passes.
+It retains 86 config roots, 115 scopes, 499 substeps, 25 paired main-thread gen-2
+collections and 47 query/update observations, with no drops and thresholds
+unchanged at 700/10/10. In every one of **15** rooted activation-window summary
+applications, exactly **one** cold screen-wide query remains (the unmodified
+recovery lookup), versus four in every baseline application. Its retained query
+cost is **1.958292–3.975500ms** within total apply cost
+**3.442042–9.092125ms**; baseline corresponding ranges were
+6.501790–15.040541ms and 12.959291–19.341708ms. Retained Static updates max
+0.152875ms. Below-threshold observations are not zero-cost, and overlapping
+inclusive spans cannot be added independently.
+
+This diagnostic also completes all 60 exact searches/eight exact activations,
+without app exception or source/corpus mutation, but six activation loop windows
+still fail: narrow **56.666708 / 38.686958 / 35.810125 / 56.262834ms**, wide
+**101.339167 / 99.960958 / 94.205250 / 124.529209ms**. Paint observer max is
+1.382459ms; all busy limits and preparation windows pass. In its longest wide
+intervals, gen-2 overlaps last 49.680375, 61.246708, 53.798084 and 90.526208ms.
+Narrow activation 1's longest failed interval contains neither gen-2 nor a
+tracked config root; narrow activation 4's failed interval contains two config
+roots and no gen-2. GC contributes but is not the only residual cause. Wrappers
+perturb allocation/scheduling, so diagnostic and ordinary runs are not a
+controlled whole-app speed comparison. The diagnostic's retained post-unmount
+app has 18 registered handles and open DB descriptors, not retirement proof.
+
+Raw build/Keyword receipts, normal and diagnostic `ui-evidence` receipts, painted
+frames, config-phase and query-cost records remain under the named container.
+Logs: `/tmp/task31966-model-scale.log`, `/tmp/task31966-model-keyword.log`,
+`/tmp/task31966-model-ui.log`, `/tmp/task31966-model-summary-query-cost.log`.
+
+The approved lookup correction is confirmed, but the broader latency acceptance
+criterion remains unsatisfied. After the three bounded recovery-height,
+Send-reason and Model-query corrections, pause for a Console refresh/GC and
+measurement-overhead architecture discussion before attempting another
+production correction. No speculative GC/cache policy or fourth fix is approved
+or applied. Native, Windows, participant and terminal-resource qualification
+remain unwaived; no final combined PR or dependent semantics work is ready.
