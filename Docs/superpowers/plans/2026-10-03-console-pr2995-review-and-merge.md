@@ -26,6 +26,8 @@ Reason: Restore approved draft ownership and startup ratchets; no new schema or 
 - Startup budget constants remain unchanged. Preserve all current dev changes and historical QA bytes.
 - Use the existing isolated worktree; no full repository test sweep, dependency installs, user profile edits, warning suppression, or new skip/xfail markers.
 
+- For the next additive QA checkpoint, pack explicitly selected Task19–22 safe receipts/reports in one fresh stdlib ZIP with an exact entry manifest, credential audit and preservation proof. Task19 alone projects at least3026 changed paths through the existing flat-export ratchet3000, before later reports/tasks. Keep every prior QA blob/ZIP/publication exact; include no raw recovery bundle, profile, config or database. Verify selected entry bytes/hashes and final actual changed-path count; root packages only after all scoped approvals. This changes evidence packaging only, with no runtime/dependency/ADR change.
+
 ## Controller preparation
 
 - [x] Incorporate latest dev81c7c94f48 backup-admission fix; verify reviewed feature source bytes unchanged and qualify affected backup/startup seams.
