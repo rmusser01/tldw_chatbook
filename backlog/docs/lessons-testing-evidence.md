@@ -4838,7 +4838,12 @@ only that the word was non-empty, and the live-capture procedure itself wrote
    (`chat_defaults_value`). The round-1 fix moved only the word, and the
    round-2 review measured the split on hand-edited keys: `streaming = 0`
    read "Off | built-in" while a new chat streamed, and `temperature = 3.0`
-   read "0.7 | Console Behavior" while a new chat got 3.0.
+   read "0.7 | Console Behavior" while a new chat got 3.0. Round 2 then fixed
+   the loaders that finding named and missed a second one: the four choice
+   rows had their own loader and the Select its own mapping, both lowercased,
+   so `reasoning_effort = "High"` showed "high" while a new chat got "High"
+   (round 3). Grep every loader and control mapping of the table, not only
+   the ones the finding names.
 2. For every config-backed row, write one case with the key absent and compare
    it with the neighbouring surface that reads the same key.
 3. Take the "at rest" capture on the shipped template. List every key the
