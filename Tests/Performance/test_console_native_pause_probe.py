@@ -1,4 +1,4 @@
-"""Native captured-send regression budgets with call-through pause diagnostics.
+"""Native captured-send regression budgets with passive original-code diagnostics.
 
 Real full app, private profile, file-backed DB, controller and capture. Only
 the final provider adapter replies immediately. No storage gate is mocked.
@@ -12,8 +12,8 @@ from __future__ import annotations
 import asyncio
 import collections
 import contextlib
-import functools
 import hashlib
+import inspect
 import json
 import os
 import platform
@@ -53,10 +53,10 @@ class Observation:
         self.config_counts = collections.Counter()
         self.config_details = []
         self.config_detail_phases = collections.Counter()
-        self.config_local = threading.local()
         self.phase_windows = {}
         self.delay_windows = []
         self.stop = threading.Event()
+        self.passive_seams = None
         self.package = str(Path(__file__).resolve().parents[2] / "tldw_chatbook")
 
     def stack(self, frame):
@@ -87,49 +87,6 @@ class Observation:
                         stack=self.stack(sys._getframe(2)),
                     )
                 )
-
-    def wrap(self, monkeypatch, owner, name, *, context=False, callers=True):
-        original = getattr(owner, name)
-        label = f"{getattr(owner, '__name__', type(owner).__name__)}.{name}"
-
-        def enter():
-            return (
-                self.phase,
-                time.perf_counter(),
-                self.stack(sys._getframe(2)) if callers else "",
-            )
-
-        if context:
-
-            @contextlib.contextmanager
-            @functools.wraps(original)
-            def measured(*args, **kwargs):
-                phase, started, caller = enter()
-                manager = original(*args, **kwargs)
-                try:
-                    active = manager.__enter__()
-                finally:
-                    self.record(
-                        label + ".enter", phase, time.perf_counter() - started, caller
-                    )
-                try:
-                    yield active
-                except BaseException:
-                    if not manager.__exit__(*sys.exc_info()):
-                        raise
-                else:
-                    manager.__exit__(None, None, None)
-        else:
-
-            @functools.wraps(original)
-            def measured(*args, **kwargs):
-                phase, started, caller = enter()
-                try:
-                    return original(*args, **kwargs)
-                finally:
-                    self.record(label, phase, time.perf_counter() - started, caller)
-
-        monkeypatch.setattr(owner, name, measured)
 
     @staticmethod
     def _metadata_hash(value):
@@ -180,183 +137,33 @@ class Observation:
                     )
                 )
 
+    def _start_seams(self, *, config_only=False):
+        from Tests.Performance.console_native_pause_seams import PassivePauseProbeSeams
+
+        assert self.passive_seams is None, "one observer owns one monitoring tool"
+        self.passive_seams = PassivePauseProbeSeams(self, config_only=config_only)
+        self.passive_seams.start()
+
+    def stop_seams(self):
+        """Remove owned local hooks once, including standalone observer tests."""
+        if self.passive_seams is not None and self.passive_seams.active:
+            self.passive_seams.stop()
+
     def install_config(self, monkeypatch, config):
-        """Call through existing checks; observe metadata without additional IO."""
-        original_posture = config._config_file_posture
-        original_hit = config._settings_cache_hit
-
-        @functools.wraps(original_posture)
-        def posture(path):
-            phase, started = self.phase, time.perf_counter()
-            try:
-                result = original_posture(path)
-                current = getattr(self.config_local, "cache_probe", None)
-                if current is not None:
-                    current["observed"] = result
-                return result
-            finally:
-                self.record(
-                    "tldw_chatbook.config._config_file_posture",
-                    phase,
-                    time.perf_counter() - started,
-                )
-
-        @functools.wraps(original_hit)
-        def cache_hit(path):
-            phase, started = self.phase, time.perf_counter()
-            before = (
-                id(config._SETTINGS_CACHE),
-                config._SETTINGS_CACHE_SOURCE,
-                config._SETTINGS_CACHE_POSTURE,
-            )
-            cached_missing = config._SETTINGS_CACHE is None
-            previous = getattr(self.config_local, "cache_probe", None)
-            current = {}
-            self.config_local.cache_probe = current
-            try:
-                result = original_hit(path)
-            finally:
-                self.config_local.cache_probe = previous
-                self.record(
-                    "tldw_chatbook.config._settings_cache_hit",
-                    phase,
-                    time.perf_counter() - started,
-                )
-            outcome = (
-                "hit"
-                if result is not None
-                else (
-                    "empty"
-                    if cached_missing
-                    else "source"
-                    if before[1] != path
-                    else "posture"
-                    if "observed" in current and current["observed"] != before[2]
-                    else "unobserved_or_raced"
-                )
-            )
-            metadata = {}
-            caller = ""
-            if outcome != "hit":
-                after = (
-                    id(config._SETTINGS_CACHE),
-                    config._SETTINGS_CACHE_SOURCE,
-                    config._SETTINGS_CACHE_POSTURE,
-                )
-                metadata = dict(
-                    source_sha256=self._metadata_hash(before[1]),
-                    selected_sha256=self._metadata_hash(path),
-                    expected_posture_sha256=self._metadata_hash(before[2]),
-                    observed_posture_sha256=self._metadata_hash(
-                        current.get("observed")
-                    ),
-                    changed_fields=self._posture_differences(
-                        before[2], current.get("observed")
-                    )
-                    if "observed" in current
-                    else [],
-                    cache_state_changed=before != after,
-                )
-                caller = self.stack(sys._getframe(1))
-                self.config_local.last_miss = (phase, outcome)
-            self.config_record("_settings_cache_hit", outcome, phase, metadata, caller)
-            return result
-
-        monkeypatch.setattr(config, "_config_file_posture", posture)
-        monkeypatch.setattr(config, "_settings_cache_hit", cache_hit)
-        # Guarded loader identities are part of the installed-source contract.
-        # Keep an unchanged, already-loaded Console public alias in agreement;
-        # other previously imported aliases remain outside these loader counts.
-        for name in (
-            "load_settings",
-            "_invalidate_config_caches",
-            "set_encryption_password",
-            "_set_session_encryption_password",
-        ):
-            original = getattr(config, name)
-
-            def install_one(name, original):
-                @functools.wraps(original)
-                def measured(*args, **kwargs):
-                    phase, started = self.phase, time.perf_counter()
-                    caller = self.stack(sys._getframe(1))
-                    forced = bool(
-                        kwargs.get(
-                            "force_reload",
-                            args[0] if args and name == "load_settings" else False,
-                        )
-                    )
-                    outcome = (
-                        "forced"
-                        if forced
-                        else "read"
-                        if name == "load_settings"
-                        else "invalidate"
-                    )
-                    recent = getattr(self.config_local, "last_miss", None)
-                    metadata = dict(
-                        force_reload=forced,
-                        preceding_miss=recent[1]
-                        if recent and recent[0] == phase
-                        else None,
-                    )
-                    self.config_record(name, outcome, phase, metadata, caller)
-                    try:
-                        return original(*args, **kwargs)
-                    finally:
-                        self.record(
-                            "tldw_chatbook.config." + name,
-                            phase,
-                            time.perf_counter() - started,
-                            caller,
-                        )
-
-                monkeypatch.setattr(config, name, measured)
-                if name == "load_settings":
-                    screen = sys.modules.get("tldw_chatbook.UI.Screens.chat_screen")
-                    if screen is not None and getattr(screen, name, None) is original:
-                        monkeypatch.setattr(screen, name, measured)
-
-            install_one(name, original)
+        """Observe original config bodies without replacing any public alias."""
+        assert sys.modules.get("tldw_chatbook.config") is config
+        self._start_seams(config_only=True)
 
     def install(self, monkeypatch):
-        from tldw_chatbook import config
-        from tldw_chatbook.Backup_Recovery import config_participants, storage_admission
-        from tldw_chatbook.DB.private_sqlite_process import HelperLease
+        # Preload the same original defining modules before selecting local codes.
+        from tldw_chatbook import config  # noqa: F401
+        from tldw_chatbook.Backup_Recovery import config_participants, storage_admission  # noqa: F401
+        from tldw_chatbook.DB.private_sqlite_process import HelperLease  # noqa: F401
 
-        self.install_config(monkeypatch, config)
-
-        self.wrap(monkeypatch, config_participants, "operation", context=True)
-        for name in (
-            "_acquire_storage",
-            "_scope",
-            "_local_pause_requested",
-            "_observe_candidates",
-            "_reuse_evidence",
-        ):
-            self.wrap(monkeypatch, storage_admission, name)
-        self.wrap(
-            monkeypatch, storage_admission._Acquisition, "initializing", context=True
-        )
-        # This wraps the resolved bound method while retaining its classmethod.
-        original_start = HelperLease.start
-
-        def start(_cls, *args, **kwargs):
-            phase, started = self.phase, time.perf_counter()
-            caller = self.stack(sys._getframe(1))
-            try:
-                return original_start(*args, **kwargs)
-            finally:
-                self.record(
-                    "HelperLease.start", phase, time.perf_counter() - started, caller
-                )
-
-        monkeypatch.setattr(HelperLease, "start", classmethod(start))
         if os.name == "nt":
-            from tldw_chatbook.Utils.windows_files import _Native
+            from tldw_chatbook.Utils.windows_files import _Native  # noqa: F401
 
-            for name in ("open_handle", "security", "ntfs", "_token_sid"):
-                self.wrap(monkeypatch, _Native, name, callers=False)
+        self._start_seams()
 
         # Audit events count real POSIX os.open without changing its identity
         # (raw participants test membership of os.supports_dir_fd).
@@ -509,6 +316,11 @@ class Observation:
                     for (p, t, s, o), n in self.config_counts.items()
                 ],
                 config_cache_miss_details=self.config_details,
+                passive_seam_observer=(
+                    self.passive_seams.receipt()
+                    if self.passive_seams is not None
+                    else None
+                ),
                 heartbeat={
                     p: dict(
                         count=len(v),
@@ -518,7 +330,7 @@ class Observation:
                     for p in self.phases.keys() | self.lags.keys()
                     for v in (self.phase_lags(p),)
                 },
-                limits="One native run per host. Call-through instrumentation overhead. Pilot/headless dispatch is included in wall time. Nested seam times overlap. Normal app timers and startup trace maintenance remain enabled. Heartbeat delay intervals are intersected with phase windows, including synchronous entry stalls. Public config-loader metrics cover module-attribute calls; imported aliases may not be observed. Guarded config callable identities remain installed. No real provider, OS keyring or model download.",
+                limits="One native run per host. Passive original-code observation overhead. Pilot/headless dispatch is included in wall time. Nested seam times overlap. Normal app timers and startup trace maintenance remain enabled. Heartbeat delay intervals are intersected with phase windows, including synchronous entry stalls. Config metrics observe original code through all imported aliases. Attempt counts use original START; elapsed timing gaps remain explicit. All production callable identities remain installed. No real provider, OS keyring or model download.",
             )
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(result, indent=2), encoding="utf-8")
@@ -545,24 +357,25 @@ async def test_native_console_pause_probe(monkeypatch, tmp_path, request):
 
     monkeypatch.setattr(Pilot, "_wait_for_screen", wait)
     observed = Observation()
-    observed.install(monkeypatch)
-    original_stage = console_send_diagnostics.record_send_stage
-
-    def stage(name, status="entered", **kwargs):
-        observed.stages.append(
-            dict(
-                phase=observed.phase,
-                stage=name,
-                outcome=status,
-                time=time.perf_counter(),
-            )
-        )
-        return original_stage(name, status, **kwargs)
-
-    monkeypatch.setattr(console_send_diagnostics, "record_send_stage", stage)
     result = {"complete": False, "provider_calls": 0}
-    heartbeat = asyncio.create_task(observed.heartbeat())
+    heartbeat = None
     try:
+        observed.install(monkeypatch)
+        original_stage = console_send_diagnostics.record_send_stage
+
+        def stage(name, status="entered", **kwargs):
+            observed.stages.append(
+                dict(
+                    phase=observed.phase,
+                    stage=name,
+                    outcome=status,
+                    time=time.perf_counter(),
+                )
+            )
+            return original_stage(name, status, **kwargs)
+
+        monkeypatch.setattr(console_send_diagnostics, "record_send_stage", stage)
+        heartbeat = asyncio.create_task(observed.heartbeat())
         app = TldwCli()
         async with app.run_test(size=(140, 42)) as pilot:
             screen = app.screen
@@ -726,12 +539,20 @@ async def test_native_console_pause_probe(monkeypatch, tmp_path, request):
             result["complete"] = True
             observed.phase = "shutdown"
     finally:
-        observed.stop.set()
-        heartbeat.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat
-        observed.sampler.join(timeout=2)
-        observed.write(result)
+        try:
+            observed.stop.set()
+            if heartbeat is not None:
+                heartbeat.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heartbeat
+            sampler = getattr(observed, "sampler", None)
+            if sampler is not None:
+                sampler.join(timeout=2)
+        finally:
+            try:
+                observed.stop_seams()
+            finally:
+                observed.write(result)
 
 
 @pytest.mark.asyncio
@@ -770,11 +591,16 @@ def test_cache_diagnostics_preserve_real_guarded_config_reads(monkeypatch, route
     control = config.load_settings(force_reload=route == "force")
     observed = Observation()
     observed.install_config(monkeypatch, config)
-    if route == "cold":
-        config._invalidate_config_caches()
-    actual = config.load_settings(force_reload=route == "force")
-    assert actual == control
-    assert all(getattr(config, name) is function for name, function in guarded.items())
+    try:
+        if route == "cold":
+            config._invalidate_config_caches()
+        actual = config.load_settings(force_reload=route == "force")
+        assert actual == control
+        assert all(
+            getattr(config, name) is function for name, function in guarded.items()
+        )
+    finally:
+        observed.stop_seams()
 
 
 @pytest.mark.asyncio
@@ -783,7 +609,7 @@ def test_cache_diagnostics_preserve_real_guarded_config_reads(monkeypatch, route
 async def test_cache_observer_preserves_checked_display_for_real_import_orders(
     monkeypatch, tmp_path, request, record_property, order
 ):
-    """Public call-through observation keeps the real issued display contract."""
+    """Passive observation keeps the real issued display contract in either order."""
     from tldw_chatbook import config
 
     module_name = "tldw_chatbook.UI.Screens.chat_screen"
@@ -799,52 +625,206 @@ async def test_cache_observer_preserves_checked_display_for_real_import_orders(
         assert sys.modules[module_name].load_settings is original_loader
     observed = Observation()
     observed.install_config(monkeypatch, config)
-    if order == "late":
-        from Tests.UI import test_console_checked_display_scope as actual
-
-    screen_module = sys.modules[module_name]
-    database, _store, _controller, screen, tasks = actual._screen(tmp_path)
-    rendered, enclosing, before_nested, serialized = [], [], [], []
     try:
-        projection = await actual._warm(screen, tasks)
+        if order == "late":
+            from Tests.UI import test_console_checked_display_scope as actual
 
-        def render():
-            rendered.append(screen._provider_readiness_app_config())
-            enclosing.append(getattr(actual.raw._local, "operation", None))
+        screen_module = sys.modules[module_name]
+        database, _store, _controller, screen, tasks = actual._screen(tmp_path)
+        rendered, enclosing, before_nested, serialized = [], [], [], []
+        try:
+            projection = await actual._warm(screen, tasks)
 
-        with actual._actual_calls() as warm_calls:
-            for _ in range(6):
-                assert actual.ChatScreen._run_console_config_sync(screen, render)
+            def render():
+                rendered.append(screen._provider_readiness_app_config())
+                enclosing.append(getattr(actual.raw._local, "operation", None))
 
-        def nested_read():
-            before_nested.append(getattr(actual.raw._local, "operation", None))
-            serialized.append(config.read_cli_config_serialized())
+            with actual._actual_calls() as warm_calls:
+                for _ in range(6):
+                    assert actual.ChatScreen._run_console_config_sync(screen, render)
 
-        with actual._actual_calls() as nested_calls:
-            assert actual.ChatScreen._run_console_config_sync(screen, nested_read)
-        record_property("import_order", order)
-        record_property("main_config_entries", warm_calls["main_scopes"])
-        record_property("main_native_opens", warm_calls["main_opens"])
-        record_property("nested_config_entries", nested_calls["main_scopes"])
-        assert all(getattr(config, name) is value for name, value in guarded.items())
-        assert screen_module.load_settings is config.load_settings
-        assert projection._display_proof is not None
-        assert len(rendered) == 6 and all(
-            value is projection.value for value in rendered
-        )
-        assert warm_calls["main_scopes"] == 0, warm_calls
-        assert warm_calls["main_opens"] == 0, warm_calls
-        assert enclosing == [None] * 6
-        assert before_nested == [None], "nested reader borrowed display authority"
-        assert len(serialized) == 1 and isinstance(serialized[0], str)
-        assert nested_calls["main_scopes"] == 3, nested_calls
-        assert len(set(nested_calls["owners"])) == 1, nested_calls
-        assert all(owner not in actual.raw._states for owner in nested_calls["owners"])
-        assert nested_calls["main_opens"] > 0, nested_calls
-        assert len(nested_calls["disk_reads"]) == 1
-        assert nested_calls["disk_reads"][0] is not None
-        assert nested_calls["disk_reads"][0] not in actual.raw._states
-        assert not any(state.source is config for state in actual.raw._states.values())
+            def nested_read():
+                before_nested.append(getattr(actual.raw._local, "operation", None))
+                serialized.append(config.read_cli_config_serialized())
+
+            with actual._actual_calls() as nested_calls:
+                assert actual.ChatScreen._run_console_config_sync(screen, nested_read)
+            record_property("import_order", order)
+            record_property("main_config_entries", warm_calls["main_scopes"])
+            record_property("main_native_opens", warm_calls["main_opens"])
+            record_property("nested_config_entries", nested_calls["main_scopes"])
+            assert all(
+                getattr(config, name) is value for name, value in guarded.items()
+            )
+            assert screen_module.load_settings is config.load_settings
+            assert projection._display_proof is not None
+            assert len(rendered) == 6 and all(
+                value is projection.value for value in rendered
+            )
+            assert warm_calls["main_scopes"] == 0, warm_calls
+            assert warm_calls["main_opens"] == 0, warm_calls
+            assert enclosing == [None] * 6
+            assert before_nested == [None], "nested reader borrowed display authority"
+            assert len(serialized) == 1 and isinstance(serialized[0], str)
+            assert nested_calls["main_scopes"] == 3, nested_calls
+            assert len(set(nested_calls["owners"])) == 1, nested_calls
+            assert all(
+                owner not in actual.raw._states for owner in nested_calls["owners"]
+            )
+            assert nested_calls["main_opens"] > 0, nested_calls
+            assert len(nested_calls["disk_reads"]) == 1
+            assert nested_calls["disk_reads"][0] is not None
+            assert nested_calls["disk_reads"][0] not in actual.raw._states
+            assert not any(
+                state.source is config for state in actual.raw._states.values()
+            )
+        finally:
+            await asyncio.gather(*tasks, return_exceptions=True)
+            database.close()
     finally:
-        await asyncio.gather(*tasks, return_exceptions=True)
-        database.close()
+        observed.stop_seams()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_passive_probe_preserves_actual_stock_sensitive_bundle(
+    monkeypatch, tmp_path, request, record_property
+):
+    """The full observer must not select the preceding custom sensitive route."""
+    from tldw_chatbook import config
+    from tldw_chatbook.Backup_Recovery import config_participants as life
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Utils import sensitive_paths as sensitive
+
+    assert "tldw_chatbook.app" not in sys.modules
+    originals = life.operation, storage._acquire_storage, config.load_settings
+    assert (
+        sensitive._stock_sensitive_config_bundle(sensitive._raw_inputs_key()[2])
+        is not None
+    )
+    observed = Observation()
+    try:
+        observed.install(monkeypatch)
+        assert (
+            sensitive._stock_sensitive_config_bundle(sensitive._raw_inputs_key()[2])
+            is not None
+        )
+        assert life.operation is originals[0]
+        assert storage._acquire_storage is originals[1]
+        assert config.load_settings is originals[2]
+        assert observed.passive_seams.bindings_current()
+    finally:
+        observed.stop.set()
+        sampler = getattr(observed, "sampler", None)
+        try:
+            if sampler is not None:
+                sampler.join(timeout=2)
+                assert not sampler.is_alive()
+        finally:
+            observed.stop_seams()
+    receipt = observed.passive_seams.receipt()
+    assert (
+        receipt["restoration"] == "selected_local_callbacks_removed_tool_freed_global0"
+    )
+    assert receipt["original_bindings_and_bodies_unchanged"]
+    assert receipt["overflow"] == 0
+    assert (
+        sensitive._stock_sensitive_config_bundle(sensitive._raw_inputs_key()[2])
+        is not None
+    )
+    assert "tldw_chatbook.app" not in sys.modules
+    record_property("passive_observer", json.dumps(receipt, sort_keys=True))
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_passive_probe_counts_original_finite_storage_acquisition(
+    monkeypatch, tmp_path, request, record_property
+):
+    """Independent original-code call events agree on real admission attempts."""
+    from tldw_chatbook.Backup_Recovery import storage_admission as storage
+
+    assert "tldw_chatbook.app" not in sys.modules
+    acquisition = storage._acquire_storage
+    acquisition_code = acquisition.__code__
+    native_code = None
+    if os.name == "nt":
+        from tldw_chatbook.Utils.windows_files import _Native
+
+        native_code = inspect.getattr_static(_Native, "open_handle").__code__
+    independent = collections.Counter()
+    previous_profile = sys.getprofile()
+    assert previous_profile is None, "this finite control owns its passive counter"
+
+    def calls(frame, event, value):
+        if event == "call":
+            if frame.f_code is acquisition_code:
+                independent["acquisition"] += 1
+            elif native_code is not None and frame.f_code is native_code:
+                independent["native"] += 1
+
+    def census():
+        with storage._lock:
+            return tuple(
+                frozenset(values)
+                for values in (
+                    storage._live_leases,
+                    storage._pending_acquisitions,
+                    storage._operations,
+                    storage._retiring_holds,
+                )
+            )
+
+    def count(label):
+        return sum(
+            value[0]
+            for (phase, thread, seam, _), value in observed.rows.items()
+            if phase == "finite_control" and thread == "main" and seam == label
+        )
+
+    observed, lease = Observation(), None
+    before = census()
+    try:
+        observed.install(monkeypatch)
+        observed.phase = "finite_control"
+        sys.setprofile(calls)
+        try:
+            lease = storage.acquire_storage()
+            assert lease in storage._live_leases
+        finally:
+            try:
+                if lease is not None:
+                    lease.close()
+            finally:
+                sys.setprofile(previous_profile)
+        assert independent["acquisition"] == 1
+        assert (
+            count(storage.__name__ + "._acquire_storage") == independent["acquisition"]
+        )
+        if os.name == "nt":
+            assert independent["native"] > 0
+            assert count("_Native.open_handle") == independent["native"]
+        assert census() == before
+        assert storage._acquire_storage is acquisition
+        assert observed.passive_seams.bindings_current()
+    finally:
+        try:
+            sys.setprofile(previous_profile)
+            if lease is not None:
+                lease.close()
+        finally:
+            observed.stop.set()
+            sampler = getattr(observed, "sampler", None)
+            try:
+                if sampler is not None:
+                    sampler.join(timeout=2)
+                    assert not sampler.is_alive()
+            finally:
+                observed.stop_seams()
+    assert sys.getprofile() is previous_profile
+    assert census() == before
+    assert observed.passive_seams.receipt()["restoration"] is not None
+    assert "tldw_chatbook.app" not in sys.modules
+    record_property(
+        "independent_original_call_counts", json.dumps(independent, sort_keys=True)
+    )

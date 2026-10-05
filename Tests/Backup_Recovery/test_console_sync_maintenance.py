@@ -41,7 +41,7 @@ async def main():
         _refresh_active_world_books_summary_if_scope_changed=AsyncMock(),
     )
     screen._character = SimpleNamespace(_refresh_active_character_avatar_if_scope_changed=AsyncMock())
-    screen._character_context = SimpleNamespace(refresh_if_scope_changed=AsyncMock())
+    screen._character_context = SimpleNamespace(refresh_presentation_if_scope_changed=AsyncMock())
     screen._workspace = SimpleNamespace(tick_workspace_build_scope=nullcontext)
     screen._sync_console_native_session_tabs = AsyncMock()
     screen._sync_native_console_transcript = AsyncMock()
