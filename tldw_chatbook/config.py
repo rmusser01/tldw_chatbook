@@ -8075,11 +8075,19 @@ def replace_cli_config_snapshot(
 
     if not isinstance(expected_snapshot, ConfigFileSnapshot):
         raise TypeError("A config file snapshot is required for guarded replacement")
-    return _replace_cli_config_serialized(
-        serialized,
-        create_backup=create_backup,
-        expected_snapshot=expected_snapshot,
-    )
+    try:
+        return _replace_cli_config_serialized(
+            serialized,
+            create_backup=create_backup,
+            expected_snapshot=expected_snapshot,
+        )
+    except _config_participants.bootstrap.RecoveryRequired as error:
+        if (
+            str(error) == "raw_source_selection_changed"
+            and expected_snapshot.path != get_cli_config_path()
+        ):
+            raise ConfigSnapshotConflictError() from error
+        raise
 
 
 def _replace_cli_config_serialized(
