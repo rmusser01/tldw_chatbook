@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -9,6 +10,7 @@ from threading import Barrier
 from typing import Any
 
 import pytest
+import pytest_asyncio
 
 from Tests.Chat.console_close_helpers import close_controller_session
 from Tests.Chat.test_console_automatic_library_preparation import (
@@ -55,6 +57,53 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
 
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def owned_durable_controllers(request, monkeypatch):
+    """Retire only this module's captured test owners after their work settles.
+
+    Args:
+        request: Supplies this importing module's helper bindings.
+        monkeypatch: Restores the local wrappers after teardown.
+
+    Yields:
+        Registration for a directly constructed test database and controller.
+    """
+    owners = []
+    build_controller = _controller
+    build_store = _ready_store
+
+    def register(database, controller=None):
+        owners.append((database, controller))
+
+    def controller_owner(*args, **kwargs):
+        result = build_controller(*args, **kwargs)
+        register(result[0], result[2])
+        return result
+
+    def store_owner(*args, **kwargs):
+        result = build_store(*args, **kwargs)
+        register(result[0])
+        return result
+
+    monkeypatch.setattr(request.module, "_controller", controller_owner)
+    monkeypatch.setattr(request.module, "_ready_store", store_owner)
+    try:
+        yield register
+    finally:
+        errors = []
+        for database, controller in reversed(owners):
+            try:
+                if controller is not None:
+                    await asyncio.wait_for(controller.shutdown(), 5)
+                with database.quiesce_connections(timeout_seconds=5):
+                    pass
+                assert database.registered_connection_count() == 0
+            except BaseException as error:  # noqa: BLE001 - retain undrained owners
+                errors.append(error)
+        if errors:
+            raise BaseExceptionGroup("Durable-send fixture retirement failed", errors)
 
 
 class _DbNoneWrapper:
@@ -315,6 +364,7 @@ def test_durable_queue_ack_cannot_settle_a_different_claim() -> None:
 async def test_explicit_frozen_evidence_makes_checkpoint_unreconstructable(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
+    owned_durable_controllers,
 ) -> None:
     state: dict[str, object] = {
         "launch": _staged_evidence_launch("private staged title"),
@@ -354,6 +404,7 @@ async def test_explicit_frozen_evidence_makes_checkpoint_unreconstructable(
             staged_evidence_provider=lambda _session_id: state["launch"] is not None,
         ),
     )
+    owned_durable_controllers(db, controller)
 
     result = await controller.submit_draft("explicit evidence", session_id=session.id)
 

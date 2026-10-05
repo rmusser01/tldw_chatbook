@@ -204,3 +204,35 @@ as `four-fixture-corrections*.log`; final raw receipts are
 inherited test lint diagnostics and 182 production diagnostics are unchanged.
 Normalized controller formatting debt exactly matches dev; no bulk format ran.
 The complete seven-file batch has not been rerun after this follow-up.
+
+### Exact durable-send fixture ownership — TASK-34403
+
+The twelve durable generation/postcommit controls reproduce accumulation on
+`cb2d88ce236c12c58bd9b8c94af49c5197048ea4`: all twelve bodies pass in 8.34s,
+but strict retirement exits **1**, retaining up to **48 SQLite descriptors**.
+Their imported helpers create real database/controller owners without teardown.
+
+An opt-in fixture wraps only this importing module's controller and ready-store
+helper bindings, captures their exact returned owners, and registers the direct
+evidence owner explicitly. It awaits existing controller shutdown before the
+existing same-file database quiescence boundary. A failed drain keeps that
+owner's files, continues independent owners, and rethrows; no production,
+constructor, shared-profile, diagnostic or GC policy changes.
+
+The unchanged twelve controls then pass in **8.16s**, no warnings, strict exit
+**0**, with zero DB files after every teardown. Independent scoped review finds
+no actionable issue. Raw receipts: `durable-owners-{red,green}.log` in the same
+private evidence root. The full affected module then passes **25 tests in
+336.58s**, no warnings, strict exit **0**, with zero DB files at every teardown;
+its unchanged 1,000-send case takes 323.71s. The original combined 25 shutdown,
+postcommit and maintenance controls also pass in **9.31s**, strict exit **0**,
+with zero DB files, but retain **two ContextVar warnings** from intentional
+closed-loop abandonment. Both results are separate: ordinary module retirement
+is green; emergency diagnostic cleanliness is not.
+
+All eleven artifact guards pass. This changed test remains format clean with
+its two inherited Ruff findings and no added diagnostics. Receipts:
+`durable-module-green.log`, `durable-maintenance-green.log`, and
+`durable-owners-preflight.log`. The complete seven-file resource batch and
+native/scale qualifications remain unverified; no waiver follows from this
+narrow fixture repair.
