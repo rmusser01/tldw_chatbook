@@ -1255,7 +1255,10 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                     not screen._provider_saved_api_key_present(provider)
                     and not bool(str(values.get("api_key") or "").strip())
                 ),
-                tooltip="Clear the API key saved in local config for this provider.",
+                tooltip=(
+                    "Clear the API key saved in local config for this provider "
+                    f"({API_KEY_CLEAR_KEY} in the API key field)."
+                ),
             )
             # Parent AC#2: like Test (t), a key runs it (ApiKeyInput), so it
             # is not a Tab stop between API key and Env var; a click still does.
