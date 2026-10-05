@@ -288,6 +288,9 @@ def voice_label(saved: SavedVoice) -> str:
         return "OmniVoice"
     if saved.other_provider:
         return saved.other_provider
+    if saved.legacy:
+        # One name for the old wizard's unspeakable write, wherever it shows.
+        return f"PocketTTS at {_LEGACY_HOST} (from an earlier setup)"
     name = service_name(saved.slot_preset or saved.preset, saved.draft.endpoint)
     return f"{name} · {saved.draft.model_id} · {saved.draft.voice_id}"
 

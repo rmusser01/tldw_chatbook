@@ -163,6 +163,24 @@ def test_the_old_wizards_pocket_tts_address_is_never_preselected() -> None:
     assert "unchanged unless you edit it" not in copy
 
 
+def test_the_old_wizards_write_is_named_the_same_way_wherever_it_shows() -> None:
+    """Found live (review round 1, F2 follow-up): the line under the radio
+    called it "PocketTTS at 127.0.0.1:8765", while the help under "Use this
+    voice…" said a new pick "replaces Custom endpoint 127.0.0.1:8765 ·
+    tts-1-hd · shimmer" -- one broken write, two names, the second of which
+    reads like a working voice."""
+    saved = prefill.saved_voice_from_config(_LEGACY_UNTOUCHED_WRITE)
+
+    label = prefill.voice_label(saved)
+    assert label.startswith("PocketTTS at 127.0.0.1:8765")
+    assert "Custom endpoint" not in label
+    assert "tts-1-hd" not in label
+    help_line = status.default_help_copy(
+        vs.VOICE_PRESET_POCKET_TTS, locked=True, ticked=True, replaces=label
+    )
+    assert "it replaces PocketTTS at 127.0.0.1:8765" in help_line
+
+
 def test_the_same_address_with_an_api_key_is_somebody_elses_server() -> None:
     saved = prefill.saved_voice_from_config(
         dict(_LEGACY_UNTOUCHED_WRITE, OPENAI_AUTH_MODE="api_key")
@@ -173,9 +191,7 @@ def test_the_same_address_with_an_api_key_is_somebody_elses_server() -> None:
     assert saved.preset == vs.VOICE_PRESET_CUSTOM
 
 
-def test_another_default_provider_is_the_current_voice_even_with_an_endpoint() -> (
-    None
-):
+def test_another_default_provider_is_the_current_voice_even_with_an_endpoint() -> None:
     """Review round 1 (F3): kokoro reads replies; the saved OpenAI endpoint is
     not "the current voice", and tts-1-hd / shimmer were invented."""
     saved = prefill.saved_voice_from_config(
