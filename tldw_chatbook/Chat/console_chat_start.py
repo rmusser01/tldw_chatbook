@@ -112,6 +112,18 @@ class ConsoleChatStartCoordinator:
     def authorizes(
         self, authorization: AgentChatStartAuthorization | None, session_id: str
     ) -> bool:
+        """Return whether this authorization still belongs to the target session.
+
+        Args:
+            authorization: Candidate start authorization, or None.
+            session_id: Target session ID whose active authorization is checked.
+
+        Returns:
+            True when this coordinator is live, the authorization is unwithdrawn
+            and owned by it and its current store, the active entry is this exact
+            object, and the target exists with the requested session incarnation.
+            This check establishes neither acceptance nor current primary visibility.
+        """
         if not isinstance(authorization, AgentChatStartAuthorization):
             return False
         target = self._controller.store._sessions.get(session_id)

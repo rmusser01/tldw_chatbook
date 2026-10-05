@@ -8,9 +8,13 @@ import pytest
 
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_interrupt_rounds import InterruptRoundHost
+from Tests.Chat.console_interrupt_test_bindings import (
+    make_interrupt_host as InterruptRoundHost,
+)
 from tldw_chatbook.Persona_Buddy.interaction import BuddyBinding
 from tldw_chatbook.UI.Navigation.buddy_speech import BuddySpeechCoordinator
+
+pytestmark = pytest.mark.bootstrap_profile
 
 DESTINATION = "sha256:" + "b" * 64
 

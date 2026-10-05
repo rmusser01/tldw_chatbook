@@ -256,7 +256,6 @@ def make_interrupt_host(seams):
             seams, "_pending_decision_order", value
         ),
         read_global_ASK_USER_TIMEOUT_ENV_VAR=lambda: ccc.ASK_USER_TIMEOUT_ENV_VAR,
-        read_global_Any=lambda: ccc.Any,
         read_global_ApprovalDecisions=lambda: ccc.ApprovalDecisions,
         read_global_CONSOLE_PENDING_APPROVAL_KIND=lambda: (
             ccc.CONSOLE_PENDING_APPROVAL_KIND
@@ -268,7 +267,6 @@ def make_interrupt_host(seams):
             ccc.ConsolePendingDecisionProjection
         ),
         read_global_INTERRUPT_BELL_ENV_VAR=lambda: ccc.INTERRUPT_BELL_ENV_VAR,
-        read_global_Mapping=lambda: ccc.Mapping,
         read_global_ToolExecutionPolicy=lambda: ccc.ToolExecutionPolicy,
         read_global_UNRESOLVED_DENIED_DECISION=lambda: ccc.UNRESOLVED_DENIED_DECISION,
         read_global__ChatCreationToken=lambda: ccc._ChatCreationToken,

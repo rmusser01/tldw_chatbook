@@ -3136,6 +3136,9 @@ async def test_accepted_agent_chat_start_has_visible_stop_in_mounted_target(tmp_
                 store.switch_session(target.id)
                 await chat._sync_native_console_chat_ui()
                 await pilot.pause()
+                await _wait_for_selector(
+                    chat, pilot, "#console-stop-generation.console-stop-active"
+                )
                 stop = chat.query_one("#console-stop-generation", Button)
                 assert controller.run_state.status is ConsoleRunStatus.STREAMING
                 assert stop.display and stop.region.width > 0

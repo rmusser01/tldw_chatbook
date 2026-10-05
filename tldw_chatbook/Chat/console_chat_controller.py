@@ -4484,7 +4484,6 @@ class ConsoleChatController:
             ),
             write_controller__pending_decision_order=write_controller__pending_decision_order,
             read_global_ASK_USER_TIMEOUT_ENV_VAR=lambda: ASK_USER_TIMEOUT_ENV_VAR,
-            read_global_Any=lambda: Any,
             read_global_ApprovalDecisions=lambda: ApprovalDecisions,
             read_global_CONSOLE_PENDING_APPROVAL_KIND=lambda: (
                 CONSOLE_PENDING_APPROVAL_KIND
@@ -4496,7 +4495,6 @@ class ConsoleChatController:
                 ConsolePendingDecisionProjection
             ),
             read_global_INTERRUPT_BELL_ENV_VAR=lambda: INTERRUPT_BELL_ENV_VAR,
-            read_global_Mapping=lambda: Mapping,
             read_global_ToolExecutionPolicy=lambda: ToolExecutionPolicy,
             read_global_UNRESOLVED_DENIED_DECISION=lambda: UNRESOLVED_DENIED_DECISION,
             read_global__ChatCreationToken=lambda: _ChatCreationToken,

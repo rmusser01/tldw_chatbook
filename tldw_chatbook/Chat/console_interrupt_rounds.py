@@ -324,13 +324,11 @@ class InterruptRoundHost:
         read_controller_worktree_merge_confirm_timeout_seconds: Callable[[], Any],
         write_controller__pending_decision_order: Callable[[Any], None],
         read_global_ASK_USER_TIMEOUT_ENV_VAR: Callable[[], Any],
-        read_global_Any: Callable[[], Any],
         read_global_ApprovalDecisions: Callable[[], Any],
         read_global_CONSOLE_PENDING_APPROVAL_KIND: Callable[[], Any],
         read_global_CONSOLE_PENDING_CHAT_CREATE_KIND: Callable[[], Any],
         read_global_ConsolePendingDecisionProjection: Callable[[], Any],
         read_global_INTERRUPT_BELL_ENV_VAR: Callable[[], Any],
-        read_global_Mapping: Callable[[], Any],
         read_global_ToolExecutionPolicy: Callable[[], Any],
         read_global_UNRESOLVED_DENIED_DECISION: Callable[[], Any],
         read_global__ChatCreationToken: Callable[[], Any],
@@ -584,7 +582,6 @@ class InterruptRoundHost:
             write_controller__pending_decision_order
         )
         self.read_global_ASK_USER_TIMEOUT_ENV_VAR = read_global_ASK_USER_TIMEOUT_ENV_VAR
-        self.read_global_Any = read_global_Any
         self.read_global_ApprovalDecisions = read_global_ApprovalDecisions
         self.read_global_CONSOLE_PENDING_APPROVAL_KIND = (
             read_global_CONSOLE_PENDING_APPROVAL_KIND
@@ -596,7 +593,6 @@ class InterruptRoundHost:
             read_global_ConsolePendingDecisionProjection
         )
         self.read_global_INTERRUPT_BELL_ENV_VAR = read_global_INTERRUPT_BELL_ENV_VAR
-        self.read_global_Mapping = read_global_Mapping
         self.read_global_ToolExecutionPolicy = read_global_ToolExecutionPolicy
         self.read_global_UNRESOLVED_DENIED_DECISION = (
             read_global_UNRESOLVED_DENIED_DECISION
@@ -1500,7 +1496,7 @@ class InterruptRoundHost:
             return True
 
         def _matches_live_round(
-            state: dict[str, self.read_global_Any()] | None,
+            state: dict[str, Any] | None,
         ) -> bool:
             return bool(
                 state is not None
@@ -1763,14 +1759,10 @@ class InterruptRoundHost:
                         # copy_conversation_active_path copies exactly the
                         # leaf-to-root ancestry, so the card must not count
                         # off-path siblings the fork drops.
-                        nodes: dict[
-                            str, self.read_global_Mapping()[str, self.read_global_Any()]
-                        ] = {}
+                        nodes: dict[str, Mapping[str, Any]] = {}
 
                         def _walk(
-                            node: self.read_global_Mapping()[
-                                str, self.read_global_Any()
-                            ],
+                            node: Mapping[str, Any],
                         ) -> None:
                             nodes[str(node["id"])] = node
                             for child in node.get("children") or []:
@@ -1839,7 +1831,7 @@ class InterruptRoundHost:
         expired = False
 
         def _expire(
-            state: dict[str, self.read_global_Any()],
+            state: dict[str, Any],
         ) -> self.read_global_threading().Event | None:
             nonlocal expired
             if (
@@ -2261,7 +2253,7 @@ class InterruptRoundHost:
         expired = False
 
         def _pause(
-            state: dict[str, self.read_global_Any()],
+            state: dict[str, Any],
         ) -> self.read_global_threading().Event | None:
             nonlocal expired
             if (
@@ -2527,7 +2519,7 @@ class InterruptRoundHost:
 
         started = False
 
-        def _start(state: dict[str, self.read_global_Any()]) -> None:
+        def _start(state: dict[str, Any]) -> None:
             nonlocal started
             if claim_revision != self.decision_view_revision:
                 return
@@ -3616,7 +3608,7 @@ class InterruptRoundHost:
         visit_cancel_event = self.read_controller__bind_visit_cancel_signal()()
         # Same run-ownership stamp the sibling bridges carry -- a revoked
         # round must fail closed even against a late Allow.
-        chat_create_round_state: dict[str, self.read_global_Any()] = {
+        chat_create_round_state: dict[str, Any] = {
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
@@ -3944,7 +3936,7 @@ class InterruptRoundHost:
             round_cancel_event = HookRoundCancellation()
         visit_cancel_event = self.read_controller__bind_visit_cancel_signal()()
         owning_run_id = self.read_global_current_run_id()()
-        round_state: dict[str, self.read_global_Any()] = {
+        round_state: dict[str, Any] = {
             "event": event,
             "decisions": decisions,
             "session_id": owning_session_id,
@@ -4220,7 +4212,7 @@ class InterruptRoundHost:
         )
         visit_cancel_event = self.read_controller__bind_visit_cancel_signal()()
         owning_run_id = self.read_global_current_run_id()()
-        install_round_state: dict[str, self.read_global_Any()] = {
+        install_round_state: dict[str, Any] = {
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
@@ -4327,7 +4319,7 @@ class InterruptRoundHost:
         )
         visit_cancel_event = self.read_controller__bind_visit_cancel_signal()()
         owning_run_id = self.read_global_current_run_id()()
-        script_round_state: dict[str, self.read_global_Any()] = {
+        script_round_state: dict[str, Any] = {
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
@@ -4428,9 +4420,9 @@ class InterruptRoundHost:
         )
         owning_run_id = self.read_global_current_run_id()()
         event = self.read_global_threading().Event()
-        decision: dict[str, self.read_global_Any()] = {}
+        decision: dict[str, Any] = {}
         request_id = str(self.read_global_uuid4()())
-        round_state: dict[str, self.read_global_Any()] = {
+        round_state: dict[str, Any] = {
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
@@ -4489,7 +4481,7 @@ class InterruptRoundHost:
         asker_label = (
             actor.label if asked_by == "sub-agent" and actor is not None else None
         )
-        card_payload: dict[str, self.read_global_Any()] = {
+        card_payload: dict[str, Any] = {
             "questions": [dict(question) for question in questions],
             "asked_by": asked_by,
             "asker_label": asker_label,
@@ -4502,7 +4494,7 @@ class InterruptRoundHost:
             self.read_controller_store().active_session_id or ""
         )
         # task-31384: one host lifecycle; the outcome maps onto PRD A6.
-        results: list[dict[str, self.read_global_Any()]] = []
+        results: list[dict[str, Any]] = []
 
         def _on_outcome(outcome: str) -> None:
             # Runs before the host's teardown so the transcript marker
@@ -4613,7 +4605,7 @@ class InterruptRoundHost:
         )
         visit_cancel_event = self.read_controller__bind_visit_cancel_signal()()
         owning_run_id = self.read_global_current_run_id()()
-        merge_round_state: dict[str, self.read_global_Any()] = {
+        merge_round_state: dict[str, Any] = {
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
