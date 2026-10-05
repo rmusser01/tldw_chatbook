@@ -920,3 +920,30 @@ Tests/Backup_Recovery/test_core_dictionary_schema.py::test_native_dictionary_sch
 Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_insert_and_read_validate_roles_conversation_versions_and_state
 Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_invalid_ownership
 ```
+
+
+Task25 incomplete checkpoint1951f9dc7ce8: original four RED cases now pass; first focused GREEN111collected/102PASS/9FAIL. Product repair and first phase evidence frozen; no source completion claim. All141artifact/5context/8owner pins verified; original report, manifest and dispatch brief have immutable aliases. Failed broad Canvas reversal proof retained; its removal accidentally touched an existing import outside the authorized list. Current source/index clean and processes closed.
+
+#### Task25 test-only continuation (Ruling106)
+
+ADR required: no new ADR. Existing dated ADR219 compatibility amendment applies; this continuation fixes verification setup and exact catalog census without changing product behavior. Original review BASE remains1dc472f66ec376fa054797805b12e1105872f28b; same implementer continues after this tracked extension. This section supersedes the original eight-owner-only handoff limit for one additional existing test owner; all original source boundaries and budgets remain.
+
+- [ ] Freeze every incomplete report/manifest/brief/artifact and receipt/source snapshot; preserve all original pins with explicit aliases for append-only report and regenerated brief. No original phase/checker/outputs rewritten. All five production hashes at1951 remain exact. Existing Tests/Backup_Recovery/test_chachanotes_native76_compatibility.py stays exact too. Only Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py, Tests/Backup_Recovery/test_restore_plan.py and new ninth owner Tests/Backup_Recovery/test_core_owners.py may change in this continuation.
+- [ ] In the six populated legacy path cases, compare note rows after upgrade through the same raw sqlite3.connect connection type used before; retain every column and order. No CAST, timestamp/data normalization, assertion removal or new authority. Move only the newly added archive quick_check assertion from raw SQLite to the already existing post-staging CharactersRAGDB native connection used for reader quarantine; preserve raw FK/source/archive/destination checks and all existing assertions. No constructor in product staging and no new constructor/helper.
+- [ ] In test_schema_policy_matches_installed_store, change only the chachanotes exact catalog count8 to10 and add CHACHANOTES_V76_NATIVE_SCHEMAS to the existing local import; assert policy.schema_sql[-2:] equals tuple((77, schema) for schema in CHACHANOTES_V76_NATIVE_SCHEMAS). Keep all other owner branches, versions, actual first catalog and migration assertions unchanged. Whole-owner Python3.12 AST reversal of these three changes must equal original BASE. Count is a schema census; no cap/timeout/budget increase.
+- [ ] Run only the nine actual first-GREEN failures below on corrected source. Retain all102passing cases at their original exact source phase; prove their existing function/helper/import dependencies unchanged by scoped AST and product hashes, no replay. Preserve contemporaneous source-bound argv/env/JUnit/stdout/stderr/exit/closed300s receipts. Fatal Ruff, final added-hunk formatting and whitespace checks still required on all current nine owners; preserve inherited whole-file formatter debt. New narrowly scoped additive preservation checker must reverse only the changed Canvas function import/list, preserve original failed checker, and qualify exact12589QA/original unowned sources and old catalog declarations; do not rerun old tests.
+- [ ] Append report with nine corrected outcomes and complete source-phase111qualification, final static/preservation and any provenance limits. Emit new final manifest with all141original artifact pins, frozen report/brief/manifest aliases, new evidence and nine current owner hashes; commit only three corrected test owners, self-review and return clean closed custody. First independent scoped review covers original BASE through final source and must approve before publication/new-head Qodo/all hosted gates/actual merge.
+
+Nine failed cases only:
+
+```text
+Tests/Backup_Recovery/test_restore_plan.py::test_shipped76_archive_stages_v77_without_changing_source[False]
+Tests/Backup_Recovery/test_restore_plan.py::test_shipped76_archive_stages_v77_without_changing_source[True]
+Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py::test_populated_legacy_queue_paths_are_lossless[constructor76-initial]
+Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py::test_populated_legacy_queue_paths_are_lossless[constructor76-updated]
+Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py::test_populated_legacy_queue_paths_are_lossless[standalone76-initial]
+Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py::test_populated_legacy_queue_paths_are_lossless[standalone76-updated]
+Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py::test_populated_legacy_queue_paths_are_lossless[constructor75-initial]
+Tests/DB/test_chachanotes_v77_agent_chat_starts_migration.py::test_populated_legacy_queue_paths_are_lossless[constructor75-updated]
+Tests/Backup_Recovery/test_core_owners.py::test_schema_policy_matches_installed_store[chachanotes]
+```
