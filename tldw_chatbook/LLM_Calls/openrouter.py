@@ -147,7 +147,7 @@ class _OpenRouterWireNormalizer:
             return response
         if (
             set(choice) - {"index", "delta", "finish_reason"} - _OPENROUTER_CHOICE_KEYS
-            or type(choice.get("index")) is not int
+            or type(choice.get("index")) is not int  # noqa: E721 - JSON integers must exclude booleans and subclasses.
             or choice.get("index") != 0
             or finish != self._finish
             or (self._native_finish is not None and native != self._native_finish)

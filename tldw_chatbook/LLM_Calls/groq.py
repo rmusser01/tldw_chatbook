@@ -143,7 +143,7 @@ def _normalize_groq_wire(
         valid = (
             isinstance(value, str)
             if key == "id"
-            else type(value) is int
+            else type(value) is int  # noqa: E721 - JSON integers must exclude booleans and subclasses.
             if key == "seed"
             else isinstance(value, Mapping)
         )
@@ -165,7 +165,7 @@ def _normalize_groq_wire(
         raise HostedChatProtocolError("Groq response usage is malformed.")
     if not streaming:
         if set(nested_usage) - _GROQ_CACHE_KEYS or any(
-            value is not None and (type(value) is not int or value < 0)
+            value is not None and (type(value) is not int or value < 0)  # noqa: E721 - JSON integers must exclude booleans and subclasses.
             for value in nested_usage.values()
         ):
             raise HostedChatProtocolError("Groq cache usage is malformed.")
@@ -177,7 +177,7 @@ def _normalize_groq_wire(
     ):
         raise HostedChatProtocolError("Groq stream usage is malformed.")
     if any(
-        type(nested_usage.get(key)) is not int or nested_usage[key] < 0
+        type(nested_usage.get(key)) is not int or nested_usage[key] < 0  # noqa: E721 - JSON integers must exclude booleans and subclasses.
         for key in _GROQ_TOKEN_KEYS
     ):
         raise HostedChatProtocolError("Groq stream usage is malformed.")
@@ -195,7 +195,7 @@ def _normalize_groq_wire(
         if detail is not None and (
             not isinstance(detail, Mapping)
             or set(detail) != {counter}
-            or type(detail.get(counter)) is not int
+            or type(detail.get(counter)) is not int  # noqa: E721 - JSON integers must exclude booleans and subclasses.
             or detail[counter] < 0
         ):
             raise HostedChatProtocolError("Groq stream usage detail is malformed.")
