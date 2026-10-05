@@ -1001,11 +1001,9 @@ class HomeScreen(BaseAppScreen):
         Notes deep-link into the Library notes editor via the existing
         ``LIBRARY_NAV_CONTEXT_NOTE_ID`` navigation-context contract; media
         into the Library item view via the open-source pair; conversations
-        into Console carrying the resume-local-conversation nav-context id
-        so the freshly mounted screen resumes THAT conversation through
-        the ordered resume-navigation startup.
-        Navigation always composes a fresh screen, so the deep link lands
-        on a cleanly mounted surface.
+        into Console carrying the resume-local-conversation nav-context id.
+        The Console consumes that exact target through ordered navigation
+        on its first mount and on return to a reused screen.
         """
         control = next(
             (

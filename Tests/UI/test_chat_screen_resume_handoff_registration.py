@@ -36,21 +36,22 @@ EXPECTED_RESUME_HANDOFF_CONSUMERS = {
     "self._consume_pending_conversation_settings_return",
     "self.consume_pending_vllm_console_intent",
     "self._fleet.consume_pending_console_fleet_completion",
+    "self._start_resume_navigation_startup",
 }
 
 
 def _resume_timer_list_source() -> str:
     source = inspect.getsource(ChatScreen.on_screen_resume)
-    match = re.search(
+    matches = re.findall(
         r"_console_resume_handoff_timers\s*=\s*\[(.*?)\n\s*\]",
         source,
         re.DOTALL,
     )
-    assert match, (
+    assert matches, (
         "on_screen_resume no longer assigns _console_resume_handoff_timers "
         "as a literal list — update this census to follow the new shape."
     )
-    return match.group(1)
+    return "\n".join(matches)
 
 
 def test_resume_timer_list_registers_every_expected_consumer():

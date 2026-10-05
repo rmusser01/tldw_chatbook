@@ -2690,6 +2690,11 @@ def _load_settings_uncached(
         "video_generation": final_video_generation_settings_cli,  # For Video_Generation/config.py loader
         "mcp": final_mcp_settings_cli,  # For MCP server settings
         "persona_buddy": copy.deepcopy(toml_config_data.get("persona_buddy", {})),
+        **(
+            {"buddy_interaction": copy.deepcopy(toml_config_data["buddy_interaction"])}
+            if "buddy_interaction" in toml_config_data
+            else {}
+        ),
         # [skills] disabled_builtins is read from app_config on every skills
         # read (TASK-32954); without this a disabled built-in returned on restart.
         "skills": copy.deepcopy(toml_config_data.get("skills", {})),

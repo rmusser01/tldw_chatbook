@@ -479,6 +479,61 @@ class BuddyManagementCoordinator:
         store = getattr(runtime, "chat_store", None)
         return tuple(store.sessions()) if store is not None else ()
 
+    async def _saved_binding_metadata(
+        self, binding: BuddyBinding
+    ) -> dict[str, Any] | None:
+        """Recognize an unloaded saved owner without constructing execution services."""
+        if (
+            binding.kind != "conversation"
+            or not binding.conversation_id
+            or binding.ephemeral
+        ):
+            return None
+        runtime = getattr(self.app, "console_runtime", None)
+        service = getattr(self.app, "local_chat_conversation_service", None)
+        if service is None:
+            return None
+
+        def has_loaded_slot() -> bool:
+            return any(
+                row.id == binding.target_id
+                or row.persisted_conversation_id == binding.conversation_id
+                for row in self._runtime_sessions()
+            )
+
+        if has_loaded_slot():
+            return None
+        db = getattr(service, "db", None)
+        memory_db = getattr(db, "is_memory_db", False)
+
+        def read() -> dict[str, Any] | None:
+            try:
+                record = service.get_conversation_metadata(binding.conversation_id)
+                if (
+                    record
+                    and record.get("id") == binding.conversation_id
+                    and not record.get("deleted")
+                    and record.get("runtime_backend", "local") == "local"
+                ):
+                    return record
+                return None
+            except Exception:  # noqa: BLE001 - unavailable owners stay unselectable
+                return None
+            finally:
+                if not memory_db:
+                    close = getattr(db, "close_connection", None)
+                    if callable(close):
+                        close()
+
+        record = read() if memory_db else await asyncio.to_thread(read)
+        if (
+            getattr(self.app, "console_runtime", None) is not runtime
+            or getattr(self.app, "local_chat_conversation_service", None) is not service
+            or has_loaded_slot()
+        ):
+            return None
+        return record
+
     def _binding_for_form(self, targets: tuple[Any, ...]) -> BuddyBinding | None:
         """Match a restored/first-saved conversation while preserving stale-slot guards."""
         binding = self.preferences.binding
@@ -602,6 +657,27 @@ class BuddyManagementCoordinator:
                     ),
                 )
             )
+        binding = self.preferences.binding
+        if binding is not None and binding.kind == "conversation":
+            record = await self._saved_binding_metadata(binding)
+            if record is not None:
+                targets.append(
+                    BuddyTargetChoice(
+                        f"conversation:{binding.target_id}",
+                        f"Conversation: {record.get('title') or 'Untitled'} · {binding.conversation_id[:8]}",
+                        binding,
+                        current_persona=await asyncio.to_thread(
+                            self._persona_label,
+                            record.get("assistant_id")
+                            if record.get("assistant_kind") == "persona"
+                            else None,
+                        ),
+                        persona_editable=False,
+                        persona_unavailable_reason=(
+                            "Open this conversation with Buddy or Console before changing its Persona."
+                        ),
+                    )
+                )
         registry = getattr(self.app, "workspace_registry_service", None)
         if registry is not None:
             workspaces = await asyncio.to_thread(registry.list_workspaces)
@@ -681,6 +757,10 @@ class BuddyManagementCoordinator:
         if binding.kind == "conversation":
             session = binding.resolve_session(self._runtime_sessions())
             if session is None:
+                if await self._saved_binding_metadata(binding) is not None:
+                    # Presentation changes need only the saved owner. Returning no
+                    # live session keeps Persona assignment behind its existing gate.
+                    return None
                 raise ValueError(
                     "The bound conversation is unavailable. Open it in Console or choose another target."
                 )

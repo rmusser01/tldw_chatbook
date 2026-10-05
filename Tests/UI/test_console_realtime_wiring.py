@@ -20,13 +20,15 @@ import logging
 import math
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Any
 
 import pytest
+import pytest_asyncio
 from loguru import logger
 from textual.widgets import Button
 
+from Tests.UI import test_console_dictation as dictation_module
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from Tests.UI.test_console_dictation_streaming import (
     FakeDictationService,
@@ -47,7 +49,39 @@ from tldw_chatbook.UI.Console_Modules import realtime as realtime_module
 from tldw_chatbook.UI.Screens import chat_screen as chat_screen_module
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 
+# Real config readers must retain the collection-time admitted profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 _ASYNC_SETTLE_TIMEOUT = 10.0
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _close_realtime_harness_owners(monkeypatch):
+    """Retire storage owned by the unmounted app behind each Console host."""
+    apps = []
+    build = _build_test_app
+
+    def build_owned(*args, **kwargs):
+        app = build(*args, **kwargs)
+        apps.append(app)
+        return app
+
+    monkeypatch.setattr(f"{__name__}._build_test_app", build_owned)
+    monkeypatch.setattr(dictation_module, "_build_test_app", build_owned)
+    yield
+    for app in reversed(apps):
+        # run_test has settled the host; this app never ran its own unmount.
+        with ExitStack() as storage:
+            for db in (
+                app.local_library_collections_db,
+                app.local_workspace_db,
+                getattr(app.evaluation_orchestrator, "db", None),
+                app.subscriptions_db,
+            ):
+                if db is not None:
+                    storage.callback(db.close)
+            await app._shutdown_console_runtime()
 
 
 async def _wait_for(

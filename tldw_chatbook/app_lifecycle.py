@@ -542,8 +542,31 @@ class LifecycleMixin:
         """
         task = self._console_runtime_shutdown_task
         if task is None:
+
+            async def settle_view_and_dispose() -> None:
+                view_workers = [
+                    worker
+                    for worker in tuple(getattr(self, "workers", ()))
+                    if worker.group in {
+                        "console-sync",
+                        "console-resume-navigation-startup",
+                        "console-resume-navigation-dispatch",
+                    }
+                ]
+                for worker in view_workers:
+                    if not worker.is_finished and not worker.is_cancelled:
+                        worker.cancel()
+                # Cancelled view workers finish their rollback before the
+                # runtime and screens disappear. Accepted execution remains
+                # owned by the runtime's existing disposal policy.
+                await asyncio.gather(
+                    *(worker.wait() for worker in view_workers),
+                    return_exceptions=True,
+                )
+                await dispose_console_runtime(self)
+
             task = asyncio.create_task(
-                dispose_console_runtime(self),
+                settle_view_and_dispose(),
                 name="shutdown_console_runtime",
             )
             self._console_runtime_shutdown_task = task
@@ -748,6 +771,10 @@ class LifecycleMixin:
 
     async def _shutdown(self) -> None:
         """Settle app-owned durable work before Textual closes screens."""
+        # App.exit normally closes mount admission first. Direct shutdown
+        # (including run_test teardown) must use that same Textual fence so
+        # queued rebuilds cannot register children after message pumps stop.
+        self._exit = True
         # Ordinary Quit reaches these drains before on_unmount. Use the same
         # process-owned, idempotent watchdog here so the drains are bounded too.
         arm_exit_watchdog(reason="app shutdown")

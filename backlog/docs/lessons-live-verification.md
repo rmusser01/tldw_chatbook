@@ -3690,6 +3690,26 @@ standalone probe against an owned numeric loopback address. Restore blocked mode
 in `finally` and assert that no blocked attempts were swallowed. Keep failed
 setup attempts out of the passing receipt.
 
+
+## Verify saved settings through the startup reader and a new process
+
+**TASK-32108.2, 2026-10-03.** Chatbook Buddy Apply and in-process navigation
+worked, and TOML contained the saved conversation binding and Static choice.
+Restart retained artwork and geometry but returned Follow to None and motion to
+Dynamic: `_load_settings_uncached` projected `persona_buddy` while omitting
+`buddy_interaction`. Tests that kept the updated `app_config` never crossed that
+reader. A real persisted-settings load and the supported Textual browser restart
+reproduced the loss; adding the copied table projection restored both choices.
+Keep absent-table semantics and parser defaults, and verify the startup reader
+instead of treating a successful writer or cached form as restart evidence.
+
+
+## Wait for Resume presentation before ending UAT; fence queued rebuilds at shutdown
+
+**Incident:** TASK-32108.4 on 2026-10-03 selected the correct saved conversation ID, then the Home UAT exited while ordered Resume still awaited UI refresh/focus. Its application log showed runtime disposal and Home removal before a focus `No screens on stack` error and duplicate IDs in two trays. A held-Resume regression proved runtime shutdown returned while its presentation worker was RUNNING. Draining that worker fixed this gap, but independent review reproduced a queued automatic tray rebuild across actual child removal after the app stopped. Textual's direct test shutdown had not set the exit flag that normal Quit sets, allowing orphan child registration and a second rebuild collision.
+
+Wait for ordered presentation and final modal dismissal, not only selected identity. At shutdown, drain view workers before runtime disposal and close existing Textual mount admission before screen pumps stop. A completed worker alone does not prove its queued widget callbacks are settled. The two production regressions verify these separate boundaries; the discarded initial-mount lock experiment did not establish either repair.
+
 ## A gap between tmux frames is not a blocked UI loop until the main thread says so (TASK-34100.1 review, 2026-10-03)
 
 **Incident.** A review of the first-run wizard reported mid-track Nexts that "froze" for
@@ -3757,3 +3777,7 @@ Non-streamed replies worked, which is how these hid.
 the error mapping), and say so. 15 key-only listings remain unseen as of this entry. When
 a key arrives, run the capture and also run the app's own discovery and a streamed reply
 through the engine against the real API, not just the replay.
+
+## Normal workflow cancellation can leave an always() job queued
+
+**PR3011, 2026-10-04.** The superseded required workflow run37232967293 stayed queued after normal cancellation because its final job uses `if: always()`. The replacement run37237159500 remained pending behind the same concurrency group. After verifying the old run's head differed from the current PR head, GitHub's force-cancel endpoint ended only that obsolete run; the replacement then created its test jobs. Normal cancellation is still the first step. If it leaves an always job queued, verify the exact obsolete run and current head before using the [documented force-cancel endpoint](https://docs.github.com/en/rest/actions/workflow-runs#force-cancel-a-workflow-run). No current gate, policy or peer run was bypassed.

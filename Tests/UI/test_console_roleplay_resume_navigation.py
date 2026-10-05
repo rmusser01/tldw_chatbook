@@ -12,10 +12,11 @@ from textual.worker import Worker, WorkerState
 
 import tldw_chatbook.UI.Console_Modules.session as session_module
 import tldw_chatbook.UI.Screens.chat_screen as chat_screen_module
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app, persist_seeded_config
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_console_workspace_controller import _conversation_tree_payload
+from Tests.UI.test_destination_shells import _wait_for_selector
 from tldw_chatbook.Chat.chat_handoff_models import ChatHandoffPayload
 from tldw_chatbook.Chat.console_chat_models import CONSOLE_GLOBAL_WORKSPACE_ID
 from tldw_chatbook.config import RuntimeConfigSnapshot
@@ -30,6 +31,8 @@ from tldw_chatbook.UI.Navigation.pending_handoff_store import (
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Widgets.Console.console_setup_modal import ConsoleSetupModal
 from tldw_chatbook.Workspaces import DEFAULT_WORKSPACE_ID
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def test_resume_navigation_context_captures_only_normalized_local_id() -> None:
@@ -238,9 +241,10 @@ def _instrument_first_chat_presentation(
 
 
 @pytest.mark.asyncio
-async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors() -> (
-    None
-):
+@private_profile_test
+async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors(
+    request: pytest.FixtureRequest,
+) -> None:
     app = _build_test_app()
     _configure_ready_console(app)
     events: list[str] = []
@@ -381,7 +385,10 @@ async def test_mounted_resume_orders_consumers_once_and_suppresses_competitors()
 
 
 @pytest.mark.asyncio
-async def test_mounted_global_resume_outranks_registry_active_workspace() -> None:
+@private_profile_test
+async def test_mounted_global_resume_outranks_registry_active_workspace(
+    request: pytest.FixtureRequest,
+) -> None:
     """An explicit global resume creates no named-workspace bootstrap tab."""
     app = _build_test_app()
     _configure_ready_console(app)
@@ -423,7 +430,10 @@ async def test_mounted_global_resume_outranks_registry_active_workspace() -> Non
 
 
 @pytest.mark.asyncio
-async def test_mounted_missing_resume_falls_back_to_registry_active_workspace() -> None:
+@private_profile_test
+async def test_mounted_missing_resume_falls_back_to_registry_active_workspace(
+    request: pytest.FixtureRequest,
+) -> None:
     """A failed ID-only resume still leaves a usable ordinary Console tab."""
     app = _build_test_app()
     _configure_ready_console(app)
@@ -472,7 +482,9 @@ async def test_mounted_missing_resume_falls_back_to_registry_active_workspace() 
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_resume_settles_first_chat_once_without_intermediate_presentation(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _build_test_app()
@@ -559,7 +571,9 @@ async def test_mounted_resume_settles_first_chat_once_without_intermediate_prese
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_resume_releases_transient_first_chat_without_rollback_focus(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _build_test_app()
@@ -657,7 +671,9 @@ async def test_mounted_resume_releases_transient_first_chat_without_rollback_foc
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_mounted_resume_never_focuses_setup_modal_before_final_opener(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     app = _build_test_app()
@@ -738,7 +754,10 @@ async def test_mounted_resume_never_focuses_setup_modal_before_final_opener(
 
 
 @pytest.mark.asyncio
-async def test_resume_navigation_continues_after_chat_handoff_release() -> None:
+@private_profile_test
+async def test_resume_navigation_continues_after_chat_handoff_release(
+    request: pytest.FixtureRequest,
+) -> None:
     screen = ChatScreen.__new__(ChatScreen)
     handoffs = PendingHandoffStore()
     handoffs.stage(
@@ -775,6 +794,7 @@ async def test_resume_navigation_continues_after_chat_handoff_release() -> None:
     screen._workspace = SimpleNamespace(
         open_console_workspace_conversation=opener,
     )
+    screen._consume_pending_conversation_resume = _async_spy([], "conversation-return")
     screen._pending_resume_local_conversation_id = "resume-target"
     screen._resume_navigation_startup_in_progress = True
 
@@ -785,7 +805,9 @@ async def test_resume_navigation_continues_after_chat_handoff_release() -> None:
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_resume_navigation_propagates_logged_chat_handoff_acquisition_failure(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FailingHandoffStore:
@@ -839,7 +861,10 @@ async def test_resume_navigation_propagates_logged_chat_handoff_acquisition_fail
 
 
 @pytest.mark.asyncio
-async def test_mounted_resume_worker_is_cancelled_and_timers_stop_on_unmount() -> None:
+@private_profile_test
+async def test_mounted_resume_worker_is_cancelled_and_timers_stop_on_unmount(
+    request: pytest.FixtureRequest,
+) -> None:
     app = _build_test_app()
     _configure_ready_console(app)
     started = asyncio.Event()
@@ -916,7 +941,10 @@ async def test_mounted_resume_worker_is_cancelled_and_timers_stop_on_unmount() -
 
 
 @pytest.mark.asyncio
-async def test_mounted_no_resume_keeps_blocking_modal_focus_transfer() -> None:
+@private_profile_test
+async def test_mounted_no_resume_keeps_blocking_modal_focus_transfer(
+    request: pytest.FixtureRequest,
+) -> None:
     app = _build_test_app()
     host = _MountedNavigationConsoleHarness(
         app,
@@ -942,7 +970,10 @@ async def test_mounted_no_resume_keeps_blocking_modal_focus_transfer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mounted_no_resume_keeps_ordinary_startup_sync_timers_and_focus() -> None:
+@private_profile_test
+async def test_mounted_no_resume_keeps_ordinary_startup_sync_timers_and_focus(
+    request: pytest.FixtureRequest,
+) -> None:
     app = _build_test_app()
     _configure_ready_console(app)
     timers: list[tuple[float, str]] = []

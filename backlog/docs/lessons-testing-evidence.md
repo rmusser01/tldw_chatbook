@@ -18053,6 +18053,34 @@ billed window, about one run in ten; the census now holds that probe still for
 the phase. Pin `os_opens` at the depth the gate actually runs at (the default
 temp dir, or CI's), and trace callers before calling an upward step "jitter".
 
+
+## TASK-32108.6: close the backing app stores after a Console harness exits
+
+The Buddy realtime group passed 181 cases but grew 697 descriptors. Its UI cases
+already ran per-test GC. Each lightweight ConsoleHarness mounted a screen backed
+by a separate, unmounted TldwCli, so host teardown left that app's strongly retained
+SQLite stores open. A native per-case census showed 13 new descriptors per mounted
+case and none from the protocol-only case. Tracking both direct factory calls and
+_ready_host's imported factory alias, draining the app Console runtime, and closing
+its four stores on their creating UI thread made the four-case census stable and
+left no SQLite file records. The final 181-case run passed without warnings and
+with total session growth of three descriptors. Keep the owner's close routes and
+leak sentinel; GC cannot retire these retained native handles.
+
+## TASK-32108: read the recorded human acceptance before reopening UAT
+
+On October 4, the Buddy continuation requested another microphone/playback and
+native check and made an OpenAI key a prerequisite. The concise task notes had
+carried these checks forward as pending, while the merged-live UAT README already
+contained post-fix run `microphone-20260905-587d0a8874`, Buddy listening, successful
+reply playback and the user's “Yes, clearly” confirmation. The native follow-up
+also recorded move, resize and restored geometry. The user objected to repeating
+accepted checks. Reconciliation preserved those results and their original source
+limits, closed the qualification task against its actual criteria, and kept the
+full OpenAI human realtime coverage item separate. Read linked acceptance evidence
+before asking for another UAT run; a newer branch or an omitted summary entry does
+not by itself establish a new defect or invalidate human acceptance.
+
 ## A format-only change can turn dev red, and neither AST-equality nor the PR fast lane sees it
 
 **PR #2993 (TASK-26000 series), 2026-10-03.** 1,681 of the 1,727 changed Python files
@@ -18360,3 +18388,14 @@ test ASTs restore after removing only scoped harness/cleanup substitutions.
 **PR #2953, 2026-10-04.** On identical sources, Linux credential polling measured 10.125 os.open/tick against a 6.75 ceiling, then its same-head retry passed at 6.75 in both variants. A local call-through audit attributed every traced idle open to storage_admission._local_pause_requested / Admission.pause_requested on executor threads: each native backup-pause probe opened 37 descriptors on that private macOS path, and two or three probes landed in the idle phase. Those are real guard costs, not additional credential-poll admissions. No stack was captured in the failing Linux job, so the local attribution does not prove that job's exact cause.
 
 Before attributing a timing-dependent storage count to the UI callback, trace all threads and retain the failed census, successful repeat and exact source identities. Keep actual native pause/admission checks and the existing ceilings intact; an observed passing repeat is not a universal flake repair.
+
+
+## A timer callback awaiting rollback can block navigation
+
+**TASK-32108.1 / PR3011, 2026-10-04.** Cancelling the ordered Resume worker on suspension fixed hidden hydration, but its async timer entry then waited for held rollback on the Screen message pump. The real ordinary-return test timed out waiting for subsequent navigation. Textual set_timer queues its callback through call_next. Keep the callback synchronous and drain rollback in an owned worker, shield the prior wait, and cancel the rollback owner only once. Repeating cancel at a later suspend or character retirement separately interrupted cleanup in both held-rollback controls.
+
+The same test hook assumed every native UI sync had a current Worker. Real attach reconciliation also calls sync outside a Worker; the hook raised NoActiveWorker there. Restrict a worker barrier to its actual group and delegate other calls to production behavior. Final original ordering assertions and held-rollback journeys pass; private controls distinguish lifecycle defects from this hook error.
+
+## A matching filename baseline can still embed shifted source locations (PR3011, 2026-10-04)
+
+**Incident.** The Console-command integration on tested `37340608a7233c74b7e6bb94751fcfaa7052851b` had286 Ruff findings on both it and dev `8c4dfe59a243ce0cec8e131aff3935646c64b298`, using the same real module filenames and repository configuration. A comparison of complete messages still reported one introduced F811 because its existing duplicate `on_button_pressed` warning embeds the earlier definition's line number, shifted by the retained Buddy edits. The paired warning kept the same code, function and occurrence count. Normalizing only that F811 reference-location field gave zero introduced findings; the raw location difference is retained in `pr3011-command-dev-20261004.json`. Compare diagnostic identity and multiplicity under matching filename context, and preserve explicitly checked location differences in the receipt.
