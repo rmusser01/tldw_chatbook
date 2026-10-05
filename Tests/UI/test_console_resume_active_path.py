@@ -2335,7 +2335,10 @@ def test_resumed_untrusted_handoff_keeps_provider_sequence(monkeypatch) -> None:
     from Tests.Chat.test_provider_continuation_history import _checkpoint, _target
     from tldw_chatbook.Chat import console_chat_controller as controller_module
     from tldw_chatbook.Chat.console_chat_controller import NATIVE_MESSAGE_ID_KEY
-    from tldw_chatbook.Chat.console_prepared_request import thaw_json
+    from tldw_chatbook.Chat.console_prepared_request import (
+        CONTINUATION_OWNER_KEY,
+        thaw_json,
+    )
     from tldw_chatbook.Chat.console_provider_gateway import (
         ConsoleProviderGateway,
         ConsoleProviderResolution,
@@ -2509,37 +2512,38 @@ def test_resumed_untrusted_handoff_keeps_provider_sequence(monkeypatch) -> None:
             continuation_owner_key=NATIVE_MESSAGE_ID_KEY,
         )
         wire = [thaw_json(row) for row in prepared.messages]
-        assert [row["role"] for row in wire] == [
-            "user",
-            "assistant",
-            "tool",
-            "assistant",
-            "user",
-            "user",
-            "user",
-            "user",
-        ]
-        assert wire[0] == {"role": "user", "content": disclosure + body}
-        assert wire[1]["tool_calls"] == [
-            {
-                "id": "call_1",
-                "type": "function",
-                "function": {
-                    "name": "lookup",
-                    "arguments": '{"query":"PRIVATE-ARGUMENT-CANARY"}',
-                },
-            }
-        ]
-        assert wire[2] == {
-            "role": "tool",
-            "tool_call_id": "call_1",
-            "content": "PRIVATE-RESULT-CANARY",
-        }
-        assert wire[3] == {"role": "assistant", "content": "visible answer"}
-        assert [row["content"] for row in wire[4:]] == [
-            row["content"] for row in payloads[2:]
+        assert wire == [
+            {"role": row["role"], "content": row["content"]} for row in payloads
         ]
         assert all(not any(key.startswith("_") for key in row) for row in wire)
+        assert len(prepared.continuation_groups) == len(sidecar) == 1
+        group = prepared.continuation_groups[0]
+        assert group.owner_message_id == sidecar[0].owner_message_id == resumed[1].id
+        assert group.checkpoint == sidecar[0].checkpoint == checkpoint
+        assert group.rounds == checkpoint.rounds
+        assert dump_provider_continuation_json(group.checkpoint) == checkpoint_json
+        (round_,) = group.rounds
+        assert round_.assistant_content == "visible answer"
+        assert round_.reasoning_blocks == ("PRIVATE-REASONING-CANARY",)
+        (call,) = round_.calls
+        assert call.call_id == "call_1"
+        assert call.name == "lookup"
+        assert call.arguments == '{"query":"PRIVATE-ARGUMENT-CANARY"}'
+        assert call.state == "completed"
+        assert call.result.value == "PRIVATE-RESULT-CANARY"
+        semantic = prepared.semantic.flattened_messages()
+        assert [
+            {"role": row["role"], "content": thaw_json(row["content"])}
+            for row in semantic
+        ] == wire
+        assert [row.get(CONTINUATION_OWNER_KEY) for row in semantic] == [
+            None,
+            resumed[1].id,
+            None,
+            None,
+            None,
+            None,
+        ]
         assert (
             controller._provider_continuation_sidecar_for_session(session.id) == sidecar
         )
