@@ -1963,3 +1963,51 @@ running; that is not proof of an available prepared Windows qualification host.
 
 The tested code is available for draft PR review; this receipt does not establish
 merge/release readiness or waive the remaining TASK-31245/TASK-31966 gates.
+
+### Published burndown-head scale checkpoint — `51860b4558`
+
+Clean exact source `51860b4558091130be81224dace8670319da5586`, based on
+dev `74557e202ac38c6d29510d0940a062ca7cc7f38b`, is measured sequentially alone
+through the unchanged guarded CLI. Tiny build/Keyword smoke passes first;
+it remains smoke, not scale evidence. The fresh full corpus contains
+10,000 conversations, 250,000 eligible messages plus four excluded canaries,
+and 10,000 indexed documents. Index ready, integrity OK and registered build
+handles after cleanup zero. Corpus SHA256:
+`779c41d8c35ee3ce72dffd487864486cd6b2c6274a76ff187a90d2f7ed69f09e`.
+
+All **300** standalone Keyword measurements pass exact correctness, with
+five discarded warmups and ten retained measurements per each of 30 queries.
+Nearest-rank P95 **117.040458ms**, maximum loop gap **12.584750ms**; unchanged
+limits are 300ms/50ms. Registered handles zero and owned DB descriptors empty
+after cleanup. Final clean/exact source and unchanged-corpus fences pass.
+
+The normal 52×20/120×50 compositor matrix finishes **60 exact searches and
+eight exact OPENED activations**, but exits **1**. Six activation loop gaps
+exceed the unchanged 50ms gate: narrow **68.483875/57.912583/50.543791ms**,
+wide **76.516625/72.899959/64.230000ms**. The other two activation gaps are
+43.678916/44.458291ms. Search maximum gap **31.707708ms**, preparations
+41.390375/41.612625ms and all busy paints (maximum **29.436375ms**) pass.
+The four/eleven visible rows out of 50 fetched remain correct. Maximum capture
+observer duration **1.371375ms** is retained, not subtracted from timing or
+treated as evidence about all observer/heap cost. No app exception; corpus and
+source fences hold. Cross-head timing variation does not prove a causal fix.
+
+At `run_test` unmount, one registered Chat handle and **24 database
+descriptors** remain. This boundary is not whole-app/native terminal retirement;
+no owner sweep or lifetime/GC/cache policy change was made. This is failed UI
+qualification despite correct destinations and passed retrieval. Native,
+Windows, actual unfamiliar participants, residual latency and application
+retirement gates remain open. No fourth production performance remedy follows.
+
+Raw root: `/tmp/task31966-burndown-head-OEkfa7`. Preserve `tiny-build.log`,
+`tiny-keyword.log`, `scale-build.log`, `keyword.log`, `ui.log`, plus
+`scale/build-receipt.json`, `keyword/keyword-receipt.json` and
+`ui/ui-evidence/ui-latency-evidence.json` with all raw samples/intervals/frames.
+Receipt SHA256s in that order:
+`e269f23a5822a99fa33d78fa1d7919c9e0313aba3b5d82361c3042cc56402424`,
+`6e1be3b6344edc5d80afd0415b58b82306e910c0767df920e7dbe3469ea68941`,
+`b2492f19f28cf5deb0b2606b51f34c096f77a70208d0fa7616b871bc5c4a4cde`.
+These OS-temporary artifacts are local retained evidence, not portable archives.
+PR3024 remains draft/HOLD. TASK31245/TASK31966 remain In Progress; no new ADR
+or qualification waiver. Existing ADR120/198 and the approved bounded plan
+remain controlling.

@@ -380,3 +380,64 @@ The prior complete 349-case failure and unchanged 1,000-send result remain
 historical; this follow-up does not rerun that long body or claim a fresh full
 corrected batch. Native/Windows/participant/scale and current-head Qodo gates
 remain open, separately from these repaired test-owner paths.
+
+### Published-head broader resource checkpoint — `51860b4558`
+
+The eight affected files, excluding only the unchanged long 1,000-send body,
+pass **348 tests, 1 deselected in 196.56s**, without warnings. The strict
+resource process still exits **1**: four replacement-profile descriptors first
+appear after `test_cancelled_rename_settles_committed_title_before_releasing_worker[profile]`
+and persist through the last teardown. All 348 observations are retained;
+327 contain `departed-profile.sqlite`/WAL/SHM files. None contain the previously
+repaired acceptance, queued-recovery, durable or workspace-profile files.
+This is body GREEN, not a passed broader resource gate.
+
+Bounded diagnostic repeats do not repair that failure. The isolated two
+cancellation controls pass in 9.35s with strict retirement. One forwarding-only
+33-control trace passes the bodies in 82.64s but exits **1**, retaining four
+`second-profile.sqlite` descriptors across ten teardowns instead. Three further
+forwarding traces pass 33 controls each (98.57s, 91.15s and 71.09s), strict
+exit 0. They observe registry and physical files retiring, without evidenced
+late reacquisition; the extra observer can perturb allocation/scheduling.
+
+A final native SQLite audit observes all 22 target-file opens using weak
+references, delegates the existing close helper unchanged, and leaves original
+pytest capture enabled. It passes 33 controls in 79.71s, no warnings, strict
+exit 0 and all 33 DB censuses empty. All three target retirements have registry
+zero and no physical files. Its retained-file branch never runs, so it does
+not explain the failing runs. No collector, extra close, warning filter,
+production or fixture change follows from these clean diagnostics.
+
+The second-profile modal fixture still closes its own database before the
+activation fixture's runtime disposal, unlike the registered departed-profile
+owner. Independent review identifies that ordering gap but does not establish
+it as the cause of either intermittent physical-retirement failure. A repair
+requires a failing exact-owner proof; the existing failures remain unwaived.
+
+Raw logs under `/tmp/switcher-emergency-context-ciQIs5`:
+`affected-corrected.log`, `departed-profile-red.log`,
+`departed-profile-trace.log`, `profile-owner-trace.log`,
+`profile-session-trace.log`, `profile-quiet-trace.log`,
+`profile-native-origin.log`. The isolated log's historical “red” filename does
+not change its passing outcome. SHA256: broader failed log
+`3ff0725a21c0db876b3966f39e2d390102692b29a6beaec341241443e1434d54`;
+native-origin log `e151abfe442e8282a7e6619485aef5436bd6bc6c6799808661427f9ea18cfe9d`;
+temporary native-origin script `784c9107b7a0a26bf670af54350f56ac55ceb7a374c28cb81afe5ced83e00869`.
+Temporary logs/scripts are retained locally, not portable archived evidence.
+
+### Current-head CI failure and matching dev baseline
+
+Perf Guard run [37371292704](https://github.com/rmusser01/tldw_chatbook/actions/runs/37371292704)
+at `51860b4558` passes latency and boot-budget
+steps but fails the tested-evidence storage census: credential polling bills
+**10.125 os.open/tick**, above the unchanged **6.75 × 1.05** ceiling. Exact
+dev base `74557e202a`, run
+[37299377360](https://github.com/rmusser01/tldw_chatbook/actions/runs/37299377360),
+fails the same variant and value.
+This matching failure predates the PR; it is not a passed CI gate or proof of
+the exact failing caller. The earlier PR2953 native-pause attribution lesson
+describes this failure class, not a stack captured in these Linux runs.
+No budget, native admission, monitor or production policy was changed, and no
+blind workflow retry was requested. Artifact run **37371292729** remains
+pending at this checkpoint. Qodo remains credit-blocked, with no actual review;
+CodeRabbit's draft-skip status is not a substitute.

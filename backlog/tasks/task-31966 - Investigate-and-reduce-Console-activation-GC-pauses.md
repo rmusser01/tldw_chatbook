@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 18:30'
+updated_date: '2026-10-05 21:14'
 labels:
   - console
   - performance
@@ -257,4 +257,6 @@ Implemented bounded native authoritative-label fallback correction: existing tri
 Independent scoped read-only review found no critical, important or minor findings; local patch ready for planned qualification, not global merge-ready. Its separate seven-node run passed4.59s with unrelated shared-temp cleanup warnings; isolated strict53-test receipt above remains the warning-free evidence.
 
 Frozen b738054edf fresh10k/250k Keyword300passes,P95105.448875ms,loop9.916375ms,zero owned cleanup resources. NormalUI60exact searches/eightOPENED but sixactivation windows(max89.041708ms) andonebodysearch51.097ms fail50ms; preparation/busy gates pass. Source/corpus guards hold, observer max46.2925ms retained as limit. NativeQA window121584 verifiesCtrlK/MRU Enter exactAmber07,three tabs unchanged only244x73. Inspector sizing does not commit. IntegratedCUA explicitly denies Terminal safety; allTerminalUI stops, no alternate path. ExactdisposablePythonPID80035 controllerSIGINT-stopped; nullnative-return code,sourceguards true,26DBdescriptors,not normalquit or retirement. DraftPR preparation does not waive remaining performance/native/Windows/participant gates. Full receipt Docs/QA/task-31245/fixture-rebuild-2026-10-04.md; task remains InProgress.
+
+Published51860b4558 fresh sequential scale checkpoint: clean exact source/dev74557; tiny smoke passes; fresh10k/250004/10k corpus ready/integrityOK. Keyword300 exact samples pass,P95117.040458ms,loop12.584750ms,zero owned cleanup handles/files. Normal52x20/120x50 UI60exact searches/eightOPENED completes but sixactivation gaps fail50ms,maximum76.516625ms; search31.707708ms,preparation41.390375/41.612625ms,busy maximum29.436375ms all pass unchanged gates. Observer max1.371375ms retained, not subtracted or exclusive-cost proof. Source/corpus fences hold; one registered Chat handle/24 DB descriptors at run_test unmount are not whole-app/native retirement. Raw root /tmp/task31966-burndown-head-OEkfa7; receipt hashes and full limitations in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. Cross-head variation is not causal improvement. PR3024 draft/HOLD; native/Windows/actual participants, intermittent replacement-profile retirement, remaining latency and external review remain unwaived. No fourth production remedy/global lifetime/GC/cache policy or new ADR; existingADR120/198. Keep all criteria unchecked and task InProgress.
 <!-- SECTION:NOTES:END -->
