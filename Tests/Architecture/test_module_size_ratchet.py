@@ -187,8 +187,10 @@ _BUDGETS: dict[str, int] = {
     # the SF3 fixes, whose logic lives in first_run_voice_{prefill,status}.py.
     # Review round 1 -> 960: the OpenAI key lookup moved to
     # first_run_voice_credentials.py, and sample playback and the save-result
-    # plumbing (shared by both halves) to OmniVoiceStepBase.
-    "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 960,
+    # plumbing (shared by both halves) to OmniVoiceStepBase; the focus
+    # hold/restore moved there too and the hint line became a property
+    # -> 920.
+    "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 920,
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
