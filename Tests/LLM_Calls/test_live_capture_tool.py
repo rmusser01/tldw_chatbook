@@ -32,7 +32,8 @@ _BODY = {
 class _Provider(BaseHTTPRequestHandler):
     requests: list[dict[str, Any]] = []
     # "ok", "echo" (bodies repeat the Authorization header), "refuse" (every
-    # round 401) or "truncate" (the stream ends without [DONE]).
+    # round 401), "truncate" (the stream ends without [DONE]) or
+    # "tool_stream_only" (every round 401 except the streamed tool call).
     mode = "ok"
 
     def log_message(self, *args: Any) -> None:
@@ -53,7 +54,9 @@ class _Provider(BaseHTTPRequestHandler):
         """Serve a chat completion, streamed when asked."""
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         type(self).requests.append({"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}, "body": body})
-        if type(self).mode == "refuse":
+        refused = type(self).mode == "refuse" or (
+            type(self).mode == "tool_stream_only" and not (body.get("stream") and "tools" in body))
+        if refused:
             self._send(json.dumps({"error": {"message": "Invalid API key"}}).encode(), status=401)
             return
         if body.get("stream"):
@@ -191,6 +194,28 @@ def test_a_capture_with_no_successful_round_writes_nothing(
     out = capsys.readouterr().out
     assert not (tmp_path / "meta.json").exists()
     assert "FAILED: no round succeeded" in out and "captured 0 of 1" in out
+
+
+def test_a_capture_whose_only_good_round_is_the_tool_stream_is_written(
+    provider: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Qodo #3019: a complete streamed tool round alone is a usable capture."""
+    _Provider.mode = "tool_stream_only"
+    fixture = _run(tmp_path, "azure", {"TLDW_LIVE_AZURE_BASE_URL": provider, "TLDW_LIVE_AZURE_MODEL": "m"})
+    assert fixture["statuses"] == {"plain": 401, "tool": 401, "stream": 401, "tool_stream": 200}
+    assert fixture["tool_stream_events"][-1] == "[DONE]"
+    assert "FAILED: no round succeeded" not in capsys.readouterr().out
+
+
+def test_uncovered_keys_ignores_tool_calls_that_are_not_a_list() -> None:
+    """Qodo #3019: a malformed ``tool_calls`` value must not crash the report."""
+    fixture = {
+        "chat_response": {"id": "c", "choices": [{"index": 0, "finish_reason": "stop",
+                          "message": {"role": "assistant", "content": "ok", "tool_calls": 1}}]},
+        "tool_stream_events": [json.dumps({"choices": [{"index": 0, "delta": {"tool_calls": "x"}}]})],
+    }
+    report = capture_tool.uncovered_keys(_RECORD, fixture)
+    assert report["tool_call"] == [] and report["stream_tool_call"] == []
 
 
 def test_a_truncated_stream_is_flagged(provider: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

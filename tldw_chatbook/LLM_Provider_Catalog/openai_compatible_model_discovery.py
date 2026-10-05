@@ -606,7 +606,10 @@ def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
     Vercel's tiered pricing (270 items against a 256-item bound) listed none
     of its 407 models (TASK-34363). A top-level field that breaks a bound on
     its own is dropped first; if the rest together still exceed a bound, the
-    largest field goes until they fit. Nothing unbounded is ever kept.
+    largest fields go, biggest first, until they fit. Nothing unbounded is
+    ever kept. The work is bounded: a model with more top-level fields than
+    the item bound cannot fit and gets no metadata, and each surviving field
+    is measured once.
 
     Args:
         model_payload: One model object from a ``/models`` response.
@@ -618,6 +621,8 @@ def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
         return _safe_model_metadata(model_payload)
     except ValueError:
         pass
+    if len(model_payload) > MODEL_METADATA_MAX_ITEMS:
+        return {}
     kept: dict[str, Any] = {}
     for key, value in model_payload.items():
         try:
@@ -625,11 +630,12 @@ def _bounded_model_metadata(model_payload: Mapping[str, Any]) -> dict[str, Any]:
         except ValueError:
             continue
         kept[key] = value
-    while kept:
+    largest_first = sorted(kept, key=lambda name: len(json.dumps(kept[name])), reverse=True)
+    for name in largest_first:
         try:
             return _safe_model_metadata(kept)
         except ValueError:
-            del kept[max(kept, key=lambda name: len(json.dumps(kept[name])))]
+            del kept[name]
     return {}
 
 

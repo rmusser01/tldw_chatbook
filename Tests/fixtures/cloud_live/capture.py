@@ -411,6 +411,11 @@ def choose_model(target: Target, listing: Any) -> str | None:
     return seeds[0] if seeds else None
 
 
+def _as_list(value: Any) -> list[Any]:
+    """``value`` when it is a list, else empty: a malformed reply must not crash the report."""
+    return value if isinstance(value, list) else []
+
+
 def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str, list[str]]:
     """Response key NAMES outside the strict shape AND the record's allowances.
 
@@ -441,7 +446,7 @@ def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str,
                 choice |= set(item) - KNOWN_CHOICE
                 if isinstance(item.get("message"), dict):
                     message |= set(item["message"]) - KNOWN_MESSAGE
-                    for call in item["message"].get("tool_calls") or []:
+                    for call in _as_list(item["message"].get("tool_calls")):
                         if isinstance(call, dict):
                             tool_call |= set(call) - KNOWN_TOOL_CALL
     for payload in [*(fixture.get("stream_events") or []), *(fixture.get("tool_stream_events") or [])]:
@@ -457,7 +462,7 @@ def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str,
                 choice |= set(item) - KNOWN_STREAM_CHOICE
                 if isinstance(item.get("delta"), dict):
                     message |= set(item["delta"]) - KNOWN_MESSAGE
-                    for call in item["delta"].get("tool_calls") or []:
+                    for call in _as_list(item["delta"].get("tool_calls")):
                         if isinstance(call, dict):
                             stream_tool_call |= set(call) - KNOWN_STREAM_TOOL_CALL
     return {
@@ -501,13 +506,18 @@ def capture(target: Target) -> Path | None:
     if record.native_tools:
         tool_stream_status, tool_events = _stream(
             target, url, target.payload(model, TOOL_MESSAGES, stream=True, tools=True))
+    tool_stream_complete = (
+        tool_stream_status == 200 and bool(tool_events) and tool_events[-1] == "[DONE]")
     print(f"  plain HTTP {chat_status}  tool HTTP {tool_status}  stream HTTP {stream_status}"
-          f" ({len(events)} events, complete: {stream_complete})  tool stream HTTP {tool_stream_status}")
-    if chat_status != 200 and tool_status != 200 and not stream_complete:
+          f" ({len(events)} events, complete: {stream_complete})  tool stream HTTP {tool_stream_status}"
+          f" (complete: {tool_stream_complete})")
+    if chat_status != 200 and tool_status != 200 and not stream_complete and not tool_stream_complete:
         print("  FAILED: no round succeeded -- no fixture written (check the key, model and URL)")
         return None
     if stream_status == 200 and not stream_complete:
         print("  ! the stream was cut off before [DONE]; its replay will fail until recaptured")
+    if tool_stream_status == 200 and not tool_stream_complete:
+        print("  ! the tool stream was cut off before [DONE]; its replay will fail until recaptured")
     listed = _listed(listing)
     fixture = {
         "server": record.key,

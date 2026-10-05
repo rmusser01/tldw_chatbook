@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-04 18:48'
-updated_date: '2026-10-04 23:44'
+updated_date: '2026-10-05 00:44'
 labels:
   - providers
   - tools
@@ -46,4 +46,6 @@ Independent review round (Qodo was out of credits and CodeRabbit skips dev-targe
 Not changed (nits): a null type/name on a continuation still fails, since no provider has been seen sending that; the fallback still drops a model's whole metadata, so the 7 Vercel models lose the inferred-vision hint (documented trade-off).
 
 Review follow-up (owner rule: fix every finding, minor included): a null type or function.name on a streamed continuation now counts as not sent, like a null id; a different non-null value still fails ('type changed' / 'name changed'). The downstream accumulator (console_provider_gateway._ToolCallAccumulator._merge) reads id, type and name by truthiness, so nulls in the visible frame are ignored. Mutation-checked.
+
+Qodo round (2026-10-05): (1) uncovered_keys no longer crashes on a tool_calls value that is not a list; (2) a complete streamed tool round now counts as a successful round, in capture.py's write gate and in the replay's has_usable_round, so a tool-stream-only capture is written and recognised. Both have tests; removing the gate change fails its test.
 <!-- SECTION:NOTES:END -->

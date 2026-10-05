@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-04 18:27'
-updated_date: '2026-10-04 23:44'
+updated_date: '2026-10-05 00:44'
 labels:
   - providers
   - discovery
@@ -38,4 +38,6 @@ Live on 2026-10-04 (no key): Vercel AI Gateway went from invalid_response with 0
 Tests: test_normalize_models_rejects_unbounded_metadata became test_normalize_models_keeps_a_model_but_none_of_its_unbounded_metadata. It covers depth, item count, an oversized string in a list, a non-finite float and Vercel-shaped tiered pricing, and checks that a sibling model keeps its metadata. Mutation-checked: removing the fallback fails all 5 cases. The no-key evidence test passed for Vercel because its fixture keeps only ids; this is recorded in lessons-live-verification.md.
 
 Review follow-up (owner rule: fix every finding, minor included): the fallback no longer drops a model's whole metadata. _bounded_model_metadata drops a top-level field that breaks a bound on its own, then the largest field until the rest fit, so nothing unbounded is kept and the model's other details stay. Live 2026-10-04 (no key): Vercel lists 407 models, none with empty metadata, 7 without pricing; openai/gpt-5.6-sol keeps its other 20 fields. Mutation-checked (returning {} fails 8 cases). The inferred-vision hint is False for every Vercel model for an unrelated reason, filed as its own task: Vercel gives modalities as a mapping, which the hint does not read.
+
+Qodo round (2026-10-05, after its credits returned): the partial drop was quadratic. A model with ~100k tiny top-level fields kept discovery busy (20,000 fields measured at 12 s). _bounded_model_metadata now returns no metadata when a model has more top-level fields than MODEL_METADATA_MAX_ITEMS (it cannot fit), measures each surviving field once, and drops largest-first in a single sorted pass. 100,000 fields now take 0.05 s. Tests: a 100k-field model finishes under 2 s with empty metadata; 200 small fields drop largest-first. Mutation-checked.
 <!-- SECTION:NOTES:END -->

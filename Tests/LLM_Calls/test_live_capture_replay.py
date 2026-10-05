@@ -109,10 +109,12 @@ def has_usable_round(capture: dict[str, Any]) -> bool:
         capture: One captured fixture.
 
     Returns:
-        True when a body round answered 200 with an object, or the stream is complete.
+        True when a body round answered 200 with an object, or either stream
+        (plain or tool) is complete.
     """
     bodies = (("plain", "chat_response"), ("tool", "tool_call_response"))
-    return stream_verdict(capture) == "complete" or any(
+    streams = ("stream", "tool_stream")
+    return any(stream_verdict(capture, name) == "complete" for name in streams) or any(
         capture["statuses"].get(name) == 200 and isinstance(capture.get(field), dict)
         for name, field in bodies
     )
@@ -268,4 +270,7 @@ def test_a_capture_with_no_successful_round_is_not_usable() -> None:
               "chat_response": {"error": "x"}, "tool_call_response": {"error": "x"}, "stream_events": ["x"]}
     assert has_usable_round(failed) is False
     assert has_usable_round({**failed, "statuses": {"plain": 200, "tool": 401, "stream": 401}}) is True
+    tool_stream_only = {**failed, "statuses": {**failed["statuses"], "tool_stream": 200},
+                        "tool_stream_events": ['{"choices": []}', "[DONE]"]}
+    assert has_usable_round(tool_stream_only) is True
 
