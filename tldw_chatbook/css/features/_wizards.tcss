@@ -1165,6 +1165,26 @@ SmartContentTree Tree > .selected-node {
     width: 11fr;
 }
 
+/* TASK-34100.8 review round 2 (R2-F3 / G8-R2-F4): the five labels need 71
+ * cells, so below about 87 columns one row clipped every one of them (80x24:
+ * "No voice for …", "PocketTT…"). VoiceServiceRadioSet adds -stacked exactly
+ * then, and the radio wraps to two rows of three columns, each as wide as
+ * its widest label needs (No voice for now / Custom, PocketTTS / OmniVoice,
+ * OpenAI). */
+#setup-voice-preset.-stacked {
+    layout: grid;
+    grid-size: 3 2;
+    grid-columns: 21fr 14fr 11fr;
+    grid-rows: $ds-size-1;
+    height: $ds-size-4;
+    min-height: $ds-size-4;
+}
+
+#setup-voice-preset.-stacked SetupRadioButton {
+    width: 1fr;
+    height: $ds-size-1;
+}
+
 .setup-voice-segmented SetupRadioButton.-on {
     background: $ds-focus-bg;
     color: $ds-focus-fg;

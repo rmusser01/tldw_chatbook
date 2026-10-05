@@ -41,7 +41,6 @@ from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupCheckbox,
     SetupRadioButton,
-    SetupRadioSet,
 )
 from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker, wizard_work
 from tldw_chatbook.UI.Wizards.first_run_voice_credentials import find_openai_credential
@@ -50,19 +49,15 @@ from tldw_chatbook.UI.Wizards.first_run_voice_pickers import (
     VoiceOptionPicker,
     compose_voice_advanced,
 )
+from tldw_chatbook.UI.Wizards.first_run_voice_service_row import (
+    BUTTON_BY_PRESET,
+    PRESET_BY_BUTTON,
+    SERVICES,
+    VoiceServiceRadioSet,
+)
 from tldw_chatbook.UI.Wizards.first_run_voice_status import probe_endpoint_reachable
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
-#: Service radio: (button id, label, preset). "No voice for now" leads.
-_SERVICES = (
-    ("setup-voice-preset-none", "No voice for now", voice_state.VOICE_PRESET_NONE),
-    ("setup-voice-preset-pocket", "PocketTTS", voice_state.VOICE_PRESET_POCKET_TTS),
-    ("setup-voice-preset-official", "OpenAI", voice_state.VOICE_PRESET_OFFICIAL_OPENAI),
-    ("setup-voice-preset-custom", "Custom", voice_state.VOICE_PRESET_CUSTOM),
-    ("setup-voice-preset-omnivoice", "OmniVoice", voice_state.VOICE_PRESET_OMNIVOICE),
-)
-_PRESET_BY_BUTTON = {button_id: preset for button_id, _label, preset in _SERVICES}
-_BUTTON_BY_PRESET = {preset: button_id for button_id, _label, preset in _SERVICES}
 #: Probed with one sub-second connect: the two services that are local servers.
 _PROBED_PRESETS = {voice_state.VOICE_PRESET_POCKET_TTS, voice_state.VOICE_PRESET_CUSTOM}
 
@@ -131,10 +126,10 @@ class VoiceSetupStep(OmniVoiceStepBase):
             yield Static("Set up a voice", classes="setup-title")
             yield Static(voice_status.subtitle_copy(saved), classes="setup-subtitle")
             yield Label("Service", classes="setup-field-label")
-            with SetupRadioSet(
+            with VoiceServiceRadioSet(
                 id="setup-voice-preset", classes="setup-voice-segmented"
             ):
-                for button_id, label, preset in _SERVICES:
+                for button_id, label, preset in SERVICES:
                     yield SetupRadioButton(
                         label, id=button_id, value=preset == self._preset
                     )
@@ -277,7 +272,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
     def _on_preset(self, event: RadioSet.Changed) -> None:
         if event.pressed is None:
             return
-        preset = _PRESET_BY_BUTTON.get(event.pressed.id or "")
+        preset = PRESET_BY_BUTTON.get(event.pressed.id or "")
         if preset is None or preset == self._preset:
             return
         self.clear_step_error()
@@ -859,14 +854,14 @@ class VoiceSetupStep(OmniVoiceStepBase):
         if prefill.is_legacy_checkpoint(values):
             return  # the old wizard's 8765 write: keep the prefill (R2-F4)
         preset = values.get("preset")
-        if preset not in _BUTTON_BY_PRESET:
+        if preset not in BUTTON_BY_PRESET:
             preset = voice_state.VOICE_PRESET_CUSTOM
         draft = prefill.draft_from_checkpoint(values, self._initial_draft())
         self._preset = str(preset)
         if preset == voice_state.VOICE_PRESET_CUSTOM:
             self._custom_draft = draft
         self._apply_draft_to_controls(draft)
-        self._set_radio(_BUTTON_BY_PRESET[self._preset])
+        self._set_radio(BUTTON_BY_PRESET[self._preset])
         self.query_one("#setup-voice-body").display = (
             self._preset != voice_state.VOICE_PRESET_NONE
         )

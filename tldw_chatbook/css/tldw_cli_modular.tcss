@@ -16375,6 +16375,21 @@ SmartContentTree Tree > .selected-node {
     width: 11fr;
 }
 
+
+#setup-voice-preset.-stacked {
+    layout: grid;
+    grid-size: 3 2;
+    grid-columns: 21fr 14fr 11fr;
+    grid-rows: $ds-size-1;
+    height: $ds-size-4;
+    min-height: $ds-size-4;
+}
+
+#setup-voice-preset.-stacked SetupRadioButton {
+    width: 1fr;
+    height: $ds-size-1;
+}
+
 .setup-voice-segmented SetupRadioButton.-on {
     background: $ds-focus-bg;
     color: $ds-focus-fg;

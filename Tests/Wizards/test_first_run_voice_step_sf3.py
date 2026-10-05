@@ -749,13 +749,19 @@ def _clipped_service_labels(step, app) -> list[str]:
     ]
 
 
-@pytest.mark.parametrize("size", [(120, 40), (100, 30)])
+@pytest.mark.parametrize(
+    ("size", "rows"), [((120, 40), 1), ((100, 30), 1), ((80, 24), 2)]
+)
 @pytest.mark.asyncio
-async def test_every_service_label_fits_in_the_wizard(size) -> None:
+async def test_every_service_label_fits_in_the_wizard(size, rows) -> None:
     """Review round 1 (F8 / G8-V1-F3): with a service chosen the step
     scrolls, the scrollbar takes its columns, and five equal segments clipped
     the lead option to "No voice for no…" at 120 columns. Real stylesheet:
-    without it the radio is not even a row."""
+    without it the radio is not even a row.
+
+    Review round 2 (R2-F3 / G8-R2-F4): at 80x24, a supported size, one row
+    offers about 64 cells to labels that need 71, and every label clipped
+    ("No voice for …", "PocketTT…"). There the radio wraps to two rows."""
     wizard = _make_wizard()
     app = _StyledHostApp(wizard)
     async with app.run_test(size=size) as pilot:
@@ -770,9 +776,10 @@ async def test_every_service_label_fits_in_the_wizard(size) -> None:
         await pilot.pause(0.3)
 
         buttons = list(step.query_one("#setup-voice-preset").query(RadioButton))
-        assert len({button.region.y for button in buttons}) == 1  # one row
+        assert len({button.region.y for button in buttons}) == rows
         assert step.show_vertical_scrollbar  # the case that clipped
         assert _clipped_service_labels(step, app) == []
+        assert [str(button.label) for button in buttons][0] == "No voice for now"
 
 
 # -- AC#3: OpenAI without a key never strands the user -------------------------

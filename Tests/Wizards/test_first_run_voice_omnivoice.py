@@ -581,13 +581,15 @@ async def test_step_data_records_the_preset(monkeypatch) -> None:
         assert step.get_step_data()["preset"] == "omnivoice"
 
 
-async def test_service_row_fits_at_100_columns(monkeypatch) -> None:
+@pytest.mark.parametrize("size", [(100, 30), (80, 24), (72, 24)])
+async def test_service_row_fits_at_every_supported_width(monkeypatch, size) -> None:
     """Every service label paints whole -- measured with the real stylesheet
     (TASK-34100.8 review round 1, F8). This test used to run at 80 columns
     without the stylesheet, where the radio is a vertical list of full-width
-    rows, so it passed whatever the CSS said. Measured for real, the five
-    labels need 71 cells and an 80-column step offers about 68, so there they
-    shrink together by a cell or two; from 100 columns every label fits."""
+    rows, so it passed whatever the CSS said. The five labels need 71 cells:
+    round 1 fitted them from 100 columns and conceded 80; review round 2
+    (R2-F3) wraps the radio to two rows wherever one row is narrower, so
+    they fit at 80 and below too."""
     from pathlib import Path
 
     from textual.widgets import RadioButton
@@ -601,11 +603,11 @@ async def test_service_row_fits_at_100_columns(monkeypatch) -> None:
     _state(monkeypatch, "ready")
     step = _step()
     host = _StyledHost(step)
-    async with host.run_test(size=(100, 30)) as pilot:
+    async with host.run_test(size=size) as pilot:
         step.add_class("active")  # what the wizard's show_step does
         await pilot.pause()
         buttons = list(step.query_one("#setup-voice-preset").query(RadioButton))
-        assert len({button.region.y for button in buttons}) == 1  # one row
+        assert len({button.region.y for button in buttons}) <= 2
         for button in buttons:
             assert button.content_size.width >= button.get_content_width(
                 button.size, host.size
