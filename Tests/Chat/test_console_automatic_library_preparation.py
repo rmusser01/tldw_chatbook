@@ -1577,7 +1577,7 @@ def _assert_reclaimed_queue_released(controller, session_id: str) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("action", ["retry", "bypass"])
 async def test_durable_queued_recovery_reclaims_same_entry_then_drains_later_work(
-    tmp_path, action
+    tmp_path, action, owned_console_databases
 ):
     """TASK-33621.19 review: the real-SQLite twin of the reclaim/advance contract.
 
@@ -1601,6 +1601,7 @@ async def test_durable_queued_recovery_reclaims_same_entry_then_drains_later_wor
         first,
         second,
     ) = await _paused_queued_send(persistence=ChatPersistenceService(db))
+    owned_console_databases(db, controller)
     session_id = paused.session_id
     assert (
         next(row for row in store.sessions() if row.id == session_id).ephemeral is False
@@ -1648,7 +1649,9 @@ async def test_durable_queued_recovery_reclaims_same_entry_then_drains_later_wor
 
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
-async def test_durable_single_entry_reclaim_releases_its_chain(tmp_path):
+async def test_durable_single_entry_reclaim_releases_its_chain(
+    tmp_path, owned_console_databases
+):
     """With nothing waiting, the reclaimed durable turn still ends its chain."""
 
     from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
@@ -1663,6 +1666,7 @@ async def test_durable_single_entry_reclaim_releases_its_chain(tmp_path):
     gateway = _BlockingFirstFence()
     service = _RagService(error=RuntimeError("queued retrieval failed"))
     controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    owned_console_databases(db, controller)
     controller.app = SimpleNamespace(library_rag_search_service=service)
     chain = asyncio.create_task(
         controller.run_prompt_chain("owner", session_id=session.id)

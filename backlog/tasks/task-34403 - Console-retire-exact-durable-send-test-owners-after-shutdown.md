@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-05 19:29'
-updated_date: '2026-10-05 19:39'
+updated_date: '2026-10-05 19:52'
 labels:
   - console
   - testing
@@ -29,16 +29,19 @@ Durable-send qualification accumulates controller.sqlite handles from test helpe
 - [x] #1 Every database created by this module’s controller and ready-store helper calls is retired only after its associated live controller shutdown succeeds.
 - [x] #2 Direct module-owned evidence controllers use the same exact-owner teardown; foreign databases and shared configuration owners are untouched.
 - [x] #3 Original send, recovery, token-fencing, queue and retention assertions remain unchanged, with raw warnings and strict descriptor results recorded.
+- [x] #4 The three real-SQLite queued-recovery controls register their exact database/controller pairs and retire them after supported shutdown without changing recovery assertions or closing shared-profile owners.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Re-run the twelve exact durable-send controls with the unchanged read-only strict descriptor gate to preserve RED. 2. Give only this importing test module opt-in ownership of its returned controller/ready-store helper objects and explicitly register its direct evidence owner; await the existing controller shutdown before the existing database quiescence boundary. Keep failed drains loud and retain their files. 3. Re-run affected controls and the module without reducing original counts/timeouts, static guards and independent scoped review; record emergency warnings separately from ordinary retirement. ADR required: no. ADR path: N/A; existing ADR120/198 apply. Reason: test-only exact-owner teardown follows established lifecycle APIs; no production runtime, storage, shared-config, global cache or GC policy.
+1. Preserve exact durable-send strict RED, then implement opt-in local helper capture and direct registration using supported shutdown/quiescence. 2. Verify the unchanged twelve controls and complete durable-send module with raw diagnostics/strict resources, retaining prior failed receipts and unchanged 1000-send count/timeout. 3. Queue-recovery extension: reproduce the three real-SQLite queued recovery cases in isolation; reuse the same exact-owner retirement body as an explicitly requested shared Tests/Chat fixture, retain the durable module’s local helper wrappers, and register only each queued test’s own controller/database pair. Keep failed drains loud and files retained; no global constructor/shared-profile/cache changes. 4. Verify affected non-retention controls and shared-fixture ownership/failure contracts, static and artifact guards, independent review and evidence; do not duplicate unchanged 1000-send bodies or claim native/scale qualification. ADR required: no. ADR path: N/A; existing ADR120/198 apply. Reason: test-only adoption of existing exact-owner shutdown/quiescence, no production storage/runtime/service/GC policy.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented opt-in exact ownership in the affected durable-send test module only: local helper wrappers capture returned DB/controller owners, the direct evidence case explicitly registers, and existing awaited shutdown precedes same-file quiescence. Failed drains retain their own files and rethrow while independent owners still retire; no production/shared-config/global constructor/GC or warning-filter changes. Strict RED: same12 bodies pass8.34s but process exits1 with48SQLite descriptors. GREEN: same12 pass8.16s no warnings strict0 zeroDBfiles. Complete module25pass336.58s no warnings strict0/zeroDBfiles at every teardown; original1000-send count/timeout unchanged, case323.71s. Combined25 shutdown/postcommit/maintenance controls pass9.31s strict0/zeroDBfiles but retain2 raw intentional closed-loop ContextVar warnings. Independent review has no actionable scoped finding. All11 artifact guards pass; test format clean,2 inherited Ruff findings unchanged/no additions. Existing ADR120/198 apply; no new ADR. QA receipt Docs/QA/task-33620.9/README.md. Keep In Progress while broader PR review/qualification and inherited static debt remain unmet; do not claim native/scale or warning-free emergency qualification.
+
+Queued-recovery extension reuses the existing finalizer in an explicitly requested Tests/Chat fixture; durable wrappers remain module-local and only the three real-SQLite queue cases opt in. Published-head RED3 pass4.09s/no warnings but strict1 retains12SQLite descriptors. GREEN28 including non-retention durable controls and new real-DB failure/foreign-owner check pass17.50s/no warnings strict0/zeroDBfiles at every teardown. Original1000-send body/count/timeout unchanged and explicitly deselected here; previous complete-module receipt remains historical. Independent scoped review has no actionable finding. All11 artifact guards pass, all3 paths format clean,6 inherited Ruff diagnostics unchanged/no additions. Logs /tmp/switcher-queued-retirement-Kk49kF/{red,green,preflight}.log. No production/shared-profile/cache/GC/diagnostic change; existing ADR120/198. Broader seven-file/emergency/native/Windows/participant/scale and Qodo-credit gates remain open; task stays In Progress.
 <!-- SECTION:NOTES:END -->

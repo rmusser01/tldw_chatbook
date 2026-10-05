@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -10,7 +9,6 @@ from threading import Barrier
 from typing import Any
 
 import pytest
-import pytest_asyncio
 
 from Tests.Chat.console_close_helpers import close_controller_session
 from Tests.Chat.test_console_automatic_library_preparation import (
@@ -59,23 +57,21 @@ from tldw_chatbook.UI.Console_Modules import retrieval as retrieval_module
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def owned_durable_controllers(request, monkeypatch):
+@pytest.fixture(autouse=True)
+def owned_durable_controllers(request, monkeypatch, owned_console_databases):
     """Retire only this module's captured test owners after their work settles.
 
     Args:
         request: Supplies this importing module's helper bindings.
         monkeypatch: Restores the local wrappers after teardown.
+        owned_console_databases: Retires only explicitly registered owners.
 
     Yields:
         Registration for a directly constructed test database and controller.
     """
-    owners = []
+    register = owned_console_databases
     build_controller = _controller
     build_store = _ready_store
-
-    def register(database, controller=None):
-        owners.append((database, controller))
 
     def controller_owner(*args, **kwargs):
         result = build_controller(*args, **kwargs)
@@ -89,21 +85,7 @@ async def owned_durable_controllers(request, monkeypatch):
 
     monkeypatch.setattr(request.module, "_controller", controller_owner)
     monkeypatch.setattr(request.module, "_ready_store", store_owner)
-    try:
-        yield register
-    finally:
-        errors = []
-        for database, controller in reversed(owners):
-            try:
-                if controller is not None:
-                    await asyncio.wait_for(controller.shutdown(), 5)
-                with database.quiesce_connections(timeout_seconds=5):
-                    pass
-                assert database.registered_connection_count() == 0
-            except BaseException as error:  # noqa: BLE001 - retain undrained owners
-                errors.append(error)
-        if errors:
-            raise BaseExceptionGroup("Durable-send fixture retirement failed", errors)
+    yield register
 
 
 class _DbNoneWrapper:
@@ -125,6 +107,56 @@ class _DbNoneAtomicWrapper(_DbNoneWrapper):
 
     def commit_durable_turn(self, **kwargs: Any):
         return self._delegate.commit_durable_turn(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_owner_retirement_keeps_failed_and_foreign_databases_open(
+    tmp_path, monkeypatch
+) -> None:
+    """A failed drain stays loud and cannot close its file or foreign owners."""
+    from Tests.Chat.conftest import owned_console_databases
+
+    healthy = CharactersRAGDB(tmp_path / "healthy.sqlite", client_id="retirement")
+    failed = CharactersRAGDB(tmp_path / "failed.sqlite", client_id="retirement")
+    foreign = CharactersRAGDB(tmp_path / "foreign.sqlite", client_id="retirement")
+    healthy_controller = ConsoleChatController(
+        store=ConsoleChatStore(persistence=ChatPersistenceService(healthy)),
+        provider_gateway=object(),
+    )
+    failed_controller = ConsoleChatController(
+        store=ConsoleChatStore(persistence=ChatPersistenceService(failed)),
+        provider_gateway=object(),
+    )
+    original_shutdown = failed_controller.shutdown
+    retirement = owned_console_databases.__wrapped__()
+
+    async def refuse_shutdown():
+        raise RuntimeError("drain failed")
+
+    try:
+        register = await anext(retirement)
+        register(healthy, healthy_controller)
+        register(failed, failed_controller)
+        monkeypatch.setattr(failed_controller, "shutdown", refuse_shutdown)
+
+        with pytest.raises(BaseExceptionGroup) as captured:
+            await retirement.aclose()
+
+        assert len(captured.value.exceptions) == 1
+        assert isinstance(captured.value.exceptions[0], RuntimeError)
+        assert str(captured.value.exceptions[0]) == "drain failed"
+        assert healthy.registered_connection_count() == 0
+        assert failed.registered_connection_count() > 0
+        assert foreign.registered_connection_count() > 0
+        assert failed.get_connection().execute("SELECT 1").fetchone()[0] == 1
+        assert foreign.get_connection().execute("SELECT 1").fetchone()[0] == 1
+    finally:
+        await retirement.aclose()
+        await original_shutdown()
+        await healthy_controller.shutdown()
+        for database in (healthy, failed, foreign):
+            with database.quiesce_connections(timeout_seconds=5):
+                pass
 
 
 @pytest.mark.asyncio

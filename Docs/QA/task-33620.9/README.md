@@ -236,3 +236,31 @@ its two inherited Ruff findings and no added diagnostics. Receipts:
 `durable-owners-preflight.log`. The complete seven-file resource batch and
 native/scale qualifications remain unverified; no waiver follows from this
 narrow fixture repair.
+
+### Queued-recovery owner adoption — TASK-34403
+
+The three real-SQLite queued recovery cases on published
+`be1ba5b4742c4f7980c2c3e32992a6c3400fbb68` pass in **4.09s**, without
+warnings, but strict retirement exits **1** with **12 SQLite descriptors**.
+The files are their own `reclaim.sqlite` and `reclaim-one.sqlite`, not the
+separate workspace-profile cache observed in the earlier wider batch.
+
+The existing exact-owner finalizer now lives in an explicitly requested shared
+Chat fixture. Durable helper wrapping stays local to its importing module;
+the three queued cases register only their own database/controller pair. A
+real-DB failure control proves an unsuccessful shutdown retains that owner's
+file and rethrows, still retires an independent healthy owner, and leaves a
+foreign database open. No global constructor interception or production
+shutdown/cache/GC/diagnostic policy was added.
+
+The three recovery cases plus the durable module's non-retention controls and
+new failure control pass **28 tests in 17.50s**, without warnings, strict exit
+**0**, zero DB files at every teardown. The unchanged 1,000-send case is
+explicitly deselected here; its prior complete-module receipt above remains
+historical evidence, not a current shared-fixture full-module claim.
+Independent scoped review has no actionable finding. All eleven artifact
+guards pass; all three changed test paths format clean, with the same six
+inherited Ruff diagnostics and no additions. Raw receipts are
+`/tmp/switcher-queued-retirement-Kk49kF/{red,green,preflight}.log`.
+The complete seven-file resource batch, emergency warnings and all native,
+Windows, participant and scale gaps remain open.
