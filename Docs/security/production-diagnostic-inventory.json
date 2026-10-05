@@ -3131,6 +3131,13 @@
     },
     {
       "call_count": 1,
+      "diagnostic_digest": "05833597d4bcd1f30771",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Navigation/surface_swap_guard.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
       "diagnostic_digest": "16f2683516d8854e3f66",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Outputs_Panel.py",

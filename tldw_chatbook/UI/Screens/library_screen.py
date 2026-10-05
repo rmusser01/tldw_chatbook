@@ -548,6 +548,10 @@ from ..Library_Modules.library_snapshot_cache import (
 )
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
+from ..Navigation.surface_swap_guard import (
+    SurfaceSwapSelfAwaitError,
+    log_refused_surface_swap,
+)
 from ..destination_recovery import (
     DestinationRecoveryState,
     load_failure_callout,
@@ -12195,9 +12199,11 @@ class LibraryScreen(BaseAppScreen):
             # landing inside the window must suppress its whole-screen
             # fallback rather than race a duplicate-id canvas into the
             # mount (review round, M3).
+            # Before the try: a refusal (TASK-34000.4) is not a repair
+            # failure to count and swallow -- the await could never return.
+            outgoing = self.children_safe_to_await_removing(canvas_host)
             self._library_canvas_projection_depth += 1
             try:
-                outgoing = tuple(canvas_host.children)
                 for child in outgoing:
                     child.display = False
                 if outgoing:
@@ -12368,7 +12374,7 @@ class LibraryScreen(BaseAppScreen):
         caller can hold ``_library_canvas_projection_depth`` across every
         one of this region's early-return paths (review round, M3).
         """
-        outgoing = tuple(canvas_host.children)
+        outgoing = self.children_safe_to_await_removing(canvas_host)
         try:
             for child in outgoing:
                 child.display = False
@@ -12550,6 +12556,16 @@ class LibraryScreen(BaseAppScreen):
             self._library_canvas_projection_depth += 1
             try:
                 await self.recompose()
+            except SurfaceSwapSelfAwaitError as error:
+                # Awaited on the pump of a widget the recompose removes
+                # (TASK-34000.4): refused before any teardown. The same
+                # rebuild on the screen's own pump completes, and it is
+                # this seam's documented fallback already.
+                log_refused_surface_swap(error, fallback="whole-screen refresh")
+                self.refresh(recompose=True)
+                if then is not None:
+                    then()
+                return
             finally:
                 self._finish_library_canvas_projection()
             if then is not None:
@@ -12587,6 +12603,9 @@ class LibraryScreen(BaseAppScreen):
                 rail_mode="selection",
                 then=then,
             )
+        except SurfaceSwapSelfAwaitError as error:
+            log_refused_surface_swap(error, fallback="whole-screen refresh")
+            result = LibraryEntryReconcileResult.FAILED
         except Exception:
             logger.debug(
                 "Targeted Library open-surface projection failed.", exc_info=True
@@ -12861,7 +12880,7 @@ class LibraryScreen(BaseAppScreen):
                 canvas_host = self._library_entry_canvas_host()
                 if canvas_host is None:
                     raise NoMatches("Library canvas host is unavailable")
-                outgoing = tuple(canvas_host.children)
+                outgoing = self.children_safe_to_await_removing(canvas_host)
                 for child in outgoing:
                     child.display = False
                 if outgoing:
@@ -12877,6 +12896,10 @@ class LibraryScreen(BaseAppScreen):
                         generation, route_key
                     )
                 await canvas_host.mount(replacement)
+            except SurfaceSwapSelfAwaitError:
+                # Not a replacement failure to retry (TASK-34000.4): the
+                # await could never return. Loud, to whoever awaited it.
+                raise
             except Exception:
                 logger.debug("Library snapshot canvas replacement failed.")
                 return self._retry_or_fail_library_entry_reconcile(

@@ -138,3 +138,10 @@ Tests/UI/test_speech_settings_save_equivalence.py
 
 # TASK-33003.20: production batch geometry, isolated profile and shipping CSS.
 Tests/UI/test_approval_batch_geometry.py
+
+# TASK-34000.4: Library Media Export… opens Export instead of freezing the app;
+# real-app, bounded polls (4 tests: mouse/keyboard x default/eager task
+# factory). The guard's real-screen tests are deliberately NOT here
+# (test_library_surface_swap_refused_on_real_screen.py): with them this file
+# measured 58 s, at the lane's 60 s budget.
+Tests/UI/test_library_media_export_no_freeze.py

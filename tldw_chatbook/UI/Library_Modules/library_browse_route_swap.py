@@ -48,6 +48,7 @@ from tldw_chatbook.Widgets.Library import (
     LibraryRail,
 )
 
+from ..Navigation.surface_swap_guard import ensure_surface_swap_not_self_awaited
 from .canvas_sync import _sync_library_canvas
 from .screen_constants import (
     LIBRARY_CANVAS_KIND_NOTES,
@@ -223,7 +224,11 @@ async def _apply_library_notes_source_strip(
             before=screen.query_one("#library-shell-grid", Widget),
         )
     elif mounted and not needed:
-        await mounted.first(Widget).remove()
+        strip = mounted.first(Widget)
+        ensure_surface_swap_not_self_awaited(
+            (strip,), seam="LibraryScreen notes source strip removal"
+        )
+        await strip.remove()
 
 
 async def _adopt_library_browse_canvas(
@@ -267,6 +272,11 @@ async def _adopt_library_browse_canvas(
         if child is not destination and child.id not in LIBRARY_RESIDENT_CANVAS_IDS
     ]
     if stale:
+        # TASK-34000.4: refused, before anything is hidden or torn down, when
+        # awaited on the pump of a widget inside a stale child.
+        ensure_surface_swap_not_self_awaited(
+            stale, seam="LibraryScreen browse route canvas swap"
+        )
         for child in stale:
             child.display = False
         await canvas_host.remove_children(stale)

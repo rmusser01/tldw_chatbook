@@ -18360,3 +18360,24 @@ test ASTs restore after removing only scoped harness/cleanup substitutions.
 **PR #2953, 2026-10-04.** On identical sources, Linux credential polling measured 10.125 os.open/tick against a 6.75 ceiling, then its same-head retry passed at 6.75 in both variants. A local call-through audit attributed every traced idle open to storage_admission._local_pause_requested / Admission.pause_requested on executor threads: each native backup-pause probe opened 37 descriptors on that private macOS path, and two or three probes landed in the idle phase. Those are real guard costs, not additional credential-poll admissions. No stack was captured in the failing Linux job, so the local attribution does not prove that job's exact cause.
 
 Before attributing a timing-dependent storage count to the UI callback, trace all threads and retain the failed census, successful repeat and exact source identities. Keep actual native pause/admission checks and the existing ceilings intact; an observed passing repeat is not a universal flake repair.
+
+## A finding verified on the review's commit may already be fixed on your base -- diff the two before designing the RED (TASK-34000.4, 2026-10-04)
+
+**Incident.** The task said a regression test for the Library Media "Export…"
+freeze "fails on current dev (by timing out)", and the plan asked for that RED
+on the wave's base, 8c4dfe59a2. The review had run on 2d34cbf80d. Between the
+two, 3cee32b3d0 (task-31249, landed the evening of the review) had already
+moved the Export projection off the press dispatch. On the base the new test
+passed 4/4 and a live click opened Export -- the P0 was gone before the fix
+task started, and a RED "on base" could only have been faked.
+
+**What to do.** Before writing the first test, run `git log
+<review-commit>..<base> -- <the files the task names>` and try the symptom
+live on the base. If it no longer reproduces, say so first in the report, and
+show the test's teeth where the defect still exists: restore the old line
+(Edit-based, restored the same way) and show the bounded failure, and
+reproduce the symptom live on a `git archive` export of the review's commit
+(`APP_WT=<export>`), next to the same clicks on the base and on the branch.
+What is left to do is then usually the part the earlier fix skipped -- here
+the hand-off at the widget, the guard for the class, and a test that fails
+instead of hanging.

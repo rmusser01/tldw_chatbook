@@ -41,6 +41,7 @@ FAST_LANE_TARGETS = (
     "Tests/UI/test_mcp_tools_mode.py",
     "Tests/Widgets/test_detach_safe_text_area.py",
     "Tests/Architecture/test_console_controllers_define_their_self_attributes.py",
+    "Tests/Architecture/test_surface_swap_guard.py",
 )
 HEAVY_JOB_KEYS = {
     "core-tests",
