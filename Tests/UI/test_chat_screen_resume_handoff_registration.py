@@ -23,7 +23,11 @@ from __future__ import annotations
 import inspect
 import re
 
+import pytest
+
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+pytestmark = pytest.mark.bootstrap_profile
 
 #: Every pending-work consumer a warm revisit must schedule, mirroring
 #: on_mount's cold-path set. (``_consume_pending_console_roleplay_repair``
