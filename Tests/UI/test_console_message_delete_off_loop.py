@@ -251,7 +251,10 @@ async def test_a_3000_message_delete_and_undo_keep_the_event_loop_running(tmp_pa
         )
         await handle_console_delete_action(console._message, "delete", target)
         confirm = f"#console-message-action-delete-confirm-{target}"
-        await _wait_for_selector(console, pilot, confirm)
+        # Arming a 3,002-message Delete blocks the loop 0.2-0.8 s even on a
+        # quiet machine (TASK-33628.5.2); the helper's 2 s default flaked
+        # under load. This wait is not what the test measures.
+        await _wait_for_selector(console, pilot, confirm, timeout=30.0)
         assert f"Delete {_REMOVED} messages" in str(
             console.query_one(confirm, Button).label
         )

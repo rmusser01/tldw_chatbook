@@ -34,7 +34,8 @@ import asyncio
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
+import uuid
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -55,7 +56,8 @@ from Tests.UI.test_app_quit_under_modal import (
 from Tests.UI.test_console_message_delete_off_loop import _REMOVED, _seed
 from Tests.UI.test_console_message_delete_undo import _painted, _tree_nodes
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
-from tldw_chatbook.Chat import console_runtime
+from tldw_chatbook import config as config_module
+from tldw_chatbook.Chat import console_durable_writes, console_runtime
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Console_Modules.message_delete import (
     handle_console_delete_action,
@@ -65,9 +67,10 @@ from tldw_chatbook.Widgets.Console import ConsoleTranscript
 pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.asyncio]
 
 _QUESTION = "Quit while still working?"
-#: How long the gated save keeps running once the Console's teardown has
-#: begun, standing in for a slow disk. Well inside the teardown's bound.
-_STILL_SAVING_SECONDS = 1.0
+#: How long the held save keeps running once app teardown has reached the
+#: store and is waiting for it, standing in for a slow disk. Well inside the
+#: teardown's bound.
+_STILL_SAVING_SECONDS = 0.5
 #: The teardown steps every app exit must run on the store, in order. The
 #: first is the voice-fenced scope that replaces the store's volatile state.
 _FULL_TEARDOWN = [
@@ -147,17 +150,39 @@ def _record_teardown(store: Any) -> list[str]:
     return steps
 
 
-@contextmanager
-def _warnings():
-    """Collect loguru WARNING-and-above messages while the block runs."""
-    messages: list[str] = []
-    handler = logger.add(
-        lambda m: messages.append(m.record["message"]), level="WARNING"
-    )
-    try:
-        yield messages
-    finally:
-        logger.remove(handler)
+class _WarningSink:
+    """Collect loguru WARNING-and-above messages from when it is attached.
+
+    Attach it only once the app has mounted: the app's own logging setup
+    runs at mount (without a splash) and removes every loguru sink there is,
+    and a removed sink would let "no such warning" checks pass on nothing.
+    ``caught`` therefore proves the sink is still live before returning.
+    """
+
+    def __init__(self) -> None:
+        self._messages: list[str] = []
+        self._handler: int | None = None
+
+    def attach(self) -> None:
+        self._handler = logger.add(
+            lambda m: self._messages.append(m.record["message"]), level="WARNING"
+        )
+
+    def caught(self) -> list[str]:
+        """The warnings caught, once a probe has reached the sink."""
+        assert self._handler is not None, "the warning sink was never attached"
+        probe = f"warning-sink-probe-{uuid.uuid4().hex}"
+        logger.warning(probe)
+        assert probe in self._messages, (
+            "the warning sink was removed while the app ran, so its "
+            "warnings were never checked"
+        )
+        return [message for message in self._messages if message != probe]
+
+    def detach(self) -> None:
+        if self._handler is not None:
+            with suppress(ValueError):  # caught() reports a removed sink
+                logger.remove(self._handler)
 
 
 def _saved_flags(path: Path, conversation_id: str) -> dict[str, int]:
@@ -187,16 +212,22 @@ def _admitted(store: Any) -> bool:
 
 
 async def _quit_anyway_mid_delete(
-    app: Any, pilot: Any, db_path: Path, conversation_id: str, hold: Any
+    app: Any,
+    pilot: Any,
+    db_path: Path,
+    conversation_id: str,
+    hold: Any,
+    sink: _WarningSink,
 ) -> dict[str, Any]:
     """Open the seeded chat, confirm its 3,002-message Delete, Quit anyway.
 
     Returns once Quit anyway has exited the app's message loop; leaving
     ``run_test`` then runs the app's shutdown, as ``App.run`` does after its
-    loop ends. ``hold(db, loop_thread)`` installs the held save just before
-    the confirm.
+    loop ends. ``hold(db, loop_thread, store)`` installs the held save just
+    before the confirm; ``sink`` is attached once the app has mounted.
     """
     console = await _mounted_console(app, pilot)
+    sink.attach()
     db = app.chachanotes_db
     store = console._ensure_console_chat_store()
     session = store.restore_persisted_session(
@@ -229,7 +260,7 @@ async def _quit_anyway_mid_delete(
         console.query_one(confirm, Button).label
     )
 
-    save = hold(db, threading.get_ident())
+    save = hold(db, threading.get_ident(), store)
     steps = _record_teardown(store)
     console.query_one(confirm, Button).press()
     await _until(pilot, save.entered.is_set, "the durable delete to start")
@@ -275,6 +306,11 @@ def _app_over(tmp_path: Path) -> tuple[Any, Path, str, list[str]]:
     db_path = tmp_path / "quit-mid-delete.db"
     db = CharactersRAGDB(db_path, "quit-mid-delete")
     conversation_id, persisted, _removed = _seed(db)
+    # No splash, as a configured profile usually has: the app then sets its
+    # logging up at mount, which removes every loguru sink added before it.
+    assert config_module.save_settings_to_cli_config(
+        {"splash_screen": {"enabled": False}}
+    )
     app = _build_test_app(configured_default="chat")
     _configure_native_ready_console(app)
     app.chachanotes_db = db
@@ -288,34 +324,46 @@ def _assert_atomic(db_path: Path, conversation_id: str, persisted: list[str]) ->
 
 
 async def test_quit_anyway_mid_delete_waits_for_the_save_then_tears_down_fully(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
     """Teardown waits for the save, then runs every store teardown step."""
     held: dict[str, _HeldSave] = {}
+    teardown: dict[str, bool] = {}
+    waiting = threading.Event()
+    real_end = console_durable_writes.end_store_after_writes
 
-    def hold(db, loop_thread):
-        # Held until the Console runtime's teardown has begun, then still
-        # saving for a while: teardown reaches the store with it in flight.
+    async def end_after_writes(store, end_app_runtime, timeout):
+        # Dispose has reached the store: note whether the save is still in
+        # flight, then let it finish while teardown waits for it.
+        teardown["save_in_flight"] = _admitted(store)
+        waiting.set()
+        await real_end(store, end_app_runtime, timeout)
+
+    monkeypatch.setattr(
+        console_durable_writes, "end_store_after_writes", end_after_writes
+    )
+
+    def hold(db, loop_thread, store):
         held["save"] = _HeldSave(
-            db,
-            loop_thread,
-            until=lambda: app._console_runtime_shutdown_task is not None,
-            then=_STILL_SAVING_SECONDS,
+            db, loop_thread, until=waiting.is_set, then=_STILL_SAVING_SECONDS
         )
         return held["save"]
 
     app, db_path, conversation_id, persisted = _app_over(tmp_path)
-    with _warnings() as warnings:
-        try:
-            async with app.run_test(size=(160, 48)) as pilot:
-                seen = await _quit_anyway_mid_delete(
-                    app, pilot, db_path, conversation_id, hold
-                )
-        finally:
-            if "save" in held:
-                held["save"].abort.set()
+    sink = _WarningSink()
+    try:
+        async with app.run_test(size=(160, 48)) as pilot:
+            seen = await _quit_anyway_mid_delete(
+                app, pilot, db_path, conversation_id, hold, sink
+            )
+        warnings = sink.caught()
+    finally:
+        sink.detach()
+        if "save" in held:
+            held["save"].abort.set()
 
     store = seen["store"]
+    assert teardown == {"save_in_flight": True}, "teardown met no save to wait for"
     assert not [w for w in warnings if "shutdown failed at dispose" in w], warnings
     assert seen["steps"] == _FULL_TEARDOWN, seen["steps"]
     assert store._provider_trace_settlement_registration_closed is True
@@ -336,27 +384,30 @@ async def test_a_save_past_the_teardown_bound_still_runs_every_other_step(
     release = threading.Event()
     held: dict[str, _HeldSave] = {}
 
-    def hold(db, loop_thread):
+    def hold(db, loop_thread, store):
         held["save"] = _HeldSave(db, loop_thread, until=release.is_set)
         return held["save"]
 
     app, db_path, conversation_id, persisted = _app_over(tmp_path)
-    with _warnings() as warnings:
-        try:
-            async with app.run_test(size=(160, 48)) as pilot:
-                seen = await _quit_anyway_mid_delete(
-                    app, pilot, db_path, conversation_id, hold
-                )
-            store = seen["store"]
-            # The app has gone with the save still held: nothing saved yet.
-            assert set(_saved_flags(db_path, conversation_id).values()) == {0}
-            assert _admitted(store)
-            steps = list(seen["steps"])
-        finally:
-            release.set()
-            if "save" in held:
-                held["save"].abort.set()
+    sink = _WarningSink()
+    try:
+        async with app.run_test(size=(160, 48)) as pilot:
+            seen = await _quit_anyway_mid_delete(
+                app, pilot, db_path, conversation_id, hold, sink
+            )
+        store = seen["store"]
+        # The app has gone with the save still held: nothing saved yet.
+        assert set(_saved_flags(db_path, conversation_id).values()) == {0}
+        assert _admitted(store)
+        steps = list(seen["steps"])
+        release.set()
         await _plain_until(lambda: not _admitted(store), "the save to be applied")
+        warnings = sink.caught()
+    finally:
+        sink.detach()
+        release.set()
+        if "save" in held:
+            held["save"].abort.set()
 
     _assert_atomic(db_path, conversation_id, persisted)
     assert steps == _FULL_TEARDOWN[1:], steps
