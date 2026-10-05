@@ -329,6 +329,33 @@ def voice_label(saved: SavedVoice) -> str:
     return f"{name} · {saved.draft.model_id} · {saved.draft.voice_id}"
 
 
+def replaced_voice(
+    saved: SavedVoice | None, preset: str, draft: vs.VoiceSetupDraft
+) -> str:
+    """The saved slot voice a save of ``draft`` would replace, or "".
+
+    Review round 2 (R2-F5): Custom holding the saved OpenAI voice's own values
+    said "it replaces OpenAI · …" although Next writes nothing. What counts is
+    what Next would write (endpoint, auth, model, voice, format, speed), not
+    the radio's name for it.
+
+    Args:
+        saved: The voice saved before this run.
+        preset: The selected Service radio.
+        draft: The controls' values.
+
+    Returns:
+        The saved voice's label, or "" when nothing slot-side is saved,
+        another provider reads replies, or the save would change nothing.
+    """
+    if saved is None or not saved.slot_preset or saved.other_provider:
+        return ""
+    if _persisted_identity(draft)[:-1] == _persisted_identity(saved.draft)[:-1]:
+        return ""  # [:-1]: the box is not the voice
+    label = voice_label(saved)
+    return "" if label == voice_label(SavedVoice(preset, draft)) else label
+
+
 def current_voice_copy(saved: SavedVoice) -> str:
     """The re-run status line naming the voice an untouched Next keeps."""
     if saved.other_provider:
@@ -459,6 +486,7 @@ __all__ = [
     "is_legacy_checkpoint",
     "legacy_summary_detail",
     "raw_app_tts",
+    "replaced_voice",
     "reply_voice_name",
     "reply_voice_uses_openai_slot",
     "saved_voice_from_config",

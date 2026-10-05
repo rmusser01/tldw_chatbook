@@ -129,12 +129,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
         draft = self._initial_draft()
         with Vertical(classes="setup-voice"):
             yield Static("Set up a voice", classes="setup-title")
-            yield Static(
-                "Hear replies read aloud — optional. Pick a service to try it, "
-                'or keep "No voice for now" — nothing is saved unless you '
-                "choose one.",
-                classes="setup-subtitle",
-            )
+            yield Static(voice_status.subtitle_copy(saved), classes="setup-subtitle")
             yield Label("Service", classes="setup-field-label")
             with SetupRadioSet(
                 id="setup-voice-preset", classes="setup-voice-segmented"
@@ -530,21 +525,13 @@ class VoiceSetupStep(OmniVoiceStepBase):
             with box.prevent(Checkbox.Changed):
                 box.value = value
         self._default_locked = box.disabled = locked
-        saved = self._saved
-        replaced = (
-            prefill.voice_label(saved)
-            if saved is not None and saved.slot_preset and not saved.other_provider
-            else ""
-        )
-        if replaced == prefill.voice_label(prefill.SavedVoice(self._preset, draft)):
-            replaced = ""
         self.query_one("#setup-voice-default-help", Static).update(
             voice_status.default_help_copy(
                 self._preset,
                 locked=locked,
                 ticked=box.value,
-                reply_voice=prefill.reply_voice_name(saved),
-                replaces=replaced,
+                reply_voice=prefill.reply_voice_name(self._saved),
+                replaces=prefill.replaced_voice(self._saved, self._preset, draft),
             )
         )
 

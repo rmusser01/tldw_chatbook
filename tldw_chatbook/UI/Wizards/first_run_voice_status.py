@@ -247,6 +247,26 @@ def blocked_status(current: str, blocked: str | None, *, testing: bool) -> str |
     return None
 
 
+def subtitle_copy(saved: prefill.SavedVoice | None) -> str:
+    """The step's subtitle: what Next does when nothing is chosen.
+
+    Review round 2 (R2-F5): over a saved voice it still said "nothing is
+    saved unless you choose one", reading as if no voice were kept.
+
+    Args:
+        saved: The voice saved before this run (None when nothing is).
+    """
+    if saved is None:
+        return (
+            "Hear replies read aloud — optional. Pick a service to try it, or "
+            'keep "No voice for now" — nothing is saved unless you choose one.'
+        )
+    return (
+        "Hear replies read aloud — optional. Your current voice stays as it "
+        "is unless you change it here."
+    )
+
+
 def no_voice_copy(saved: prefill.SavedVoice | None) -> str:
     """The line under the radio while "No voice for now" is chosen.
 
@@ -381,5 +401,6 @@ __all__ = [
     "probe_endpoint_reachable",
     "sample_readiness",
     "service_status_copy",
+    "subtitle_copy",
     "voice_test_failure_copy",
 ]

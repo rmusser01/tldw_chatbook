@@ -387,6 +387,36 @@ async def test_a_rerun_pick_over_the_openai_reply_voice_says_it_replaces_it(
 
 
 @pytest.mark.asyncio
+async def test_custom_with_the_saved_values_claims_no_replacement(monkeypatch) -> None:
+    """Review round 2 (R2-F5): over a saved OpenAI voice, Custom with the
+    same values said "it replaces OpenAI · tts-1-hd · shimmer" although Next
+    writes nothing; and the subtitle said "nothing is saved unless you choose
+    one" over a voice that is saved and kept."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-sent")
+    shown: list[tuple[bool, bool, str]] = []
+    subtitles: list[str] = []
+
+    async def pick_custom(step, pilot):
+        subtitles.append(str(step.query_one(".setup-subtitle", Static).render()))
+        step._select_preset_button("setup-voice-preset-custom")
+        await pilot.pause()
+        shown.append(_default_box(step))
+
+    step, app, outcome, before, after = await _commit_through_real_writer(
+        _WORKING_OPENAI_APP_TTS, _WORKING_OPENAI_TTS_SETTINGS, act=pick_custom
+    )
+
+    assert "nothing is saved unless" not in subtitles[0]
+    assert "current voice" in subtitles[0]
+    [(ticked, locked, help_line)] = shown
+    assert (ticked, locked) == (True, True)
+    assert "replaces" not in help_line
+    assert outcome == (True, "")
+    assert app.saves == []
+    assert after == before
+
+
+@pytest.mark.asyncio
 async def test_another_default_provider_keeps_the_box_free_and_its_defaults() -> None:
     """Review round 2 (F11): with kokoro reading replies, an unticked
     PocketTTS save writes the endpoint only; kokoro's defaults stay."""
