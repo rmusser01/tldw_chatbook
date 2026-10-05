@@ -330,6 +330,8 @@ def _refresh_console_message_parents(
     }
     resolved: dict[str, str | None] = {}
     for node in nodes:
+        if node.persisted_message_id is None:
+            continue
         node_id = str(node.persisted_message_id)
         row = raw_by_id.get(node_id)
         if row is None:

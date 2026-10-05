@@ -412,6 +412,7 @@ async def test_hydration_keeps_scalar_only_cursor_reader_compatibility() -> None
     assert store.active_leaf(session.id) is None
 
 
+@pytest.mark.bootstrap_profile
 def test_the_screen_tree_walk_still_flattens_every_branch(tmp_path):
     """Characterization: the screen seam eight test files call by name.
 
@@ -1382,5 +1383,34 @@ async def test_restore_refreshes_current_durable_parents() -> None:
             db.get_message_by_id("old")["provider_continuation_json"] == checkpoint_json
         )
         assert db.get_message_by_id("sidecar")["thinking_blocks_json"] == thinking_json
+
+        from tldw_chatbook.Chat.console_conversation_hydration import (
+            _refresh_console_message_parents,
+        )
+
+        anonymous = replace(
+            by_id["retained-change"],
+            id="anonymous",
+            persisted_message_id=None,
+            parent_message_id="old",
+        )
+        literal_none = replace(
+            by_id["retained-change"],
+            id="literal-none",
+            persisted_message_id="None",
+            parent_message_id="old",
+        )
+        supplemental = [anonymous, literal_none, by_id["old"], by_id["new"]]
+        identities = [
+            (node.id, node.persisted_message_id, node.content) for node in supplemental
+        ]
+        _refresh_console_message_parents(
+            supplemental, [{"id": "None", "parent_message_id": "new"}]
+        )
+        assert anonymous.parent_message_id == "old"
+        assert literal_none.parent_message_id == "new"
+        assert [
+            (node.id, node.persisted_message_id, node.content) for node in supplemental
+        ] == identities
     finally:
         db.close_connection()
