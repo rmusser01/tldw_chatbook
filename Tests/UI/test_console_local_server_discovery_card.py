@@ -7,6 +7,7 @@ the highlighted model; Esc saves nothing. The mounted tests are
 """
 
 import asyncio
+import threading
 
 import pytest
 from textual.app import ComposeResult
@@ -205,25 +206,29 @@ class ConsoleHarness(ConsolidatedCSSApp):
 def _blocked_console_app(
     detected_servers: tuple[DiscoveredLocalServer, ...],
     llama_cpp: dict | None = None,
+    **api_settings: dict,
 ):
     """Build a test app whose Console blocks on setup with a discovery fake."""
     app = _build_test_app()
     app.app_config = {
         "chat_defaults": {"provider": "OpenAI", "model": ""},
-        "api_settings": {"openai": {"api_key": ""}},
+        "api_settings": {"openai": {"api_key": ""}, **api_settings},
     }
     if llama_cpp is not None:
         app.app_config["api_settings"]["llama_cpp"] = llama_cpp
     app.chat_api_provider_value = "OpenAI"
     app.chat_api_model_value = ""
     discovery_calls: list[object] = []
+    discovery_threads: list[int] = []
 
     async def fake_discovery(config):
         discovery_calls.append(config)
+        discovery_threads.append(threading.get_ident())
         return detected_servers
 
     app.console_local_server_discovery = fake_discovery
     app._discovery_calls = discovery_calls
+    app._discovery_threads = discovery_threads
     return app
 
 
@@ -288,6 +293,10 @@ async def test_blocked_card_runs_discovery_once_and_offers_detected_server(
 
         assert str(detected.label) == "Use detected llama.cpp (127.0.0.1:8080)"
         assert len(app._discovery_calls) == 1
+        # Owner ruling (Phase 5): it probes in its own thread and loop. On the
+        # UI loop a boot-time storage scope of another task leaked into the
+        # recovery guard, which refused a plain launch's only attempt.
+        assert app._discovery_threads != [threading.get_ident()]
 
 
 @pytest.mark.asyncio
@@ -474,21 +483,134 @@ async def test_detected_server_keeps_a_different_saved_endpoint_for_this_chat_on
             "using the detected server for this session only."
         )
         assert (warning, "warning") in notices
-        settings = console._session._active_console_session_settings()
+        # The detected endpoint is this chat's session-only endpoint: never
+        # conversation metadata, and the send path uses it.
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        settings = store.session_settings(session_id)
         assert (settings.provider, settings.model) == ("llama_cpp", "srv-model-b")
-        assert settings.base_url == "http://127.0.0.1:8080"
+        assert settings.base_url != "http://127.0.0.1:8080"
+        assert (
+            store.effective_session_settings(session_id).base_url
+            == "http://127.0.0.1:8080"
+        )
+        assert store.session_ephemeral_endpoint_policy(session_id).base_url == (
+            "http://127.0.0.1:8080"
+        )
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        await _until(pilot, lambda: not modal.is_blocking, "the card to unlock")
+
+
+def _record_notices(app, monkeypatch) -> list[tuple[str, str | None]]:
+    notices: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        app,
+        "notify",
+        lambda message, **kwargs: notices.append(
+            (str(message), kwargs.get("severity"))
+        ),
+    )
+    return notices
+
+
+async def _enter_enter(host, console, pilot) -> None:
+    """Press Enter on "Use detected <server>", then in Switch model; drain."""
+    await _detected_action_focused(host, console, pilot)
+    await pilot.press("enter")
+    await _switcher_ready(host, pilot)
+    await pilot.press("enter")
+    await _until(pilot, lambda: host.screen is console, "the switcher to close")
+    await _drain(host.app_instance)
 
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_a_failed_adoption_holds_no_shutdown_admission(
+async def test_detected_ollama_keeps_a_different_saved_endpoint_and_unlocks_the_card(
     monkeypatch,
     request,
 ) -> None:
-    """The adoption runs inside the switcher's commit, after the live commit
-    took a durability admission. If it raises, the switcher reports it and
-    delivers no result, so the commit itself must release the admission:
-    ``close_and_drain`` (app shutdown) waits for every one still held."""
+    """TASK-33008.3 AC#2 and parent AC#1 for a provider off the direct
+    llama.cpp path. Ollama has a different address saved (a LAN box), so it is
+    kept, and the detected server is this chat's session-only endpoint. That
+    endpoint is what a send uses, so readiness reads it as configured and the
+    card unlocks: before, readiness said "endpoint not saved" and the card
+    stayed up after Enter, Enter."""
+    lan = "http://192.168.1.50:11434/v1/chat/completions"
+    detected = DiscoveredLocalServer(
+        provider_key="ollama",
+        base_url="http://127.0.0.1:11434",
+        model_ids=("llama3.2", "qwen3"),
+    )
+    app = _blocked_console_app((detected,), ollama={"api_url": lan, "model": ""})
+    saved_sections = _capture_saves(app, monkeypatch)
+    notices = _record_notices(app, monkeypatch)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _enter_enter(host, console, pilot)
+        modal = console.query_one("#console-setup-modal", ConsoleSetupModal)
+        await _until(pilot, lambda: not modal.is_blocking, "the card to unlock")
+
+        assert saved_sections == [
+            {
+                "api_settings.ollama": {"model": "llama3.2"},
+                "chat_defaults": {"provider": "ollama", "model": "llama3.2"},
+            }
+        ]
+        assert app.app_config["api_settings"]["ollama"]["api_url"] == lan
+        assert any(
+            message.startswith("Keeping the saved endpoint") and severity == "warning"
+            for message, severity in notices
+        )
+        settings, readiness = console._active_console_settings_readiness()
+        assert (settings.provider, settings.model) == ("ollama", "llama3.2")
+        assert settings.base_url == detected.base_url
+        assert readiness.native_send_supported, readiness.blocker
+        selection = console._build_console_provider_selection()
+        assert selection.base_url == detected.base_url
+        assert not selection.configured_endpoint_fallback_allowed
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_failed_default_save_says_the_pick_applies_to_this_chat_only(
+    monkeypatch,
+    request,
+) -> None:
+    """TASK-33008.3: the scope line promised the new-chat default, so a save
+    that fails says so instead of only logging it."""
+    app = _blocked_console_app((_DETECTED_SERVER,))
+    monkeypatch.setattr(
+        model_switcher_module, "save_settings_to_cli_config", lambda _sections: False
+    )
+    notices = _record_notices(app, monkeypatch)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _enter_enter(host, console, pilot)
+
+        assert (
+            "Default not saved for llama_cpp/srv-model-a; it applies to this chat only.",
+            "warning",
+        ) in notices
+        assert _pair(console) == ("llama_cpp", "srv-model-a")
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_failed_adoption_keeps_the_applied_pair_and_warns(
+    monkeypatch,
+    request,
+) -> None:
+    """TASK-33008.3. Rewritten on purpose from
+    ``test_a_failed_adoption_holds_no_shutdown_admission``, which pinned the
+    switcher reporting "nothing changed" after the live commit had applied
+    the pair. The adoption runs after that commit: when it raises, the commit
+    stands, the switcher delivers it (which releases the durability
+    admission ``close_and_drain`` waits for), and a warning says what is not
+    done."""
     app = _blocked_console_app((_DETECTED_SERVER,))
 
     def broken_writer(*_args) -> None:
@@ -497,6 +619,41 @@ async def test_a_failed_adoption_holds_no_shutdown_admission(
     monkeypatch.setattr(
         model_switcher_module, "adopt_detected_local_server", broken_writer
     )
+    notices = _record_notices(app, monkeypatch)
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _enter_enter(host, console, pilot)
+
+        assert _pair(console) == ("llama_cpp", "srv-model-a")
+        assert (
+            (
+                "The detected server was not fully applied: check this chat's "
+                "endpoint in Chat settings."
+            ),
+            "warning",
+        ) in notices
+        await asyncio.wait_for(
+            app.console_settings_durability_owner.close_and_drain(), timeout=2
+        )
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_detected_legacy_alias_server_lists_its_models(
+    monkeypatch,
+    request,
+) -> None:
+    """TASK-33008.3: discovery also probes the shipped legacy-alias endpoints
+    (llama.cpp on :8001). Legacy aliases get no readiness unless used, so the
+    card's switcher was empty for such a server; serving models is use."""
+    detected = DiscoveredLocalServer(
+        provider_key="local_llamacpp",
+        base_url="http://127.0.0.1:8001",
+        model_ids=("alias-a", "alias-b"),
+    )
+    app = _blocked_console_app((detected,))
     host = ConsoleHarness(app)
 
     async with host.run_test(size=(211, 44)) as pilot:
@@ -504,14 +661,15 @@ async def test_a_failed_adoption_holds_no_shutdown_admission(
         await _detected_action_focused(host, console, pilot)
         await pilot.press("enter")
         switcher = await _switcher_ready(host, pilot)
-        await pilot.press("enter")
+        await host.workers.wait_for_complete()
         await pilot.pause()
 
-        assert host.screen is switcher
-        assert switcher.query_one("#console-popover-error", Static).display
-        await asyncio.wait_for(
-            app.console_settings_durability_owner.close_and_drain(), timeout=2
-        )
+        lines = list_lines(host, switcher)
+        for model in detected.model_ids:
+            assert "legacy alias" in line_with(lines, model)
+        row = switcher.highlighted_row()
+        assert row is not None
+        assert (row.provider, row.model) == ("local_llamacpp", "alias-a")
 
 
 @pytest.mark.asyncio

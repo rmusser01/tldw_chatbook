@@ -376,6 +376,7 @@ from ...Chat.local_server_discovery import (
     discover_local_servers,
 )
 from ...Chat.custom_endpoint_registry import provider_identity_key
+from ...Chat.console_provider_endpoints import with_provider_endpoint
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.provider_readiness import (
     get_provider_readiness,
@@ -8884,11 +8885,18 @@ class ChatScreen(BaseAppScreen):
             model=selected_model,
             base_url=selection.base_url,
         )
+        app_config = self._provider_readiness_app_config()
+        if not selection.configured_endpoint_fallback_allowed and selection.base_url:
+            # A session-only endpoint is what a send uses, unguarded by the
+            # gateway's unsaved-endpoint check: read it as configured.
+            app_config = with_provider_endpoint(
+                app_config, provider_config_key(settings.provider), selection.base_url
+            )
         # TASK-33620.4: NEVER `active_run` here (the settings modal alone gates
         # on it), so consumers' `wait_for_active_run` guards are belt-and-braces.
         readiness = build_console_settings_readiness(
             effective_settings,
-            app_config=self._provider_readiness_app_config(),
+            app_config=app_config,
             connection_evidence=shared_connection_evidence(lambda: self.app),
         )
         model_warning = self._console_model_capability_warning(
@@ -14110,7 +14118,16 @@ class ChatScreen(BaseAppScreen):
         if not callable(discover):
             discover = discover_local_servers
         try:
-            servers = tuple(await discover(self._provider_readiness_app_config()) or ())
+            # In its own thread and loop, as the switcher's probe: on the UI
+            # thread the recovery guard refused every plain launch's only
+            # attempt (raw_operation_provenance_invalid), so "Use detected"
+            # never appeared (TASK-33008.3).
+            servers = tuple(
+                await asyncio.to_thread(
+                    asyncio.run, discover(self._provider_readiness_app_config())
+                )
+                or ()
+            )
         except Exception:
             logger.debug("Console local-server discovery failed", exc_info=True)
             return

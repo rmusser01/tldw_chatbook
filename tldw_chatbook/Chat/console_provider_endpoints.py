@@ -93,28 +93,35 @@ def first_configured_endpoint(provider_settings: Mapping[str, object]) -> str | 
     return None
 
 
-def with_configured_endpoint(
-    provider_settings: Mapping[str, object], endpoint: str
+def with_provider_endpoint(
+    app_config: Mapping[str, object], provider_key: str, endpoint: str
 ) -> dict[str, object]:
-    """Return a copy of provider settings whose one configured endpoint is ``endpoint``.
+    """Return a copy of ``app_config`` whose provider's one endpoint is ``endpoint``.
 
+    In memory only: readiness and probes then read an endpoint the session
+    uses (a detected server, a session-only endpoint) as the configured one.
     Every endpoint alias is dropped first, so no higher-ranked alias outranks
-    the new value. The input is not changed.
+    it. The input is not changed.
 
     Args:
-        provider_settings: Provider-specific configuration mapping.
+        app_config: The configuration snapshot.
+        provider_key: The ``api_settings`` section to configure.
         endpoint: The endpoint the copy is configured with.
 
     Returns:
-        The copied settings with ``api_url`` set to ``endpoint``.
+        The copied configuration with that section's ``api_url`` set.
     """
+    api_settings = app_config.get("api_settings")
+    api_settings = dict(api_settings) if isinstance(api_settings, Mapping) else {}
+    section = api_settings.get(provider_key)
     settings = {
         key: value
-        for key, value in provider_settings.items()
+        for key, value in (section.items() if isinstance(section, Mapping) else ())
         if key not in _ENDPOINT_SETTING_KEYS
     }
     settings["api_url"] = endpoint
-    return settings
+    api_settings[provider_key] = settings
+    return {**app_config, "api_settings": api_settings}
 
 
 def effective_provider_endpoint(

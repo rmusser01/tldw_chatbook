@@ -155,24 +155,39 @@ async def _composer_ready(harness: _Harness, console: ChatScreen, pilot) -> None
 @pytest.mark.asyncio
 @pytest.mark.loopback_network
 @pytest.mark.local_server_probe
+@pytest.mark.parametrize(
+    "llama_cpp",
+    [
+        # "" means none: a deleted key loads its shipped default.
+        pytest.param({"api_url": "", "model": ""}, id="no-endpoint-saved"),
+        # Every profile carries the template's http://localhost:8080: that is
+        # no endpoint the user chose, so it is no task-16476 case either.
+        pytest.param(None, id="untouched-shipped-profile"),
+    ],
+)
 @private_profile_test
 async def test_detected_stub_server_second_model_is_saved_by_the_real_writer(
-    monkeypatch, request
+    monkeypatch, request, llama_cpp
 ) -> None:
     """AC#8 (and R12, no endpoint saved): a stub loopback server lists two
     models; Enter on the card, Down, Enter picks the second. The real writer
     saves ``chat_defaults`` and the detected endpoint, and the chat holds the
-    pair. The discovery probe and the switcher's open-time probe both run for
-    real, against the stub only; nothing is written before the second Enter."""
+    pair, with no "Keeping the saved endpoint" warning. The discovery probe
+    and the switcher's open-time probe both run for real, against the stub
+    only; nothing is written before the second Enter."""
     with _stub_llama_server() as server:
         url = f"http://127.0.0.1:{server.server_address[1]}"
-        app = _console_app(
-            {
-                "chat_defaults": {"provider": "llama_cpp", "model": ""},
-                # "" means none: a deleted key loads its shipped default.
-                "api_settings.llama_cpp": {"api_url": "", "model": ""},
-            },
-            {"llama_cpp": []},
+        sections: dict = {"chat_defaults": {"provider": "llama_cpp", "model": ""}}
+        if llama_cpp is not None:
+            sections["api_settings.llama_cpp"] = llama_cpp
+        app = _console_app(sections, {"llama_cpp": []})
+        if llama_cpp is None:
+            assert _saved()["api_settings"]["llama_cpp"]["api_url"] == (
+                "http://localhost:8080"
+            )
+        notices: list[str] = []
+        monkeypatch.setattr(
+            app, "notify", lambda message, **_kwargs: notices.append(str(message))
         )
 
         async def discover(_config):
@@ -247,6 +262,7 @@ async def test_detected_stub_server_second_model_is_saved_by_the_real_writer(
             assert _pair(console) == ("llama_cpp", STUB_MODELS[1])
             store = console._ensure_console_chat_store()
             assert store.session_settings(store.active_session_id).base_url == url
+            assert not [notice for notice in notices if "Keeping" in notice]
 
 
 @pytest.mark.asyncio
@@ -285,7 +301,9 @@ async def test_card_choose_model_opens_switch_model_and_sets_the_new_chat_defaul
         switcher = await _switcher_ready(harness, pilot)
         assert not switcher._pick_only
         find = switcher.query_one("#console-popover-find", Input)
-        assert find.value == ""
+        # On the chat's provider, as "… N more" opens one: unfiltered, another
+        # provider's row could come first, and Enter would make it the default.
+        assert find.value == "llama.cpp "
         assert _scope(switcher) == model_switcher.SCOPE_THIS_CHAT_AND_NEW_CHATS
         row = switcher.highlighted_row()
         assert (row.kind, row.provider, row.model) == ("pair", "llama_cpp", "model-a")
@@ -368,6 +386,14 @@ async def test_card_pick_applies_to_this_chat_only_while_a_new_chat_default_work
         await pilot.press("enter")
         switcher = await _switcher_ready(harness, pilot)
         assert _scope(switcher) == model_switcher.SCOPE_THIS_CHAT
+        # Choose model opens on the chat's provider (Ollama lists no model
+        # here); clearing Find lists every provider again.
+        find = switcher.query_one("#console-popover-find", Input)
+        assert find.value == "Ollama "
+        row = switcher.highlighted_row()
+        assert (row.kind, row.provider) == ("setup", "ollama")
+        find.value = ""
+        await pilot.pause()
         row = switcher.highlighted_row()
         assert (row.kind, row.provider, row.model) == ("pair", "llama_cpp", "model-a")
         await pilot.press("down", "enter")
@@ -402,6 +428,8 @@ async def test_card_choose_provider_opens_switch_model_and_esc_returns(
         await pilot.press("enter")
         switcher = await _switcher_ready(harness, pilot)
         assert not switcher._pick_only
+        # Choosing a provider is choosing among them: Find stays empty.
+        assert switcher.query_one("#console-popover-find", Input).value == ""
         assert _scope(switcher) == model_switcher.SCOPE_THIS_CHAT_AND_NEW_CHATS
         await pilot.press("escape")
         await _until(pilot, lambda: harness.screen is console, "Esc to close it")
@@ -443,43 +471,52 @@ def _recovery_screen(action: str | None, *, blocking: bool = True) -> SimpleName
     return SimpleNamespace(
         _console_setup_modal_blocking=lambda: blocking,
         _active_console_settings_readiness=lambda: (
-            None,
+            SimpleNamespace(provider="ollama"),
             SimpleNamespace(recovery_action=action),
         ),
+        _provider_readiness_app_config=dict,
     )
 
 
 @pytest.mark.parametrize(
-    "action, opens",
+    "action, query",
     [
-        ("select_provider", True),
-        ("select_supported_provider", True),
-        ("select_model", True),
-        ("configure_endpoint", False),
-        ("save_endpoint", False),
-        ("review_provider_settings", False),
-        ("configure_credential", False),
-        ("retry_connection", False),
-        (None, False),
+        ("select_provider", ""),
+        ("select_supported_provider", ""),
+        # Choose model: on the chat's provider (finding 6, round 1).
+        ("select_model", "Ollama "),
+        ("configure_endpoint", None),
+        ("save_endpoint", None),
+        ("review_provider_settings", None),
+        ("configure_credential", None),
+        ("retry_connection", None),
+        (None, None),
     ],
 )
 def test_only_the_cards_pair_choices_open_switch_model(
-    monkeypatch, action, opens
+    monkeypatch, action, query
 ) -> None:
     """AC#4 (R16): Choose provider and Choose model go to Switch model; every
-    other recovery, and every recovery off the card, keeps its own route."""
-    opened: list[object] = []
-    monkeypatch.setattr(model_switcher, "open_setup_card_switcher", opened.append)
+    other recovery, and every recovery off the card, keeps its own route.
+    ``query`` is the Find text it opens with (None: it does not open)."""
+    opened: list[tuple[object, dict]] = []
+    monkeypatch.setattr(
+        model_switcher,
+        "_open_switcher",
+        lambda screen, **kwargs: opened.append((screen, kwargs)),
+    )
 
     screen = _recovery_screen(action)
-    assert model_switcher.open_card_recovery_switcher(screen) is opens
-    assert opened == ([screen] if opens else [])
+    assert model_switcher.open_card_recovery_switcher(screen) is (query is not None)
+    assert opened == (
+        [] if query is None else [(screen, {"query": query, "card": True})]
+    )
 
     # The same recovery from the transcript or the prompts hook: no card.
     assert not model_switcher.open_card_recovery_switcher(
         _recovery_screen(action, blocking=False)
     )
-    assert len(opened) == (1 if opens else 0)
+    assert len(opened) == (0 if query is None else 1)
 
 
 @pytest.mark.parametrize(
@@ -513,3 +550,44 @@ def test_a_working_new_chat_default_needs_a_ready_provider_and_model(
         if len(defaults) == 2 and all(defaults.values())
         else []
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.loopback_network
+@pytest.mark.local_server_probe
+@private_profile_test
+async def test_a_plain_launch_runs_the_real_discovery_and_offers_the_server(
+    monkeypatch, request
+) -> None:
+    """Owner ruling (Phase 5): a plain launch probes the localhost defaults,
+    so "Use detected <server>" can appear for a real user. Nothing injects
+    ``app.console_local_server_discovery`` here: the card's worker runs the
+    real ``discover_local_servers``, with its well-known candidates pointed at
+    a stub loopback server (and no configured candidate), and the stub must
+    see the request."""
+    from tldw_chatbook.Chat import local_server_discovery
+
+    with _stub_llama_server() as server:
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        for name in (
+            "DEFAULT_LLAMACPP_DISCOVERY_URL",
+            "DEFAULT_LLAMACPP_BASE_URL",
+            "DEFAULT_OLLAMA_DISCOVERY_URL",
+        ):
+            monkeypatch.setattr(local_server_discovery, name, url)
+        monkeypatch.setattr(local_server_discovery, "LOCAL_DISCOVERY_PROVIDER_KEYS", ())
+        app = _console_app(
+            {"chat_defaults": {"provider": "llama_cpp", "model": ""}},
+            {"llama_cpp": []},
+        )
+        assert getattr(app, "console_local_server_discovery", None) is None
+        harness = _Harness(app)
+        async with harness.run_test(size=(211, 44)) as pilot:
+            console, _modal = await _blocking_card(harness, pilot)
+            action = await _focused_action(
+                harness, console, pilot, CONSOLE_SETUP_MODAL_DETECTED_ACTION_ID
+            )
+            assert str(action.label) == (
+                f"Use detected llama.cpp (127.0.0.1:{server.server_address[1]})"
+            )
+            assert "/v1/models" in server.paths

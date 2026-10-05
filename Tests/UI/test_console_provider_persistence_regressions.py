@@ -401,11 +401,19 @@ def test_detected_server_adoption_keeps_configured_endpoint(monkeypatch, request
         "using the detected server for this session only."
     )
     assert [m for m, _kwargs in notifies if "Keeping" in m] == [warning]
-    active_settings = store.session_settings(store.active_session_id)
+    # TASK-33008.3 fix round 1 (rewritten on purpose; it read the raw session
+    # settings): the detected endpoint is the session's live-only endpoint
+    # policy, so it applies now but never enters conversation metadata.
+    session_id = store.active_session_id
+    active_settings = store.effective_session_settings(session_id)
     assert active_settings.base_url == detected_endpoint, (
         "Adoption must apply the detected endpoint to the active session so "
         "'Use detected ...' stays effective without the config write; got "
         f"{active_settings.base_url!r}."
+    )
+    assert store.session_settings(session_id).base_url != detected_endpoint
+    assert store.session_ephemeral_endpoint_policy(session_id).base_url == (
+        detected_endpoint
     )
     assert (active_settings.model, active_settings.source) == ("detected-model", "user")
 

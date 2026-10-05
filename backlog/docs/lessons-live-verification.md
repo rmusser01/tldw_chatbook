@@ -418,12 +418,22 @@ per screen and its `except` logs at debug level, so the refusal reads as "no
 server found". The mounted tests inject `app.console_local_server_discovery`,
 which bypasses the refused function, so they stay green.
 
+**Fixed in the same task (fix round 1, 2026-10-05).** The card's worker now
+runs discovery in its own thread and loop (`asyncio.to_thread(asyncio.run,
+...)`, the switcher probe's pattern). Same scratch profile and stub: before the
+change, zero requests and no action; after it, two `GET /v1/models` and "Use
+detected llama.cpp (127.0.0.1:8080)" focused on the first launch. A guess that
+does NOT reproduce it: setting `raw_participants._local.operation` to a stray
+object — `_runtime_operation` ignores an unregistered operation. The mounted
+real-discovery test passes at both base and head, so the thread is pinned by
+recording the discovery thread, not by a reproduction.
+
 **What to do.** Count the stub's requests before reading the card: zero means
 discovery did not run, not that nothing answered. A test that injects the
-discovery seam does not cover the real entry point. Until that defect is fixed,
-drive the detected-server flow from a scratch launcher that retries
-`chat_screen.discover_local_servers`, never committed, and say so with the
-capture.
+discovery seam does not cover the real entry point. Send a human gap between
+keys when driving Enter, Enter (`send-keys Enter`, ~150 ms, `send-keys
+Enter`): two keys in one tmux write reach the card before Switch model mounts,
+and the second is dropped.
 
 ## Send synthetic Paste through the app, not directly to TextArea
 

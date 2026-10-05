@@ -452,6 +452,7 @@ class ConsoleModelPopover(
         query: str = "",
         connection_prober: ConnectionProber | None = None,
         served_models: Mapping[str, Sequence[str]] | None = None,
+        highlight_pair: tuple[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize one exact-origin Switch model transaction.
@@ -485,7 +486,12 @@ class ConsoleModelPopover(
             connection_prober: The screen's local-server probe, run once per
                 listed provider per open; this widget calls no network.
             served_models: Models a Chat settings listing found per provider,
-                listed beside the saved ones (a new entry's, TASK-33006.4).
+                listed beside the saved ones (a new entry's, TASK-33006.4), or
+                that a detected server listed. A served provider is used, so
+                it is listed even as a legacy alias.
+            highlight_pair: The pair highlighted first, listed even while
+                providers are checked, until Find changes (the Get started
+                card's detected server: its first listed model, TASK-33008.3).
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -531,6 +537,12 @@ class ConsoleModelPopover(
             settings.model or None,
         )
         self._query = query
+        self._opened_query = query
+        self._highlight_pair = (
+            (provider_key(highlight_pair[0]), highlight_pair[1])
+            if highlight_pair is not None
+            else None
+        )
         self._rows: list[SwitcherRow] = []
         self._model_columns = _MODEL_COLUMNS
         self._painted_index: int | None = None
@@ -799,6 +811,7 @@ class ConsoleModelPopover(
         if self._previous is not None:
             keys.add(provider_key(self._previous.provider))
         keys.update(provider_key(use.provider) for use in self._recent)
+        keys.update(self._served)  # a server listed its models: it is in use
         defaults = self._app_config.get("chat_defaults")
         if isinstance(defaults, Mapping):
             keys.add(provider_key(defaults.get("provider")))
@@ -1106,6 +1119,15 @@ class ConsoleModelPopover(
             members = []
             if not current_shown:
                 members.append(self._pair_row("pair", current_key, current_model))
+            preferred = self._highlight_pair
+            if (
+                preferred is not None
+                and preferred not in shown
+                and preferred != (current_key, current_model)
+            ):
+                # A server that just answered lists it; a fast Enter applies
+                # it (the commit still checks readiness) instead of an error.
+                members.append(self._pair_row("pair", *preferred))
             members.append(SwitcherRow("info", "  checking providers…"))
             group("READY PROVIDERS", members)
             rows.extend(self._typed_rows(tokens))
@@ -1377,6 +1399,11 @@ class ConsoleModelPopover(
         if self._user_moved and self._highlight_key is not None:
             for index in selectable:
                 if self._rows[index].key == self._highlight_key:
+                    return index
+        if self._highlight_pair is not None and self._query == self._opened_query:
+            for index in selectable:
+                row = self._rows[index]
+                if (provider_key(row.provider), row.model) == self._highlight_pair:
                     return index
         if self._query.strip():
             ranked = [index for index in selectable if self._rows[index].kind != "more"]

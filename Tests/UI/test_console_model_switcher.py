@@ -223,8 +223,12 @@ def build_switcher(
     catalog_loader=None,
     draft_rebaser=_rebase,
     pick_only: bool = False,
+    **extra: object,
 ) -> ConsoleModelPopover:
-    """One switcher with recording seams. RECENT loads after open."""
+    """One switcher with recording seams. RECENT loads after open.
+
+    ``extra`` reaches the popover as is (``query``, ``served_models``, ...).
+    """
 
     async def load_recent():
         return recent or ()
@@ -251,6 +255,7 @@ def build_switcher(
         catalog_loader=catalog_loader,
         setup_opener=lambda provider, model: recorder.setup.append((provider, model)),
         pick_only=pick_only,
+        **extra,
     )
 
 
@@ -696,6 +701,123 @@ async def test_legacy_aliases_are_hidden_unless_current_then_labelled() -> None:
         )
         row = line_with(list_lines(app, switcher), "legacy-model")
         assert "legacy alias" in row and CURRENT_MARK in row
+
+
+async def test_a_served_legacy_alias_is_listed_with_the_models_it_served() -> None:
+    """TASK-33008.3: a server detected on a legacy alias's endpoint (llama.cpp
+    on :8001) lists its models, so the card's switcher is not empty: serving
+    them is use, which lists a legacy alias (and lets Find type an id on it)."""
+    recorder = Recorder(ready=READY_PROVIDERS | {"local_llamacpp"})
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                providers_models={"Llama_cpp": ["model-a"]},
+                served_models={"local_llamacpp": ("alias-a", "alias-b")},
+                query="llama.cpp (legacy alias) ",
+            ),
+        )
+        assert "local_llamacpp" in {p for p, _m, _t in recorder.readiness_calls}
+        for model in ("alias-a", "alias-b"):
+            assert "legacy alias" in line_with(list_lines(app, switcher), model)
+        row = switcher.highlighted_row()
+        assert row is not None
+        assert (row.kind, row.provider, row.model) == (
+            "pair",
+            "local_llamacpp",
+            "alias-a",
+        )
+
+
+async def test_a_highlight_pair_outranks_previous_and_current_until_find_changes() -> (
+    None
+):
+    """TASK-33008.3 AC#1: the card's detected switcher highlights the server's
+    first listed model, although PREVIOUS and the chat's own model on that
+    provider rank above it; once Find changes, typing ranks as ever."""
+    recorder = Recorder()
+    app = SwitcherHarness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = await open_switcher(
+            app,
+            pilot,
+            build_switcher(
+                recorder,
+                remembered_previous=_Use(
+                    "llama_cpp", "model-b", timedelta(hours=2), True
+                ),
+                served_models={"llama_cpp": ("srv-1", "srv-2")},
+                query="llama.cpp ",
+                highlight_pair=("llama_cpp", "srv-1"),
+            ),
+        )
+        rows = [(row.provider, row.model) for row in switcher._rows if row.model]
+        # PREVIOUS and the chat's current model are listed ahead of it.
+        assert rows.index(("llama_cpp", "model-b")) < rows.index(("llama_cpp", "srv-1"))
+        assert rows.index(("llama_cpp", "model-a")) < rows.index(("llama_cpp", "srv-1"))
+        row = switcher.highlighted_row()
+        assert row is not None and (row.provider, row.model) == ("llama_cpp", "srv-1")
+
+        find = switcher.query_one("#console-popover-find", Input)
+        find.value = "srv-2"
+        await pilot.pause()
+        row = switcher.highlighted_row()
+        assert row is not None and (row.provider, row.model) == ("llama_cpp", "srv-2")
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+    settings = recorder.submissions[0].draft.settings
+    assert (settings.provider, settings.model) == ("llama_cpp", "srv-2")
+
+
+async def test_a_highlight_pair_applies_while_providers_are_still_checked() -> None:
+    """TASK-33008.3 (parent AC#1, Enter, Enter at speed): before the first
+    readiness lands, the list holds only the chat's pair and "checking
+    providers…". The detected server's first model is listed and highlighted
+    there too, so a fast second Enter applies it instead of an error."""
+    release = threading.Event()
+
+    class SlowRecorder(Recorder):
+        def readiness(self, provider, model):  # type: ignore[no-untyped-def]
+            release.wait(10)
+            return super().readiness(provider, model)
+
+    recorder = SlowRecorder()
+    app = SwitcherHarness()
+    try:
+        async with app.run_test(size=(211, 44)) as pilot:
+            switcher = build_switcher(
+                recorder,
+                draft=_draft("openai", None),
+                served_models={"llama_cpp": ("srv-1", "srv-2")},
+                query="llama.cpp ",
+                highlight_pair=("llama_cpp", "srv-1"),
+            )
+            app.push_screen(switcher, callback=lambda result: None)
+            await pilot.pause()
+            await pilot.pause()
+            assert not switcher._first_readiness_done
+            assert any("checking providers" in row.text for row in switcher._rows)
+            row = switcher.highlighted_row()
+            assert row is not None and (row.kind, row.provider, row.model) == (
+                "pair",
+                "llama_cpp",
+                "srv-1",
+            )
+
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.screen is not switcher  # applied and closed, no error
+            release.set()
+    finally:
+        release.set()
+
+    settings = recorder.submissions[0].draft.settings
+    assert (settings.provider, settings.model) == ("llama_cpp", "srv-1")
 
 
 async def test_custom_endpoints_show_display_names_and_builtin_slots_stay() -> None:

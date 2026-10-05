@@ -39,7 +39,7 @@ from ...Chat.console_provider_endpoints import (
     first_configured_endpoint,
     normalize_generic_endpoint_for_compare,
     safe_endpoint_display,
-    with_configured_endpoint,
+    with_provider_endpoint,
 )
 from ...Chat.console_provider_gateway import normalize_llamacpp_base_url
 from ...Chat.provider_catalog import provider_display_name
@@ -50,7 +50,10 @@ from ...Utils.timestamps import as_utc
 
 if TYPE_CHECKING:
     from ...Chat.console_chat_store import ConsoleChatSession
-    from ...Chat.console_session_settings import ConsoleSessionSettings
+    from ...Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        ConsoleSettingsReadiness,
+    )
     from ...Chat.console_settings_apply import (
         ConsoleSettingsDraftState,
         ConsoleSettingsOrigin,
@@ -356,22 +359,24 @@ def _switcher_sources(
     screen: ChatScreen,
     session_id: str,
     before: Pair,
-    server: DiscoveredLocalServer | None = None,
+    app_config: Mapping[str, object] | None = None,
+    readiness: Callable[..., ConsoleSettingsReadiness] | None = None,
+    listing: tuple[str, Sequence[str]] | None = None,
 ) -> dict[str, object]:
     """Return the pair sources every Switch model mode lists from.
 
-    With ``server`` (the Get started card's detected server), the provider is
-    described by what discovery found, in memory only: saved configuration
-    may hold no endpoint or model for it, or a different endpoint
-    (task-16476) whose last test failed, and either would list it under NEEDS
-    SETUP. Readiness and the open-time probe read the detected endpoint, and
-    its models are the ones the server listed. Nothing here is saved.
+    The Get started card's detected server passes the three optional
+    arguments, in memory only (``_open_switcher``): a configuration and a
+    readiness that read the detected endpoint, and the server's own listing,
+    which is that provider's catalog. Nothing here is saved.
 
     Args:
         screen: The Console screen that owns the chat.
         session_id: The chat whose PREVIOUS pair the list offers.
         before: The pair the chat (or the Chat settings draft) holds now.
-        server: The detected local server the list is opened for, if any.
+        app_config: The configuration the list reads; the saved one if None.
+        readiness: The readiness resolver; the saved defaults' if None.
+        listing: ``(provider, models)`` a server listed, if any.
 
     Returns:
         ``ConsoleModelPopover`` keyword arguments: the configuration, the
@@ -382,16 +387,8 @@ def _switcher_sources(
 
     store = screen._ensure_console_chat_store()
     providers_models = screen._providers_models()
-    app_config = screen._provider_readiness_app_config()
-    readiness = screen._console_default_readiness
-    detected = provider_config_key(server.provider_key) if server else None
-    if server is not None:
-        api_settings = dict(screen._config_section(app_config, "api_settings"))
-        api_settings[detected] = with_configured_endpoint(
-            screen._config_section(api_settings, detected), server.base_url
-        )
-        app_config = {**app_config, "api_settings": api_settings}
-        readiness = partial(readiness, app_config=app_config)
+    if app_config is None:
+        app_config = screen._provider_readiness_app_config()
     probe = switcher_connection_prober(screen.app, app_config)
 
     async def connection_prober(targets, settled):  # type: ignore[no-untyped-def]
@@ -408,10 +405,10 @@ def _switcher_sources(
         await probe(targets, settled_here_and_under)
 
     async def catalog_loader(provider: str) -> list[str]:
-        if server is not None and provider == detected:
+        if listing is not None and provider == listing[0]:
             # The server's own listing is its catalog: a saved model list or
             # a cached catalog describes some other endpoint.
-            return list(server.model_ids)
+            return list(listing[1])
         return await load_provider_catalog(screen, providers_models, provider)
 
     return {
@@ -420,7 +417,7 @@ def _switcher_sources(
         "draft_rebaser": (
             screen._ensure_console_chat_controller().rebase_console_settings_draft
         ),
-        "default_readiness_resolver": readiness,
+        "default_readiness_resolver": readiness or screen._console_default_readiness,
         "recent_pairs_loader": lambda: read_recent_model_pairs(
             getattr(screen.app_instance, "chachanotes_db", None), store.sessions()
         ),
@@ -476,10 +473,11 @@ def open_setup_card_switcher(
     mode, so a NEEDS SETUP row still opens its fix in Settings.
 
     "Use detected <server>" passes ``server``: Find opens on that provider's
-    name, its rows are the models the server listed, and Enter on one adopts
-    it (``adopt_detected_local_server``). Any other pick here, and every pick
-    made while no new-chat default works, also becomes the default for new
-    chats; the scope line says so before Enter. Esc saves nothing.
+    name, its rows are the models the server listed, the first of them is
+    highlighted, and Enter on one adopts it (``adopt_detected_local_server``).
+    Any other pick here, and every pick made while no new-chat default works,
+    also becomes the default for new chats; the scope line says so before
+    Enter. Esc saves nothing.
 
     Args:
         screen: The Console screen the card blocks.
@@ -493,7 +491,9 @@ def open_card_recovery_switcher(screen: ChatScreen) -> bool:
 
     Only while the card blocks: the same recoveries from the transcript or
     the prompts hook, and the card's endpoint and settings recoveries, keep
-    opening Chat settings.
+    opening Chat settings. Choose model opens on the chat's provider, as
+    "… N more" does: unfiltered, another provider's row could come first and
+    one Enter would make it the default for new chats.
 
     Args:
         screen: The Console screen whose provider recovery was requested.
@@ -503,10 +503,17 @@ def open_card_recovery_switcher(screen: ChatScreen) -> bool:
     """
     if not screen._console_setup_modal_blocking():
         return False
-    _settings, readiness = screen._active_console_settings_readiness()
+    settings, readiness = screen._active_console_settings_readiness()
     if readiness.recovery_action not in _CARD_SWITCHER_RECOVERIES:
         return False
-    open_setup_card_switcher(screen)
+    query = ""
+    if readiness.recovery_action == "select_model":
+        name = provider_display_name(
+            provider_config_key(settings.provider),
+            screen._provider_readiness_app_config(),
+        )
+        query = f"{name} "
+    _open_switcher(screen, query=query, card=True)
     return True
 
 
@@ -544,10 +551,21 @@ def _open_switcher(
     sets_default = card and (
         server is not None or not has_working_new_chat_default(screen)
     )
-    sources = _switcher_sources(screen, session.id, before, server)
-    readiness = sources["default_readiness_resolver"]
-    detected = provider_config_key(server.provider_key) if server else None
+    detected: str | None = None
+    app_config: Mapping[str, object] | None = None
+    readiness: Callable[..., ConsoleSettingsReadiness] = (
+        screen._console_default_readiness
+    )
     if server is not None:
+        # R12: what discovery found describes the provider, in memory only.
+        # Saved configuration may hold no endpoint or model for it, or a
+        # different endpoint (task-16476) whose last test failed; either would
+        # list it under NEEDS SETUP.
+        detected = provider_config_key(server.provider_key)
+        app_config = with_provider_endpoint(
+            screen._provider_readiness_app_config(), detected, server.base_url
+        )
+        readiness = partial(readiness, app_config=app_config)
         # Filtered to the provider: Find holds its name, as "… N more" does.
         query = f"{provider_display_name(detected)} "
 
@@ -556,7 +574,7 @@ def _open_switcher(
         adopt = server is not None and provider_config_key(chosen.provider) == detected
         if sets_default:
             # As Ctrl+N: a pair that cannot send never becomes the default.
-            verdict = readiness(chosen.provider, chosen.model)  # type: ignore[operator]
+            verdict = readiness(chosen.provider, chosen.model)
             if not verdict.native_send_supported:
                 raise ValueError(f"Unavailable: {verdict.detail}")
             if not adopt:
@@ -569,10 +587,23 @@ def _open_switcher(
         if adopt:
             try:
                 adopt_detected_local_server(screen, server, live_commit.settings)
+            except Exception as exc:  # noqa: BLE001 - the pair is applied
+                # The live commit stands, so the switcher must deliver it: a
+                # raise would report "nothing changed" over an applied pair.
+                logger.warning(
+                    "Detected local server adoption failed after the pair applied: {}",
+                    type(exc).__name__,
+                )
+                screen.app_instance.notify(
+                    "The detected server was not fully applied: check this "
+                    "chat's endpoint in Chat settings.",
+                    severity="warning",
+                )
             except BaseException:
-                # The switcher reports the failure and delivers no result, so
-                # nothing else would release the admission shutdown waits on.
-                live_commit.durability_admission.release()
+                # Nothing delivers the result now, so nothing else would
+                # release the admission shutdown waits on.
+                if live_commit.durability_admission is not None:
+                    live_commit.durability_admission.release()
                 raise
         elif not card:
             # The pair the card replaces never worked: it is no PREVIOUS.
@@ -607,7 +638,20 @@ def _open_switcher(
             served_models=(
                 {detected: server.model_ids} if server is not None else None
             ),
-            **sources,  # type: ignore[arg-type]
+            # AC#1: the server's first listed model, whatever RECENT holds.
+            highlight_pair=(
+                (detected, server.model_ids[0])
+                if server is not None and server.model_ids
+                else None
+            ),
+            **_switcher_sources(  # type: ignore[arg-type]
+                screen,
+                session.id,
+                before,
+                app_config,
+                readiness,
+                (detected, server.model_ids) if server is not None else None,
+            ),
         ),
         callback=screen._apply_console_model_popover_result,
     )
@@ -660,35 +704,48 @@ def adopt_detected_local_server(
     snapshots). The full Console sync follows from the switcher's committed
     result, as after any apply.
 
+    A provider still at its shipped template has no endpoint the user chose
+    (every profile carries ``http://localhost:8080`` for llama.cpp), so the
+    detected one is saved.
+
     task-16476: a provider that already has a DIFFERENT user-configured
     endpoint keeps it -- the endpoint write fills only when absent, and the
-    detected endpoint is applied to the session instead, so the adoption
-    stays effective without clobbering persisted config (discovery is
-    loopback-only and can never see the LAN server the configured endpoint
-    may point at).
+    detected endpoint is this chat's session-only endpoint instead
+    (``adopt_session_ephemeral_endpoint``, never conversation metadata), so
+    the adoption stays effective without clobbering persisted config
+    (discovery is loopback-only and can never see the LAN server the
+    configured endpoint may point at).
 
     Args:
         screen: The Console screen that owns the chat.
         server: The detected local server.
         settings: The picked pair's settings as just applied to the chat.
     """
+    from ...Chat.console_session_endpoint_policy import (
+        ConsoleEphemeralEndpointPolicy,
+    )
+    from ...Chat.console_session_settings import provider_left_at_shipped_default
+
     provider_key = provider_config_key(server.provider_key)
-    configured_endpoint = first_configured_endpoint(
-        screen._config_section(
+    app_config = screen._provider_readiness_app_config()
+    configured_endpoint = (
+        None
+        if provider_left_at_shipped_default(app_config, provider_key)
+        else first_configured_endpoint(
             screen._config_section(
-                screen._provider_readiness_app_config(), "api_settings"
-            ),
-            provider_key,
+                screen._config_section(app_config, "api_settings"), provider_key
+            )
         )
     )
-    provider_values: dict[str, object] = {"model": settings.model}
     # Qodo review (PR #1720): compare connection identities, not raw
     # strings -- a configured endpoint differing only by a trailing slash (or
     # a llama.cpp endpoint-path suffix) is the SAME server and must not warn
     # or skip the canonicalizing write.
-    if configured_endpoint and adoption_endpoints_differ(
-        provider_key, configured_endpoint, server.base_url
-    ):
+    keep_saved = bool(configured_endpoint) and adoption_endpoints_differ(
+        provider_key, str(configured_endpoint), server.base_url
+    )
+    provider_values: dict[str, object] = {"model": settings.model}
+    if keep_saved:
         screen.app_instance.notify(
             "Keeping the saved endpoint "
             f"{safe_endpoint_display(configured_endpoint) or configured_endpoint} "
@@ -715,9 +772,29 @@ def adopt_detected_local_server(
             "Could not persist detected local server defaults to config; "
             "applying to this session only"
         )
-    screen._session._replace_active_console_session_settings(
-        replace(settings, base_url=server.base_url, source="user")
-    )
+        screen.app_instance.notify(
+            f"Default not saved for {provider_key}/{settings.model}; "
+            "it applies to this chat only.",
+            severity="warning",
+        )
+    chosen = replace(settings, source="user")
+    if keep_saved:
+        # The send path skips its unsaved-endpoint guard for this endpoint,
+        # and readiness reads it as configured (ChatScreen readiness).
+        store = screen._ensure_console_chat_store()
+        store.adopt_session_ephemeral_endpoint(
+            store.active_session_id,
+            settings=chosen,
+            policy=ConsoleEphemeralEndpointPolicy(
+                chosen.provider, chosen.model, server.base_url
+            ),
+        )
+        screen._sync_console_chat_core_state()
+        screen._sync_console_settings_summary()
+    else:
+        screen._session._replace_active_console_session_settings(
+            replace(chosen, base_url=server.base_url)
+        )
     # The card unlocks now; the switcher's result runs the full Console sync.
     screen._sync_console_transcript_guidance()
 
