@@ -1,0 +1,53 @@
+{
+  "root_metadata_base": "13d1668d4eedbdfcab50fff28a47a8a68346f033",
+  "integrated_head": "54a18180211ed2ecbf450db78202d28d97a7b995",
+  "unowned_paths": 30517,
+  "unowned_before_after_equal": true,
+  "unowned_path_mode_blob_digest": "b9dd0bbcf885dabc8cae621659d6b98e563bfd15f635c5da340de3722ebd73f8",
+  "actual_changed_paths": [
+    "Docs/User_Guide/console.md",
+    "Docs/User_Guide/console/attachments-images-voice.md",
+    "Docs/User_Guide/console/video.md",
+    "Docs/security/production-diagnostic-inventory.json",
+    "Tests/Chat/test_console_generation_actions.py",
+    "Tests/Console/test_console_command_draft.py",
+    "Tests/UI/test_console_command_origin_chat.py",
+    "Tests/UI/test_console_video_send_freeze.py",
+    "backlog/docs/lessons-textual.md",
+    "backlog/tasks/task-33622.16 - Console-generate-video-send-freezes-input-the-cost-confirm-and-storage-choice-ignore-Escape-F1-and-CtrlQ-until-generation-resolves.md",
+    "tldw_chatbook/UI/Console_Modules/command_draft.py",
+    "tldw_chatbook/UI/Console_Modules/command_handoff.py",
+    "tldw_chatbook/UI/Console_Modules/image.py",
+    "tldw_chatbook/UI/Console_Modules/message.py",
+    "tldw_chatbook/UI/Console_Modules/prompts.py",
+    "tldw_chatbook/UI/Console_Modules/skill.py",
+    "tldw_chatbook/UI/Console_Modules/video.py",
+    "tldw_chatbook/UI/Console_Modules/wiring.py",
+    "tldw_chatbook/UI/Screens/chat_screen.py"
+  ],
+  "qa_directories": {
+    "Docs/superpowers/qa/2026-10-03-console-pr2995-review-and-merge/": {
+      "rows": 354,
+      "before_after_exact_equal": true,
+      "path_mode_blob_sha256": "7c844ff9f2fa16b8db545cbfd92b9e238b923e92ad6230a6efaf48ff6c5266b9",
+      "preflight_digest_preserved_at_original_algorithm": "97f69c24385be32703297a304e8207850705034f05153ed7fc7d3fe2f96331df"
+    },
+    "Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/": {
+      "rows": 632,
+      "before_after_exact_equal": true,
+      "path_mode_blob_sha256": "d74d16de2410f21a7560a0303506a5543e9b2a13978037469cf964119f9a7976",
+      "preflight_digest_preserved_at_original_algorithm": "5d17ffb7a9f313dd40fc385e159bd94ce9ed6b883cd188c9037985aa754439fa"
+    }
+  },
+  "original_1983_digest": "ad92f9666141271109dde626bd96522d969f0dd366da9a0db931e492b3940d04",
+  "original_1983_preservation": "Preflight verified exact rows; every QA/unowned base blob remains exact in integrated HEAD. No historical receipt retargeted.",
+  "original_zip": {
+    "path": "Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/qualification-evidence.zip",
+    "bytes": 63166118,
+    "sha256": "acecbdfb6ddbafe6df679c39f9f137f2bfb49a1f87b62556e1345021f8384c84",
+    "entries_carried_from_prior_receipt": 2118,
+    "decompressed_or_replayed": false,
+    "actual_entries": 2118
+  },
+  "public527_carry": "Every historical tracked QA base blob preserved; original public527 and all additive receipts unchanged."
+}

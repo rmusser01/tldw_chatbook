@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -20,6 +21,7 @@ from uuid import uuid4
 
 from tldw_chatbook.Agents.agent_models import TERMINAL_RUN_STATUSES
 from tldw_chatbook.Agents.automatic_work_budget import (
+    AutomaticChatStartAttempt,
     AutomaticWakeAttempt,
     AutomaticWorkLimits,
     AutomaticWorkRefused,
@@ -34,6 +36,11 @@ if TYPE_CHECKING:
 # A persisted monotonic reading is comparable only within this process. Store
 # its owner so separate DB handles share the original anchor without a cache.
 _CLOCK_OWNER_ID = uuid4().hex
+
+# Failed durable settlement must deny the same runtime's sibling work, including
+# through another handle. Only identities live here; recovery remains durable.
+_UNCONFIRMED_STARTS: dict[tuple[str, str, str], tuple[str | None, object]] = {}
+_UNCONFIRMED_STARTS_LOCK = threading.RLock()
 
 
 def _identity(value: str) -> str:
@@ -55,6 +62,68 @@ class AutomaticWorkLedger:
         self._db = db
         self._wall_clock = wall_clock
         self._monotonic_clock = monotonic_clock
+
+        # Establish the existing canonical key before this ledger can authorize
+        # work. Cleanup must never need a fresh filesystem observation.
+        if not db.is_memory_db:
+            self._restriction_database_id = str(db.db_path.resolve())
+        else:
+            # Independent memory stores retain private UUIDs; ledgers for the
+            # same store share the identity even if the property is rebuilt.
+            with _UNCONFIRMED_STARTS_LOCK:
+                identity = getattr(db, "_automatic_work_restriction_id", None)
+                if identity is None:
+                    identity = "memory:" + uuid4().hex
+                    db._automatic_work_restriction_id = identity
+                self._restriction_database_id = identity
+
+    def _restriction_database(self) -> str:
+        return self._restriction_database_id
+
+    def _restrict_chat_start(
+        self, attempt_id: str, *, owner_id: str, chain_id: str | None
+    ) -> None:
+        """Retain uncertain authority before settlement I/O, without reading DB."""
+        self._retain_chat_start_restriction(
+            attempt_id, owner_id=owner_id, chain_id=chain_id
+        )
+
+    def _retain_chat_start_restriction(
+        self, attempt_id: str, *, owner_id: str, chain_id: str | None
+    ) -> None:
+        """Insert denial using only captured identity and the existing registry."""
+        with _UNCONFIRMED_STARTS_LOCK:
+            _UNCONFIRMED_STARTS[
+                (self._restriction_database_id, owner_id, attempt_id)
+            ] = (chain_id, object())
+
+    def _clear_chat_start_restriction(self, attempt_id: str, *, owner_id: str) -> None:
+        with _UNCONFIRMED_STARTS_LOCK:
+            _UNCONFIRMED_STARTS.pop(
+                (self._restriction_database(), owner_id, attempt_id), None
+            )
+
+    def _check_unconfirmed_starts(
+        self, conn: sqlite3.Connection, chain_id: str
+    ) -> None:
+        current = conn.execute(
+            "SELECT owner_id FROM automatic_work_runtime_owner WHERE singleton=1"
+        ).fetchone()
+        with _UNCONFIRMED_STARTS_LOCK:
+            members = tuple(
+                entry[0]
+                for (database, owner, _), entry in _UNCONFIRMED_STARTS.items()
+                if database == self._restriction_database()
+                and (current is None or owner == current["owner_id"])
+            )
+        if not members:
+            return
+        root = self._allowance_chain(conn, chain_id)["id"]
+        if any(
+            member is None or self._allowance_chain(conn, member)["id"] == root
+            for member in members
+        ):
+            raise AutomaticWorkRefused("settlement_unconfirmed")
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -89,7 +158,8 @@ class AutomaticWorkLedger:
             try:
                 yield conn
             except AutomaticWorkRefused as exc:
-                observed = self._chain(conn, chain_id)
+                observed = self._allowance_chain(conn, chain_id)
+                root_id = observed["id"]
                 conn.execute("ROLLBACK TO automatic_admission")
                 # Elapsed-time observations are not an admission. In particular,
                 # a refused first call in a replacement process must keep its
@@ -100,7 +170,7 @@ class AutomaticWorkLedger:
                         observed["last_observed_at"],
                         observed["clock_owner_id"],
                         observed["started_monotonic"],
-                        chain_id,
+                        root_id,
                     ),
                 )
                 refusal = exc
@@ -119,11 +189,11 @@ class AutomaticWorkLedger:
                 )
                 # A stale callback has no authority to pause its replacement's
                 # otherwise healthy chain. Its admission alone is refused.
-                if reason != "runtime_owner_replaced":
+                if reason not in {"runtime_owner_replaced", "settlement_unconfirmed"}:
                     conn.execute(
                         "UPDATE automatic_work_chains SET status=?, pause_reason=? "
                         "WHERE id=? AND status!='review_required'",
-                        (status, reason, chain_id),
+                        (status, reason, root_id),
                     )
             finally:
                 conn.execute("RELEASE automatic_admission")
@@ -139,6 +209,7 @@ class AutomaticWorkLedger:
         amount: int = 0,
         limits: AutomaticWorkLimits | None = None,
     ) -> None:
+        self._check_unconfirmed_starts(conn, chain_id)
         snapshot = self._snapshot(conn, chain_id)
         if snapshot.status == "review_required":
             raise AutomaticWorkRefused(snapshot.pause_reason or "review_required")
@@ -156,7 +227,8 @@ class AutomaticWorkLedger:
                 }
             )
         )
-        chain = self._chain(conn, chain_id)
+        chain = self._allowance_chain(conn, chain_id)
+        chain_id = chain["id"]
         now, monotonic = self._wall_clock(), self._monotonic_clock()
         if not math.isfinite(now) or not math.isfinite(monotonic):
             raise AutomaticWorkRefused("clock_unknown")
@@ -201,7 +273,8 @@ class AutomaticWorkLedger:
         )
 
     def _start_automatic(self, conn: sqlite3.Connection, chain_id: str) -> None:
-        chain = self._chain(conn, chain_id)
+        chain = self._allowance_chain(conn, chain_id)
+        chain_id = chain["id"]
         if chain["started_at"] is None:
             limits = AutomaticWorkLimits(**json.loads(chain["limits_json"]))
             now = self._wall_clock()
@@ -276,6 +349,22 @@ class AutomaticWorkLedger:
             raise ValueError("unknown automatic work chain")
         return row
 
+    def _allowance_chain(self, conn: sqlite3.Connection, chain_id: str) -> sqlite3.Row:
+        """Resolve one direct canonical root without changing local scope."""
+        member = self._chain(conn, chain_id)
+        root_id = member["allowance_root_chain_id"]
+        if root_id is None:
+            return member
+        root = self._chain(conn, root_id)
+        if root["allowance_root_chain_id"] is not None:
+            raise ValueError("automatic allowance must name a direct root")
+        return root
+
+    def allowance_root(self, chain_id: str) -> str:
+        """Return the canonical allowance identity without renewing limits."""
+        with self._db.connection() as conn:
+            return str(self._allowance_chain(conn, chain_id)["id"])
+
     @staticmethod
     def _reservation(
         conn: sqlite3.Connection, reservation_id: str, owner_id: str
@@ -298,13 +387,17 @@ class AutomaticWorkLedger:
     def _snapshot(
         self, conn: sqlite3.Connection, chain_id: str
     ) -> AutomaticWorkSnapshot:
-        chain = self._chain(conn, chain_id)
+        member = self._chain(conn, chain_id)
+        chain = self._allowance_chain(conn, chain_id)
         limits = AutomaticWorkLimits(**json.loads(chain["limits_json"]))
         used = dict.fromkeys(limits.resources(), 0)
         reserved = dict(used)
         uncertain = chain["status"] == "review_required"
         for row in conn.execute(
-            "SELECT * FROM automatic_work_reservations WHERE chain_id=?", (chain_id,)
+            "SELECT reservation.* FROM automatic_work_reservations AS reservation "
+            "JOIN automatic_work_chains AS member ON member.id = reservation.chain_id "
+            "WHERE member.id = ? OR member.allowance_root_chain_id = ?",
+            (chain["id"], chain["id"]),
         ):
             if row["state"] == "released":
                 continue
@@ -323,7 +416,7 @@ class AutomaticWorkLedger:
         }
         return AutomaticWorkSnapshot(
             chain_id,
-            chain["conversation_id"],
+            member["conversation_id"],
             limits,
             chain["status"],
             chain["pause_reason"],
@@ -428,11 +521,11 @@ class AutomaticWorkLedger:
         ):
             raise ValueError("pause reason must be a bounded reason code")
         with self.transaction() as conn:
-            self._chain(conn, chain_id)
+            root_id = self._allowance_chain(conn, chain_id)["id"]
             conn.execute(
                 "UPDATE automatic_work_chains SET status=?, pause_reason=? "
                 "WHERE id=? AND status!='review_required'",
-                ("review_required" if review_required else "paused", reason, chain_id),
+                ("review_required" if review_required else "paused", reason, root_id),
             )
 
     def admit_call(
@@ -570,10 +663,11 @@ class AutomaticWorkLedger:
                     reservation_id,
                 ),
             )
+            root_id = self._allowance_chain(conn, row["chain_id"])["id"]
             if actual_amount is None:
                 conn.execute(
                     "UPDATE automatic_work_chains SET status='review_required', pause_reason='usage_unknown' WHERE id=?",
-                    (row["chain_id"],),
+                    (root_id,),
                 )
             else:
                 snapshot = self._snapshot(conn, row["chain_id"])
@@ -585,7 +679,7 @@ class AutomaticWorkLedger:
                         "UPDATE automatic_work_chains SET status='paused', pause_reason='tokens_budget' "
                         "WHERE id=? AND status!='review_required' "
                         "AND (pause_reason IS NULL OR pause_reason!='wall_budget')",
-                        (row["chain_id"],),
+                        (root_id,),
                     )
         return True
 
@@ -613,6 +707,313 @@ class AutomaticWorkLedger:
             conn.execute(
                 "UPDATE agent_runs SET work_chain_id=? WHERE id=?", (chain_id, run_id)
             )
+
+    @staticmethod
+    def _target_active(conn: sqlite3.Connection, conversation_id: str) -> bool:
+        return (
+            conn.execute(
+                "SELECT 1 FROM automatic_wake_attempts WHERE conversation_id=? "
+                "AND state IN ('prepared', 'accepted') UNION ALL "
+                "SELECT 1 FROM automatic_chat_start_attempts WHERE conversation_id=? "
+                "AND state IN ('prepared', 'accepted') LIMIT 1",
+                (conversation_id, conversation_id),
+            ).fetchone()
+            is not None
+        )
+
+    @staticmethod
+    def _chat_start_attempt(
+        conn: sqlite3.Connection, attempt_id: str, owner_id: str
+    ) -> sqlite3.Row:
+        row = conn.execute(
+            "SELECT * FROM automatic_chat_start_attempts WHERE id=?", (attempt_id,)
+        ).fetchone()
+        if row is None:
+            raise ValueError("unknown chat start attempt")
+        if row["owner_id"] != owner_id:
+            raise ValueError("attempt owner mismatch")
+        return row
+
+    @staticmethod
+    def _chat_start_view(row: sqlite3.Row) -> AutomaticChatStartAttempt:
+        return AutomaticChatStartAttempt(
+            **{key: row[key] for key in AutomaticChatStartAttempt.__dataclass_fields__}
+        )
+
+    def read_chat_start_attempt(
+        self, attempt_id: str, *, owner_id: str
+    ) -> AutomaticChatStartAttempt:
+        """Return exact persisted native authority for its immutable owner."""
+        with self._db.connection() as conn:
+            return self._chat_start_view(
+                self._chat_start_attempt(conn, attempt_id, owner_id)
+            )
+
+    def prepare_chat_start(
+        self,
+        *,
+        attempt_id: str,
+        source_run_id: str,
+        target_conversation_id: str,
+        target_session_id: str,
+        target_session_incarnation: str,
+        owner_id: str,
+        draft_revision: int,
+        context_epoch: int,
+        request_fingerprint: str,
+        limits: AutomaticWorkLimits | None = None,
+    ) -> AutomaticChatStartAttempt:
+        """Atomically reserve one shared generation for an exact local target.
+
+        The controller proves live source-session ownership before calling this
+        trusted interface. Persisted run lineage and runtime ownership are checked
+        here; target runs continue to have only same-conversation parents.
+        """
+        for value in (
+            attempt_id,
+            source_run_id,
+            target_conversation_id,
+            target_session_id,
+            target_session_incarnation,
+            owner_id,
+        ):
+            _identity(value)
+        submission_id = _identity(f"chat-start:{attempt_id}")
+        for value in (draft_revision, context_epoch):
+            if type(value) is not int or not 0 <= value < 2**63:
+                raise ValueError(
+                    "revision and epoch must be nonnegative SQLite integers"
+                )
+        if (
+            not isinstance(request_fingerprint, str)
+            or len(request_fingerprint) != 64
+            or any(
+                character not in "0123456789abcdef" for character in request_fingerprint
+            )
+        ):
+            raise ValueError("request fingerprint must be a SHA-256 digest")
+        with self._db.connection() as conn:
+            source = conn.execute(
+                "SELECT work_chain_id FROM agent_runs WHERE id=?", (source_run_id,)
+            ).fetchone()
+            if source is None or source["work_chain_id"] is None:
+                raise AutomaticWorkRefused("source_chain_missing")
+            source_chain_id = source["work_chain_id"]
+        with self._admission_transaction(source_chain_id) as conn:
+            self._check_runtime_owner(conn, owner_id)
+            existing = conn.execute(
+                "SELECT * FROM automatic_chat_start_attempts WHERE id=?", (attempt_id,)
+            ).fetchone()
+            identity = (
+                source_run_id,
+                source_chain_id,
+                target_conversation_id,
+                target_session_id,
+                target_session_incarnation,
+                owner_id,
+                draft_revision,
+                context_epoch,
+                request_fingerprint,
+            )
+            if existing is not None:
+                if (
+                    tuple(
+                        existing[key]
+                        for key in (
+                            "source_run_id",
+                            "source_chain_id",
+                            "conversation_id",
+                            "session_id",
+                            "session_incarnation",
+                            "owner_id",
+                            "draft_revision",
+                            "context_epoch",
+                            "request_fingerprint",
+                        )
+                    )
+                    != identity
+                ):
+                    raise ValueError("attempt identity conflict")
+                return self._chat_start_view(existing)
+            source = conn.execute(
+                "SELECT status FROM agent_runs WHERE id=?", (source_run_id,)
+            ).fetchone()
+            if source["status"] in TERMINAL_RUN_STATUSES:
+                raise AutomaticWorkRefused("source_run_terminal")
+            self._check_admission(
+                conn, source_chain_id, kind="generation", amount=1, limits=limits
+            )
+            if self._target_active(conn, target_conversation_id):
+                raise AutomaticWorkRefused("conversation_wake_active")
+            root = self._allowance_chain(conn, source_chain_id)
+            chain_id, reservation_id = uuid4().hex, uuid4().hex
+            now = self._wall_clock()
+            conn.execute(
+                "INSERT INTO automatic_work_chains (id, conversation_id, root_submission_id, limits_json, "
+                "created_at, last_observed_at, allowance_root_chain_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    chain_id,
+                    target_conversation_id,
+                    submission_id,
+                    root["limits_json"],
+                    now,
+                    now,
+                    root["id"],
+                ),
+            )
+            conn.execute(
+                "INSERT INTO automatic_work_reservations (id, chain_id, owner_id, kind, amount, state, created_at, updated_at) "
+                "VALUES (?, ?, ?, 'generation', 1, 'reserved', ?, ?)",
+                (reservation_id, chain_id, owner_id, now, now),
+            )
+            conn.execute(
+                "INSERT INTO automatic_chat_start_attempts (id, source_run_id, source_chain_id, chain_id, conversation_id, "
+                "session_id, session_incarnation, owner_id, draft_revision, context_epoch, request_fingerprint, "
+                "generation_reservation_id, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?)",
+                (
+                    attempt_id,
+                    source_run_id,
+                    source_chain_id,
+                    chain_id,
+                    target_conversation_id,
+                    target_session_id,
+                    target_session_incarnation,
+                    owner_id,
+                    draft_revision,
+                    context_epoch,
+                    request_fingerprint,
+                    reservation_id,
+                    now,
+                ),
+            )
+            return self._chat_start_view(
+                self._chat_start_attempt(conn, attempt_id, owner_id)
+            )
+
+    def accept_chat_start(
+        self,
+        attempt_id: str,
+        *,
+        owner_id: str,
+        limits: AutomaticWorkLimits | None = None,
+    ) -> bool:
+        """Commit the ownership cutoff once; conversation acceptance follows."""
+        with self._db.connection() as conn:
+            chain_id = self._chat_start_attempt(conn, attempt_id, owner_id)["chain_id"]
+        with self._admission_transaction(chain_id) as conn:
+            self._check_runtime_owner(conn, owner_id)
+            attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
+            if attempt["state"] != "prepared":
+                return False
+            self._check_admission(conn, chain_id, kind="generation", limits=limits)
+            reservation = self._reservation(
+                conn, attempt["generation_reservation_id"], owner_id
+            )
+            if reservation["state"] != "reserved":
+                raise ValueError("attempt generation is not reserved")
+            now = self._wall_clock()
+            conn.execute(
+                "UPDATE automatic_work_reservations SET state='committed', updated_at=? WHERE id=?",
+                (now, reservation["id"]),
+            )
+            conn.execute(
+                "UPDATE automatic_chat_start_attempts SET state='accepted', accepted_at=? WHERE id=?",
+                (now, attempt_id),
+            )
+            self._start_automatic(conn, chain_id)
+        return True
+
+    def abort_chat_start(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Refund only this owner's still-prepared, uncommitted attempt."""
+        with self.transaction() as conn:
+            attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
+            if attempt["state"] != "prepared":
+                return False
+            reservation = self._reservation(
+                conn, attempt["generation_reservation_id"], owner_id
+            )
+            if reservation["state"] != "reserved":
+                return False
+            self._check_runtime_owner(conn, owner_id)
+            now = self._wall_clock()
+            conn.execute(
+                "UPDATE automatic_work_reservations SET state='released', updated_at=? WHERE id=?",
+                (now, reservation["id"]),
+            )
+            conn.execute(
+                "UPDATE automatic_chat_start_attempts SET state='aborted', completed_at=? WHERE id=?",
+                (now, attempt_id),
+            )
+        return True
+
+    def _confirm_chat_start_absent(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Confirm exact absence only after a successful current-owner transaction."""
+        absent = False
+        with self.transaction() as conn:
+            owner = conn.execute(
+                "SELECT owner_id FROM automatic_work_runtime_owner WHERE singleton=1"
+            ).fetchone()
+            if owner is not None and owner["owner_id"] == owner_id:
+                absent = (
+                    conn.execute(
+                        "SELECT 1 FROM automatic_chat_start_attempts WHERE id=?",
+                        (attempt_id,),
+                    ).fetchone()
+                    is None
+                )
+        # Commit and connection-policy restoration must both have succeeded.
+        return absent
+
+    def mark_chat_start_review_required(
+        self, attempt_id: str, *, owner_id: str
+    ) -> bool:
+        """Atomically settle same-owner accepted uncertainty and pause its root.
+
+        Preserve every charge and clock anchor. A stale owner cannot change its
+        replacement, and nonaccepted terminal rows cannot be rewritten.
+
+        Args:
+            attempt_id: Exact durable native-start attempt identity.
+            owner_id: Runtime owner that prepared and accepted the attempt.
+
+        Returns:
+            True after accepted or already-reviewed work is durably paused;
+            False for prepared, aborted, or completed work.
+
+        Raises:
+            AutomaticWorkRefused: The durable runtime owner was replaced.
+            ValueError: The attempt is unknown or belongs to another owner.
+            sqlite3.Error: Durable settlement could not be confirmed.
+        """
+        with self.transaction() as conn:
+            self._check_runtime_owner(conn, owner_id)
+            attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
+            if attempt["state"] not in {"accepted", "review_required"}:
+                return False
+            root = self._allowance_chain(conn, attempt["chain_id"])["id"]
+            conn.execute(
+                "UPDATE automatic_chat_start_attempts SET state='review_required', completed_at=COALESCE(completed_at, ?) WHERE id=?",
+                (self._wall_clock(), attempt_id),
+            )
+            conn.execute(
+                "UPDATE automatic_work_chains SET status='review_required', pause_reason='interrupted_work' WHERE id=?",
+                (root,),
+            )
+        self._clear_chat_start_restriction(attempt_id, owner_id=owner_id)
+        return True
+
+    def complete_chat_start(self, attempt_id: str, *, owner_id: str) -> bool:
+        """Settle accepted native work once, without survivor delivery marks."""
+        with self.transaction() as conn:
+            attempt = self._chat_start_attempt(conn, attempt_id, owner_id)
+            if attempt["state"] != "accepted":
+                return False
+            self._check_runtime_owner(conn, owner_id)
+            conn.execute(
+                "UPDATE automatic_chat_start_attempts SET state='completed', completed_at=? WHERE id=?",
+                (self._wall_clock(), attempt_id),
+            )
+        return True
 
     @staticmethod
     def _attempt(
@@ -680,11 +1081,7 @@ class AutomaticWorkLedger:
             self._check_admission(
                 conn, chain_id, kind="generation", amount=1, limits=limits
             )
-            active = conn.execute(
-                "SELECT 1 FROM automatic_wake_attempts WHERE conversation_id=? AND state IN ('prepared', 'accepted')",
-                (snapshot.conversation_id,),
-            ).fetchone()
-            if active:
+            if self._target_active(conn, snapshot.conversation_id):
                 raise AutomaticWorkRefused("conversation_wake_active")
             for run_id in selected:
                 row = conn.execute(
@@ -815,6 +1212,7 @@ class AutomaticWorkLedger:
         but cannot grant the old owner new execution authority.
         """
         _identity(current_owner_id)
+        database = self._restriction_database()
         with self.transaction() as conn:
             # Revoke even completed owners: their surviving child callbacks
             # may otherwise look fully accounted and escape the unfinished scan.
@@ -827,10 +1225,18 @@ class AutomaticWorkLedger:
                 row[0]
                 for row in conn.execute(
                     "SELECT chain_id FROM automatic_wake_attempts WHERE owner_id!=? AND state IN ('prepared', 'accepted') "
+                    "UNION SELECT chain_id FROM automatic_chat_start_attempts WHERE owner_id!=? AND state IN ('prepared', 'accepted') "
                     "UNION SELECT chain_id FROM automatic_work_reservations WHERE owner_id!=? AND (state='reserved' OR (kind='tokens' AND state='committed'))",
-                    (current_owner_id, current_owner_id),
+                    (current_owner_id, current_owner_id, current_owner_id),
                 )
             }
+            chains = {
+                self._allowance_chain(conn, chain_id)["id"] for chain_id in chains
+            }
+            conn.execute(
+                "UPDATE automatic_chat_start_attempts SET state='review_required' WHERE owner_id!=? AND state IN ('prepared', 'accepted')",
+                (current_owner_id,),
+            )
             conn.execute(
                 "UPDATE automatic_wake_attempts SET state='review_required' WHERE owner_id!=? AND state IN ('prepared', 'accepted')",
                 (current_owner_id,),
@@ -843,4 +1249,17 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_work_chains SET status='review_required', pause_reason='interrupted_work' WHERE id=?",
                 [(chain_id,) for chain_id in chains],
             )
+            # Snapshot only the entries covered while this transaction owns
+            # recovery. Later recoveries/setters may run before our return.
+            with _UNCONFIRMED_STARTS_LOCK:
+                recovered_restrictions = tuple(
+                    (key, entry)
+                    for key, entry in _UNCONFIRMED_STARTS.items()
+                    if key[0] == database and key[1] != current_owner_id
+                )
+        with _UNCONFIRMED_STARTS_LOCK:
+            for key, entry in recovered_restrictions:
+                # A fresh write to even the same key is new uncertainty.
+                if _UNCONFIRMED_STARTS.get(key) is entry:
+                    _UNCONFIRMED_STARTS.pop(key)
         return len(chains)

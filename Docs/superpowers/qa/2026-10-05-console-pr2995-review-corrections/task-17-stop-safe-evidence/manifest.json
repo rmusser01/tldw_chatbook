@@ -1,0 +1,31 @@
+{
+  "original-node-argv.json": {
+    "sha256": "97eda4acbb01cdeb19568164d1520008d48fa49fd4dd1230af466f510ead0f2c",
+    "bytes": 2399
+  },
+  "original-node-result.json": {
+    "sha256": "8138ab5457a47dc1c6a0ac18b239ee1ebfc1a96f8603cab2dfc287e1e1d9c133",
+    "bytes": 223
+  },
+  "original-node.log": {
+    "sha256": "4cd779cc2ed809074118294448f63a6c5f4c1094df122c1d620399bd80ed9d52",
+    "bytes": 705
+  },
+  "original-node.xml": {
+    "sha256": "3245e445e57a4f3d0bacf7e109c4bb10c46ffd5ac764638ddcf49ef09a7b9d98",
+    "bytes": 415
+  },
+  "focused-frozen-comparison.json": {
+    "sha256": "f0cdd0bfd2fc5d9866a0432a9d882b67b5aea115394ad2c356639943cb9cafa5",
+    "bytes": 2731
+  },
+  "retained_ci_failure_receipt": {
+    "sha256": "002adb2798786f4d3c99972cdf6ac166dda377feec5d24c2e35211f2d1a5c7ab",
+    "path": ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-17-PR-fast-lane-failure-receipt.json",
+    "unchanged": true
+  },
+  "post-run-currentness.json": {
+    "sha256": "7265e42eae5208a2cd100860243e64339026587838cbbe2332bf0e77af743a2b",
+    "bytes": 502
+  }
+}

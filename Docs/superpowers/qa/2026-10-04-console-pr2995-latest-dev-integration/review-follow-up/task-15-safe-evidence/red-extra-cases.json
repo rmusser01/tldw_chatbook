@@ -1,0 +1,32 @@
+[
+  {
+    "id": "Tests.DB.test_automatic_chat_starts::test_missing_start_confirmation_requires_successful_owned_transaction[foreign_attempt]",
+    "status": "failed",
+    "message": "AttributeError: 'AutomaticWorkLedger' object has no attribute '_confirm_chat_start_absent'"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_contended_preparation_confirms_absence_after_writer_exits",
+    "status": "failed",
+    "message": "AssertionError: assert ('review_requ..._unconfirmed') == ('not_started...start_failed')\n  \n  At index 0 diff: 'review_required' != 'not_started'\n  Use -v to get more diff"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[publication]",
+    "status": "passed",
+    "message": null
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[abandonment]",
+    "status": "failed",
+    "message": "AssertionError: assert [OSError('pri...nup failure')] == [None]\n  \n  At index 0 diff: OSError('private cleanup failure') != None\n  Use -v to get more diff"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[run_state]",
+    "status": "failed",
+    "message": "AssertionError: assert [OSError('pri...nup failure')] == [None]\n  \n  At index 0 diff: OSError('private cleanup failure') != None\n  Use -v to get more diff"
+  },
+  {
+    "id": "Tests.Chat.test_console_chat_start::test_post_drain_cleanup_keeps_outcome_and_exact_capacity_release[replacement]",
+    "status": "passed",
+    "message": null
+  }
+]

@@ -1,0 +1,8 @@
+- Repair every one of the 21 recorded failing nodes listed below; run all seven complete owner modules together.
+- Preserve observable outcome, projected-request, token-budget, lineage and publication assertions. Do not skip, xfail, broaden warning filters, raise FD limits or relax production guards.
+- Changes belong in the managed worktree `/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook`; retain the original checkout and user files.
+- Reuse `/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python`. Run targeted owner checks only. Worktree writes require scoped `exec_command require_escalated` because its sandbox root was not extended.
+- The existing `fork_chat` contract and automatic allowance/receipt/provenance invariants remain unchanged.
+- No dependencies, settings, migrations or production behavior changes are planned. Investigate any unexpected owner failure before proposing a production change; update task scope before implementing such a change.
+- Record warnings accurately; passing tests are not a claim of general resource cleanup.
+- User authorized push and PR, plus baseline fixes. PR destination is pending because the original local base is not on GitHub; do not publish until that choice is resolved.

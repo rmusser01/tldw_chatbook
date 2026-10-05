@@ -121,6 +121,9 @@ def test_controller_composition_honors_local_master_and_kill_switch(
         is_session_approved=lambda *_args: False,
     )
     controller = object.__new__(ConsoleChatController)
+    from Tests.Chat.console_interrupt_test_bindings import make_interrupt_host
+
+    controller._interrupt_host = make_interrupt_host(controller)
     controller.app = SimpleNamespace(unified_mcp_service=service)
     turn_context = SimpleNamespace(
         tool_configuration={"local_tools_enabled": local_enabled},
@@ -159,6 +162,9 @@ def test_compose_virtual_cli_provider_wires_arg_rule_persist_and_check(tmp_path)
         ),
     )
     controller = object.__new__(ConsoleChatController)
+    from Tests.Chat.console_interrupt_test_bindings import make_interrupt_host
+
+    controller._interrupt_host = make_interrupt_host(controller)
     controller.app = SimpleNamespace(unified_mcp_service=service)
     # `tool_policy_profile_id="default"` sidesteps an unrelated pre-existing
     # bug in this composition path with a bare `SimpleNamespace` turn
@@ -196,6 +202,9 @@ def test_controller_does_not_compose_virtual_cli_without_admitted_roots(tmp_path
         is_session_approved=lambda *_args: False,
     )
     controller = object.__new__(ConsoleChatController)
+    from Tests.Chat.console_interrupt_test_bindings import make_interrupt_host
+
+    controller._interrupt_host = make_interrupt_host(controller)
     controller.app = SimpleNamespace(unified_mcp_service=service)
 
     assert controller._compose_virtual_cli_provider(

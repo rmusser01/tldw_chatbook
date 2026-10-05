@@ -13,6 +13,7 @@ from textual.events import DescendantFocus
 from textual.widgets import Button, Input, Static
 from textual.worker import WorkerCancelled
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
     LibraryHarness,
@@ -365,8 +366,9 @@ async def test_conversations_mount_three_retained_roles_once(
         assert compose_calls.count(screen) == 1
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_reader_info_is_explicit_and_truthful() -> None:
+async def test_reader_info_is_explicit_and_truthful(request) -> None:
     app = _build_test_app()
     _seed_conversations(app, _conversation_records())
     screen = _active_conversations_screen(app)
@@ -1055,8 +1057,7 @@ async def test_messages_synced_revalidates_find_focus_before_deferred_reveal(
                 screen.on_descendant_focus(DescendantFocus(replacement_focus))
                 assert screen.focused is replacement_focus
                 assert (
-                    screen._notes_state.focus_intent_generation
-                    > prior_focus_generation
+                    screen._notes_state.focus_intent_generation > prior_focus_generation
                 )
         finally:
             release_mount.set()
@@ -1172,9 +1173,7 @@ async def test_exiting_select_mode_restarts_invalidated_progressive_reader() -> 
             screen.query_one("#library-conversations-select-toggle", Button).press()
             await pilot.pause()
             assert screen._conversations_state.reader_state.bulk_active
-            invalidated_generation = (
-                screen._conversations_state.reader_state.generation
-            )
+            invalidated_generation = screen._conversations_state.reader_state.generation
 
             screen.query_one("#library-conversations-select-toggle", Button).press()
             await pilot.pause()
@@ -1656,9 +1655,11 @@ async def test_authoritative_refresh_marks_selected_conversation_deleted_without
         )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_page_drift_confirms_exact_identity_before_declaring_deletion(
     monkeypatch: pytest.MonkeyPatch,
+    request,
 ) -> None:
     app = _build_test_app()
     records = [

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Collapsible, Input, Select
 
@@ -146,8 +148,10 @@ async def test_initial_select_event_does_not_erase_retained_draft(tmp_path):
         assert view.query_one("#llamacpp-profile-name", Input).value == "Laptop draft"
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_real_models_pane_preserves_sources_snapshots_and_navigates_to_console(
+    request,
     monkeypatch,
 ):
     from Tests.UI.app_factory import _build_test_app
@@ -157,11 +161,15 @@ async def test_real_models_pane_preserves_sources_snapshots_and_navigates_to_con
     from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
     from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
-    set_app_global(monkeypatch, "get_cli_setting", lambda section, key=None, default=None: (
+    set_app_global(
+        monkeypatch,
+        "get_cli_setting",
+        lambda section, key=None, default=None: (
             False
             if (section, key) == ("splash_screen", "enabled")
             else get_cli_setting(section, key, default)
-        ))
+        ),
+    )
 
     async def probe(request, **kwargs):
         return LlamaCppProbeResult(request, "ready", ("org/model",), "org/model")

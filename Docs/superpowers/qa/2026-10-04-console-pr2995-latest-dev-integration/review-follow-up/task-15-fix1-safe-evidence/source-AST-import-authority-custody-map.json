@@ -1,0 +1,63 @@
+{
+  "base": "41155ce71ed84e6cb5d9c720a6d1a2f736c35e53",
+  "previous_reviewed_source": "9c0aa539712a2e2659a2b355d531228408932a83",
+  "files": {
+    "tldw_chatbook/Chat/console_chat_start.py": {
+      "base_sha256": "f28df48d144d296329f872001a83300248be44e4df8619baff2cd53bd6d8c8b2",
+      "final_sha256": "3d628d4394da0ecad3a4d04166623608116e709a434dab204b13ab71e6b5b2e0",
+      "changed_definitions": [
+        "ConsoleChatStartCoordinator._restrict_cleanup"
+      ],
+      "added_definitions": [],
+      "original_imports_preserved": true,
+      "run_both_physical_drains_outcome_exact_release_and_all_other_authority_methods_AST_exact": true
+    },
+    "tldw_chatbook/DB/automatic_work.py": {
+      "base_sha256": "a78ed90f3fd717029ffb3cec53929a888e26f3b7d44f4c703769958153a1211c",
+      "final_sha256": "09d8f2e12dfe993844c9b5f8cf4d34cd6f6f7760026150f7c89bfd1baf80f75f",
+      "changed_definitions": [
+        "AutomaticWorkLedger.__init__",
+        "AutomaticWorkLedger._restrict_chat_start",
+        "AutomaticWorkLedger._restriction_database"
+      ],
+      "added_definitions": [
+        "AutomaticWorkLedger._retain_chat_start_restriction"
+      ],
+      "original_imports_preserved": true,
+      "abort_chat_start_body_byte_exact": true,
+      "recover_body_byte_exact": true,
+      "fallback_calls_only_object_for_original_recovery_snapshot_token": true,
+      "constructor_and_identity_getter_are_explicit_new_exceptions": true
+    },
+    "tldw_chatbook/Chat/console_chat_fork.py": {
+      "base_sha256": "6d86308c24ad8d2b33f625047b6fea52c9280542bd0c23230de7268cf8ca3afb",
+      "final_sha256": "6d86308c24ad8d2b33f625047b6fea52c9280542bd0c23230de7268cf8ca3afb",
+      "changed_definitions": [],
+      "added_definitions": [],
+      "original_imports_preserved": true,
+      "fork_whole_file_exact_to_prior_review": true
+    },
+    "Tests/Chat/test_console_chat_start.py": {
+      "base_sha256": "96057a9d001ef3a78986366ca94fbe2752a144347dc30bfd87025b7d2ef0ceae",
+      "final_sha256": "d0fc1e4524e7260458ed32625156fd8dc7a9c68f681bcbaf18d5729a12e3c748",
+      "changed_definitions": [],
+      "added_definitions": [
+        "test_initial_identity_failure_precedes_native_start_authority",
+        "test_persistent_registration_and_settlement_failure_retains_native_denial"
+      ],
+      "original_imports_preserved": true,
+      "original_prefix_assertions_waits_markers_byte_exact": true
+    },
+    "Tests/DB/test_automatic_chat_starts.py": {
+      "base_sha256": "225e549fd3416e7052c06bbef4bcfaa419c88c3f043214238c798422ea500689",
+      "final_sha256": "65d2dc93bc58f9e20e249fc59e0624ad94e36d1ccd2eeed7cea5ffc8d265edd7",
+      "changed_definitions": [],
+      "added_definitions": [
+        "test_initial_restriction_identity_failure_refuses_automatic_authority",
+        "test_restriction_identity_is_captured_for_aliases_and_memory_peers"
+      ],
+      "original_imports_preserved": true,
+      "original_prefix_assertions_waits_markers_byte_exact": true
+    }
+  }
+}

@@ -1,0 +1,140 @@
+FFFF                                                                     [100%]
+=================================== FAILURES ===================================
+_ test_rejected_session_close_finalization_preserves_chat_create_grants[missing_ticket] _
+
+refusal = 'missing_ticket'
+
+    @pytest.mark.parametrize(
+        "refusal", ("missing_ticket", "mismatched_ticket", "generation")
+    )
+    def test_rejected_session_close_finalization_preserves_chat_create_grants(refusal):
+        _runtime, controller, _bridge, store, session = _runtime_with_fleet()
+        controller._chat_create_session_grants[session.id] = {"fork_chat"}
+        ticket = controller.begin_session_close(
+            session.id,
+            expected_revision=controller.lifecycle_impact(session_id=session.id).revision,
+        )
+        if refusal == "missing_ticket":
+            ticket = replace(ticket, close_id="unknown-close")
+        elif refusal == "mismatched_ticket":
+            ticket = replace(ticket, expected_revision=ticket.expected_revision + 1)
+        else:
+            controller._session_close_generations[session.id] += 1
+    
+        with pytest.raises(
+            RuntimeError, match="close (ticket is stale|generation changed)"
+        ):
+            controller.finalize_session_close(ticket)
+    
+        assert [item.id for item in store.sessions()] == [session.id]
+>       assert controller._chat_create_session_grants[session.id] == {"fork_chat"}
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: '961a6da7-2d0b-4cc2-a20a-99827f022f9f'
+
+Tests/Chat/test_console_runtime_shutdown.py:506: KeyError
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 19:58:56.300 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-03 19:58:56.402 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-03 19:58:56.606 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-03 19:58:56.619 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 19:58:56.677 | INFO     | tldw_chatbook.Chat.console_chat_controller:begin_session_close:14992 - close_session cancelled 1 sub-agent(s) of the closed conversation
+_ test_rejected_session_close_finalization_preserves_chat_create_grants[mismatched_ticket] _
+
+refusal = 'mismatched_ticket'
+
+    @pytest.mark.parametrize(
+        "refusal", ("missing_ticket", "mismatched_ticket", "generation")
+    )
+    def test_rejected_session_close_finalization_preserves_chat_create_grants(refusal):
+        _runtime, controller, _bridge, store, session = _runtime_with_fleet()
+        controller._chat_create_session_grants[session.id] = {"fork_chat"}
+        ticket = controller.begin_session_close(
+            session.id,
+            expected_revision=controller.lifecycle_impact(session_id=session.id).revision,
+        )
+        if refusal == "missing_ticket":
+            ticket = replace(ticket, close_id="unknown-close")
+        elif refusal == "mismatched_ticket":
+            ticket = replace(ticket, expected_revision=ticket.expected_revision + 1)
+        else:
+            controller._session_close_generations[session.id] += 1
+    
+        with pytest.raises(
+            RuntimeError, match="close (ticket is stale|generation changed)"
+        ):
+            controller.finalize_session_close(ticket)
+    
+        assert [item.id for item in store.sessions()] == [session.id]
+>       assert controller._chat_create_session_grants[session.id] == {"fork_chat"}
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: '22a683be-74f9-423d-9326-ad80d9c09e3a'
+
+Tests/Chat/test_console_runtime_shutdown.py:506: KeyError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 19:58:56.957 | INFO     | tldw_chatbook.Chat.console_chat_controller:begin_session_close:14992 - close_session cancelled 1 sub-agent(s) of the closed conversation
+_ test_rejected_session_close_finalization_preserves_chat_create_grants[generation] _
+
+refusal = 'generation'
+
+    @pytest.mark.parametrize(
+        "refusal", ("missing_ticket", "mismatched_ticket", "generation")
+    )
+    def test_rejected_session_close_finalization_preserves_chat_create_grants(refusal):
+        _runtime, controller, _bridge, store, session = _runtime_with_fleet()
+        controller._chat_create_session_grants[session.id] = {"fork_chat"}
+        ticket = controller.begin_session_close(
+            session.id,
+            expected_revision=controller.lifecycle_impact(session_id=session.id).revision,
+        )
+        if refusal == "missing_ticket":
+            ticket = replace(ticket, close_id="unknown-close")
+        elif refusal == "mismatched_ticket":
+            ticket = replace(ticket, expected_revision=ticket.expected_revision + 1)
+        else:
+            controller._session_close_generations[session.id] += 1
+    
+        with pytest.raises(
+            RuntimeError, match="close (ticket is stale|generation changed)"
+        ):
+            controller.finalize_session_close(ticket)
+    
+        assert [item.id for item in store.sessions()] == [session.id]
+>       assert controller._chat_create_session_grants[session.id] == {"fork_chat"}
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'bbb4da2c-875a-4651-a4b0-e6ee2774d6ef'
+
+Tests/Chat/test_console_runtime_shutdown.py:506: KeyError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 19:58:57.045 | INFO     | tldw_chatbook.Chat.console_chat_controller:begin_session_close:14992 - close_session cancelled 1 sub-agent(s) of the closed conversation
+___________ test_session_close_clears_grants_only_after_valid_ticket ___________
+
+    @pytest.mark.bootstrap_profile
+    @pytest.mark.asyncio
+    async def test_session_close_clears_grants_only_after_valid_ticket():
+        from dataclasses import replace
+    
+        runtime, controller, _bridge, _store, session = _runtime_with_fleet()
+        controller._chat_create_session_grants[session.id] = {"remembered"}
+        ticket = controller.begin_session_close(
+            session.id,
+            expected_revision=controller.lifecycle_impact(session_id=session.id).revision,
+        )
+        with pytest.raises(RuntimeError, match="stale"):
+            controller.finalize_session_close(replace(ticket, close_id="not-owned"))
+>       assert controller._chat_create_session_grants[session.id] == {"remembered"}
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: '38fabe6d-dec1-40fe-a9af-2264762d234f'
+
+Tests/Chat/test_console_runtime_shutdown.py:820: KeyError
+----------------------------- Captured stderr call -----------------------------
+2026-10-03 19:58:57.146 | INFO     | tldw_chatbook.Chat.console_chat_controller:begin_session_close:14992 - close_session cancelled 1 sub-agent(s) of the closed conversation
+============================= slowest 25 durations =============================
+
+(12 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_runtime_shutdown.py::test_rejected_session_close_finalization_preserves_chat_create_grants[missing_ticket]
+FAILED Tests/Chat/test_console_runtime_shutdown.py::test_rejected_session_close_finalization_preserves_chat_create_grants[mismatched_ticket]
+FAILED Tests/Chat/test_console_runtime_shutdown.py::test_rejected_session_close_finalization_preserves_chat_create_grants[generation]
+FAILED Tests/Chat/test_console_runtime_shutdown.py::test_session_close_clears_grants_only_after_valid_ticket
+4 failed in 3.19s

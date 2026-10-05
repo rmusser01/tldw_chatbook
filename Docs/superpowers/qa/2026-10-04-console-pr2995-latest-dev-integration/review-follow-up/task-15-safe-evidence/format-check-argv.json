@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+    "format",
+    "--check",
+    "tldw_chatbook/Chat/console_chat_start.py",
+    "tldw_chatbook/DB/automatic_work.py",
+    "tldw_chatbook/Chat/console_chat_fork.py",
+    "Tests/Chat/test_console_chat_start.py",
+    "Tests/DB/test_automatic_chat_starts.py"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "PYTHONPATH": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "head": "100fa9d8191620645e003b2e9ec5e076b7763ad2",
+  "source_hashes": {
+    "tldw_chatbook/Chat/console_chat_start.py": "f28df48d144d296329f872001a83300248be44e4df8619baff2cd53bd6d8c8b2",
+    "tldw_chatbook/DB/automatic_work.py": "a78ed90f3fd717029ffb3cec53929a888e26f3b7d44f4c703769958153a1211c",
+    "tldw_chatbook/Chat/console_chat_fork.py": "6d86308c24ad8d2b33f625047b6fea52c9280542bd0c23230de7268cf8ca3afb",
+    "Tests/Chat/test_console_chat_start.py": "96057a9d001ef3a78986366ca94fbe2752a144347dc30bfd87025b7d2ef0ceae",
+    "Tests/DB/test_automatic_chat_starts.py": "225e549fd3416e7052c06bbef4bcfaa419c88c3f043214238c798422ea500689"
+  }
+}

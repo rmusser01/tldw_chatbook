@@ -1,0 +1,29 @@
+{
+  "time": 1791060527.8335638,
+  "boots": [
+    {
+      "boot": "boot1",
+      "sha": "78ff106faca1626faf74bb86029764475568df92",
+      "app_pid": 11791,
+      "returncode": 0,
+      "pid_absent": true
+    },
+    {
+      "boot": "boot2",
+      "sha": "78ff106faca1626faf74bb86029764475568df92",
+      "app_pid": 96377,
+      "returncode": 0,
+      "pid_absent": true
+    },
+    {
+      "boot": "boot3",
+      "sha": "78ff106faca1626faf74bb86029764475568df92",
+      "app_pid": 6210,
+      "returncode": 0,
+      "pid_absent": true
+    }
+  ],
+  "real_config_sha256": "15c6cb224a6a51c7de5c3f716fbe9dfaef7b7ca05cf9daa7e3ebe247df9310da",
+  "real_config_bytes": 54970,
+  "real_config_mtime_ns": 1790431296768447552
+}

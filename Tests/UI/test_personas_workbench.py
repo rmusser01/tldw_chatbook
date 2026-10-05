@@ -11256,6 +11256,7 @@ class TestPreviewIntegration:
             prompt = screen.preview.system_prompt()
             assert "Draft noir vibes, unsaved." in prompt
 
+    @pytest.mark.bootstrap_profile
     async def test_open_in_console_stages_preview_transcript(
         self, mock_app_instance, stub_characters, stub_conversations
     ):

@@ -1,0 +1,52 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-vv",
+    "-p",
+    "no:randomly",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pr2995-task17-execution-2ssf7qhb/pytest",
+    "Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]",
+    "Tests/Architecture/test_screen_size_ratchet.py::test_budget_is_not_left_slack_after_a_wave[tldw_chatbook/UI/Screens/chat_screen.py]",
+    "Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-17-safe-evidence/composed_static_owners-execution.xml"
+  ],
+  "exit": 1,
+  "elapsed_seconds": 57.606799333,
+  "stdout": "composed_static_owners-execution.stdout",
+  "stderr": "composed_static_owners-execution.stderr",
+  "log": "composed_static_owners-execution.log",
+  "complete_outputs": true,
+  "pid": 53208,
+  "closed_process": true,
+  "head_after": "54a18180211ed2ecbf450db78202d28d97a7b995",
+  "source_after_unchanged": true,
+  "junit": "composed_static_owners-execution.xml",
+  "cases": [
+    {
+      "classname": "Tests.Architecture.test_screen_size_ratchet",
+      "name": "test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]",
+      "time": "0.482"
+    },
+    {
+      "classname": "Tests.Architecture.test_screen_size_ratchet",
+      "name": "test_budget_is_not_left_slack_after_a_wave[tldw_chatbook/UI/Screens/chat_screen.py]",
+      "time": "0.002"
+    },
+    {
+      "classname": "Tests.Architecture.test_persistent_diagnostic_inventory",
+      "name": "test_production_diagnostic_inventory_and_sink_topology_are_unchanged",
+      "time": "55.343"
+    }
+  ],
+  "case_count": 3,
+  "failed_cases": [
+    {
+      "classname": "Tests.Architecture.test_persistent_diagnostic_inventory",
+      "name": "test_production_diagnostic_inventory_and_sink_topology_are_unchanged",
+      "time": "55.343"
+    }
+  ],
+  "skipped_cases": []
+}

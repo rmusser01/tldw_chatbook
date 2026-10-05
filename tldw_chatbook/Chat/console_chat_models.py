@@ -82,6 +82,7 @@ class ConsoleSubmissionOrigin(str, Enum):
     MANUAL = "manual"
     QUEUED = "queued"
     AGENT_WAKE = "agent_wake"
+    AGENT_CHAT_START = "agent_chat_start"
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +105,7 @@ class ConsoleControllerActivity:
     queued_count: int
     queue_paused: bool
     terminal_notification_eligible: bool
+    agent_handoff_status: str = ""
 
     @property
     def has_queued_work(self) -> bool:

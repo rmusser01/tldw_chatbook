@@ -1,0 +1,7 @@
+{
+  "actual_sha256": "b9c3ea4b8b0c35bb4501d36285b03b7b374f7a02466939451fb30fc7d93497e9",
+  "formatting_changed_only_authorized_inserted_keyword_lines": true,
+  "inserted_block": "                _console_pending_send=None,\n                _console_visible_draft_session_id=session.id,\n                _console_visible_send_session_id=lambda: session.id,\n                _ui_responsiveness_monitor=lambda: None,\n                _send_console_message_from_visible_action_observed=lambda **kwargs: (\n                    ChatScreen._send_console_message_from_visible_action_observed(\n                        screen, **kwargs\n                    )\n                ),\n",
+  "raw_to_added_hunk_format_patch": "",
+  "selected_raw_proposal_sha256": "b9c3ea4b8b0c35bb4501d36285b03b7b374f7a02466939451fb30fc7d93497e9"
+}

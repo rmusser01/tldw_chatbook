@@ -210,11 +210,22 @@ from ...Chat.console_project_instructions import (
     decode_project_context_json,
     encode_project_context_json,
 )
+from ..Navigation.vllm_handoff import (
+    VllmConsoleIntent,
+    owner_has_current_intent,
+)
+from ...Chat.console_session_endpoint_policy import (
+    ConsoleEndpointRollbackOutcome,
+    ConsoleEphemeralEndpointPolicy,
+)
+from ...Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
 from ...Chat.console_session_settings import (
     ConsoleSessionSettings,
     blank_console_session_settings,
     build_default_console_session_settings,
     default_console_session_settings,
+    build_target_default_console_session_settings,
+    validate_console_session_settings,
 )
 from ...Chat.console_switcher_state import (
     ConsoleSwitcherEntry,
@@ -255,6 +266,7 @@ from ..Navigation.pending_handoff_store import (
     HandoffChannel,
     PendingHandoffStore,
 )
+from ...Widgets.Console.console_composer_bar import ComposerDraftSnapshot
 from ...Widgets.Console import (
     ConsoleComposerUndoHistory,
     ConsoleProjectInstructionStatusRow,
@@ -285,6 +297,12 @@ from ..character_display_text import sanitize_character_display_label
 from .reaction_preview import ConsoleReactionPreviewCoordinator
 
 if TYPE_CHECKING:
+    from textual.timer import Timer
+    from textual.worker import Worker
+
+    from ...Chat.console_conversation_activation import (
+        CharacterConversationActivationRequest,
+    )
     from ...Chat.conversation_local_marks_service import (
         ConversationLocalMarksService,
         ManualUnreadToken,
@@ -530,10 +548,7 @@ def _persona_session_identity_from_handoff(
     persona_id = str(metadata.get("selected_record_id") or "").strip()
     if not persona_id:
         return None
-    if (
-        metadata.get("selected_target_id")
-        != f"{runtime_backend}:persona:{persona_id}"
-    ):
+    if metadata.get("selected_target_id") != f"{runtime_backend}:persona:{persona_id}":
         return None
 
     persona_name = str(metadata.get("selected_name") or payload.title or "").strip()
@@ -642,9 +657,7 @@ def _persona_session_prompt_seed(
     template, and there is no greeting.
     """
     raw_name = str(profile.get("name") or "").strip() or str(name_hint or "").strip()
-    name = (
-        sanitize_character_display_label(raw_name, max_characters=180) or "Persona"
-    )
+    name = sanitize_character_display_label(raw_name, max_characters=180) or "Persona"
     template = str(profile.get("system_prompt") or "")
     system_prompt = (
         expand_character_template(template, user_name=user_name, character_name=name)
@@ -793,10 +806,47 @@ class ConsoleSessionController:
         self,
         screen: "ChatScreen",
         *,
+        resume_screen_is_torn_down: Callable[[], bool],
+        read_resume_asyncio: Callable[[], Any],
+        resume_isawaitable: Callable[[Any], bool],
+        read_resume_logger: Callable[[], Any],
+        read_resume_startup_worker: Callable[[], Worker | None],
+        write_resume_startup_worker: Callable[[Worker | None], None],
+        read_resume_dispatch_worker: Callable[[], Worker | None],
+        read_resume_local_conversation_id: Callable[[], str | None],
+        write_resume_local_conversation_id: Callable[[str | None], None],
+        read_resume_character_target: Callable[
+            [], CharacterConversationActivationRequest | None
+        ],
+        write_resume_character_target: Callable[
+            [CharacterConversationActivationRequest | None], None
+        ],
+        write_resume_startup_in_progress: Callable[[bool], None],
+        read_resume_handoff_timers: Callable[[], Sequence[Timer]],
+        write_resume_handoff_timers: Callable[[list[Timer]], None],
+        consume_resume_chat_handoff: Callable[..., Any],
+        consume_resume_roleplay_repair: Callable[[], Any],
+        consume_resume_prompt_insert: Callable[[], Any],
+        consume_resume_fleet_completion: Callable[[], Any],
+        open_resume_character_target: Callable[
+            [CharacterConversationActivationRequest], Any
+        ],
+        open_resume_local_conversation: Callable[[str], Any],
+        consume_resume_conversation_return: Callable[[], Any],
+        reconcile_resume_session_with_registry: Callable[[], None],
+        read_trace_recovery_dispatch: Callable[[], Callable[..., Any]],
+        read_trace_recovery_state: Callable[[], Callable[..., Any]],
+        read_trace_recovery_started: Callable[[], Callable[..., Any]],
+        read_trace_recovery_finished: Callable[[], Callable[..., Any]],
         app_instance: Any,
         chat_store_accessor: Callable[[], ConsoleChatStore],
         current_chat_store_accessor: Callable[[], ConsoleChatStore | None],
         ensure_console_chat_controller: Callable[[], Any],
+        current_chat_controller_accessor: Callable[[], Any],
+        build_current_provider_selection: Callable[[], Any],
+        build_settings_summary: Callable[[], Any],
+        apply_settings_summary: Callable[[Any], None],
+        settings_initial_draft: Callable[..., Any],
         composer_accessor: Callable[[], Any],
         restore_banked_raw_cli_stashes: Callable[[str, Any], int],
         effective_console_provider_model: Callable[[], tuple[Any, Any]],
@@ -865,7 +915,41 @@ class ConsoleSessionController:
         exception only for the framework services above; the moved family
         itself never reaches through `_screen` or into the DOM.
 
+        Resume orchestration keeps its nullable requests, timers and exact Workers
+        on the reusable screen visit. Every read/write and sibling operation below
+        is a named late-bound callable. The four module callbacks retain the
+        screen's live helper, asyncio, awaitability and logger patch routes.
+        First-chat consumption, store access and UI sync remain this owner's
+        existing operations; no callback grants execution authority.
+
         Args:
+            resume_screen_is_torn_down: Invoke the current screen-module teardown helper.
+            read_resume_asyncio: Read the current screen-module asyncio binding.
+            resume_isawaitable: Invoke the current screen-module awaitability check.
+            read_resume_logger: Read the current screen-module logger binding.
+            read_resume_startup_worker: Read the exact nullable visit startup Worker.
+            write_resume_startup_worker: Replace the nullable visit startup Worker.
+            read_resume_dispatch_worker: Read the exact nullable dispatch Worker.
+            read_resume_local_conversation_id: Read the nullable saved conversation request.
+            write_resume_local_conversation_id: Replace the nullable saved conversation request.
+            read_resume_character_target: Read the exact nullable typed character request.
+            write_resume_character_target: Replace the nullable typed character request.
+            write_resume_startup_in_progress: Set the visit presentation gate.
+            read_resume_handoff_timers: Read the current visit handoff timers.
+            write_resume_handoff_timers: Replace the visit handoff timer list.
+            consume_resume_chat_handoff: Consume the current chat handoff with release policy.
+            consume_resume_roleplay_repair: Consume the current roleplay repair intent.
+            consume_resume_prompt_insert: Consume the current pending prompt insertion.
+            consume_resume_fleet_completion: Consume a fleet completion; may return an awaitable.
+            open_resume_character_target: Open the exact typed character request.
+            open_resume_local_conversation: Open the exact saved conversation ID.
+            consume_resume_conversation_return: Consume the remaining conversation-return intent.
+            reconcile_resume_session_with_registry: Reconcile the fallback with the registry.
+            current_chat_controller_accessor: Live controller read without initialization.
+            build_current_provider_selection: Late-bound current selection snapshot.
+            build_settings_summary: Late-bound opaque presentation snapshot.
+            apply_settings_summary: Late-bound restoration of that presentation snapshot.
+            settings_initial_draft: Existing clean settings-draft builder, resolved at call time.
             screen: The Console screen. Used ONLY for the framework
                 services (`run_worker`, `push_screen`) and the one disclosed
                 sibling-cluster reach-back (`_console_agent_drilldown_
@@ -990,6 +1074,11 @@ class ConsoleSessionController:
         self._chat_store_accessor = chat_store_accessor
         self._current_chat_store_accessor = current_chat_store_accessor
         self._ensure_console_chat_controller_fn = ensure_console_chat_controller
+        self._current_chat_controller_accessor = current_chat_controller_accessor
+        self._build_current_provider_selection_fn = build_current_provider_selection
+        self._build_settings_summary_fn = build_settings_summary
+        self._apply_settings_summary_fn = apply_settings_summary
+        self._settings_initial_draft_fn = settings_initial_draft
         self._composer_accessor = composer_accessor
         self._restore_banked_raw_cli_stashes_fn = restore_banked_raw_cli_stashes
         self._effective_console_provider_model_fn = effective_console_provider_model
@@ -1035,6 +1124,9 @@ class ConsoleSessionController:
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_visible_draft_session_id: str | None = None
+        self._visible_agent_handoff_draft: (
+            tuple[str, str, int, ComposerDraftSnapshot] | None
+        ) = None
         self._console_undo_histories: dict[str, ConsoleComposerUndoHistory] = {}
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
         self._closing_session_requests: set[str] = set()
@@ -1061,6 +1153,158 @@ class ConsoleSessionController:
         # saved defaults for; see `_maybe_refresh_stale_default_console_settings`.
         self._pristine_defaults_checked: tuple[str, object] | None = None
 
+        self._resume_screen_is_torn_down = resume_screen_is_torn_down
+        self._read_resume_asyncio = read_resume_asyncio
+        self._resume_isawaitable = resume_isawaitable
+        self._read_resume_logger = read_resume_logger
+        self._read_resume_startup_worker = read_resume_startup_worker
+        self._write_resume_startup_worker = write_resume_startup_worker
+        self._read_resume_dispatch_worker = read_resume_dispatch_worker
+        self._read_resume_local_conversation_id = read_resume_local_conversation_id
+        self._write_resume_local_conversation_id = write_resume_local_conversation_id
+        self._read_resume_character_target = read_resume_character_target
+        self._write_resume_character_target = write_resume_character_target
+        self._write_resume_startup_in_progress = write_resume_startup_in_progress
+        self._read_resume_handoff_timers = read_resume_handoff_timers
+        self._write_resume_handoff_timers = write_resume_handoff_timers
+        self._consume_resume_chat_handoff = consume_resume_chat_handoff
+        self._consume_resume_roleplay_repair = consume_resume_roleplay_repair
+        self._consume_resume_prompt_insert = consume_resume_prompt_insert
+        self._consume_resume_fleet_completion = consume_resume_fleet_completion
+        self._open_resume_character_target = open_resume_character_target
+        self._open_resume_local_conversation = open_resume_local_conversation
+        self._consume_resume_conversation_return = consume_resume_conversation_return
+        self._reconcile_resume_session_with_registry = (
+            reconcile_resume_session_with_registry
+        )
+
+        self._read_trace_recovery_dispatch = read_trace_recovery_dispatch
+        self._read_trace_recovery_state = read_trace_recovery_state
+        self._read_trace_recovery_started = read_trace_recovery_started
+        self._read_trace_recovery_finished = read_trace_recovery_finished
+
+    async def settle_and_start_resume_navigation(self) -> None:
+        """Start one visible request after the prior visit's rollback settles."""
+        if self._resume_screen_is_torn_down():
+            self._write_resume_startup_in_progress(False)
+            return
+        previous = self._read_resume_startup_worker()
+        if previous is not None:
+            if not previous.is_finished and (not previous.is_cancelled):
+                previous.cancel()
+            await self._read_resume_asyncio().shield(
+                self._read_resume_asyncio().gather(
+                    previous.wait(), return_exceptions=True
+                )
+            )
+        if (
+            not self.is_current
+            or self._resume_screen_is_torn_down()
+            or self._read_resume_startup_worker() is not previous
+            or (
+                self._read_resume_local_conversation_id() is None
+                and self._read_resume_character_target() is None
+            )
+        ):
+            return
+        self._write_resume_startup_in_progress(True)
+        self._write_resume_startup_worker(
+            self.run_worker(
+                self.consume_resume_navigation_startup(),
+                exclusive=True,
+                group="console-resume-navigation-startup",
+            )
+        )
+
+    async def retire_resume_navigation_startup(self) -> bool:
+        """Retire an older request and drain its rollback before a newer choice.
+
+        Returns:
+            Whether an older request or unfinished startup worker was present.
+        """
+        worker = self._read_resume_startup_worker()
+        dispatch = self._read_resume_dispatch_worker()
+        had_request = bool(
+            self._read_resume_local_conversation_id() is not None
+            or self._read_resume_character_target() is not None
+            or (worker is not None and (not worker.is_finished))
+        )
+        for timer in self._read_resume_handoff_timers():
+            timer.stop()
+        self._write_resume_handoff_timers([])
+        self._write_resume_local_conversation_id(None)
+        self._write_resume_character_target(None)
+        if dispatch is not None:
+            if not dispatch.is_finished and (not dispatch.is_cancelled):
+                dispatch.cancel()
+            await self._read_resume_asyncio().shield(
+                self._read_resume_asyncio().gather(
+                    dispatch.wait(), return_exceptions=True
+                )
+            )
+        if worker is not None:
+            if not worker.is_finished and (not worker.is_cancelled):
+                worker.cancel()
+            await self._read_resume_asyncio().shield(
+                self._read_resume_asyncio().gather(
+                    worker.wait(), return_exceptions=True
+                )
+            )
+            if self._read_resume_startup_worker() is worker:
+                self._write_resume_startup_worker(None)
+        if had_request:
+            self._write_resume_startup_in_progress(False)
+        return had_request
+
+    async def consume_resume_navigation_startup(self) -> None:
+        """Consume older Console intents before the explicit resume target."""
+        target = self._read_resume_local_conversation_id()
+        typed_target = self._read_resume_character_target()
+        worker = self._read_resume_startup_worker()
+        cancelled = False
+        opened: bool | None = None
+        try:
+            if target is None and typed_target is None:
+                return
+            self.consume_pending_console_first_chat_intent(defer_presentation=True)
+            await self._consume_resume_chat_handoff(suppress_released_failure=True)
+            self._consume_resume_roleplay_repair()
+            await self._consume_resume_prompt_insert()
+            fleet_result = self._consume_resume_fleet_completion()
+            if self._resume_isawaitable(fleet_result):
+                await fleet_result
+            if typed_target is not None:
+                opened = await self._open_resume_character_target(typed_target)
+            else:
+                opened = await self._open_resume_local_conversation(target)
+        except self._read_resume_asyncio().CancelledError:
+            # The opener settles owned hydration before propagating cancellation.
+            # Keep this exact request for the next ordinary visible visit.
+            cancelled = True
+            raise
+        finally:
+            if not cancelled and (
+                self._read_resume_local_conversation_id() == target
+                and self._read_resume_character_target() is typed_target
+            ):
+                self._write_resume_local_conversation_id(None)
+                self._write_resume_character_target(None)
+            if self._read_resume_startup_worker() is worker:
+                self._write_resume_startup_in_progress(False)
+        await self._consume_resume_conversation_return()
+        if opened is True:
+            return
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is not None:
+            return
+        try:
+            self._reconcile_resume_session_with_registry()
+        except Exception:
+            self._read_resume_logger().opt(exception=True).debug(
+                "Unable to reconcile Console after failed saved-chat startup resume"
+            )
+        await self._sync_native_console_chat_ui()
+
     # -- Framework services (live-read via `@property`) --------------------
 
     @property
@@ -1068,6 +1312,16 @@ class ConsoleSessionController:
         """`Screen.run_worker`, bound. See `__init__`'s docstring for why
         this is a property rather than a value snapshotted once."""
         return self._screen.run_worker
+
+    @property
+    def is_current(self) -> bool:
+        """Read the current framework visit at use time."""
+        return self._screen.is_current
+
+    @property
+    def is_attached(self) -> bool:
+        """Read current framework attachment; never retain its construction value."""
+        return self._screen.is_attached
 
     @property
     def push_screen(self) -> Any:
@@ -2783,7 +3037,9 @@ class ConsoleSessionController:
             if new_session is not None:
                 try:
                     if activate_if is None:
-                        await self._refresh_console_effective_scope_and_sync(new_session)
+                        await self._refresh_console_effective_scope_and_sync(
+                            new_session
+                        )
                     else:
                         await self._refresh_console_effective_scope_and_sync(
                             new_session, refresh_if=activate_if
@@ -3576,8 +3832,12 @@ class ConsoleSessionController:
         # session. Settings/default-persona selection lives in the helper
         # below so published-default provenance is testable without a live
         # screen.
-        target_workspace_id = self._ensure_console_chat_store().workspace_context.active_workspace_id
-        settings, assistant_kwargs = self._new_session_startup_settings(target_workspace_id)
+        target_workspace_id = (
+            self._ensure_console_chat_store().workspace_context.active_workspace_id
+        )
+        settings, assistant_kwargs = self._new_session_startup_settings(
+            target_workspace_id
+        )
         self._ensure_console_chat_controller().new_session(
             workspace_id=target_workspace_id,
             settings=settings,
@@ -3606,6 +3866,281 @@ class ConsoleSessionController:
         self._focus_console_composer_if_needed(force=True)
 
     # -- Per-session settings -------------------------------------------------
+
+    def consume_pending_vllm_console_intent(self) -> bool:
+        """Apply one current verified vLLM target to the active session only."""
+
+        return self._consume_verified_console_intent(
+            HandoffChannel.VLLM_CONSOLE,
+            VllmConsoleIntent,
+            "vllm",
+            "_vllm_connection_owner",
+            owner_has_current_intent,
+        )
+
+    def consume_pending_llamacpp_console_intent(self) -> bool:
+        """Apply one current verified llama.cpp target to this session only."""
+
+        from ..Navigation.llamacpp_handoff import (
+            LlamaCppConsoleIntent,
+            owner_has_current_intent as llama_owner_has_current_intent,
+        )
+
+        return self._consume_verified_console_intent(
+            HandoffChannel.LLAMACPP_CONSOLE,
+            LlamaCppConsoleIntent,
+            "llama_cpp",
+            "_llamacpp_connection_owner",
+            llama_owner_has_current_intent,
+        )
+
+    def _consume_verified_console_intent(
+        self, channel, intent_type, provider, owner_attribute, current_intent
+    ) -> bool:
+        """Reuse the exact session adoption and compensation transaction."""
+
+        provider_name = "vLLM" if provider == "vllm" else "llama.cpp"
+        store = getattr(self.app_instance, "pending_handoffs", None)
+        if type(store) is not PendingHandoffStore:
+            return False
+        if store.release_recovery(channel) is not None:
+            recovery_result = store.retry_release_recovery(
+                channel,
+                automatic=False,
+            )
+            if recovery_result != "released":
+                self.app_instance.notify(
+                    "verified provider session handoff cleanup is still pending. It will "
+                    "retry on the next Console activation.",
+                    severity="warning",
+                )
+                return False
+        claim = store.claim(channel)
+        if claim is None:
+            return False
+        session_store = None
+        session_id = None
+        current = None
+        next_settings = None
+        current_has_user_work = None
+        current_controller = None
+        current_provider_selection = None
+        current_summary_state = None
+        current_endpoint_policy = None
+        adoption_receipt = None
+        replacement_started = False
+        try:
+            intent = claim.value
+            if type(intent) is not intent_type:
+                raise TypeError(f"{provider_name} Console handoff was not exact")
+            owner = getattr(self.app_instance, owner_attribute, None)
+            if not current_intent(owner, intent):
+                raise ValueError(f"{provider_name} Console handoff is stale")
+            if not self.is_attached:
+                raise RuntimeError("Console is detached")
+            session_store = self._ensure_console_chat_store()
+            current = self._ensure_active_console_session_settings()
+            session_id = session_store.active_session_id
+            if session_id is None:
+                raise RuntimeError("Console active session is unavailable")
+            rebase_controller = self._current_chat_controller_accessor()
+            if rebase_controller is None:
+                rebase_controller = self._ensure_console_chat_controller()
+            current_summary_state = self._build_settings_summary_fn()
+            if (
+                not self.is_attached
+                or session_store.active_session_id != session_id
+                or not current_intent(owner, intent)
+            ):
+                raise RuntimeError("Console handoff changed before adoption")
+            # Controller initialization can synchronize live settings. Capture
+            # compensation only after that synchronization has completed.
+            current = session_store.session_settings(session_id)
+            if current is None:
+                raise RuntimeError("Console active session settings are unavailable")
+            active_session = session_store.ensure_session()
+            if active_session.id != session_id:
+                raise RuntimeError("Console active session changed before adoption")
+            current_has_user_work = active_session.has_user_work
+            current_endpoint_policy = session_store.session_ephemeral_endpoint_policy(
+                session_id
+            )
+            current_controller = self._current_chat_controller_accessor()
+            current_provider_selection = self._build_current_provider_selection_fn()
+            configured_provider = build_target_default_console_session_settings(
+                self._provider_readiness_app_config(),
+                provider,
+                intent.model_id,
+            )
+            draft = self._settings_initial_draft_fn(
+                current,
+                session_store.session_context_policy_overrides(session_id),
+                exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+            )
+            rebased = rebase_controller.rebase_console_settings_draft(
+                draft,
+                provider=provider,
+                model=intent.model_id,
+                app_config=self._provider_readiness_app_config(),
+                exposed_fields=FULL_MODEL_DEFAULT_FIELDS,
+            )
+            next_settings = replace(
+                rebased.settings,
+                base_url=configured_provider.base_url,
+                source="user",
+            )
+            endpoint_policy = ConsoleEphemeralEndpointPolicy(
+                provider=provider,
+                model=intent.model_id,
+                base_url=intent.api_url,
+            )
+            errors = validate_console_session_settings(
+                endpoint_policy.effective_settings(next_settings),
+                app_config=self._provider_readiness_app_config(),
+            )
+            if errors:
+                raise ValueError(
+                    f"{provider_name} Console session settings are invalid"
+                )
+            adoption_receipt = session_store.adopt_session_ephemeral_endpoint(
+                session_id,
+                settings=next_settings,
+                policy=endpoint_policy,
+            )
+            replacement_started = True
+            self._sync_console_chat_core_state()
+            self._sync_console_settings_summary()
+            if (
+                not self.is_attached
+                or session_store.active_session_id != session_id
+                or not current_intent(owner, intent)
+                or not store.acknowledge_current(claim)
+            ):
+                raise RuntimeError(
+                    f"{provider_name} Console handoff changed during adoption"
+                )
+        except BaseException as error:
+            if (
+                replacement_started
+                and session_store is not None
+                and session_id is not None
+                and next_settings is not None
+                and current is not None
+                and current_has_user_work is not None
+            ):
+                try:
+                    outcome = (
+                        session_store.rollback_session_ephemeral_endpoint_adoption(
+                            session_id,
+                            expected_settings=next_settings,
+                            expected_policy=endpoint_policy,
+                            prior_settings=current,
+                            prior_policy=current_endpoint_policy,
+                            prior_has_user_work=current_has_user_work,
+                            receipt=adoption_receipt,
+                        )
+                    )
+                    if outcome is ConsoleEndpointRollbackOutcome.LOST_SESSION_FENCE:
+                        raise RuntimeError(
+                            f"{provider_name} Console rollback lost its session fence"
+                        )
+                    if (
+                        outcome is ConsoleEndpointRollbackOutcome.RESTORED
+                        and session_store.active_session_id == session_id
+                    ):
+                        try:
+                            self._sync_console_chat_core_state()
+                        except BaseException:
+                            if current_controller is None:
+                                if self._current_chat_controller_accessor() is not None:
+                                    raise
+                            elif current_provider_selection is None:
+                                raise
+                            else:
+                                current_controller.update_provider_selection(
+                                    current_provider_selection
+                                )
+                        try:
+                            self._sync_console_settings_summary()
+                        except BaseException:
+                            if current_summary_state is None:
+                                raise
+                            self._apply_settings_summary_fn(current_summary_state)
+                    elif (
+                        outcome
+                        is ConsoleEndpointRollbackOutcome.BLOCKED_DURABLE_RESTORE
+                        and session_store.active_session_id == session_id
+                    ):
+                        self.app_instance.notify(
+                            f"{provider_name} session endpoint blocked because the prior "
+                            "conversation metadata could not be restored. Retry "
+                            "the handoff or choose a provider before sending.",
+                            severity="error",
+                        )
+                        self._sync_console_chat_core_state()
+                        self._sync_console_settings_summary()
+                except BaseException as rollback_error:
+                    logger.warning(
+                        f"{provider_name} Console handoff rollback failed "
+                        "(revision={}, exception_category={})",
+                        claim.revision,
+                        type(rollback_error).__name__,
+                    )
+                    self.app_instance.notify(
+                        f"{provider_name} session handoff could not restore its exact prior "
+                        "state. Review the current provider before sending.",
+                        severity="error",
+                    )
+            release_failure = "false"
+            try:
+                released = store.release(claim) is True
+            except BaseException as release_error:
+                released = False
+                release_failure = "exception"
+                logger.warning(
+                    f"{provider_name} Console handoff claim release failed "
+                    "(revision={}, exception_category={})",
+                    claim.revision,
+                    type(release_error).__name__,
+                )
+            if not released:
+                try:
+                    store.retain_release_recovery(
+                        claim,
+                        failed_attempts=1,
+                        automatic_retry_limit=3,
+                        last_failure=release_failure,
+                    )
+                except BaseException as retention_error:
+                    logger.warning(
+                        f"{provider_name} Console handoff cleanup ownership transfer failed "
+                        "(revision={}, exception_category={})",
+                        claim.revision,
+                        type(retention_error).__name__,
+                    )
+                self.app_instance.notify(
+                    f"{provider_name} session handoff could not be re-queued yet. Console "
+                    "retained cleanup ownership and will retry before adoption.",
+                    severity="error",
+                )
+            if isinstance(
+                error,
+                (asyncio.CancelledError, GeneratorExit, KeyboardInterrupt, SystemExit),
+            ):
+                raise
+            logger.warning(
+                f"{provider_name} Console handoff will retry "
+                "(channel={}, revision={}, exception_category={})",
+                claim.channel.value,
+                claim.revision,
+                type(error).__name__,
+            )
+            return False
+        self.app_instance.notify(
+            f"Using the verified {provider_name} target for this Console session only.",
+            severity="information",
+        )
+        return True
 
     def _active_console_session_settings(self) -> ConsoleSessionSettings | None:
         """Return settings for the active native Console session, if one exists."""
@@ -3680,15 +4215,19 @@ class ConsoleSessionController:
 
         target = workspace_id
         if target is None:
-            target = self._ensure_console_chat_store().workspace_context.active_workspace_id
+            target = (
+                self._ensure_console_chat_store().workspace_context.active_workspace_id
+            )
         startup = resolve_new_console_assistant(
             self.app_instance, target, ConsoleSessionSettings(provider="")
         )
         if startup.assistant_kind != "persona":
             return None
         return (
-            startup.assistant_id, startup.settings.character_label,
-            startup.settings.system_prompt, startup.persona_memory_mode,
+            startup.assistant_id,
+            startup.settings.character_label,
+            startup.settings.system_prompt,
+            startup.persona_memory_mode,
         )
 
     def _new_session_startup_settings(
@@ -3699,7 +4238,9 @@ class ConsoleSessionController:
 
         target = workspace_id
         if target is None:
-            target = self._ensure_console_chat_store().workspace_context.active_workspace_id
+            target = (
+                self._ensure_console_chat_store().workspace_context.active_workspace_id
+            )
         startup = resolve_new_console_assistant(
             self.app_instance, target, self._blank_console_session_settings()
         )
@@ -3929,9 +4470,7 @@ class ConsoleSessionController:
             ):
                 return memo_settings
 
-        settings = default_console_session_settings(
-            app_config, provider_key, model_key
-        )
+        settings = default_console_session_settings(app_config, provider_key, model_key)
         self._console_default_settings_memo = (
             app_config,
             provider_key,
@@ -4412,9 +4951,7 @@ class ConsoleSessionController:
         if getattr(self.app_instance, "active_server_id", None) != expected_server_id:
             return None
         provider = getattr(self.app_instance, "server_context_provider", None)
-        capture_context = getattr(
-            provider, "capture_character_authority_context", None
-        )
+        capture_context = getattr(provider, "capture_character_authority_context", None)
         context_is_current = getattr(
             provider, "is_character_authority_context_current", None
         )
@@ -4697,9 +5234,7 @@ class ConsoleSessionController:
             )
         return True
 
-    async def _start_persona_console_session(
-        self, payload: ChatHandoffPayload
-    ) -> bool:
+    async def _start_persona_console_session(self, payload: ChatHandoffPayload) -> bool:
         """Build a dedicated persona-bound session from a Personas handoff.
 
         Mirrors ``_start_character_console_session`` minus greeting, local
@@ -4892,6 +5427,32 @@ class ConsoleSessionController:
             composer.edit_serial,
         )
 
+    def _consume_visible_agent_handoff(self, store: Any, composer: Any) -> None:
+        """Apply an accepted handoff receipt only to its exact visible revision."""
+        captured = self._visible_agent_handoff_draft
+        if captured is None:
+            return
+        session_id, incarnation, revision, snapshot = captured
+        session = next((row for row in store.sessions() if row.id == session_id), None)
+        if session is None or session.incarnation_id != incarnation:
+            self._visible_agent_handoff_draft = None
+            return
+        if session.agent_handoff_state != "consumed":
+            return
+        self._visible_agent_handoff_draft = None
+        live_snapshot = composer.capture_draft_snapshot()
+        if (
+            self._console_visible_draft_session_id == session_id
+            and session.agent_handoff_revision == revision + 1
+            and live_snapshot.generation == snapshot.generation
+            and live_snapshot.edit_serial == snapshot.edit_serial
+            and live_snapshot.segments == snapshot.segments
+        ):
+            # Caret/selection navigation does not author a new draft. Keep
+            # widget generation, authored revision and segment identity fenced.
+            if composer.commit_captured_draft(composer.capture_draft_for_send()):
+                self._console_draft_switch_snapshot = None
+
     def _sync_console_session_draft(self) -> None:
         """Reconcile the composer draft with the active runtime Console session.
 
@@ -4930,6 +5491,7 @@ class ConsoleSessionController:
         composer = self._console_composer_or_none()
         if composer is None:
             return
+        self._consume_visible_agent_handoff(store, composer)
         visible_session_id = self._console_visible_draft_session_id
         if visible_session_id == active_session_id:
             self._restore_banked_raw_cli_stashes_fn(active_session_id, composer)
@@ -4986,6 +5548,16 @@ class ConsoleSessionController:
         ):
             self._on_draft_session_changed()
         self._console_visible_draft_session_id = active_session_id
+        self._visible_agent_handoff_draft = (
+            (
+                session.id,
+                session.incarnation_id,
+                session.agent_handoff_revision,
+                composer.capture_draft_snapshot(),
+            )
+            if session.agent_handoff_state == "pending"
+            else None
+        )
 
     # -- Session identity / state -------------------------------------------
 
@@ -5566,9 +6138,8 @@ class ConsoleSessionController:
             or getattr(binding, "label", "")
             or f"Folder {index + 1}"
         )
-        kind = (
-            getattr(getattr(binding, "binding_kind", None), "value", None)
-            or str(getattr(binding, "binding_kind", ""))
+        kind = getattr(getattr(binding, "binding_kind", None), "value", None) or str(
+            getattr(binding, "binding_kind", "")
         )
         if kind == "ssh-filesystem" and not ssh_missing:
             binding_id = str(getattr(binding, "binding_id", "") or "")
@@ -5603,10 +6174,9 @@ class ConsoleSessionController:
         ssh_missing = not ssh_available()
 
         def _binding_kind(binding: Any) -> str:
-            return (
-                getattr(getattr(binding, "binding_kind", None), "value", None)
-                or str(getattr(binding, "binding_kind", ""))
-            )
+            return getattr(
+                getattr(binding, "binding_kind", None), "value", None
+            ) or str(getattr(binding, "binding_kind", ""))
 
         options = tuple(
             ProjectInstructionBindingOption(
@@ -5615,8 +6185,7 @@ class ConsoleSessionController:
                     selection, index, ssh_missing=ssh_missing
                 ),
                 eligible=not (
-                    ssh_missing
-                    and _binding_kind(selection.binding) == "ssh-filesystem"
+                    ssh_missing and _binding_kind(selection.binding) == "ssh-filesystem"
                 ),
                 recovery=(
                     SSH_UNAVAILABLE_MESSAGE
@@ -5665,9 +6234,7 @@ class ConsoleSessionController:
             screen = screen_ref()
             if (
                 owner is None
-                or owner._project_instruction_decision_modals.pop(
-                    decision_id, None
-                )
+                or owner._project_instruction_decision_modals.pop(decision_id, None)
                 is not modal
                 or screen is None
                 or getattr(screen, "_console_runtime_attachment_retired", False)
@@ -5707,9 +6274,7 @@ class ConsoleSessionController:
             screen = screen_ref()
             if (
                 owner is None
-                or owner._project_instruction_decision_modals.pop(
-                    decision_id, None
-                )
+                or owner._project_instruction_decision_modals.pop(decision_id, None)
                 is not modal
                 or screen is None
                 or getattr(screen, "_console_runtime_attachment_retired", False)
@@ -5891,4 +6456,53 @@ class ConsoleSessionController:
         return (
             store.active_session_id is not None
             and self._console_visible_draft_session_id == store.active_session_id
+        )
+
+    async def _dispatch_console_trace_recovery(
+        self, action: str, preparation_id: str
+    ) -> object:
+        """Route a pre-dispatch card action; a cancelled hold refills the composer."""
+
+        controller = self._ensure_console_chat_controller()
+        held = controller.trace_call_recovery_preparation()
+        # TASK-34350: read the held text BEFORE the action: the UI sync that
+        # follows it mirrors the (empty) composer back into the session draft.
+        held_text = (
+            held.executed_draft
+            if held is not None
+            and held.preparation_id == preparation_id
+            and controller.context_compaction_hold(preparation_id) is not None
+            else ""
+        )
+        result = await self._read_trace_recovery_dispatch()(
+            controller,
+            action,
+            preparation_id,
+            on_started=self._read_trace_recovery_started(),
+            on_finished=self._read_trace_recovery_finished(),
+        )
+        composer = self._console_composer_or_none()
+        if (
+            action == "cancel"
+            and held_text
+            and controller.context_compaction_hold(preparation_id) is None
+            and composer is not None
+            and not composer.draft_text().strip()
+        ):
+            # Cancel puts the held message back where it came from.
+            composer.load_draft(held_text)
+        return result
+
+    def _console_trace_recovery_state(self) -> Any:
+        """Project the active pre-dispatch pause, with a context hold's numbers."""
+
+        controller = self._ensure_console_chat_controller()
+        preparation = controller.trace_call_recovery_preparation()
+        return self._read_trace_recovery_state()(
+            preparation,
+            context_hold=(
+                controller.context_compaction_hold(preparation.preparation_id)
+                if preparation is not None
+                else None
+            ),
         )

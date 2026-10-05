@@ -66,7 +66,7 @@ def test_automatic_work_indexes_serve_real_queries_without_statistics(db):
             conn.set_trace_callback(None)
         for fragment, index in (
             (
-                "SELECT * FROM automatic_work_reservations WHERE chain_id=",
+                "SELECT reservation.* FROM automatic_work_reservations AS reservation",
                 "idx_automatic_reservations_chain",
             ),
             (
@@ -83,6 +83,18 @@ def test_automatic_work_indexes_serve_real_queries_without_statistics(db):
             assert any("SEARCH" in detail and index in detail for detail in details), (
                 details
             )
+            if fragment.startswith("SELECT 1 FROM automatic_wake_attempts"):
+                assert any(
+                    "SEARCH" in detail
+                    and "idx_automatic_chat_start_conversation_active" in detail
+                    for detail in details
+                ), details
+            if fragment.startswith("SELECT reservation.*"):
+                assert any(
+                    "SEARCH" in detail
+                    and "idx_automatic_chains_allowance_root" in detail
+                    for detail in details
+                ), details
 
 
 def test_automatic_work_commit_is_full_synced_and_rollback_restores_policy(db):
@@ -326,3 +338,29 @@ def test_legacy_parent_cannot_bridge_conversation_scope(db):
             parent_run_id=parent,
             work_chain_id=chain_id,
         )
+
+
+@pytest.mark.parametrize(
+    "kind,limit_name",
+    [
+        ("child_launch", "child_launches"),
+        ("model_call", "model_calls"),
+        ("tokens", "budget_tokens"),
+    ],
+)
+def test_descendant_resources_spend_the_same_root_balance(db, kind, limit_name):
+    from Tests.DB.test_automatic_chat_starts import prepare, source_run
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+    root, source = source_run(db, **{limit_name: 2})
+    first = prepare(db, source, "a", "first")
+    sibling = prepare(db, source, "b", "sibling")
+    reserve(db, first.chain_id, "whole", kind=kind, amount=2)
+    db.automatic_work.commit("whole", owner_id="owner")
+    with pytest.raises(AutomaticWorkRefused, match=f"{kind}_budget"):
+        reserve(db, sibling.chain_id, "excess", kind=kind)
+    for member in (root, first.chain_id, sibling.chain_id):
+        snapshot = db.automatic_work.snapshot(member)
+        assert snapshot.used[kind] == 2
+        assert snapshot.available[kind] == 0
+        assert snapshot.pause_reason == f"{kind}_budget"

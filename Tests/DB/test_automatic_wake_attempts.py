@@ -204,3 +204,24 @@ def test_completed_claim_survives_reopen_without_consuming_later_result(db):
     assert db.automatic_work.recover(current_owner_id="new-owner") == 0
     assert [row["id"] for row in db.undelivered_wake_runs("conversation")] == [later]
     assert db.automatic_work.snapshot(chain_id).used["generation"] == 1
+
+
+@pytest.mark.parametrize("wake_first", [False, True])
+def test_wakes_and_native_starts_cannot_own_the_same_target(db, wake_first):
+    from Tests.DB.test_automatic_chat_starts import prepare, source_run
+    from tldw_chatbook.Agents.automatic_work_budget import AutomaticWorkRefused
+
+    root, source = source_run(db)
+    target_chain = chain(db, conversation="target", submission="target")
+    child = survivor(db, target_chain, conversation="target")
+    if wake_first:
+        claim(db, target_chain, [child])
+        with pytest.raises(AutomaticWorkRefused, match="conversation_wake_active"):
+            prepare(db, source, "target", "native")
+    else:
+        native = prepare(db, source, "target", "native")
+        with pytest.raises(AutomaticWorkRefused, match="conversation_wake_active"):
+            claim(db, target_chain, [child])
+        assert db.automatic_work.abort_chat_start(native.id, owner_id="owner")
+        claim(db, target_chain, [child])
+    assert db.automatic_work.snapshot(root).used["generation"] == 0

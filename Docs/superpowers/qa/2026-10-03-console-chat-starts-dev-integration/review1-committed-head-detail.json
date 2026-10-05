@@ -1,0 +1,1034 @@
+{
+  "head": "df81b3e65c2c2a0b221c85962658acc96fc567d2",
+  "checks": [
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Agents/test_agent_chat_create_tools.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "e7601b3151b19ee0a9d0c8a594003bf024f74169f7b15a7468a32b58580ced8e"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Architecture/test_persistent_diagnostic_inventory.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "d7c41e1471677ea706f03551344fde3c287b7cbc450e87bcce1905d54ac38b8d"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Backup_Recovery/test_agent_runs_recovery_schema.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "d86c4b9dec6c5d00ca0e4679253d8fc071155f34ee16994520fb93cf70f018d4"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Backup_Recovery/test_console_artifacts_roundtrip.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "b1b52e24f4e465a9b211c91082fd0de5af003a9a1f6ffd406660abb368c59305"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Backup_Recovery/test_console_sync_maintenance.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "e44fbc087999678ea3d8d7afabe5d450dac546499d9f49312aafc82c96eb7c0e"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Backup_Recovery/test_core_owners.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "25aebc7178141b4bcc6e85a1c888f83305efeda6989bfde7194076a367485c15"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Backup_Recovery/test_remaining_sqlite_participant_lifetimes.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "f3bab19bc2b31fd98fc93a70c150e357523d354a0b2493065d4e8240f407b6bd"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "c2a98c144f6804fbdf9614c7213a4c89f66cfd7092a6e2c17a9bb518b1a7fbb6"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Chat/test_automatic_wake_budget.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "348c8ed615993b6ded4399a9ff623ad3f522efc9c884a03d0f94e8e6dce40e64"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Chat/test_automatic_work_lineage.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "a3d3915716b88d2a24251360d125508d56df554d38347e3d2acab560ccc6a598"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Chat/test_chat_create_confirm_card.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "34f6e898d34c5984521bc163cb827ef633e53e9d3e71dec2648550e208ba12bd"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Chat/test_console_agent_project_instructions.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "736511d87f10366c50aebc787e0f685189a6683bc24435b3f7ba66ffbf6bbd50"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Chat/test_console_chat_create_confirm.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "6207c357aa83eec951aae9c114dbdfca80071f82d08a4d94f53c647f7bd6b402"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Chat/test_console_chat_create_integration.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "48d76566ab6ec09f7edc7ca58964f64f18deee7102ad34cc472dff08eff6f873"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Chat/test_console_chat_fork.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "ae3bd89fb960c3462f81446e7a9b76255b2fe44b248c1b261fa4df20aec15585"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Chat/test_console_chat_start.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "f7c6587d305faa2b21c8bcd4898c02c09f1ff17d37ac6d1d439d4bae4679aa45"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Chat/test_console_fleet_wake.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "b2840dff0af4c32c583e399164174e436904296a434814d1ceb4c5207e611af0"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Chat/test_console_personal_context_snapshot.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "50ee0f44bd26c000d384e76e131bc846079a6b3d64e63d43072e82a24cb04c2a"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/Chat/test_message_metadata.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "ec3ea799e4ca134b15fecbd15a9a8dbab1787343079c21ad6f3308ea9e9090fe"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/DB/test_agent_orchestration_dev_migration.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "2917575f9ce278f299729066f02210fb1b7ffc05690b29495c6161e6c509d209"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/DB/test_automatic_chat_starts.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "57a2fddc1d63400c8b90276ebaec04a5177b1a4fef0877da4a2ecc360926db2e"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/DB/test_automatic_wake_attempts.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "6809ecba1a45ad1e0a22b21efeab969180a21a0acc893d637cab03182b25da42"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/DB/test_automatic_work_budget.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "71a8cbdc524f88efd3c2124fb87d35cde4fb204fabbe09bc9c07ac19a375f538"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/DB/test_automatic_work_deadlines.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "b97b14c9e7e902dfc1f4f21ce9fe6c0e2749335a0d058c50578a076df0ee92ce"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/DB/test_automatic_work_migration.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "78401a6a59978141b105273fee035c20f0e934b52ba13ce10112ca2b11ae5725"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/DB/test_chachanotes_console_library_policy_migration.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "beb139c1bc768896779fe8c37e778045558d8b29a2edf7d4878907989fb5f5fb"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "d054fa7f0e72b405d70674952d450ac2b7d57cae829337bda01c38562bbf8f36"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/DB/test_chachanotes_v76_agent_chat_starts_migration.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "248f2c02e9c193d243d426fcbd3b5c5f98f313e0d01086ef0c826073e608b164"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/DB/test_schema_table_allowlist_guard.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "4989b455643d0d0633d189119fe4ab00529c157deb26951a93b3fc4ea3bedfd2"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/UI/test_console_launch_wake.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "a49a4055f025985430b8e277a114693292c14dc983f7ce3f8b33bf6491bcb574"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/UI/test_console_prompt_queue.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "a122b36d0baaea4d017cc51974f001a185fc12ba8afeced56e6b2634f070266c"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/UI/test_console_runtime_ownership.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "9e0a134a4579f101d5e9155071a8fc97ad11cef695a68793c2eb093220d1c2a3"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "Tests/UI/test_console_store_continuity.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "5b68cfa8a5e7c7119bcb01fbed104be6ba948be8387841bde2ec0b2ed2931916"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "scripts/check_schema_table_allowlist.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "dbfafac92c1bc31a71af15f1ddfb7c24617825b4b260bc3c1593c0ee919486da"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Agents/automatic_work_budget.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "9fcec8e07f379838fa240b36be591ca707ae72f14d0299a72d13d3948a75c2d0"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Agents/automatic_work_runtime.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "1bed6778cdfdd595d05190797ea923f60daabd17ed24f9b4a9a11504ea55ef77"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Agents/tool_catalog.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "224f794e60c43daa85bb75db1a87e1e55c2597378972a783321ea43d6de02560"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Backup_Recovery/sqlite_validation.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "062f7695437335ef2f51aa78d06431e3d0b198b02ad697fbfdb8242f3f5f4f43"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/chat_persistence_service.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "b581f7f25630321d3086989c1cdb712929953e4f2a720e302c68a68bf359ad0a"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_agent_bridge.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "359a787d4f4444a1e21797a3b15c8d0f5a246382ac94ee6c616d65a90da3031a"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_chat_controller.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "cb5f78e90f23aece23110b5c55b1a49cf2bb0d26635d2813ba4a1700174dfaef"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_chat_models.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "fd5356fd9a9864b2f8e1a64f07cfe03b78ad4a914c347b5e6f915da36bc4ae40"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_chat_start.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "fa456ab892bc7644ab75c7a1a1c8b5a4b17093b2e9fafe470b6e04bf5315ed20"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_chat_store.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "be11678c78a28353be2db3350d8d14d0eef29461a1c61e1881798c3c4f510e17"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_dispatch_checkpoint.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "0208ce2be331c715d772dbe0f27057198af9388094fc2b6b2b239d3a323178bd"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_dispatch_repository.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "fc43b02efa8f4afc931fb3165583a60c8dbec4fb510fab76fa2aedef5043dc77"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_fleet_wake.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "1abaf73ce1b08cd8b719f3c35f6520cf0d718d9ed432c60ab3d4b5c92314d6a1"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_prompt_queue_coordinator.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "1ec17befba21730276903f2cf16b6468c86c1eb680570828c16ae2fc6fff695e"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_roleplay_identity.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "c485a1cc6d782bf2fde648bd7da3f9a911584fc0f504ce0f569185620d8cfce7"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_runtime.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "852552ca3fe4445cbd584b616e8586ab0d92d2e31563b40d58453a7443725f91"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/console_turn_preparation.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "532f3b06132c83607bb668c0a0974b325cff6979011ed8516ef556aa658e0c1f"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Chat/message_metadata.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "0c780a7b2a7d949393be1d78d805c6d736e655ddb9b97f9fb0c1f884eae726e4"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/DB/AgentRuns_DB.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "2b8647ba3e7cc857012cf6ed316ec960ad24da567a5c290f343c8a616abb7e67"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/DB/ChaChaNotes_DB.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "4285bb031268ed7d9b0e96a3f14d2493606c854f8932bb75a000b0a717aba016"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/DB/automatic_work.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "ee998835558e8e5842fb66f9692a4af66d5af2099ddbb838074827bda3a2113b"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/DB/recovery_core.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "512889c53b5602d221d11f4843caf7da6dac63f663bbb0fd53d07388aead46c4"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/DB/recovery_core_schema.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "7c3bca91a5721c4221a4fe761b7df5bf57a676cf0a20ba438516e6815488dd06"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/DB/recovery_operations.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "64252bd5840e6166e5edcaea934c30dbff5377a674d0ab1ffda78a195dafddad"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "8c516d94348bdb34f9684545cf13e34de130b312c3bcbe7b16256a6c1ccd7d7d"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/UI/Console_Modules/workspace.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "1a0cb315ff23c1c6f589c9ec6258ef97c868bf4cfccd14b8013aedea7ec41c5f"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/UI/Screens/chat_screen.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "3f70629c25ab34bc5f1c83a9f694cb5dbd60c7b96ec7e53636840aaa32d62683"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Widgets/Chat_Widgets/chat_create_confirm_card.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "3136ddb0b2e7ec7718943a4571f87df6dbabdd0f4f15e32be996f5171bd5e910"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Widgets/Console/console_composer_bar.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "c09381a5fcad7ce29d604c238f36fe6bcbd6d1c09cb85003bc4030c4abda3513"
+    },
+    {
+      "argv": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "E9,F63,F7,F82",
+        "--stdin-filename",
+        "tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",
+        "-"
+      ],
+      "returncode": 0,
+      "output": "All checks passed!\n",
+      "source_sha256": "c5d863240ad01a1a0f5a5869c90f7e89fb28d2c174219c992e1000d9f5b97537"
+    }
+  ],
+  "obsolete_absent": [
+    "Tests/DB/test_chachanotes_v74_agent_chat_starts_migration.py",
+    "tldw_chatbook/DB/migrations/agent_runs_v18_to_v19_chat_starts.sql",
+    "tldw_chatbook/DB/migrations/chachanotes_v73_to_v74_agent_chat_starts.sql"
+  ]
+}

@@ -1,0 +1,1397 @@
+FFFFFFFFFF.                                                              [100%]
+=================================== FAILURES ===================================
+__________ test_redirect_fit_boundary_keeps_run_controls_in_place[-1] __________
+
+self = <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[-1]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[-1]>>, 'threshold_offset': -1}
+request = <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[-1]>>
+work = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee0/private-profile-process')
+profile = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...5-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee0/private-profile-process/profile')
+environment = {'BROWSER_USE_ACCESS_VERIFYING_IDENTITY': 'MCowBQYDK2VwAyEANwqxwYsEWxgwX0aksJ1Npcf7iOTqoO8TY5PAXiLXDFA=', 'BUN_INSTALL... 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/11cdc099-f81d-4638-b70f-10e4b19d551f.sock', 'CODEX_CI': '1', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...eview-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee0/private-profile-process/pytest.xml')
+log = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...eview-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee0/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={timeout}",
+                f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                *coverage_args,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
+        if process.returncode:
+>           pytest.fail(
+                f"{log}\n{_child_failure_report(report)}\n"
+                f"--- child log tail ---\n{log.read_text()[-16000:]}"
+            )
+E           Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee0/private-profile-process/pytest.log
+E           --- child failure: AssertionError: run activation shifted controls or the draft
+E           assert (Region(x=97,...60, height=1)) == (Region(x=107...54, height=1))
+E             
+E             At index 0 diff: Region(x=97, y=49, width=43, height=1) != Region(x=107, y=49, width=33, height=1)
+E             Use -v to get more diff
+E           threshold_offset = -1
+E           request = <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[-1]>>
+E           
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("threshold_offset", [-1, 0, 1])
+E               @private_profile_test
+E               async def test_redirect_fit_boundary_keeps_run_controls_in_place(threshold_offset, request):
+E                   """Fit comes from the visible control cells and draft/reason floors."""
+E                   gateway, host = _held_run_host()
+E                   async with host.run_test(size=(235, 52)) as pilot:
+E                       console, composer = await _mounted(host, pilot)
+E                       await pilot.pause(0.2)
+E                       row = composer.query_one("#console-composer-expanded")
+E                       chrome = host.size.width - row.content_size.width
+E                       # Independent geometry: left Menu/collapse 12+6; actions Send 6,
+E                       # gap 2, Dictate 11, Stop 6, Redirect 10; margin 2; draft floor
+E                       # 32; widest reason 52. No production budget method supplies this.
+E                       threshold = chrome + 12 + 6 + 6 + 2 + 11 + 6 + 10 + 2 + 32 + 52
+E                       await pilot.resize_terminal(threshold + threshold_offset, 52)
+E                       await pilot.pause(0.3)
+E                       actions = composer.query_one("#console-composer-actions")
+E                       send = composer.query_one("#console-send-message", Button)
+E                       dictate = composer.query_one("#console-dictation", Button)
+E                       redirect = composer.query_one("#console-redirect-generation", Button)
+E                       draft = composer.query_one("#console-command-visible-text", Static)
+E               
+E                       def geometry():
+E                           return (actions.region, send.region, dictate.region, draft.region)
+E               
+E                       resting = geometry()
+E                       expected_fit = threshold_offset >= 0
+E                       assert composer._redirect_budgeted is expected_fit
+E                       try:
+E                           await _start_held_run(console, composer, pilot)
+E                           await pilot.pause(0.2)
+E                           assert redirect.display is expected_fit
+E           >               assert geometry() == resting, "run activation shifted controls or the draft"
+E           E               AssertionError: run activation shifted controls or the draft
+E           E               assert (Region(x=97,...60, height=1)) == (Region(x=107...54, height=1))
+E           E                 
+E           E                 At index 0 diff: Region(x=97, y=49, width=43, height=1) != Region(x=107, y=49, width=33, height=1)
+E           E                 Use -v to get more diff
+E           
+E           Tests/UI/test_console_composer_run_controls.py:1540: AssertionError
+E           --- child log tail ---
+E           oks = WorldBookManager(db).get_world_books_for_conversation(
+E             File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Character_Chat/world_book_manager.py", line 734, in get_world_books_for_conversation
+E               cursor.execute(query, (conversation_id,))
+E             File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/DB/base_db.py", line 596, in execute
+E               return self._tracked(
+E             File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/DB/base_db.py", line 579, in _tracked
+E               result = run(*args)
+E           sqlite3.OperationalError: no such table: world_books
+E           2026-10-03 20:34:17.580 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:17.580 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:17.584 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:17.660 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6142324736.
+E           2026-10-03 20:34:17.661 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6142324736.
+E           2026-10-03 20:34:17.665 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6159151104.
+E           2026-10-03 20:34:17.667 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6159151104.
+E           2026-10-03 20:34:17.681 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (cefd5e29-9d57-4f06-aead-d4f43fa9ce37, 392d3b57-a745-4fd1-974f-65e6aad79468)
+E           2026-10-03 20:34:17.682 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:17.685 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:17.744 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (cefd5e29-9d57-4f06-aead-d4f43fa9ce37, 392d3b57-a745-4fd1-974f-65e6aad79468)
+E           2026-10-03 20:34:17.747 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:17.747 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:17.766 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6125498368.
+E           2026-10-03 20:34:17.780 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6125498368.
+E           2026-10-03 20:34:17.795 | WARNING  | tldw_chatbook.UI.Console_Modules.review_selection:_load_console_annotation_previews:414 - Console annotations: load failed for '4d81a364-5b71-463a-8b38-e3a9a5cc11fa'
+E           2026-10-03 20:34:17.843 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6175977472.
+E           2026-10-03 20:34:17.846 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6175977472.
+E           2026-10-03 20:34:17.850 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6142324736.
+E           2026-10-03 20:34:17.852 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6142324736.
+E           2026-10-03 20:34:17.882 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (cefd5e29-9d57-4f06-aead-d4f43fa9ce37, 392d3b57-a745-4fd1-974f-65e6aad79468)
+E           2026-10-03 20:34:17.885 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:17.886 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:17.935 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (cefd5e29-9d57-4f06-aead-d4f43fa9ce37, 392d3b57-a745-4fd1-974f-65e6aad79468)
+E           2026-10-03 20:34:17.937 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:17.937 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:17.965 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6175977472.
+E           2026-10-03 20:34:17.966 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6175977472.
+E           2026-10-03 20:34:17.973 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6159151104.
+E           2026-10-03 20:34:17.976 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6159151104.
+E           2026-10-03 20:34:17.992 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (cefd5e29-9d57-4f06-aead-d4f43fa9ce37, 392d3b57-a745-4fd1-974f-65e6aad79468)
+E           2026-10-03 20:34:17.993 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:17.998 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:18.049 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, version FROM messages WHERE id IN (?, ?) AND deleted = 0... Params: (cefd5e29-9d57-4f06-aead-d4f43fa9ce37, 392d3b57-a745-4fd1-974f-65e6aad79468)
+E           2026-10-03 20:34:18.051 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:18.052 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:18.166 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6142324736.
+E           2026-10-03 20:34:18.166 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:18.168 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:18.169 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): SELECT id, conversation_id, parent_message_id, sender, role, content, image_data, image_mime_type, timestamp, ranking, last_modified, version, client_id, deleted, feedback, usage_json, metadata_json, provider_continuation_json, thinking_blocks_json, assistant_generation_state FROM messages WHERE id ... Params: (392d3b57-a745-4fd1-974f-65e6aad79468)
+E           2026-10-03 20:34:18.169 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6142324736.
+E           2026-10-03 20:34:18.169 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:18.173 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:18.177 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:18.180 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9309 - Attempting to save setting: [console.onboarding].first_send_completed = True
+E           2026-10-03 20:34:18.241 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:18.242 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:18.242 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:18.242 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:18.245 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen chat unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1046 No capability information found for llama_cpp/test-model, using defaults
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage app_version=0.2.3 attempt_id=f32265fc907b4d379c6e50ca76ea7c25 component=console duration_ms=0 phase=ui_action python_version=3.12.11 sqlite_version=3.49.1 status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=f32265fc907b4d379c6e50ca76ea7c25 component=console duration_ms=9 phase=ui_dispatch status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=f32265fc907b4d379c6e50ca76ea7c25 component=console duration_ms=125 phase=ui_submit status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=f32265fc907b4d379c6e50ca76ea7c25 component=console duration_ms=351 phase=ui_submit status=accepted
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=f32265fc907b4d379c6e50ca76ea7c25 component=console duration_ms=372 phase=ui_dispatch status=sent
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=f32265fc907b4d379c6e50ca76ea7c25 component=console duration_ms=372 phase=ui_action status=dispatched
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=f32265fc907b4d379c6e50ca76ea7c25 component=console duration_ms=374 phase=controller_submit status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=f32265fc907b4d379c6e50ca76ea7c25 component=console duration_ms=703 phase=provider_resolution status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=f32265fc907b4d379c6e50ca76ea7c25 capture_enabled=false component=console duration_ms=706 phase=capture_policy status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=f32265fc907b4d379c6e50ca76ea7c25 component=console duration_ms=1106 phase=durable_commit status=entered
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=f32265fc907b4d379c6e50ca76ea7c25 component=console duration_ms=1127 phase=durable_commit status=succeeded
+E           INFO     tldw_chatbook.diagnostics.console:persistent_diagnostics.py:256 event=console_send_stage attempt_id=f32265fc907b4d379c6e50ca76ea7c25 component=console duration_ms=2188 phase=controller_submit status=completed
+E           --------------------------- Captured stderr teardown ---------------------------
+E           2026-10-03 20:34:18.292 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8612 - Attempting to apply literal settings mutation: sets={"('console', 'onboarding')": ['first_send_completed']}, deletes={}
+E           2026-10-03 20:34:18.344 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8670 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee0/private-profile-process/profile/config/config.toml
+E           2026-10-03 20:34:18.348 | INFO     | tldw_chatbook.config:_load_settings_uncached:2134 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-03 20:34:18.349 | INFO     | tldw_chatbook.config:_load_settings_uncached:2137 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-03 20:34:18.352 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2160 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-03 20:34:18.354 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2482 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-10-03 20:34:18.491 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3712 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee0/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-10-03 20:34:18.492 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3743 - load_settings: Configuration cached for future use
+E           2026-10-03 20:34:18.494 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8698 - Global configuration caches invalidated and reloaded.
+E           2026-10-03 20:34:18.667 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:18.667 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee0/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           9.40s call     Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[-1]
+E           
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[-1]
+E           1 failed in 13.25s
+
+Tests/private_profile.py:158: Failed
+---------------------------- Captured stderr setup -----------------------------
+2026-10-03 20:34:03.233 | DEBUG    | tldw_chatbook.Utils.optional_deps:check_dependency:642 - ✅ huggingface_hub dependency found. Feature 'huggingface_hub' is enabled.
+2026-10-03 20:34:03.267 | WARNING  | tldw_chatbook.Audio.recording_service:<module>:52 - PyAudio not available. Install with: pip install pyaudio
+2026-10-03 20:34:03.435 | INFO     | tldw_chatbook.Audio.recording_service:<module>:58 - Sounddevice backend available
+2026-10-03 20:34:03.495 | INFO     | tldw_chatbook.Audio.recording_service:<module>:73 - WebRTC VAD available for voice activity detection
+__________ test_redirect_fit_boundary_keeps_run_controls_in_place[0] ___________
+
+self = <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[0]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[0]>>, 'threshold_offset': 0}
+request = <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[0]>>
+work = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee1/private-profile-process')
+profile = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...5-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee1/private-profile-process/profile')
+environment = {'BROWSER_USE_ACCESS_VERIFYING_IDENTITY': 'MCowBQYDK2VwAyEANwqxwYsEWxgwX0aksJ1Npcf7iOTqoO8TY5PAXiLXDFA=', 'BUN_INSTALL... 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/11cdc099-f81d-4638-b70f-10e4b19d551f.sock', 'CODEX_CI': '1', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...eview-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee1/private-profile-process/pytest.xml')
+log = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...eview-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee1/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={timeout}",
+                f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                *coverage_args,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
+        if process.returncode:
+>           pytest.fail(
+                f"{log}\n{_child_failure_report(report)}\n"
+                f"--- child log tail ---\n{log.read_text()[-16000:]}"
+            )
+E           Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee1/private-profile-process/pytest.log
+E           --- child failure: AssertionError: assert False is True
+E            +  where False = ConsoleComposerBar(id='console-native-composer', classes='ds-panel')._redirect_budgeted
+E           threshold_offset = 0
+E           request = <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[0]>>
+E           
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("threshold_offset", [-1, 0, 1])
+E               @private_profile_test
+E               async def test_redirect_fit_boundary_keeps_run_controls_in_place(threshold_offset, request):
+E                   """Fit comes from the visible control cells and draft/reason floors."""
+E                   gateway, host = _held_run_host()
+E                   async with host.run_test(size=(235, 52)) as pilot:
+E                       console, composer = await _mounted(host, pilot)
+E                       await pilot.pause(0.2)
+E                       row = composer.query_one("#console-composer-expanded")
+E                       chrome = host.size.width - row.content_size.width
+E                       # Independent geometry: left Menu/collapse 12+6; actions Send 6,
+E                       # gap 2, Dictate 11, Stop 6, Redirect 10; margin 2; draft floor
+E                       # 32; widest reason 52. No production budget method supplies this.
+E                       threshold = chrome + 12 + 6 + 6 + 2 + 11 + 6 + 10 + 2 + 32 + 52
+E                       await pilot.resize_terminal(threshold + threshold_offset, 52)
+E                       await pilot.pause(0.3)
+E                       actions = composer.query_one("#console-composer-actions")
+E                       send = composer.query_one("#console-send-message", Button)
+E                       dictate = composer.query_one("#console-dictation", Button)
+E                       redirect = composer.query_one("#console-redirect-generation", Button)
+E                       draft = composer.query_one("#console-command-visible-text", Static)
+E               
+E                       def geometry():
+E                           return (actions.region, send.region, dictate.region, draft.region)
+E               
+E                       resting = geometry()
+E                       expected_fit = threshold_offset >= 0
+E           >           assert composer._redirect_budgeted is expected_fit
+E           E           AssertionError: assert False is True
+E           E            +  where False = ConsoleComposerBar(id='console-native-composer', classes='ds-panel')._redirect_budgeted
+E           
+E           Tests/UI/test_console_composer_run_controls.py:1535: AssertionError
+E           --- child log tail ---
+E           on thread 8494865792.
+E           2026-10-03 20:34:26.768 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.771 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.799 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.807 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.833 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.835 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.844 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 3 on thread 8494865792.
+E           2026-10-03 20:34:26.844 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 3 on thread 8494865792.
+E           2026-10-03 20:34:26.845 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.850 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.879 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.885 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.889 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.902 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.923 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.928 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.941 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.943 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:26.972 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8685 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 76.
+E           2026-10-03 20:34:26.974 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:26.975 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:3399 - CharactersRAGDB initialization completed successfully db_sha256=memory
+E           2026-10-03 20:34:27.327 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing ChatScreen screen: chat
+E           2026-10-03 20:34:27.345 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:27.345 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:27.355 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+E           2026-10-03 20:34:27.557 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 10 pricing patterns for provider anthropic
+E           2026-10-03 20:34:27.560 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 18 pricing patterns for provider openai
+E           2026-10-03 20:34:27.564 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 5 pricing patterns for provider cohere
+E           2026-10-03 20:34:27.568 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 5 pricing patterns for provider google
+E           2026-10-03 20:34:27.572 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 4 pricing patterns for provider mistral
+E           2026-10-03 20:34:27.572 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 4 pricing patterns for provider mistralai
+E           2026-10-03 20:34:27.572 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 2 pricing patterns for provider deepseek
+E           2026-10-03 20:34:27.572 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:630 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E           2026-10-03 20:34:27.582 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3825 - Local persisted conversation service is unavailable
+E           2026-10-03 20:34:27.585 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14058 - No Console workspace context tray available for sync
+E           2026-10-03 20:34:27.586 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9309 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E           2026-10-03 20:34:27.586 | WARNING  | tldw_chatbook.Chat.console_fleet_wake:recover:1001 - wake recovery failed (exception_type=AttributeError)
+E           2026-10-03 20:34:27.963 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14058 - No Console workspace context tray available for sync
+E           2026-10-03 20:34:28.451 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3554 - Opened/Reopened SQLite connection db_sha256=memory thread=6139621376
+E           2026-10-03 20:34:28.470 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6139621376.
+E           2026-10-03 20:34:28.481 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6139621376.
+E           2026-10-03 20:34:28.501 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8612 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E           2026-10-03 20:34:28.530 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8670 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee1/private-profile-process/profile/config/config.toml
+E           2026-10-03 20:34:28.537 | INFO     | tldw_chatbook.config:_load_settings_uncached:2134 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-03 20:34:28.540 | INFO     | tldw_chatbook.config:_load_settings_uncached:2137 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-03 20:34:28.541 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2160 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-03 20:34:28.544 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2482 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-10-03 20:34:28.605 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3712 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee1/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-10-03 20:34:28.608 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3743 - load_settings: Configuration cached for future use
+E           2026-10-03 20:34:28.610 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8698 - Global configuration caches invalidated and reloaded.
+E           2026-10-03 20:34:28.703 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+E           2026-10-03 20:34:28.723 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3554 - Opened/Reopened SQLite connection db_sha256=memory thread=6156447744
+E           2026-10-03 20:34:28.725 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6156447744.
+E           2026-10-03 20:34:28.732 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6156447744.
+E           2026-10-03 20:34:28.788 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen chat mounted
+E           2026-10-03 20:34:28.790 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:28.797 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:28.803 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23581 - Chat screen resuming
+E           2026-10-03 20:34:29.653 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3554 - Opened/Reopened SQLite connection db_sha256=memory thread=6173274112
+E           2026-10-03 20:34:29.672 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6173274112.
+E           2026-10-03 20:34:29.686 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6173274112.
+E           2026-10-03 20:34:29.691 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6156447744.
+E           2026-10-03 20:34:29.692 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6156447744.
+E           2026-10-03 20:34:29.839 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:29.839 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:29.839 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23581 - Chat screen resuming
+E           2026-10-03 20:34:29.932 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6173274112.
+E           2026-10-03 20:34:29.934 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:11274 - Listing all active conversations: limit=1000, offset=0
+E           2026-10-03 20:34:29.934 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6173274112.
+E           2026-10-03 20:34:29.937 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): 
+E                           SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (test-client, 1000, 0)
+E           2026-10-03 20:34:29.944 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4122 - Query execution failed: 
+E                           SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Error: exception_type=OperationalError
+E           2026-10-03 20:34:29.947 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:11332 - Database error listing all active conversations: exception_type=CharactersRAGDBError
+E           2026-10-03 20:34:29.951 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_prune_console_rail_preferences:13097 - Console rail preference prune skipped: Query execution failed: no such table: conversations
+E           2026-10-03 20:34:29.998 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3554 - Opened/Reopened SQLite connection db_sha256=memory thread=6190100480
+E           2026-10-03 20:34:29.998 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6190100480.
+E           2026-10-03 20:34:29.998 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6190100480.
+E           2026-10-03 20:34:30.395 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25203 - No collapsible states to restore
+E           2026-10-03 20:34:30.395 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6173274112.
+E           2026-10-03 20:34:30.396 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6173274112.
+E           2026-10-03 20:34:30.522 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6173274112.
+E           2026-10-03 20:34:30.523 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6173274112.
+E           2026-10-03 20:34:31.993 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:31.996 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:31.998 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen chat unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1046 No capability information found for llama_cpp/test-model, using defaults
+E           - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee1/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           6.74s call     Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[0]
+E           
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[0]
+E           1 failed in 10.10s
+
+Tests/private_profile.py:158: Failed
+__________ test_redirect_fit_boundary_keeps_run_controls_in_place[1] ___________
+
+self = <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[1]>
+
+    def runtest(self) -> None:
+        runner_fixture_id = f"_{self._loop_scope}_scoped_runner"
+        runner = self._request.getfixturevalue(runner_fixture_id)
+        context = contextvars.copy_context()
+        synchronized_obj = _synchronize_coroutine(
+            getattr(*self._synchronization_target_attr), runner, context
+        )
+        with MonkeyPatch.context() as c:
+            c.setattr(*self._synchronization_target_attr, synchronized_obj)
+>           super().runtest()
+
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:474: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+../../../../Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:721: in inner
+    runner.run(coro, context=context)
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py:691: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+args = ()
+kwargs = {'request': <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[1]>>, 'threshold_offset': 1}
+request = <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[1]>>
+work = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee2/private-profile-process')
+profile = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...5-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee2/private-profile-process/profile')
+environment = {'BROWSER_USE_ACCESS_VERIFYING_IDENTITY': 'MCowBQYDK2VwAyEANwqxwYsEWxgwX0aksJ1Npcf7iOTqoO8TY5PAXiLXDFA=', 'BUN_INSTALL... 'CODEX_APP_TOOLS_PIPE_PATH': '/tmp/codex-browser-use/11cdc099-f81d-4638-b70f-10e4b19d551f.sock', 'CODEX_CI': '1', ...}
+name = 'PYTEST_ADDOPTS', marker = None, timeout = 300.0
+report = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...eview-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee2/private-profile-process/pytest.xml')
+log = PosixPath('/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-p...eview-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee2/private-profile-process/pytest.log')
+
+    @wraps(function)
+    async def wrapped(*args, **kwargs):
+        request = kwargs["request"]
+        if is_private_profile_child(request):
+            result = function(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
+        if _CHILD_NODE in os.environ:
+            pytest.fail("private profile child node changed")
+        work = request.getfixturevalue("tmp_path") / "private-profile-process"
+        work.mkdir(mode=0o700)
+        profile = work / "profile"
+        profile.mkdir(mode=0o700)
+        environment = dict(os.environ)
+        environment.update(
+            TLDW_TEST_PRIVATE_PROFILE_NODE=request.node.nodeid,
+            TLDW_TEST_CONFIG_ROOT=str(profile),
+            HOME=str(profile / "home"),
+            USERPROFILE=str(profile / "home"),
+            XDG_CONFIG_HOME=str(profile / "config"),
+            XDG_DATA_HOME=str(profile / "data"),
+            TLDW_CONFIG_PATH=str(profile / "config" / "config.toml"),
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        )
+        for name in (
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+            "PYTEST_XDIST_WORKER",
+            "PYTEST_XDIST_WORKER_COUNT",
+            "PYTEST_ADDOPTS",
+        ):
+            environment.pop(name, None)
+        marker = request.node.get_closest_marker("timeout")
+        timeout = marker.args[0] if marker and marker.args else None
+        if timeout is None and marker:
+            timeout = marker.kwargs.get("timeout")
+        if timeout is None:
+            timeout = get_env_settings(request.config).timeout
+        timeout = float(timeout or 0)
+        report = work / "pytest.xml"
+        log = work / "pytest.log"
+        coverage_plugin = request.config.pluginmanager.getplugin("_cov")
+        coverage_controller = getattr(coverage_plugin, "cov_controller", None)
+        coverage_args = []
+        coverage_file = work / ".coverage"
+        if coverage_controller is not None:
+            # Keep each child's data private; the parent retains its report gate.
+            environment["COVERAGE_FILE"] = str(coverage_file)
+            for name in tuple(environment):
+                if name.startswith("COV_CORE_"):
+                    environment.pop(name)
+            coverage_args = [
+                "-p",
+                "pytest_cov.plugin",
+                "--cov-report=",
+                "--cov-fail-under=0",
+            ]
+            sources = coverage_controller.cov_source
+            coverage_args += (
+                [f"--cov={source}" for source in sources] if sources else ["--cov"]
+            )
+            config_file = coverage_controller.cov.config.config_file
+            if config_file:
+                coverage_args += [f"--cov-config={config_file}"]
+            if coverage_controller.cov.config.branch:
+                coverage_args += ["--cov-branch"]
+            if coverage_plugin.options.cov_context:
+                coverage_args += [
+                    f"--cov-context={coverage_plugin.options.cov_context}"
+                ]
+        with log.open("w") as output:
+            process = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-m",
+                "pytest",
+                request.node.nodeid,
+                "-p",
+                "pytest_asyncio.plugin",
+                "-p",
+                "pytest_timeout",
+                "-q",
+                f"--timeout={timeout}",
+                f"--basetemp={work / 'pytest'}",
+                f"--junitxml={report}",
+                *coverage_args,
+                cwd=Path(__file__).resolve().parents[1],
+                env=environment,
+                stdout=output,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                await asyncio.wait_for(process.wait(), timeout if timeout > 0 else None)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+        if coverage_controller is not None and coverage_file.is_file():
+            # pytest-cov combines parallel files for serial and xdist reports.
+            parent_file = Path(
+                coverage_controller.topdir, coverage_controller.cov.config.data_file
+            ).resolve()
+            with NamedTemporaryFile(
+                prefix=parent_file.name + ".", dir=parent_file.parent, delete=False
+            ) as output:
+                output.write(coverage_file.read_bytes())
+        if process.returncode:
+>           pytest.fail(
+                f"{log}\n{_child_failure_report(report)}\n"
+                f"--- child log tail ---\n{log.read_text()[-16000:]}"
+            )
+E           Failed: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee2/private-profile-process/pytest.log
+E           --- child failure: AssertionError: assert False is True
+E            +  where False = ConsoleComposerBar(id='console-native-composer', classes='ds-panel')._redirect_budgeted
+E           threshold_offset = 1
+E           request = <FixtureRequest for <Coroutine test_redirect_fit_boundary_keeps_run_controls_in_place[1]>>
+E           
+E               @pytest.mark.asyncio
+E               @pytest.mark.parametrize("threshold_offset", [-1, 0, 1])
+E               @private_profile_test
+E               async def test_redirect_fit_boundary_keeps_run_controls_in_place(threshold_offset, request):
+E                   """Fit comes from the visible control cells and draft/reason floors."""
+E                   gateway, host = _held_run_host()
+E                   async with host.run_test(size=(235, 52)) as pilot:
+E                       console, composer = await _mounted(host, pilot)
+E                       await pilot.pause(0.2)
+E                       row = composer.query_one("#console-composer-expanded")
+E                       chrome = host.size.width - row.content_size.width
+E                       # Independent geometry: left Menu/collapse 12+6; actions Send 6,
+E                       # gap 2, Dictate 11, Stop 6, Redirect 10; margin 2; draft floor
+E                       # 32; widest reason 52. No production budget method supplies this.
+E                       threshold = chrome + 12 + 6 + 6 + 2 + 11 + 6 + 10 + 2 + 32 + 52
+E                       await pilot.resize_terminal(threshold + threshold_offset, 52)
+E                       await pilot.pause(0.3)
+E                       actions = composer.query_one("#console-composer-actions")
+E                       send = composer.query_one("#console-send-message", Button)
+E                       dictate = composer.query_one("#console-dictation", Button)
+E                       redirect = composer.query_one("#console-redirect-generation", Button)
+E                       draft = composer.query_one("#console-command-visible-text", Static)
+E               
+E                       def geometry():
+E                           return (actions.region, send.region, dictate.region, draft.region)
+E               
+E                       resting = geometry()
+E                       expected_fit = threshold_offset >= 0
+E           >           assert composer._redirect_budgeted is expected_fit
+E           E           AssertionError: assert False is True
+E           E            +  where False = ConsoleComposerBar(id='console-native-composer', classes='ds-panel')._redirect_budgeted
+E           
+E           Tests/UI/test_console_composer_run_controls.py:1535: AssertionError
+E           --- child log tail ---
+E            on thread 8494865792.
+E           2026-10-03 20:34:40.204 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.208 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.231 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.239 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.263 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.268 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.275 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 3 on thread 8494865792.
+E           2026-10-03 20:34:40.275 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 3 on thread 8494865792.
+E           2026-10-03 20:34:40.279 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.282 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.307 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.309 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.310 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.319 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.334 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.336 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.344 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.346 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24458 - Entered nested transaction level 2 on thread 8494865792.
+E           2026-10-03 20:34:40.371 | INFO     | tldw_chatbook.DB.ChaChaNotes_DB:_initialize_schema:8685 - Database schema 'rag_char_chat_schema' successfully initialized/migrated to version 76.
+E           2026-10-03 20:34:40.371 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:40.372 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:__init__:3399 - CharactersRAGDB initialization completed successfully db_sha256=memory
+E           2026-10-03 20:34:40.709 | DEBUG    | tldw_chatbook.UI.Navigation.base_app_screen:__init__:89 - Initializing ChatScreen screen: chat
+E           2026-10-03 20:34:40.726 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:40.727 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:40.737 | DEBUG    | tldw_chatbook.Chat.chat_persistence_service:__init__:271 - Recovered-media message source is unavailable.
+E           2026-10-03 20:34:40.919 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 10 pricing patterns for provider anthropic
+E           2026-10-03 20:34:40.919 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 18 pricing patterns for provider openai
+E           2026-10-03 20:34:40.923 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 5 pricing patterns for provider cohere
+E           2026-10-03 20:34:40.923 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 5 pricing patterns for provider google
+E           2026-10-03 20:34:40.926 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 4 pricing patterns for provider mistral
+E           2026-10-03 20:34:40.927 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 4 pricing patterns for provider mistralai
+E           2026-10-03 20:34:40.927 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:_compile_patterns:655 - Compiled 2 pricing patterns for provider deepseek
+E           2026-10-03 20:34:40.927 | DEBUG    | tldw_chatbook.LLM_Calls.pricing_catalog:__init__:630 - PricingCatalog initialized with 62 direct mappings and patterns for 7 providers
+E           2026-10-03 20:34:40.935 | DEBUG    | tldw_chatbook.UI.Console_Modules.workspace:_persisted_console_browser_rows:3825 - Local persisted conversation service is unavailable
+E           2026-10-03 20:34:40.935 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14058 - No Console workspace context tray available for sync
+E           2026-10-03 20:34:40.936 | INFO     | tldw_chatbook.config:save_setting_to_cli_config:9309 - Attempting to save setting: [console.rail_state].console_rail_state:global:shared-layout-v1 = {'left_open': True, 'workspace_open': False, 'conversations_open': True, 'model_open': False, 'details_open': False, 'agent_open': False, 'inspector_more_open': False, 'environment_open': True, 'tasks_open': True}
+E           2026-10-03 20:34:40.936 | WARNING  | tldw_chatbook.Chat.console_fleet_wake:recover:1001 - wake recovery failed (exception_type=AttributeError)
+E           2026-10-03 20:34:41.239 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_sync_console_workspace_context:14058 - No Console workspace context tray available for sync
+E           2026-10-03 20:34:41.611 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3554 - Opened/Reopened SQLite connection db_sha256=memory thread=6163738624
+E           2026-10-03 20:34:41.618 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6163738624.
+E           2026-10-03 20:34:41.618 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6163738624.
+E           2026-10-03 20:34:41.642 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8612 - Attempting to apply literal settings mutation: sets={"('console', 'rail_state')": ['console_rail_state:global:shared-layout-v1']}, deletes={}
+E           2026-10-03 20:34:41.666 | SUCCESS  | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8670 - Successfully replaced settings file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee2/private-profile-process/profile/config/config.toml
+E           2026-10-03 20:34:41.669 | INFO     | tldw_chatbook.config:_load_settings_uncached:2134 - Determined ACTUAL_PROJECT_ROOT for general paths: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-03 20:34:41.669 | INFO     | tldw_chatbook.config:_load_settings_uncached:2137 - Determined APP_COMPONENT_ROOT for config files: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook
+E           2026-10-03 20:34:41.670 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2160 - load_settings: Configuration loaded from disk (cache miss or forced reload)
+E           2026-10-03 20:34:41.674 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:2482 - Darwin platform-preferred STT provider resolved to: faster-whisper
+E           2026-10-03 20:34:41.728 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3712 - Ensured chat dictionaries folder exists: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee2/private-profile-process/profile/home/.local/share/tldw_cli/default_user/chat_dicts
+E           2026-10-03 20:34:41.731 | DEBUG    | tldw_chatbook.config:_load_settings_uncached:3743 - load_settings: Configuration cached for future use
+E           2026-10-03 20:34:41.733 | INFO     | tldw_chatbook.config:_apply_literal_settings_transaction_locked:8698 - Global configuration caches invalidated and reloaded.
+E           2026-10-03 20:34:41.816 | DEBUG    | tldw_chatbook.Widgets.compact_model_bar:handle_compact_temp_change:203 - Sidebar temperature input not found for sync
+E           2026-10-03 20:34:41.832 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3554 - Opened/Reopened SQLite connection db_sha256=memory thread=6180564992
+E           2026-10-03 20:34:41.836 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6180564992.
+E           2026-10-03 20:34:41.838 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6180564992.
+E           2026-10-03 20:34:41.877 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_mount:532 - Screen chat mounted
+E           2026-10-03 20:34:41.878 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:41.882 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:41.882 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23581 - Chat screen resuming
+E           2026-10-03 20:34:42.628 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3554 - Opened/Reopened SQLite connection db_sha256=memory thread=6197391360
+E           2026-10-03 20:34:42.632 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6197391360.
+E           2026-10-03 20:34:42.644 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6197391360.
+E           2026-10-03 20:34:42.673 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6163738624.
+E           2026-10-03 20:34:42.674 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6163738624.
+E           2026-10-03 20:34:42.856 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:42.856 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:42.856 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:on_screen_resume:23581 - Chat screen resuming
+E           2026-10-03 20:34:43.110 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6197391360.
+E           2026-10-03 20:34:43.111 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:11274 - Listing all active conversations: limit=1000, offset=0
+E           2026-10-03 20:34:43.112 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6197391360.
+E           2026-10-03 20:34:43.114 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4046 - Executing SQL (script=False): 
+E                           SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Params: (test-client, 1000, 0)
+E           2026-10-03 20:34:43.115 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:execute_query:4122 - Query execution failed: 
+E                           SELECT id,                        root_id,                        character_id,                        assistant_kind,                        assistant_id,                        assistant_authority_id,                        runtime_backend,                        discovery_owner, ... Error: exception_type=OperationalError
+E           2026-10-03 20:34:43.115 | ERROR    | tldw_chatbook.DB.ChaChaNotes_DB:list_all_active_conversations:11332 - Database error listing all active conversations: exception_type=CharactersRAGDBError
+E           2026-10-03 20:34:43.115 | WARNING  | tldw_chatbook.UI.Screens.chat_screen:_prune_console_rail_preferences:13097 - Console rail preference prune skipped: Query execution failed: no such table: conversations
+E           2026-10-03 20:34:43.202 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_get_thread_connection:3554 - Opened/Reopened SQLite connection db_sha256=memory thread=6214217728
+E           2026-10-03 20:34:43.203 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6214217728.
+E           2026-10-03 20:34:43.206 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6214217728.
+E           2026-10-03 20:34:43.382 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6197391360.
+E           2026-10-03 20:34:43.382 | DEBUG    | tldw_chatbook.UI.Screens.chat_screen:_restore_collapsible_states:25203 - No collapsible states to restore
+E           2026-10-03 20:34:43.383 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6197391360.
+E           2026-10-03 20:34:43.394 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 6163738624.
+E           2026-10-03 20:34:43.397 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24589 - Transaction (outermost) rolled back due to exception (OperationalError) on thread 6163738624.
+E           2026-10-03 20:34:44.854 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_enter_transaction:24489 - Started outermost transaction on thread 8494865792.
+E           2026-10-03 20:34:44.857 | DEBUG    | tldw_chatbook.DB.ChaChaNotes_DB:_exit_transaction:24552 - Transaction (outermost) committed successfully on thread 8494865792.
+E           2026-10-03 20:34:44.858 | INFO     | tldw_chatbook.UI.Navigation.base_app_screen:on_unmount:563 - Screen chat unmounted
+E           ------------------------------ Captured log call -------------------------------
+E           INFO     root:app.py:1385 App __init__: Determined initial tab value: chat
+E           WARNING  root:app.py:1492 Prompts service not initialized, self.prompts_db set to None.
+E           ERROR    root:app.py:1513 ChaChaNotesDB (CharactersRAGDB) instance not found/assigned in app.__init__.
+E           INFO     tldw_chatbook.model_capabilities:model_capabilities.py:1046 No capability information found for llama_cpp/test-model, using defaults
+E           - generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red-profile-kcos_4y2/pytest/test_redirect_fit_boundary_kee2/private-profile-process/pytest.xml -
+E           ============================= slowest 25 durations =============================
+E           6.32s call     Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[1]
+E           
+E           (2 durations < 1s hidden.)
+E           =========================== short test summary info ============================
+E           FAILED Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[1]
+E           1 failed in 9.74s
+
+Tests/private_profile.py:158: Failed
+____ test_note_actions_persist_through_notes_service[-User-summarize-note] _____
+
+action_id = 'summarize-note', origin = '', speaker = 'User'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
+    @pytest.mark.parametrize(
+        ("origin", "speaker"),
+        [("", "User"), ("agent_chat_start", "Agent handoff"), ("untrusted", "Unverified handoff")],
+    )
+    async def test_note_actions_persist_through_notes_service(action_id, origin, speaker):
+        """End-to-end (review follow-up): driving each action's worker against
+        a stubbed notes service persists the draft with the expected title,
+        content, scope, keywords, and the app's configured notes identity."""
+>       app, screen = _build_screen()
+                      ^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_note_span_actions.py:353: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_note_span_actions.py:227: in _build_screen
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:357: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:113: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10a931730>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ test_note_actions_persist_through_notes_service[-User-save-transcript-note] __
+
+action_id = 'save-transcript-note', origin = '', speaker = 'User'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
+    @pytest.mark.parametrize(
+        ("origin", "speaker"),
+        [("", "User"), ("agent_chat_start", "Agent handoff"), ("untrusted", "Unverified handoff")],
+    )
+    async def test_note_actions_persist_through_notes_service(action_id, origin, speaker):
+        """End-to-end (review follow-up): driving each action's worker against
+        a stubbed notes service persists the draft with the expected title,
+        content, scope, keywords, and the app's configured notes identity."""
+>       app, screen = _build_screen()
+                      ^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_note_span_actions.py:353: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_note_span_actions.py:227: in _build_screen
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:357: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:113: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10a931730>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ test_note_actions_persist_through_notes_service[agent_chat_start-Agent handoff-summarize-note] _
+
+action_id = 'summarize-note', origin = 'agent_chat_start'
+speaker = 'Agent handoff'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
+    @pytest.mark.parametrize(
+        ("origin", "speaker"),
+        [("", "User"), ("agent_chat_start", "Agent handoff"), ("untrusted", "Unverified handoff")],
+    )
+    async def test_note_actions_persist_through_notes_service(action_id, origin, speaker):
+        """End-to-end (review follow-up): driving each action's worker against
+        a stubbed notes service persists the draft with the expected title,
+        content, scope, keywords, and the app's configured notes identity."""
+>       app, screen = _build_screen()
+                      ^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_note_span_actions.py:353: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_note_span_actions.py:227: in _build_screen
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:357: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:113: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10a931730>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ test_note_actions_persist_through_notes_service[agent_chat_start-Agent handoff-save-transcript-note] _
+
+action_id = 'save-transcript-note', origin = 'agent_chat_start'
+speaker = 'Agent handoff'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
+    @pytest.mark.parametrize(
+        ("origin", "speaker"),
+        [("", "User"), ("agent_chat_start", "Agent handoff"), ("untrusted", "Unverified handoff")],
+    )
+    async def test_note_actions_persist_through_notes_service(action_id, origin, speaker):
+        """End-to-end (review follow-up): driving each action's worker against
+        a stubbed notes service persists the draft with the expected title,
+        content, scope, keywords, and the app's configured notes identity."""
+>       app, screen = _build_screen()
+                      ^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_note_span_actions.py:353: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_note_span_actions.py:227: in _build_screen
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:357: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:113: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10a931730>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ test_note_actions_persist_through_notes_service[untrusted-Unverified handoff-summarize-note] _
+
+action_id = 'summarize-note', origin = 'untrusted'
+speaker = 'Unverified handoff'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
+    @pytest.mark.parametrize(
+        ("origin", "speaker"),
+        [("", "User"), ("agent_chat_start", "Agent handoff"), ("untrusted", "Unverified handoff")],
+    )
+    async def test_note_actions_persist_through_notes_service(action_id, origin, speaker):
+        """End-to-end (review follow-up): driving each action's worker against
+        a stubbed notes service persists the draft with the expected title,
+        content, scope, keywords, and the app's configured notes identity."""
+>       app, screen = _build_screen()
+                      ^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_note_span_actions.py:353: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_note_span_actions.py:227: in _build_screen
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:357: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:113: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10a931730>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ test_note_actions_persist_through_notes_service[untrusted-Unverified handoff-save-transcript-note] _
+
+action_id = 'save-transcript-note', origin = 'untrusted'
+speaker = 'Unverified handoff'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("action_id", ["summarize-note", "save-transcript-note"])
+    @pytest.mark.parametrize(
+        ("origin", "speaker"),
+        [("", "User"), ("agent_chat_start", "Agent handoff"), ("untrusted", "Unverified handoff")],
+    )
+    async def test_note_actions_persist_through_notes_service(action_id, origin, speaker):
+        """End-to-end (review follow-up): driving each action's worker against
+        a stubbed notes service persists the draft with the expected title,
+        content, scope, keywords, and the app's configured notes identity."""
+>       app, screen = _build_screen()
+                      ^^^^^^^^^^^^^^^
+
+Tests/Chat/test_console_note_span_actions.py:353: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+Tests/Chat/test_console_note_span_actions.py:227: in _build_screen
+    app = _build_test_app()
+          ^^^^^^^^^^^^^^^^^
+Tests/UI/app_factory.py:357: in _build_test_app
+    fake_app_config = build_test_app_config(
+Tests/UI/app_factory.py:113: in build_test_app_config
+    config = load_settings()
+             ^^^^^^^^^^^^^^^
+tldw_chatbook/config.py:2027: in load_settings
+    return _load_settings_guarded(
+tldw_chatbook/Backup_Recovery/config_participants.py:421: in wrapped
+    with operation(source, target=target):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/config_participants.py:352: in operation
+    with raw._scope(source, route, writing=True, selected_read=target) as active:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:649: in _scope
+    participant = _raw_participant(source)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^
+tldw_chatbook/Backup_Recovery/raw_participants.py:296: in _raw_participant
+    state = _participant_state(participant)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+participant = <tldw_chatbook.Backup_Recovery.raw_participants._RawParticipant object at 0x10a931730>
+
+    def _participant_state(participant):
+        if type(participant) is not _RawParticipant or participant not in _participants:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        state = _participants[participant]
+        source = state.source()
+        if source is None or type(source) is not state.source_type:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if _source_participants.get(source) is not participant:
+            raise bootstrap.RecoveryRequired("raw_participant_not_installed")
+        if state.owner.startswith("mcp."):
+            bound = mcp_sources.binding(source)
+            if bound is None or not bound[2] or bound[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "chat.dictionaries":
+            binding = dictionary_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner in {"personas", "chat.dictionary_history", "chat.rag_context"}:
+            binding = chat_sources.binding(source)
+            if binding is None or binding[1] != state.selected:
+                raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+        if state.owner == "config":
+            binding = config_files.binding(source)
+            if binding is None or binding[1] != state.selected:
+>               raise bootstrap.RecoveryRequired("raw_source_selection_changed")
+E               tldw_chatbook.Backup_Recovery.bootstrap.RecoveryRequired: raw_source_selection_changed
+
+tldw_chatbook/Backup_Recovery/raw_participants.py:132: RecoveryRequired
+_ test_defaults_discard_authority_and_preserve_literal_fields[_shared_validate] _
+
+validate = <function _shared_validate at 0x113e4e160>
+
+    @pytest.mark.parametrize("validate", [_shared_validate, validate_new_chat_arguments])
+    def test_defaults_discard_authority_and_preserve_literal_fields(validate):
+>       assert validate({"source_run_id": "forged", "workspace_id": "secret"}) == {
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            "title": "", "opening_prompt": "", "instructions": "",
+            "destination": "same_workspace", "mode": "draft", "provider": "",
+            "model": "", "preset": "",
+        }
+
+Tests/Utils/test_console_new_chat_input_validation.py:18: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+arguments = {'source_run_id': 'forged', 'workspace_id': 'secret'}
+
+    def _shared_validate(arguments):
+        validator = getattr(input_validation, "validate_console_new_chat_arguments", None)
+>       assert callable(validator), "chat creation needs the shared Pydantic validation boundary"
+E       AssertionError: chat creation needs the shared Pydantic validation boundary
+E       assert False
+E        +  where False = callable(None)
+
+Tests/Utils/test_console_new_chat_input_validation.py:12: AssertionError
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-3-red.xml -
+============================= slowest 25 durations =============================
+17.30s call     Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[-1]
+13.17s call     Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[0]
+13.02s call     Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[1]
+
+(22 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[-1]
+FAILED Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[0]
+FAILED Tests/UI/test_console_composer_run_controls.py::test_redirect_fit_boundary_keeps_run_controls_in_place[1]
+FAILED Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[-User-summarize-note]
+FAILED Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[-User-save-transcript-note]
+FAILED Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[agent_chat_start-Agent handoff-summarize-note]
+FAILED Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[agent_chat_start-Agent handoff-save-transcript-note]
+FAILED Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[untrusted-Unverified handoff-summarize-note]
+FAILED Tests/Chat/test_console_note_span_actions.py::test_note_actions_persist_through_notes_service[untrusted-Unverified handoff-save-transcript-note]
+FAILED Tests/Utils/test_console_new_chat_input_validation.py::test_defaults_discard_authority_and_preserve_literal_fields[_shared_validate]
+10 failed, 1 passed in 50.72s

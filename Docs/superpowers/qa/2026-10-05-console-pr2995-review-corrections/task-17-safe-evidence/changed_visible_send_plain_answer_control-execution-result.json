@@ -1,0 +1,34 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-vv",
+    "-p",
+    "no:randomly",
+    "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pr2995-task17-execution-5xq_8ohb/pytest",
+    "Tests/UI/test_console_ask_user_typed_answers.py::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer",
+    "--junitxml=/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-17-safe-evidence/changed_visible_send_plain_answer_control-execution.xml"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 5.225372500000006,
+  "stdout": "changed_visible_send_plain_answer_control-execution.stdout",
+  "stderr": "changed_visible_send_plain_answer_control-execution.stderr",
+  "log": "changed_visible_send_plain_answer_control-execution.log",
+  "complete_outputs": true,
+  "pid": 53099,
+  "closed_process": true,
+  "head_after": "54a18180211ed2ecbf450db78202d28d97a7b995",
+  "source_after_unchanged": true,
+  "junit": "changed_visible_send_plain_answer_control-execution.xml",
+  "cases": [
+    {
+      "classname": "Tests.UI.test_console_ask_user_typed_answers",
+      "name": "test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer",
+      "time": "1.817"
+    }
+  ],
+  "case_count": 1,
+  "failed_cases": [],
+  "skipped_cases": []
+}

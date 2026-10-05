@@ -1,0 +1,405 @@
+{
+  "status": "read-only preflight; proposed integration and future selection; no production/test execution",
+  "head": "b1efc37ae8f481c1df01e2f253d5878ba68e35a4",
+  "olddev": "a7d9bca5da7f0d6be95cb9c3b7ab81602987051c",
+  "newdev": "49206beea90d35ea9e6842ffa44e4b274db29d8a",
+  "git_merge_base": "a7d9bca5da7f0d6be95cb9c3b7ab81602987051c",
+  "incoming_commit_count": 3,
+  "incoming_path_count": 13,
+  "feature_overlap_paths": [
+    "backlog/docs/lessons-backlog-hygiene.md"
+  ],
+  "final_tree_conflict_paths": [
+    "backlog/docs/lessons-backlog-hygiene.md"
+  ],
+  "production_conflict_count": 0,
+  "git_merge_tree_mode": "--trivial-merge; no HEAD/index/worktree operation",
+  "overlay_map": [
+    {
+      "path": "Tests/LLM_Calls/test_doc_derived_presets.py",
+      "olddev_blob": "495c8b17c15b3730310767721ba841feb55e8246",
+      "head_blob": "495c8b17c15b3730310767721ba841feb55e8246",
+      "newdev_blob": "8511a7f79aa77ad2316739215ec05b109ad2bd48",
+      "feature_overlap": false,
+      "final_tree_conflict": false,
+      "candidate_sha256": "dbb658cfdcbe71dbc3f4c76a7fe2a3c8da56e8826c3211f4c58dbd6bbef7dec0",
+      "candidate_bytes": 21732,
+      "candidate_lines": 590,
+      "preservation": "exact upstream whole file",
+      "head_sha256": "99d39039a74b567e1818ba4010c9e02548f6402302a478052f066f9bdeab0950"
+    },
+    {
+      "path": "Tests/LLM_Calls/test_inference_cloud_presets.py",
+      "olddev_blob": "5c43f6ad2ad1e09ce34a96f3b04519fa5ae858c9",
+      "head_blob": "5c43f6ad2ad1e09ce34a96f3b04519fa5ae858c9",
+      "newdev_blob": "9d8120c05330a68fdc5e46801b7cb83fb1d1134a",
+      "feature_overlap": false,
+      "final_tree_conflict": false,
+      "candidate_sha256": "6b69ebab239fa0724d79e695ce502321f189af5b82c6f31491a5aedb6cc917bf",
+      "candidate_bytes": 6903,
+      "candidate_lines": 185,
+      "preservation": "exact upstream whole file",
+      "head_sha256": "62053a3d1c23745ac4e64d694f61620a6da7b900e066430af8ed3467b96f33f4"
+    },
+    {
+      "path": "Tests/LLM_Calls/test_live_capture_replay.py",
+      "olddev_blob": "2221a82c64c7a8f55be5d652232c63dc581e7d2b",
+      "head_blob": "2221a82c64c7a8f55be5d652232c63dc581e7d2b",
+      "newdev_blob": "3711a99be2dab0a6a28fd4b87d7fc8910483a606",
+      "feature_overlap": false,
+      "final_tree_conflict": false,
+      "candidate_sha256": "a009bec348e7dcff7f9872c5ecd8936d049c51f298b78572dc7fd75d125203a4",
+      "candidate_bytes": 10112,
+      "candidate_lines": 246,
+      "preservation": "exact upstream whole file",
+      "head_sha256": "28df63e64a651de44e24bad73a03a2f1f329c5e93273566a0ec4d22fcb8259c7"
+    },
+    {
+      "path": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py",
+      "olddev_blob": "06b1b6d4a727b4bf67af45728f9df9e41c83b6e7",
+      "head_blob": "06b1b6d4a727b4bf67af45728f9df9e41c83b6e7",
+      "newdev_blob": "8a01ec5185c4a65ec28aa917fe94546d5d317ee3",
+      "feature_overlap": false,
+      "final_tree_conflict": false,
+      "candidate_sha256": "d7a2fd78b428ffdfb3cc7f6e83f30108a59dcdb3626bb56a96d82aacd05dadf4",
+      "candidate_bytes": 45120,
+      "candidate_lines": 1290,
+      "preservation": "exact upstream whole file",
+      "head_sha256": "ed0f53e5f0914e3c3e6b4b5e4dc3a6d51f1716d08ae5c202f76e0c8bf3963f50"
+    },
+    {
+      "path": "Tests/fixtures/cloud_live/capture.py",
+      "olddev_blob": "e66e484dfce7ec67748653f442cc91efb4f63673",
+      "head_blob": "e66e484dfce7ec67748653f442cc91efb4f63673",
+      "newdev_blob": "44f3a6845230f520fa18cf0faca1227785c37dbb",
+      "feature_overlap": false,
+      "final_tree_conflict": false,
+      "candidate_sha256": "6c4fcf50933fbb7ccbc63fc435b06b35b9440b02adaad01182e57c66122d64ea",
+      "candidate_bytes": 27810,
+      "candidate_lines": 640,
+      "preservation": "exact upstream whole file",
+      "head_sha256": "c8b1665f80164da69f6f528a34780d54d94e5e4c02a211a92a6667397e0b1948"
+    },
+    {
+      "path": "Tests/fixtures/cloud_live/together.json",
+      "olddev_blob": null,
+      "head_blob": null,
+      "newdev_blob": "610333b4850e678159dde61d5e0f385d1f10fe08",
+      "feature_overlap": false,
+      "final_tree_conflict": false,
+      "candidate_sha256": "06ced4954143bb61372ce8d42919c0551d3a32bc51f8912ecddc4651bdbde8ca",
+      "candidate_bytes": 41366,
+      "candidate_lines": 695,
+      "preservation": "exact upstream whole file"
+    },
+    {
+      "path": "backlog/docs/lessons-backlog-hygiene.md",
+      "olddev_blob": "c08018825531e398ab25d14bf9656c63f9de986f",
+      "head_blob": "70a15c4bd5d7dc6bac23e948aa92eeccb2fd2806",
+      "newdev_blob": "9ebc5b632746d3c8248582e75d2e0c47c58cd4df",
+      "feature_overlap": true,
+      "final_tree_conflict": true,
+      "candidate_sha256": "49f6324c6348519e418d883b8c78b80d5c4dbc2a340c2318ed4edab26b3d1f97",
+      "candidate_bytes": 73840,
+      "candidate_lines": 1245,
+      "preservation": "head exact prefix + incoming exact append; delete head append to reconstruct complete upstream file",
+      "head_sha256": "90d8329e39e450a7d26c7fbb84b516db9931d18459bfd352366a79b9ba0b57f5"
+    },
+    {
+      "path": "backlog/docs/lessons-live-verification.md",
+      "olddev_blob": "45855c1dfdcf768de4dda1dfc732489a4ab6d44b",
+      "head_blob": "45855c1dfdcf768de4dda1dfc732489a4ab6d44b",
+      "newdev_blob": "c66f09bce13addf96787f9165c1aa4723d5ce1a1",
+      "feature_overlap": false,
+      "final_tree_conflict": false,
+      "candidate_sha256": "de25ed6d7a82bff8e8233a11bb4306b4b81348e14b740ebc855c8a4332f87094",
+      "candidate_bytes": 243502,
+      "candidate_lines": 3759,
+      "preservation": "exact upstream whole file",
+      "head_sha256": "9534ba1ddee019fb72f0036f0a308bfd064ddf39159933f0394e57afdd8cb365"
+    },
+    {
+      "path": "backlog/tasks/task-33640 - Live-capture-every-engine-preset-against-its-real-API.md",
+      "olddev_blob": "bc17135423c4502cf711f79079362b6756d09614",
+      "head_blob": "bc17135423c4502cf711f79079362b6756d09614",
+      "newdev_blob": "b99ff8c149f5e9fe9d3333a0ee160944cbb19769",
+      "feature_overlap": false,
+      "final_tree_conflict": false,
+      "candidate_sha256": "26914fe895e6ec4aec187f77763ec814d05b88f24971457580959d4547d1f073",
+      "candidate_bytes": 6584,
+      "candidate_lines": 58,
+      "preservation": "exact upstream whole file",
+      "head_sha256": "e10bf18a4870f4703e5ee77f2c7c4505d79353887264ab0a9564772b52c6f486"
+    },
+    {
+      "path": "backlog/tasks/task-34361 - Model-discovery-rejects-Togethers-bare-array-models-listing.md",
+      "olddev_blob": null,
+      "head_blob": null,
+      "newdev_blob": "80f8cc16637629e095aac23f4af683709e5b4044",
+      "feature_overlap": false,
+      "final_tree_conflict": false,
+      "candidate_sha256": "2aaae5e9717e752354aa5e91fe5bba2c3730313a7169c0fe33536b9d764bcbf0",
+      "candidate_bytes": 3222,
+      "candidate_lines": 41,
+      "preservation": "exact upstream whole file"
+    },
+    {
+      "path": "backlog/tasks/task-34362 - Every-streamed-Together-reply-fails-at-the-first-chunk.md",
+      "olddev_blob": null,
+      "head_blob": null,
+      "newdev_blob": "70ef8d3d4c7c875774704280cbbd121f162c426b",
+      "feature_overlap": false,
+      "final_tree_conflict": false,
+      "candidate_sha256": "390997a36e6885c2ce80a7c4f5a0362fa1c3356a3f276b06eeae078c8d09f9df",
+      "candidate_bytes": 2028,
+      "candidate_lines": 34,
+      "preservation": "exact upstream whole file"
+    },
+    {
+      "path": "tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py",
+      "olddev_blob": "7716fd8076ccc5c841b11c2bec012ced15930d08",
+      "head_blob": "7716fd8076ccc5c841b11c2bec012ced15930d08",
+      "newdev_blob": "bf08b0eb5eae0518d027f4be6c0d02adb060cb1a",
+      "feature_overlap": false,
+      "final_tree_conflict": false,
+      "candidate_sha256": "05bca4e400557b148cf2da08ab1a6eb70d2593548caf78fe9f29a4dc5b5d580c",
+      "candidate_bytes": 38389,
+      "candidate_lines": 987,
+      "preservation": "exact upstream whole file",
+      "head_sha256": "effbe30b122ed5c7a0bb2e8f04d37da3904f8cc79001394127b140be3688210e",
+      "all_import_nodes_identical": true,
+      "changed_top_level_declarations": [
+        "_scrub_model_metadata_value",
+        "discover_openai_compatible_models"
+      ],
+      "worker_timer_screen_call_projection_identical": true,
+      "line_delta": 9
+    },
+    {
+      "path": "tldw_chatbook/provider_registry.py",
+      "olddev_blob": "8e12fb7df861b2e5af75e6d5caac9978dfc0596d",
+      "head_blob": "8e12fb7df861b2e5af75e6d5caac9978dfc0596d",
+      "newdev_blob": "ee8beb9751a576bf99ad1debcdece95f6d5ea840",
+      "feature_overlap": false,
+      "final_tree_conflict": false,
+      "candidate_sha256": "3b0ad68a3a56489126a63dfb22dce8e0453e1a36503e1e20c7074ac2e6d9cb80",
+      "candidate_bytes": 78705,
+      "candidate_lines": 1744,
+      "preservation": "exact upstream whole file",
+      "head_sha256": "b9b61786c7d4b631a412111b1adc73dac18ee56ac44ea816cadf66d0c61a077e",
+      "all_import_nodes_identical": true,
+      "changed_top_level_declarations": [],
+      "worker_timer_screen_call_projection_identical": true,
+      "line_delta": 8
+    }
+  ],
+  "lesson_append_union": {
+    "head_append_bytes": 869,
+    "incoming_append_bytes": 682,
+    "head_exact_prefix": true,
+    "upstream_restored_after_head_append_removal": true,
+    "candidate_sha256": "49f6324c6348519e418d883b8c78b80d5c4dbc2a340c2318ed4edab26b3d1f97"
+  },
+  "source_qualification_carry": {
+    "original_map": "task-13-safe-evidence/final-source-union.json#source_hashes_from_execution",
+    "historical_source": "9445ed93ed430ba0e3660ad2008621f6a809bd0e",
+    "pins": 8123,
+    "all_original_pins_still_exact_at_head": true,
+    "incoming_exceptions": [
+      {
+        "path": "Tests/LLM_Calls/test_doc_derived_presets.py",
+        "qualified_sha256": "99d39039a74b567e1818ba4010c9e02548f6402302a478052f066f9bdeab0950",
+        "incoming_sha256": "dbb658cfdcbe71dbc3f4c76a7fe2a3c8da56e8826c3211f4c58dbd6bbef7dec0",
+        "policy": "Explicit incoming-source exception; historical source receipt remains original. New selection qualifies incoming behavior later."
+      },
+      {
+        "path": "Tests/LLM_Calls/test_inference_cloud_presets.py",
+        "qualified_sha256": "62053a3d1c23745ac4e64d694f61620a6da7b900e066430af8ed3467b96f33f4",
+        "incoming_sha256": "6b69ebab239fa0724d79e695ce502321f189af5b82c6f31491a5aedb6cc917bf",
+        "policy": "Explicit incoming-source exception; historical source receipt remains original. New selection qualifies incoming behavior later."
+      },
+      {
+        "path": "Tests/LLM_Calls/test_live_capture_replay.py",
+        "qualified_sha256": "28df63e64a651de44e24bad73a03a2f1f329c5e93273566a0ec4d22fcb8259c7",
+        "incoming_sha256": "a009bec348e7dcff7f9872c5ecd8936d049c51f298b78572dc7fd75d125203a4",
+        "policy": "Explicit incoming-source exception; historical source receipt remains original. New selection qualifies incoming behavior later."
+      },
+      {
+        "path": "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py",
+        "qualified_sha256": "ed0f53e5f0914e3c3e6b4b5e4dc3a6d51f1716d08ae5c202f76e0c8bf3963f50",
+        "incoming_sha256": "d7a2fd78b428ffdfb3cc7f6e83f30108a59dcdb3626bb56a96d82aacd05dadf4",
+        "policy": "Explicit incoming-source exception; historical source receipt remains original. New selection qualifies incoming behavior later."
+      },
+      {
+        "path": "Tests/fixtures/cloud_live/capture.py",
+        "qualified_sha256": "c8b1665f80164da69f6f528a34780d54d94e5e4c02a211a92a6667397e0b1948",
+        "incoming_sha256": "6c4fcf50933fbb7ccbc63fc435b06b35b9440b02adaad01182e57c66122d64ea",
+        "policy": "Explicit incoming-source exception; historical source receipt remains original. New selection qualifies incoming behavior later."
+      },
+      {
+        "path": "tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py",
+        "qualified_sha256": "effbe30b122ed5c7a0bb2e8f04d37da3904f8cc79001394127b140be3688210e",
+        "incoming_sha256": "05bca4e400557b148cf2da08ab1a6eb70d2593548caf78fe9f29a4dc5b5d580c",
+        "policy": "Explicit incoming-source exception; historical source receipt remains original. New selection qualifies incoming behavior later."
+      },
+      {
+        "path": "tldw_chatbook/provider_registry.py",
+        "qualified_sha256": "b9b61786c7d4b631a412111b1adc73dac18ee56ac44ea816cadf66d0c61a077e",
+        "incoming_sha256": "3b0ad68a3a56489126a63dfb22dce8e0453e1a36503e1e20c7074ac2e6d9cb80",
+        "policy": "Explicit incoming-source exception; historical source receipt remains original. New selection qualifies incoming behavior later."
+      }
+    ],
+    "unchanged_candidate_pins": 8116,
+    "old_maps_rewritten": false
+  },
+  "archive_carry": {
+    "original_entry_count": 2118,
+    "prior_verified_receipt": "Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/evidence-packing-verification.json",
+    "zip_path": "Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/qualification-evidence.zip",
+    "zip_sha256": "acecbdfb6ddbafe6df679c39f9f137f2bfb49a1f87b62556e1345021f8384c84",
+    "zip_bytes": 63166118,
+    "fresh_zip_whole_file_hash_verified": true,
+    "entries_decompressed_or_replayed": false,
+    "original_visible_paths_preserved": 99,
+    "new_packing_files_preserved": 5,
+    "older_qa_tree_blobs_preserved": 12337,
+    "older_qa_exact_whole_files": 12336,
+    "older_qa_original_prefix_upstream_append_exception": {
+      "path": "Docs/QA/task-31245/switcher-reuse-and-mode-follow-up.md",
+      "original_bytes": 7982,
+      "original_sha256": "db7d9edb09f65f5132aa06d98dfe48932a6528a9407db62e156042b463841505",
+      "original_exact_prefix": true,
+      "append_bytes": 4417,
+      "append_lines": 70,
+      "append_sha256": "281ec403c258c1210dac8b710e603d35eec99712ad7fbdc6cdcfe60d4a88a8d3",
+      "final_exact_upstream": true,
+      "final_sha256": "356b47f7fe349cb19f12bb432efaf44e52c59e89eb40d772ac54627e68904e49"
+    },
+    "all_qa_archive_paths_disjoint_from_incoming": true
+  },
+  "boot_loading_worker_public_close_carry": {
+    "historical_source": "a6887fdb8931adb9d1b99a376d63d9b9b66a5bb5",
+    "historical_loading_passes": 35,
+    "historical_pins": 7689,
+    "prior_task13_authorized_changed_pins": [
+      "Tests/Architecture/test_module_size_ratchet.py",
+      "Tests/UI/test_console_prompt_queue.py",
+      "tldw_chatbook/Chat/console_chat_controller.py",
+      "tldw_chatbook/Chat/console_display_state.py",
+      "tldw_chatbook/Chat/console_runtime.py",
+      "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+      "tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py",
+      "tldw_chatbook/UI/Console_Modules/wiring.py",
+      "tldw_chatbook/UI/Screens/chat_screen.py",
+      "tldw_chatbook/Widgets/Console/console_send_authority_summary.py",
+      "tldw_chatbook/Widgets/Console/console_workbench_state.py"
+    ],
+    "additional_incoming_source_exceptions": [
+      "Tests/LLM_Calls/test_doc_derived_presets.py",
+      "Tests/LLM_Calls/test_inference_cloud_presets.py",
+      "Tests/LLM_Calls/test_live_capture_replay.py",
+      "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py",
+      "Tests/fixtures/cloud_live/capture.py",
+      "tldw_chatbook/LLM_Provider_Catalog/openai_compatible_model_discovery.py",
+      "tldw_chatbook/provider_registry.py"
+    ],
+    "total_historical_exception_paths": 18,
+    "historical_source_pins_unchanged_after_overlay": 7671,
+    "relative_task13_loading_source_pins_unchanged": 7682,
+    "authority_guard_route_css_profile_source_pins_unchanged": 98,
+    "constructor_native_custody_close_declaration_pins_unchanged": 19,
+    "new_loading_selectors": [],
+    "all_incoming_production_import_nodes_identical": true,
+    "all_incoming_worker_timer_screen_calls_identical": true,
+    "marginal_preimport_modules_or_loc_change": false,
+    "reason": "Discovery is already app-import resident; registry is already Chat/UI-ready resident. Both are inside app+Chat baseline and absent from marginal preimport snapshot. Existing imports unchanged; discovery changes stay inside functions, Together record changes fields consumed at provider request time. No module route, CSS, worker, public navigation or Close owner/source changes. Historical module counts/warnings remain historical; no fresh timing/pass claim."
+  },
+  "caps_preserved": {
+    "cap_source_files": {
+      "Tests/Architecture/test_module_size_ratchet.py": "c6edcb0356dcb454a2a35838e7ab9be72731cd40b4ec6090572a864019bdbd2e",
+      "Tests/Architecture/test_screen_size_ratchet.py": "3a5eab2d853c7e21a079fdb271f964d9ade977ec572f16219968a2a33d4b2bfb",
+      "Tests/Performance/test_app_import_weight.py": "c98f0e9378897ceea76b77547925737e377904f7d0bb4650fc7f069ce3378219",
+      "Tests/Performance/test_ui_ready_module_census.py": "08bb8725611f069fd42d87f11fed813969fa44ac154fedf803cbd04d66ff6117",
+      "Tests/Performance/test_screen_preimport_payload_budget.py": "27f92d64015b5d598ed5b204d6443820c2e0316c1ae2205db189060d3bddba4c",
+      "Tests/Performance/test_boot_css_byte_budget.py": "f02d7f710ae102d4032238373439caa7e1e3e5771716b49e248af9662dbb0080"
+    },
+    "controller_lines_cap": 29301,
+    "store_lines_cap": 22344,
+    "interrupt_lines_cap": 6479,
+    "compaction_lines_cap": 4185,
+    "screen_lines_cap": 25218,
+    "screen_method_cap": 759,
+    "screen_actual_lines_historical": 25192,
+    "screen_actual_methods_historical": 759,
+    "slack_rule": 50,
+    "historical_app_import_modules": "681/686",
+    "historical_ui_ready_modules": "1033/1033",
+    "historical_preimport_modules": "557/557",
+    "historical_boot_css_bytes": "607326/608090"
+  },
+  "selection_groups": [
+    {
+      "name": "Discovery normalization and bounded controls",
+      "selectors": [
+        "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_bare_array_listing_of_non_model_objects_stays_invalid",
+        "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_normalize_models_drops_an_oversized_field_but_keeps_the_model",
+        "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_normalize_models_rejects_unbounded_metadata",
+        "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_normalizes_openai_models_response_to_raw_model_ids",
+        "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_response_metadata_does_not_include_sensitive_headers",
+        "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_anthropic_paginates_with_after_id",
+        "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_openai_does_not_paginate",
+        "Tests/LLM_Provider_Catalog/test_openai_compatible_model_discovery.py::test_discovery_rejects_model_count_over_bound_without_partial_cache_data"
+      ],
+      "expected_cases_from_source": 12,
+      "reason": "3 invalid bare arrays, oversized mapping-field drop,3 remaining metadata rejection cases; envelope, credential scrubbing, pagination and count-cap controls."
+    },
+    {
+      "name": "Together live-fixture engine and listing replay",
+      "selectors": [
+        "Tests/LLM_Calls/test_live_capture_replay.py::test_captured_listing_discovers_in_its_recorded_shape[together]",
+        "Tests/LLM_Calls/test_live_capture_replay.py::test_captured_stream_parses_under_its_record[together]",
+        "Tests/LLM_Calls/test_live_capture_replay.py::test_captured_bodies_parse_under_their_record"
+      ],
+      "expected_cases_from_source": 4,
+      "reason": "Only Together is a top-level keyed capture at pinned newdev; the body selector expands to plain/tool. The actual engine stream must finish with its record, and bare-array sample discovery retains every sampled id."
+    },
+    {
+      "name": "Together record payload and allowance contract",
+      "selectors": [
+        "Tests/LLM_Calls/test_doc_derived_presets.py::test_stream_options_only_where_the_record_asks[together]",
+        "Tests/LLM_Calls/test_doc_derived_presets.py::test_existing_presets_keep_their_payload_contract",
+        "Tests/LLM_Calls/test_inference_cloud_presets.py::test_allowances_ship_empty_pending_first_capture[together]"
+      ],
+      "expected_cases_from_source": 3,
+      "reason": "Streamed payload requests include_usage; blocking payload omits stream_options; generic existing-preset contract keeps all5 old records governed and only Together changes; Together choice allowance stays exactly logprobs."
+    },
+    {
+      "name": "Capture helper envelope consumer",
+      "selectors": [
+        "Tests/LLM_Calls/test_live_capture_tool.py::test_listing_picks_a_chat_model_and_ollama_cloud_sends_no_tool_choice"
+      ],
+      "expected_cases_from_source": 1,
+      "reason": "Existing loopback writer and choose_model consume the new _listed envelope helper; retain numeric loopback marker and canonical profile fixture."
+    }
+  ],
+  "selector_count": 15,
+  "expected_case_count_from_source": 20,
+  "collection_performed": false,
+  "tests_run": false,
+  "future_verification_constraints": [
+    "Use shared Python3.12 and actual worktree PYTHONPATH; unchanged canonical Tests/conftest.py private profiles and300-second timeout.",
+    "Only exact proposed15 selectors; recheck expansion at execution and retain actual IDs/argv/output; no full suites or previously qualified boot/feature replay.",
+    "Keep incoming metadata test list variant and new tests/assertions exact; no fixture weakening, skips/XFAIL, raised caps or warning suppression.",
+    "Run changed-file fatal Ruff and inherited formatter attribution/changed whitespace only after final source freeze; no whole-owner formatter cleanup.",
+    "Keep Task13 FD warning (14->383,growth369,limit200) visible as prior cohort concern.",
+    "Integrate latest-dev overlay before independently scoped Qodo cleanup/CI fixture repair, with fresh source map and separate later exception rows."
+  ],
+  "adr_required": false,
+  "adr_paths": [
+    "backlog/decisions/179-generic-hosted-provider-engine-and-preset-registry.md",
+    "backlog/decisions/097-boot-budget-ratchets.md",
+    "backlog/decisions/219-console-chat-destinations-and-bounded-starts.md",
+    "backlog/decisions/220-console-human-decision-coordination-ownership.md"
+  ],
+  "reason_no_new_adr": "Preflight and direct existing provider-boundary/ratchet integration; no new ownership, storage, permission or dependency mechanism."
+}

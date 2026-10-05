@@ -1,0 +1,158 @@
+{
+  "actual_cases": 25,
+  "cases": [
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[[/]]",
+      "outcome": "error",
+      "time": "0.185"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[[b]x]",
+      "outcome": "error",
+      "time": "0.065"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[[@click=app.record('x')]N[/]]",
+      "outcome": "error",
+      "time": "0.057"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[[/]",
+      "outcome": "error",
+      "time": "0.055"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[[TODO] y]",
+      "outcome": "error",
+      "time": "0.055"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[a\\\\[/]b]",
+      "outcome": "error",
+      "time": "0.055"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_agent_question_options_on_the_buddy_and_console_card[\\\\[x^2\\\\]]",
+      "outcome": "error",
+      "time": "0.053"
+    },
+    {
+      "classname": "Tests.UI.test_chat_question_card",
+      "name": "test_submit_returns_selections_other_text_and_unanswered_with_the_request_id",
+      "outcome": "error",
+      "time": "0.059"
+    },
+    {
+      "classname": "Tests.UI.test_console_ask_user_typed_answers",
+      "name": "test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer",
+      "outcome": "error",
+      "time": "0.058"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[[/]]",
+      "outcome": "error",
+      "time": "0.061"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[[b]x]",
+      "outcome": "error",
+      "time": "0.068"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[[@click=app.record('x')]N[/]]",
+      "outcome": "error",
+      "time": "0.087"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[[/]",
+      "outcome": "error",
+      "time": "0.068"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[[TODO] y]",
+      "outcome": "error",
+      "time": "0.063"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[a\\\\[/]b]",
+      "outcome": "error",
+      "time": "0.059"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_provider_label_is_plain_text[\\\\[x^2\\\\]]",
+      "outcome": "error",
+      "time": "0.060"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[[/]]",
+      "outcome": "error",
+      "time": "0.067"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[[b]x]",
+      "outcome": "error",
+      "time": "0.063"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[[@click=app.record('x')]N[/]]",
+      "outcome": "error",
+      "time": "0.063"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[[/]",
+      "outcome": "error",
+      "time": "0.058"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[[TODO] y]",
+      "outcome": "error",
+      "time": "0.060"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[a\\\\[/]b]",
+      "outcome": "error",
+      "time": "0.060"
+    },
+    {
+      "classname": "Tests.UI.test_roleplay_hostile_text_surfaces",
+      "name": "test_the_preview_transcript_status_readout_and_greetings[\\\\[x^2\\\\]]",
+      "outcome": "error",
+      "time": "0.060"
+    },
+    {
+      "classname": "Tests.UI.test_personas_preview",
+      "name": "test_styled_line_italicizes_action_and_escapes_markup",
+      "outcome": "error",
+      "time": "0.061"
+    },
+    {
+      "classname": "Tests.UI.test_personas_workbench.TestPreviewIntegration",
+      "name": "test_open_in_console_stages_preview_transcript",
+      "outcome": "error",
+      "time": "0.060"
+    }
+  ],
+  "outcomes": {
+    "error": 25
+  }
+}

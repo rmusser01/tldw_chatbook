@@ -1,0 +1,77 @@
+{
+  "tldw_chatbook/Chat/console_chat_start.py": {
+    "applied_changed_hunk_edits": 2,
+    "inherited_remaining_edits": [],
+    "original_debt_count": 0,
+    "AST_preserved": true,
+    "sha256_before": "8bb38ae2cc2793fa32e031fb24ff03839eb2f86b41ea28dbdadef6e3e01def3c",
+    "sha256_after": "f28df48d144d296329f872001a83300248be44e4df8619baff2cd53bd6d8c8b2",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "format",
+      "--stdin-filename",
+      "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_start.py",
+      "-"
+    ]
+  },
+  "tldw_chatbook/DB/automatic_work.py": {
+    "applied_changed_hunk_edits": 1,
+    "inherited_remaining_edits": [],
+    "original_debt_count": 0,
+    "AST_preserved": true,
+    "sha256_before": "224760c0962d92362fde9095cc603eb798d590dac03e30fd11fcedf77045395b",
+    "sha256_after": "a78ed90f3fd717029ffb3cec53929a888e26f3b7d44f4c703769958153a1211c",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "format",
+      "--stdin-filename",
+      "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/DB/automatic_work.py",
+      "-"
+    ]
+  },
+  "tldw_chatbook/Chat/console_chat_fork.py": {
+    "applied_changed_hunk_edits": 0,
+    "inherited_remaining_edits": [],
+    "original_debt_count": 0,
+    "AST_preserved": true,
+    "sha256_before": "b20e19d779fde162ebcec9c4b0bc7a03ddc6d9b80115c58ee32123feaac98770",
+    "sha256_after": "b20e19d779fde162ebcec9c4b0bc7a03ddc6d9b80115c58ee32123feaac98770",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "format",
+      "--stdin-filename",
+      "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_chat_fork.py",
+      "-"
+    ]
+  },
+  "Tests/Chat/test_console_chat_start.py": {
+    "applied_changed_hunk_edits": 45,
+    "inherited_remaining_edits": [],
+    "original_debt_count": 0,
+    "AST_preserved": true,
+    "sha256_before": "b0a6109bc6cec4625b29d1031add71674aaabf3972fda042f392f411e86f6382",
+    "sha256_after": "cb260bc87424f805aed13c1950aa308bc3cac931d4b98cd5ee296b31a5ce1136",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "format",
+      "--stdin-filename",
+      "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/Chat/test_console_chat_start.py",
+      "-"
+    ]
+  },
+  "Tests/DB/test_automatic_chat_starts.py": {
+    "applied_changed_hunk_edits": 15,
+    "inherited_remaining_edits": [],
+    "original_debt_count": 0,
+    "AST_preserved": true,
+    "sha256_before": "a7891297a1a3b27c4b9dcddb827a040c3e0bbee01e9714442356243356468957",
+    "sha256_after": "225e549fd3416e7052c06bbef4bcfaa419c88c3f043214238c798422ea500689",
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/ruff",
+      "format",
+      "--stdin-filename",
+      "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/DB/test_automatic_chat_starts.py",
+      "-"
+    ]
+  }
+}

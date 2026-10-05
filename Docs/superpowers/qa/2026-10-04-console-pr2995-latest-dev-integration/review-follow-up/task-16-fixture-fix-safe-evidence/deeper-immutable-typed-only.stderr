@@ -1,0 +1,58 @@
+--- Logging error in Loguru Handler #1 ---
+Record was: {'elapsed': datetime.timedelta(seconds=4, microseconds=122177), 'exception': (type=<class 'RuntimeError'>, value=RuntimeError('Event loop is closed'), traceback=<traceback object at 0x110b14940>), 'extra': {}, 'file': (name='console_interrupt_rounds.py', path='/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py'), 'function': 'on_pending_rounds_changed', 'level': (name='DEBUG', no=10, icon='🐞'), 'line': 3237, 'message': 'Console attention marshal failed', 'module': 'console_interrupt_rounds', 'name': 'tldw_chatbook.Chat.console_interrupt_rounds', 'process': (id=27582, name='MainProcess'), 'thread': (id=6168653824, name='Thread-1 (<lambda>)'), 'time': datetime(2026, 10, 4, 16, 4, 59, 318294, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=61200), 'PDT'))}
+Traceback (most recent call last):
+  File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py", line 3235, in on_pending_rounds_changed
+    marshal(_apply)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py", line 1834, in call_from_thread
+    future: Future[CallThreadReturnType] = asyncio.run_coroutine_threadsafe(
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py", line 950, in run_coroutine_threadsafe
+    loop.call_soon_threadsafe(callback)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 844, in call_soon_threadsafe
+    self._check_closed()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 545, in _check_closed
+    raise RuntimeError('Event loop is closed')
+RuntimeError: Event loop is closed
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/loguru/_handler.py", line 206, in emit
+    self._sink.write(str_record)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/loguru/_simple_sinks.py", line 16, in write
+    self._stream.write(message)
+ValueError: I/O operation on closed file.
+--- End of logging error ---
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py:3237: RuntimeWarning: coroutine 'App.call_from_thread.<locals>.run_callback' was never awaited
+  self.read_global_logger().opt(exception=True).debug(
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+--- Logging error in Loguru Handler #1 ---
+Record was: {'elapsed': datetime.timedelta(seconds=4, microseconds=127928), 'exception': (type=<class 'RuntimeError'>, value=RuntimeError('Event loop is closed'), traceback=<traceback object at 0x1090f9780>), 'extra': {}, 'file': (name='console_interrupt_rounds.py', path='/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py'), 'function': 'run_round', 'level': (name='DEBUG', no=10, icon='🐞'), 'line': 1373, 'message': 'Failed to marshal question remount during teardown', 'module': 'console_interrupt_rounds', 'name': 'tldw_chatbook.Chat.console_interrupt_rounds', 'process': (id=27582, name='MainProcess'), 'thread': (id=6168653824, name='Thread-1 (<lambda>)'), 'time': datetime(2026, 10, 4, 16, 4, 59, 324045, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=61200), 'PDT'))}
+Traceback (most recent call last):
+  File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py", line 1369, in run_round
+    self.remount_head(
+  File "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py", line 928, in remount_head
+    app.call_from_thread(_apply)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/textual/app.py", line 1834, in call_from_thread
+    future: Future[CallThreadReturnType] = asyncio.run_coroutine_threadsafe(
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/tasks.py", line 950, in run_coroutine_threadsafe
+    loop.call_soon_threadsafe(callback)
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 844, in call_soon_threadsafe
+    self._check_closed()
+  File "/Users/macbook-dev/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 545, in _check_closed
+    raise RuntimeError('Event loop is closed')
+RuntimeError: Event loop is closed
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/loguru/_handler.py", line 206, in emit
+    self._sink.write(str_record)
+  File "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/loguru/_simple_sinks.py", line 16, in write
+    self._stream.write(message)
+ValueError: I/O operation on closed file.
+--- End of logging error ---
+/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/tldw_chatbook/Chat/console_interrupt_rounds.py:1373: RuntimeWarning: coroutine 'App.call_from_thread.<locals>.run_callback' was never awaited
+  logger.opt(exception=True).debug(
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback

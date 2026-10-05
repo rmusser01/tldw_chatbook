@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-B",
+    ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/finalfix_contract_proof.py"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 6.881457805633545,
+  "output": "8 exact owned paths: final hashes captured; all inherited skip/xfail decorators equal FIX_BASE; no added exclusions.\n"
+}

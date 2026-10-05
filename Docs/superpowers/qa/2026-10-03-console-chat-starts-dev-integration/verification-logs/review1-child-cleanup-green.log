@@ -1,0 +1,67 @@
+...........                                                              [100%]
+============================= slowest 25 durations =============================
+1.35s setup    Tests/Chat/test_console_chat_create_integration.py::test_child_prepared_create_rechecks_currentness_before_execution[wrong_actor]
+1.29s setup    Tests/Chat/test_console_chat_create_confirm.py::test_child_new_chat_cancelled_during_confirmation_closes_authority
+1.16s setup    Tests/Chat/test_console_chat_create_confirm.py::test_child_approved_creation_revocation_closes_prepared_token
+1.15s setup    Tests/Chat/test_console_chat_create_confirm.py::test_survivor_child_confirm_does_not_bind_next_turn_stop
+1.14s setup    Tests/Chat/test_console_chat_create_integration.py::test_child_prepared_create_rechecks_currentness_before_execution[terminal_child]
+1.06s setup    Tests/Chat/test_console_chat_create_integration.py::test_child_new_chat_refuses_new_destination_and_start_authority[extra0]
+1.03s call     Tests/Chat/test_console_chat_create_confirm.py::test_survivor_child_confirm_does_not_bind_next_turn_stop
+1.01s setup    Tests/Chat/test_console_chat_create_confirm.py::test_child_declined_creation_releases_prepared_token
+
+(17 durations < 1s hidden.)
+11 passed, 46 deselected in 13.86s
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-128b6aef-51ce-460a-bd3e-df4f6310a0d8/popen-gw0/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-128b6aef-51ce-460a-bd3e-df4f6310a0d8/popen-gw0/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-128b6aef-51ce-460a-bd3e-df4f6310a0d8/popen-gw0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-128b6aef-51ce-460a-bd3e-df4f6310a0d8/popen-gw0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-128b6aef-51ce-460a-bd3e-df4f6310a0d8
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-128b6aef-51ce-460a-bd3e-df4f6310a0d8'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-67274466-1f7d-47c7-a8c4-2aa0865d0dfd/popen-gw1/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-67274466-1f7d-47c7-a8c4-2aa0865d0dfd/popen-gw1/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-67274466-1f7d-47c7-a8c4-2aa0865d0dfd/popen-gw1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-67274466-1f7d-47c7-a8c4-2aa0865d0dfd/popen-gw1'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-67274466-1f7d-47c7-a8c4-2aa0865d0dfd
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-67274466-1f7d-47c7-a8c4-2aa0865d0dfd'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-12c49fbd-9050-47aa-b82c-f6be12802b2c/popen-gw3/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-12c49fbd-9050-47aa-b82c-f6be12802b2c/popen-gw3/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-12c49fbd-9050-47aa-b82c-f6be12802b2c/popen-gw3
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-12c49fbd-9050-47aa-b82c-f6be12802b2c/popen-gw3'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-12c49fbd-9050-47aa-b82c-f6be12802b2c
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-12c49fbd-9050-47aa-b82c-f6be12802b2c'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a822e40c-bc59-4390-a4e1-4edf91a20df0/popen-gw1/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a822e40c-bc59-4390-a4e1-4edf91a20df0/popen-gw1/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a822e40c-bc59-4390-a4e1-4edf91a20df0/popen-gw1
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a822e40c-bc59-4390-a4e1-4edf91a20df0/popen-gw1'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a822e40c-bc59-4390-a4e1-4edf91a20df0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-a822e40c-bc59-4390-a4e1-4edf91a20df0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1f1fe2f6-9a23-4690-879e-07449a8393bd/popen-gw2/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1f1fe2f6-9a23-4690-879e-07449a8393bd/popen-gw2/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1f1fe2f6-9a23-4690-879e-07449a8393bd/popen-gw2
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1f1fe2f6-9a23-4690-879e-07449a8393bd/popen-gw2'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1f1fe2f6-9a23-4690-879e-07449a8393bd
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-1f1fe2f6-9a23-4690-879e-07449a8393bd'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-6ef5a4ce-b047-4332-a6a0-41042abb3aab/popen-gw0/test_fs_read_of_file_in_unread0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-6ef5a4ce-b047-4332-a6a0-41042abb3aab/popen-gw0/test_fs_read_of_file_in_unread0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-6ef5a4ce-b047-4332-a6a0-41042abb3aab/popen-gw0
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-6ef5a4ce-b047-4332-a6a0-41042abb3aab/popen-gw0'
+  warnings.warn(
+/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/lib/python3.12/site-packages/_pytest/pathlib.py:96: PytestWarning: (rm_rf) error removing /private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-6ef5a4ce-b047-4332-a6a0-41042abb3aab
+<class 'OSError'>: [Errno 66] Directory not empty: '/private/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/pytest-of-macbook-dev/garbage-6ef5a4ce-b047-4332-a6a0-41042abb3aab'
+  warnings.warn(

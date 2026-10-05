@@ -1,0 +1,55 @@
+{
+  "base_ref": "c0b251a71422536a3da2be421dd60f79e2cb230a",
+  "base_sha": "c0b251a71422536a3da2be421dd60f79e2cb230a",
+  "baseline_red_paths": [
+    "Tests/UI/test_console_runtime_ownership.py"
+  ],
+  "files": {
+    "Tests/UI/test_console_runtime_ownership.py": {
+      "debt_units": 56,
+      "formatter_required": true,
+      "normalized_diff_sha256": "db13222d766c9d4efdd040ffc212b36628dd199f50bcd7963830b258534872c9",
+      "source_hunks": [
+        [
+          844,
+          853
+        ],
+        [
+          868,
+          877
+        ],
+        [
+          885,
+          892
+        ],
+        [
+          971,
+          980
+        ],
+        [
+          1000,
+          1009
+        ],
+        [
+          1176,
+          1185
+        ],
+        [
+          1222,
+          1231
+        ],
+        [
+          2188,
+          2193
+        ]
+      ],
+      "source_sha256": "683adeb3dc538c65fa341bae0d377c9e99ca5ff1d0b6b94cde922e0fb3d8e4d9"
+    }
+  },
+  "generated_at_utc": "2026-10-04T05:26:02.899630+00:00",
+  "paths": [
+    "Tests/UI/test_console_runtime_ownership.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

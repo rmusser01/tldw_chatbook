@@ -1,0 +1,6 @@
+...                                                                      [100%]
+============================= slowest 25 durations =============================
+1.02s call     Tests/Chat/test_console_chat_start.py::test_native_project_decision_refuses_before_both_fences[1]
+
+(8 durations < 1s hidden.)
+3 passed, 116 deselected in 2.42s

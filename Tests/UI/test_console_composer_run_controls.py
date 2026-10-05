@@ -1502,3 +1502,58 @@ def test_palette_lists_stop_and_the_composer_menu_actions_class_safe():
         "Console: Improve current draft…",
     ):
         assert expected in labels, expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("threshold_offset", [-1, 0, 1])
+@private_profile_test
+async def test_redirect_fit_boundary_keeps_run_controls_in_place(
+    threshold_offset, request
+):
+    """Fit comes from the visible control cells and draft/reason floors."""
+    gateway, host = _held_run_host()
+    async with host.run_test(size=(235, 52)) as pilot:
+        console, composer = await _mounted(host, pilot)
+        await pilot.pause(0.2)
+        row = composer.query_one("#console-composer-expanded")
+        chrome = host.size.width - row.content_size.width
+        # Independent geometry: left Menu/collapse 12+6; Send reserves 14
+        # for its longest label (Preparing... plus padding),
+        # gap 2, Dictate 11, Stop 6, Redirect 10; margin 2; draft floor
+        # 32; widest reason 52. No production budget method supplies this.
+        threshold = chrome + 12 + 6 + 14 + 2 + 11 + 6 + 10 + 2 + 32 + 52
+        await pilot.resize_terminal(threshold + threshold_offset, 52)
+        await pilot.pause(0.3)
+        actions = composer.query_one("#console-composer-actions")
+        send = composer.query_one("#console-send-message", Button)
+        dictate = composer.query_one("#console-dictation", Button)
+        redirect = composer.query_one("#console-redirect-generation", Button)
+        draft = composer.query_one("#console-command-visible-text", Static)
+
+        def geometry():
+            return (actions.region, send.region, dictate.region)
+
+        resting = geometry()
+        expected_fit = threshold_offset >= 0
+        assert composer._redirect_budgeted is expected_fit
+        try:
+            await _start_held_run(console, composer, pilot)
+            await pilot.pause(0.2)
+            assert redirect.display is expected_fit
+            assert geometry() == resting, (
+                "run activation shifted the action row or controls"
+            )
+            assert draft.region.width >= 32
+            if expected_fit:
+                assert redirect.region.width == 10
+                assert actions.region.contains_region(redirect.region)
+                assert _painted_at(host, redirect)
+            composer.query_one("#console-stop-generation", Button).press()
+            await _wait_for(pilot, lambda: not composer.run_active, "run never stopped")
+            await pilot.pause(0.2)
+            assert not redirect.display
+            assert geometry() == resting, (
+                "run deactivation shifted the action row or controls"
+            )
+        finally:
+            gateway.release.set()

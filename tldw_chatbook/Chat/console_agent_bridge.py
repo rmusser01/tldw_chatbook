@@ -5679,11 +5679,11 @@ class ConsoleAgentBridge:
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
         skills_context: Mapping[str, Any] | None = None,
+        fork_chat_enabled: bool = False,
+        new_chat_enabled: bool = False,
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         worktree_merge_enabled: bool = False,
-        fork_chat_enabled: bool = False,
-        new_chat_enabled: bool = False,
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
         profile_provider: Any | None = None,
@@ -5815,11 +5815,11 @@ class ConsoleAgentBridge:
         scratch_lease: Callable[[], ContextManager[Path]] | None = None,
         turn_skill_bindings: tuple[str, ...] = (),
         turn_bundle_block: str = "",
+        fork_chat_enabled: bool = False,
+        new_chat_enabled: bool = False,
         request_skill_install_enabled: bool = False,
         request_skill_script_enabled: bool = False,
         worktree_merge_enabled: bool = False,
-        fork_chat_enabled: bool = False,
-        new_chat_enabled: bool = False,
         profile_context_service: Any | None = None,
     ) -> ProfileContextSnapshot:
         """Build the exact reserved profile snapshot for disposable Next Send."""
@@ -5929,6 +5929,7 @@ class ConsoleAgentBridge:
         request_skill_script_confirm: Callable[[dict], dict] | None = None,
         request_chat_create_confirm: Callable[[dict], dict] | None = None,
         execute_agent_chat_create: Callable[[dict], dict] | None = None,
+        prepare_agent_chat_create: Callable[[dict], dict] | None = None,
         # TASK-28238 phase 2 Task 6: forwarded straight to
         # `AgentService.run_turn(request_worktree_merge_confirm=...)` --
         # unlike `request_skill_script_confirm` above, this is never
@@ -6286,6 +6287,7 @@ class ConsoleAgentBridge:
             fork_chat_tool, new_chat_tool = build_chat_create_tool_closures(
                 confirm=request_chat_create_confirm,
                 execute=execute_agent_chat_create,
+                prepare=prepare_agent_chat_create,
                 session_id=session_id,
                 run_id=assistant_message_id,
             )
@@ -11169,6 +11171,7 @@ def build_chat_create_tool_closures(
     *,
     confirm: Callable[[dict], dict],
     execute: Callable[[dict], dict],
+    prepare: Callable[[dict], dict] | None = None,
     session_id: str,
     run_id: str,
 ) -> tuple[Callable[[dict], ToolResult], Callable[[dict], ToolResult]]:
@@ -11197,6 +11200,7 @@ def build_chat_create_tool_closures(
         ``(fork_chat_tool, new_chat_tool)`` -- each ``args -> ToolResult``.
     """
     denials = {"fork_chat": 0, "new_chat": 0}
+    remembered: set[object] = set()
 
     def _run(tool: str, args: dict) -> ToolResult:
         if denials[tool] >= _CHAT_CREATE_DENIAL_LIMIT:
@@ -11230,6 +11234,13 @@ def build_chat_create_tool_closures(
                     error=f"invalid_args: {name} must be a string, got "
                     f"{type(value).__name__}",
                 )
+        if tool == "new_chat":
+            try:
+                public = validate_new_chat_arguments(args)
+            except ValueError as exc:
+                return ToolResult(ok=False, error=str(exc))
+        else:
+            public = {}
         title = raw_title.strip()[:CHAT_CREATE_TITLE_MAX]
         opening_prompt = raw_prompt
         instructions = raw_instructions
@@ -11258,23 +11269,49 @@ def build_chat_create_tool_closures(
             "model": model,
             "preset": preset,
         }
-        # Qodo 2761 round, finding 1: NO closure-local remember memo. The
-        # controller's session grants are the single remember authority,
-        # and they REFUSE to ride for sub-agent requesters -- caching a
-        # remember here would let a later child-run call on this turn skip
-        # consent entirely.
-        try:
-            decision = confirm(dict(payload))
-        except Exception:  # noqa: BLE001 — a UI error fails closed
-            decision = {"allow": False, "remember": False}
-        if not isinstance(decision, Mapping) or not decision.get(
-            "allow", False
-        ):
-            denials[tool] += 1
-            return ToolResult(
-                ok=False,
-                error="The user declined. Do not retry this turn.",
-            )
+        grant_scope: object = tool
+        if tool == "new_chat":
+            if prepare is None:
+                return ToolResult(ok=False, error="creation_preparation_unavailable")
+            from tldw_chatbook.Agents.run_context import current_run_id
+
+            payload.update(public)
+            payload["source_run_id"] = current_run_id()
+            payload["source_message_id"] = run_id
+            try:
+                payload = prepare(payload)
+                grant_scope = payload["_grant_scope"]
+                hash(grant_scope)
+                if payload.get("_creation_token") is None:
+                    raise ValueError("creation_authority_unavailable")
+            except Exception as exc:
+                from tldw_chatbook.Agents.agent_routing import RoutingError
+
+                if isinstance(exc, RoutingError):
+                    return ToolResult(ok=False, error=f"{exc.code}: {exc}")
+                return ToolResult(ok=False, error="creation_preparation_refused")
+        # Trusted preparation rechecks the captured primary or child actor.
+        # Child decisions never remember, so every child request confirms anew.
+        child_request = (
+            tool == "new_chat" and payload.get("source_agent_kind") == "subagent"
+        )
+        if tool != "new_chat" or child_request or grant_scope not in remembered:
+            try:
+                decision = confirm(dict(payload))
+            except Exception:
+                decision = {"allow": False, "remember": False}
+            if not isinstance(decision, Mapping) or not decision.get("allow", False):
+                denials[tool] += 1
+                _release_chat_creation_token(payload)
+                return ToolResult(
+                    ok=False, error="The user declined. Do not retry this turn."
+                )
+            if (
+                tool == "new_chat"
+                and not child_request
+                and decision.get("remember", False)
+            ):
+                remembered.add(grant_scope)
         # Broad-catch the EXECUTE phase exactly like the sibling
         # run_skill_script_tool does: a raising executor must surface as
         # the outcome contract (ok=False, execution_failed), never as an
@@ -11284,6 +11321,8 @@ def build_chat_create_tool_closures(
             outcome = execute(dict(payload))
         except Exception as exc:  # noqa: BLE001 — the outcome contract is the error boundary
             return ToolResult(ok=False, error=f"execution_failed: {exc}")
+        finally:
+            _release_chat_creation_token(payload)
         if not isinstance(outcome, dict) or not outcome.get("ok"):
             kind = (
                 str(outcome.get("kind", "execution_failed"))
@@ -11301,6 +11340,11 @@ def build_chat_create_tool_closures(
             "opening prompt as a draft in its input box; the user reviews and "
             "sends it themselves. Do not send messages into the new chat."
         )
+        if tool == "new_chat":
+            note = (
+                "Creation is saved. Do not repeat creation to recover a blocked "
+                "or uncertain start. Inspect this chat and use its normal controls."
+            )
         content = json.dumps(
             {
                 "title": outcome.get("title"),
@@ -11309,6 +11353,20 @@ def build_chat_create_tool_closures(
                 "copied_messages": outcome.get("copied_messages"),
                 "draft_set": bool(outcome.get("draft_set")),
                 "note": note,
+                **(
+                    {
+                        key: outcome.get(key)
+                        for key in (
+                            "destination",
+                            "scope_type",
+                            "mode",
+                            "launch_status",
+                            "reason",
+                        )
+                    }
+                    if tool == "new_chat"
+                    else {}
+                ),
             }
         )
         return ToolResult(ok=True, content=content)
@@ -11320,3 +11378,33 @@ def build_chat_create_tool_closures(
         return _run("new_chat", args)
 
     return fork_chat_tool, new_chat_tool
+
+
+def validate_new_chat_arguments(arguments: Mapping[str, Any]) -> dict[str, str]:
+    """Validate public creation fields without carrying model-supplied authority.
+
+    Args:
+        arguments: Public title, opening_prompt, instructions, destination,
+            mode, and optional provider/model/preset strings. Omitted fields
+            retain empty-string, same_workspace, and draft defaults. Unknown
+            authority fields are discarded by the shared validator.
+
+    Returns:
+        The eight validated fields, with title trimmed after its length check
+        and literal prompts, instructions, and routing strings preserved.
+
+    Raises:
+        ValueError: An input-free invalid_args or payload_too_large category for
+            non-string fields, unsupported choices, exceeded limits, or a
+            blank opening_prompt in start mode.
+    """
+    from tldw_chatbook.Utils.input_validation import validate_console_new_chat_arguments
+
+    return validate_console_new_chat_arguments(arguments)
+
+
+def _release_chat_creation_token(payload: dict) -> None:
+    """Drop private preparation custody on every terminal tool path."""
+    release = getattr(payload.get("_creation_token"), "close", None)
+    if callable(release):
+        release()

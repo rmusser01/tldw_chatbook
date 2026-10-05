@@ -23,7 +23,11 @@ from __future__ import annotations
 import inspect
 import re
 
+import pytest
+
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+pytestmark = pytest.mark.bootstrap_profile
 
 #: Every pending-work consumer a warm revisit must schedule, mirroring
 #: on_mount's cold-path set. (``_consume_pending_console_roleplay_repair``
@@ -34,7 +38,8 @@ EXPECTED_RESUME_HANDOFF_CONSUMERS = {
     "self._consume_pending_chat_handoff",
     "self._consume_pending_console_prompt_insert",
     "self._consume_pending_conversation_settings_return",
-    "self.consume_pending_vllm_console_intent",
+    "self._session.consume_pending_vllm_console_intent",
+    "self._session.consume_pending_llamacpp_console_intent",
     "self._fleet.consume_pending_console_fleet_completion",
     "self._start_resume_navigation_startup",
 }

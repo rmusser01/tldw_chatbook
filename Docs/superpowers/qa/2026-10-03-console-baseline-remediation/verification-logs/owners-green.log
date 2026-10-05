@@ -1,0 +1,50 @@
+........................................................................ [ 16%]
+........................................................................ [ 32%]
+........................................................................ [ 48%]
+........................................................................ [ 65%]
+........................................................................ [ 81%]
+........................................................................ [ 97%]
+...........                                                              [100%]
+=============================== warnings summary ===============================
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+  <unknown>:32: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+  <unknown>:31: SyntaxWarning: invalid escape sequence '\ '
+
+Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send
+  /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/Tests/conftest.py:529: UserWarning: open file descriptors grew by 751 over the test session (start=12, end=763, limit=200) — possible fd leak; bisect with TLDW_TEST_GC_EVERY=1 and mark offending tests @pytest.mark.requires_cleanup
+    warnings.warn(message, UserWarning, stacklevel=0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============================= slowest 25 durations =============================
+31.84s call     Tests/UI/test_console_launch_wake.py::test_a_second_launch_does_not_re_announce_a_delivered_wake
+21.01s call     Tests/UI/test_console_launch_wake.py::test_the_kill_switch_silences_the_launch_fire_point_and_loses_nothing
+20.89s call     Tests/UI/test_console_runtime_ownership.py::test_console_runtime_is_the_single_construction_site
+19.46s call     Tests/UI/test_console_launch_wake.py::test_a_launch_built_controller_is_not_sticky_when_console_opens
+18.07s call     Tests/UI/test_console_launch_wake.py::test_a_launch_delivers_a_wake_owed_from_a_previous_process
+15.05s call     Tests/UI/test_console_launch_wake.py::test_a_launch_into_console_delivers_without_stealing_the_active_tab
+14.55s call     Tests/UI/test_console_launch_wake.py::test_the_startup_cost_pin_is_not_vacuous
+14.43s call     Tests/UI/test_console_launch_wake.py::test_a_launch_hydrates_only_the_conversations_that_are_owed
+12.65s call     Tests/UI/test_console_launch_wake.py::test_an_unresolvable_ephemeral_mark_is_cleared_at_launch
+8.02s call     Tests/UI/test_console_launch_wake.py::test_a_crash_killed_child_swept_to_error_wakes_nobody_at_launch
+6.80s call     Tests/UI/test_console_launch_wake.py::test_a_mark_with_nothing_owed_is_left_alone_at_launch
+6.63s call     Tests/UI/test_console_runtime_ownership.py::test_prepared_native_start_allows_mounted_manual_send
+6.32s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll
+6.21s call     Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target
+5.80s call     Tests/UI/test_console_runtime_ownership.py::test_post_unmount_raw_refusal_restores_on_second_console_visit
+5.57s call     Tests/UI/test_console_runtime_ownership.py::test_second_console_visit_reuses_the_runtime
+4.88s call     Tests/UI/test_console_runtime_ownership.py::test_a_superseded_screen_never_detaches_the_successors_runtime
+3.90s call     Tests/UI/test_console_runtime_ownership.py::test_clearing_agent_handoff_in_mounted_composer_persists_before_exit
+3.56s call     Tests/UI/test_console_runtime_ownership.py::test_a_terminal_run_state_after_leaving_does_not_reach_the_dead_screen
+2.16s call     Tests/UI/test_console_launch_wake.py::test_a_launch_with_no_marks_constructs_nothing_and_reads_once
+1.73s teardown Tests/UI/test_console_launch_wake.py::test_a_launch_into_console_delivers_without_stealing_the_active_tab
+1.68s teardown Tests/UI/test_console_launch_wake.py::test_the_startup_cost_pin_is_not_vacuous
+1.43s teardown Tests/UI/test_console_launch_wake.py::test_a_launch_hydrates_only_the_conversations_that_are_owed
+1.29s call     Tests/UI/test_console_runtime_ownership.py::test_sync_constructed_app_starts_canvas_policy_watch_in_running_lifecycle
+1.23s call     Tests/Chat/test_console_agent_project_instructions.py::test_project_instruction_disable_terminalizes_and_allows_retry[False]
+443 passed, 7 warnings in 348.15s (0:05:48)

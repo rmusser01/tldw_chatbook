@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
@@ -39,6 +40,7 @@ from ...Character_Chat.character_conversation_navigation import (
     LocalCharacterConversationTarget,
 )
 from ...Chat.console_appearance import ConsoleConversationAppearance
+from ...Chat.message_metadata import AgentHandoffLaunchMetadata
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
     CONSOLE_RUN_MARKER_GLYPHS,
@@ -2160,7 +2162,7 @@ class ConsoleWorkspaceController:
                 scope_type="workspace",
                 workspace_id=workspace_id,
                 workspace_label=labels.get(workspace_id, workspace_id),
-                status=str(item.get("state") or "workspace-thread"),
+                status=self._saved_handoff_status(item),
                 selected=conversation_id == self._current_console_conversation_id(),
                 source_kind="persisted",
                 updated_sort=console_persisted_row_updated_sort(item),
@@ -3172,7 +3174,13 @@ class ConsoleWorkspaceController:
                 workspace_label=self._console_browser_workspace_label(
                     workspace_id, labels
                 ),
-                status="active session" if selected else "open session",
+                status=(
+                    session.agent_handoff_launch.label
+                    if getattr(session, "agent_handoff_launch", None) is not None
+                    else "active session"
+                    if selected
+                    else "open session"
+                ),
                 selected=selected,
                 source_kind="native",
                 updated_sort=str(session.updated_at or ""),
@@ -3240,7 +3248,9 @@ class ConsoleWorkspaceController:
                     workspace_id=workspace_id,
                     workspace_label=workspace_label,
                     status=(
-                        "active session"
+                        session.agent_handoff_launch.label
+                        if getattr(session, "agent_handoff_launch", None) is not None
+                        else "active session"
                         if session.id == active_session_id
                         else "open session"
                     ),
@@ -3392,6 +3402,11 @@ class ConsoleWorkspaceController:
                     state = str(getattr(run_state.status, "value", run_state.status))
                 elif activity.queued_count:
                     state = "queued"
+                elif getattr(activity, "agent_handoff_status", "") in {
+                    "Not started",
+                    "Review required",
+                }:
+                    state = "blocked"
                 if state:
                     signals.append(
                         ConsoleSwitcherActivitySignal(
@@ -3595,7 +3610,7 @@ class ConsoleWorkspaceController:
                 scope_type=scope_type,
                 workspace_id=workspace_id,
             )
-            lifecycle = str(item.get("state") or "workspace-thread")
+            lifecycle = self._saved_handoff_status(item)
             workspace_label = self._console_browser_workspace_label(
                 workspace_id, labels
             )
@@ -3666,6 +3681,27 @@ class ConsoleWorkspaceController:
         return resolve_glyph(
             CONSOLE_RUN_MARKER_GLYPHS.get(ConsoleRunMarker.SUBAGENT_UNSEEN, "")
         )
+
+    @staticmethod
+    def _saved_handoff_status(item: Mapping[str, Any]) -> str:
+        """Read bounded saved launch display facts without granting authority."""
+        metadata = item.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (TypeError, ValueError):
+                metadata = None
+        handoff = (
+            metadata.get("console_agent_handoff")
+            if isinstance(metadata, dict)
+            else None
+        )
+        launch = (
+            AgentHandoffLaunchMetadata.read(handoff.get("launch"))
+            if isinstance(handoff, dict) and handoff.get("version") == 2
+            else None
+        )
+        return launch.label if launch else str(item.get("state") or "workspace-thread")
 
     async def _persisted_console_browser_rows(
         self,
@@ -3840,7 +3876,7 @@ class ConsoleWorkspaceController:
                             normalized_workspace_id,
                             labels,
                         ),
-                        status=str(item.get("state") or "workspace-thread"),
+                        status=self._saved_handoff_status(item),
                         selected=bool(
                             current_conversation
                             and current_conversation == conversation_id
@@ -7203,7 +7239,7 @@ class ConsoleWorkspaceController:
                 ConsoleWorkspaceConversationRow(
                     conversation_id=conversation_id,
                     title=str(item.get("title") or "Untitled conversation"),
-                    status=str(item.get("state") or "workspace-thread"),
+                    status=self._saved_handoff_status(item),
                     selected=bool(
                         current_conversation and current_conversation == conversation_id
                     ),

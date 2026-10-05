@@ -141,6 +141,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-210](210-console-region-ownership.md) | Accepted | Give each Console region one job — authority header, identity tab strip, one Chats browser, three-group Inspect, four-slot status strip, run-owning composer — and re-home every duplicated control. |
 | [ADR-212](212-shared-adaptive-pane-shell.md) | Accepted | Share the adaptive pane shell (grips, messages, rail rows, compact search input) between the Library and Roleplay through destination classes, neutral resolver aliases and an opt-in Tab region. |
 | [ADR-217](217-first-run-setup-shape-and-surfaces.md) | Accepted | One setup owner on a Textual-free setup core serves the first-run corridor (Quick 4 steps, Full 11), a re-run dashboard, single-step sheets and `tldw-cli setup --plain`; a stable step total; a Console probe-turn test message; provider keys stay in config.toml by default with the OS keychain optional. |
+| [ADR-219](219-console-chat-destinations-and-bounded-starts.md) | Accepted | Let Console agents create workspace or casual drafts and start background work with destination defaults, scoped approvals, shared finite budgets, and durable recovery. |
 
 ## Historical Decision Material
 

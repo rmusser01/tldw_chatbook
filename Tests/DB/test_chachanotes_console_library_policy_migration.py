@@ -201,6 +201,7 @@ def test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows(
         ("assistant_message_version", "INTEGER", 1, None, 0),
         ("origin", "TEXT", 1, None, 0),
         ("queue_entry_id", "TEXT", 0, None, 0),
+        ("agent_chat_start_attempt_id", "TEXT", 0, None, 0),
         ("frozen_authority_json", "TEXT", 1, None, 0),
         ("resolved_destination_json", "TEXT", 1, None, 0),
         ("reconstructability_json", "TEXT", 1, None, 0),
@@ -245,7 +246,7 @@ def test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows(
         assert clause in compact_policy
     for clause in (
         "CHECK(state IN ('accepted', 'dispatch_started'))",
-        "CHECK(origin IN ('manual', 'queued'))",
+        "CHECK(origin IN ('manual', 'queued', 'agent_chat_start'))",
         "CHECK(schema_version > 0)",
         "CHECK(checkpoint_revision > 0)",
         "CHECK(user_message_version > 0)",
