@@ -1084,3 +1084,77 @@ branch qualification. Fresh frozen-head scale evidence is required next.
 All eleven derived-artifact guards pass
 (`/tmp/task31966-busy-capture-preflight.log`). Both Backlog integrity guards
 pass again after the final task-note edits. No full suite was run.
+
+## Frozen first-busy correction: full-scale result
+
+Measured head `0abbd7bf16f58249ab0e5a5f6b9c8f5d0ef8ff0c`; fresh container
+`/tmp/task31966-busy-measure-pGwqbB`. Source remained clean/exact throughout
+both ordinary and diagnostic measurements. The new real-API corpus has counts
+10,000/250,004/10,000, integrity `ok`, Keyword index `ready`, and digest
+`ff8fa926743839b41a0f888426207dee8bbb30e22588431c0f4203294b224c6c`.
+Seeding took 154.699196s, index construction 3.960759s; registered handles after
+build cleanup: zero. Raw build receipt is in `scale/build-receipt.json`;
+log `/tmp/task31966-busy-scale.log`.
+
+Fresh standalone Keyword passes all 300 timed queries: P95 123.915667ms,
+maximum loop interval 13.286542ms, no correctness or acceptance failures,
+unchanged corpus, zero owned DB descriptors/registered handles after cleanup.
+Receipt `keyword/keyword-receipt.json`; log `/tmp/task31966-busy-keyword.log`.
+This does not qualify Meaning or native interaction.
+
+The ordinary real-owner UI matrix completes both preparations, all 60 exact
+searches and eight exact OPENED activations with no app exception. Every
+activation now records **one** actual busy capture, at most 0.783792ms observer
+duration. All preparation, search and busy-paint gates pass, but **seven**
+activation intervals still fail the unchanged 50ms limit:
+
+| Viewport | Activation loop intervals (ms), in order |
+| --- | --- |
+| 52×20 | 66.633042 FAIL; 39.285375 PASS; 68.128625 FAIL; 51.300791 FAIL |
+| 120×50 | 68.768917 FAIL; 113.711542 FAIL; 114.820666 FAIL; 102.904625 FAIL |
+
+Failed receipt: `ui/ui-evidence/ui-latency-evidence.json`; log
+`/tmp/task31966-busy-ui.log`. The retained post-test app has 15 registered
+handles, not terminal retirement. The correction demonstrably removes redundant
+captures, but these separate runs are not a controlled speedup comparison and
+the broader latency criterion is still unsatisfied.
+
+The unchanged external GC/native-refresh/config observer passes its forwarding/
+exception self-checks and runs once at this same source/corpus. Raw diagnostic
+root: `ui-gc-caller`; log `/tmp/task31966-busy-gc-caller.log`; absolute interval
+overlap analysis: `/tmp/task31966-busy-analysis.json`. The outer trigger observer
+retains 26 paired gen-2 collections (52 records), 16 Pilot waits, valid pairing
+and zero drops. The nested config observer retains 25 pairs over its shorter
+lifetime. Thresholds remain 700/10/10. The instrumented matrix still fails six
+activation windows and one Keyword semantic-category query window; the latter
+expects zero Keyword matches and is not a Meaning execution.
+
+Worst failed narrow activation 1 (62.326667ms) and wide activation 1
+(65.269542ms) contain no gen-2 collection. Their tracked native/config spans
+leave other work unattributed. In the other failed activation intervals,
+allocating triggers are native transcript Static construction, partial-update
+Strip construction, Markdown mount task creation and layout arrangement:
+
+| Activation | Collection wall / thread CPU (ms) | Collected objects |
+| --- | --- | --- |
+| 52×20 #3 | 39.819625 / 39.004458 | 13,091 |
+| 120×50 #2 | 74.807125 / 74.289416 | 34,525 |
+| 120×50 #3 | 67.138333 / 66.943541 | 12,985 |
+| 120×50 #4 | 60.689125 / 60.498708 | 12,621 |
+
+Trigger metadata locates the allocation, not ownership of scanned/dead objects.
+Inclusive native/config/GC spans overlap and are not additive; no acceptance
+time is subtracted. A separate gen-2 trigger occurs in the required final Chat
+capture elsewhere in the diagnostic; it is not proof that all worst intervals
+are observer work. Native first-busy and final exact-readiness/transcript gates
+remain intact. No additional production fix, global GC/cache policy or
+threshold change is selected. Existing architecture checkpoint remains in
+force; native/resource/Windows/participant qualification is still open.
+
+Read-only resource tracing additionally distinguishes process-global lazy
+Chat/Prompt/Media owners from app-created Library/Workspace/Subscriptions
+owners. `SubscriptionsDB.close_all_connections()` explicitly checkpoints and
+closes the calling thread only, reporting other live-thread caches; its name
+does not promise cross-thread retirement. This is why the native 37-descriptor
+receipt cannot justify a blanket cleanup or a fixture-based production claim.
+An ownership-specific shutdown remedy is not yet established.
