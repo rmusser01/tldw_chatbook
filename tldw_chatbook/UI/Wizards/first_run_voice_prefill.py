@@ -396,6 +396,34 @@ def draft_matches_preset(draft: vs.VoiceSetupDraft, preset: str) -> bool:
     )
 
 
+def is_legacy_checkpoint(values: Mapping[str, object]) -> bool:
+    """Whether a resume checkpoint holds the old wizard's 8765 write.
+
+    Review round 2 (R2-F4): an interrupted old-wizard run checkpointed
+    ``{preset: pocket_tts, endpoint: :8765/v1/audio/speech, auth: none}``.
+    Restored, the endpoint flipped the service to Custom and Next saved the
+    unspeakable address with nothing edited. The new wizard's PocketTTS
+    preset is ``:8000/tts`` (an edit away from it is Custom), so only an old
+    checkpoint pairs that preset with this address.
+
+    Args:
+        values: The checkpoint's non-secret Voice values.
+    """
+    endpoint = values.get("endpoint")
+    if values.get("preset") != vs.VOICE_PRESET_POCKET_TTS or not isinstance(
+        endpoint, str
+    ):
+        return False
+    try:
+        url = normalize_openai_compatible_endpoint(endpoint).speech_url
+    except ValueError:
+        return False
+    return (
+        url == LEGACY_POCKET_TTS_ENDPOINT
+        and values.get("authentication_mode", "none") == "none"
+    )
+
+
 def draft_from_checkpoint(
     values: Mapping[str, object], fallback: vs.VoiceSetupDraft
 ) -> vs.VoiceSetupDraft:
@@ -428,6 +456,7 @@ __all__ = [
     "draft_matches_preset",
     "formats_for",
     "initial_voice_draft",
+    "is_legacy_checkpoint",
     "legacy_summary_detail",
     "raw_app_tts",
     "reply_voice_name",

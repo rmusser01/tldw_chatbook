@@ -191,6 +191,39 @@ def test_the_same_address_with_an_api_key_is_somebody_elses_server() -> None:
     assert saved.preset == vs.VOICE_PRESET_CUSTOM
 
 
+#: A resume checkpoint the old wizard wrote after an untouched Voice step.
+_LEGACY_CHECKPOINT = {
+    "preset": "pocket_tts",
+    "endpoint": "http://127.0.0.1:8765/v1/audio/speech",
+    "authentication_mode": "none",
+    "model_id": "pocket-tts",
+    "voice_id": "alba",
+    "response_format": "wav",
+    "speed": 1.0,
+    "sample_text": vs.DEFAULT_SAMPLE_TEXT,
+    "use_as_default": False,
+}
+
+
+@pytest.mark.parametrize(
+    ("changes", "legacy"),
+    (
+        ({}, True),
+        ({"endpoint": "http://127.0.0.1:8765/v1"}, True),  # normalizes to it
+        ({"authentication_mode": "api_key"}, False),  # somebody else's server
+        ({"preset": "custom"}, False),  # typed on purpose in the new wizard
+        ({"endpoint": vs.POCKET_TTS_ENDPOINT}, False),
+        ({"endpoint": 8765}, False),
+    ),
+)
+def test_the_old_wizards_resume_checkpoint_is_recognised(changes, legacy) -> None:
+    """Review round 2 (R2-F4): resuming an old run brought the 8765 address
+    back as a working-looking Custom voice that Next then saved."""
+    values = dict(_LEGACY_CHECKPOINT, **changes)
+
+    assert prefill.is_legacy_checkpoint(values) is legacy
+
+
 def test_another_default_provider_is_the_current_voice_even_with_an_endpoint() -> None:
     """Review round 1 (F3): kokoro reads replies; the saved OpenAI endpoint is
     not "the current voice", and tts-1-hd / shimmer were invented."""

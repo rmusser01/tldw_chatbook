@@ -869,6 +869,8 @@ class VoiceSetupStep(OmniVoiceStepBase):
 
     def restore_checkpoint(self, values: Mapping[str, object]) -> None:
         """Put a resumed run's non-secret Voice values back (TASK-1264)."""
+        if prefill.is_legacy_checkpoint(values):
+            return  # the old wizard's 8765 write: keep the prefill (R2-F4)
         preset = values.get("preset")
         if preset not in _BUTTON_BY_PRESET:
             preset = voice_state.VOICE_PRESET_CUSTOM

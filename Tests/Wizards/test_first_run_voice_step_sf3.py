@@ -501,6 +501,51 @@ async def test_the_old_wizards_pocket_tts_write_is_not_preselected_or_rewritten(
 
 
 @pytest.mark.asyncio
+async def test_resuming_an_old_wizards_run_does_not_bring_back_the_8765_voice() -> None:
+    """Review round 2 (R2-F4): an interrupted old-wizard run checkpointed the
+    unspeakable 8765 PocketTTS address. Resumed, it came back as a
+    working-looking Custom voice, and Next saved it with nothing edited."""
+    legacy = {
+        "OPENAI_BASE_URL": "http://127.0.0.1:8765/v1/audio/speech",
+        "OPENAI_AUTH_MODE": "none",
+        "default_provider": "openai",
+        "default_model": "tts-1-hd",
+        "default_voice": "shimmer",
+        "default_format": "mp3",
+    }
+    lines: list[str] = []
+
+    async def resume(step, pilot):
+        step.restore_checkpoint(
+            {
+                "preset": "pocket_tts",
+                "endpoint": "http://127.0.0.1:8765/v1/audio/speech",
+                "authentication_mode": "none",
+                "model_id": "pocket-tts",
+                "voice_id": "alba",
+                "response_format": "wav",
+                "speed": 1.0,
+                "sample_text": voice_state.DEFAULT_SAMPLE_TEXT,
+                "use_as_default": False,
+            }
+        )
+        await pilot.pause()
+        lines.append(
+            str(step.query_one("#setup-voice-service-status", Static).render())
+        )
+
+    step, app, outcome, before, after = await _commit_through_real_writer(
+        legacy, None, act=resume
+    )
+
+    assert step._preset == voice_state.VOICE_PRESET_NONE
+    assert "127.0.0.1:8765" in lines[0] and "can't speak" in lines[0]
+    assert outcome == (True, "")
+    assert app.saves == []
+    assert after == before
+
+
+@pytest.mark.asyncio
 async def test_no_voice_for_now_over_a_saved_voice_says_it_is_kept(
     monkeypatch,
 ) -> None:
