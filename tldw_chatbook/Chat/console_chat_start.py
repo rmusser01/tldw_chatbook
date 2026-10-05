@@ -289,7 +289,24 @@ class ConsoleChatStartCoordinator:
         )
 
     async def start(self, request: AgentChatStartRequest) -> AgentChatStartOutcome:
-        """Return at refusal or both acceptance fences while owning the target task."""
+        """Return at refusal or both acceptance fences while owning the target task.
+
+        Args:
+            request: Frozen source and target identities and incarnations, target
+                draft and context revisions, literal opening prompt, configuration,
+                and destination workspace for this one start attempt.
+
+        Returns:
+            An outcome with launch_status and an optional reason: not_started for
+            refusal, started after native acceptance and the automatic-work receipt
+            with completion still pending, or review_required when acceptance,
+            receipt, settlement, or outcome publication cannot be confirmed. The
+            coordinator retains ownership of target work through cleanup.
+
+        Raises:
+            asyncio.CancelledError: If the caller is cancelled. A still-prepared
+                target is asked to withdraw; owned work retains its drain custody.
+        """
         controller = self._controller
         reason = self._runtime_refusal(request)
         if reason is None and not self._destination_available(request):

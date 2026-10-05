@@ -812,7 +812,13 @@ NEW_CHAT_TOOL_SCHEMA = ToolSchema(
             },
             "opening_prompt": {
                 "type": "string",
-                "description": "Draft first message placed in the new chat's input box.",
+                "description": (
+                    "First message for the new chat. With mode=draft (default), "
+                    "it is saved in the input box for review. With mode=start, "
+                    "it must be nonblank and is submitted as one bounded background "
+                    "agent turn after confirmation and runtime admission. Text is "
+                    "literal; slash commands and @ references are not expanded."
+                ),
             },
             "instructions": {
                 "type": "string",
