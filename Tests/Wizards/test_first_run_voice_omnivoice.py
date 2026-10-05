@@ -298,6 +298,63 @@ async def test_reshow_rereads_state_without_cancelling_install(monkeypatch) -> N
         assert step._omnivoice_installing is True
 
 
+def _default_box(step) -> tuple[bool, bool, str]:
+    box = step.query_one("#setup-voice-default", Checkbox)
+    help_line = str(step.query_one("#setup-voice-default-help", Static).render())
+    return box.value, box.disabled, help_line
+
+
+_OMNIVOICE_READS_REPLIES = {
+    "COMPREHENSIVE_CONFIG_RAW": {"app_tts": {"default_provider": "omnivoice"}}
+}
+
+
+async def test_a_saved_omnivoice_reply_voice_cannot_be_unticked_away(
+    monkeypatch,
+) -> None:
+    """Review round 2 (R2-F2): the prefill preselected a saved OmniVoice voice
+    with the box ticked but free. Unticked, Next posted nothing, so OmniVoice
+    kept reading replies while the box said it would not."""
+    _state(monkeypatch, "ready")
+    step = _step(_OMNIVOICE_READS_REPLIES)
+    host = _Host(step)
+    async with host.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        assert step._preset == vs.VOICE_PRESET_OMNIVOICE
+
+        ticked, locked, help_line = _default_box(step)
+        assert (ticked, locked) == (True, True)
+        assert help_line.startswith(
+            "Replies use OmniVoice now — pick another service to change that."
+        )
+        step.query_one("#setup-voice-default", Checkbox).value = False
+        await pilot.pause()
+        assert _default_box(step)[:2] == (True, True)
+        assert await step.commit() == (True, "")
+        assert host.saved is None
+
+
+async def test_another_service_over_a_saved_omnivoice_names_it(monkeypatch) -> None:
+    """Review round 2 (R2-F1): over a saved OmniVoice reply voice, an
+    OpenAI-slot pick read "Replies will use this voice instead of ." -- the
+    provider name was empty. Like kokoro, the box starts unticked."""
+    _state(monkeypatch, "ready")
+    step = _step(_OMNIVOICE_READS_REPLIES)
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        step._select_preset_button("setup-voice-preset-pocket")
+        await pilot.pause()
+
+        ticked, locked, help_line = _default_box(step)
+        assert (ticked, locked) == (False, False)
+        assert help_line.startswith("Saved for later; replies keep using OmniVoice.")
+        step.query_one("#setup-voice-default", Checkbox).value = True
+        await pilot.pause()
+        assert _default_box(step)[2].startswith(
+            "Replies will use this voice instead of OmniVoice."
+        )
+
+
 async def test_a_blank_sample_says_why_test_is_off(monkeypatch) -> None:
     """Review round 2 (G8-R2-F5): OmniVoice shares the status line, so a
     blank sample says why Test and Hear is off there too."""

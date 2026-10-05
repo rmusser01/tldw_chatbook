@@ -53,6 +53,9 @@ KEY_REFUSAL_COPY = (
     'above, pick another service, or choose "No voice for now".'
 )
 DEFAULT_HELP_COPY = "Turn on Speak replies in Console to hear answers automatically."
+OMNIVOICE_REPLY_LEAD = (
+    "Replies use OmniVoice now — pick another service to change that."
+)
 #: The auth option names the key; this line says where it comes from (the
 #: long label was cut to "…from the Provider st…" even at 160 columns).
 AUTH_HELP_COPY = (
@@ -283,6 +286,9 @@ def default_help_copy(
         reply_voice: The provider reading replies when the box is free.
         replaces: The saved voice this pick replaces, if it differs.
     """
+    if preset == vs.VOICE_PRESET_OMNIVOICE and locked:
+        # Review round 2 (R2-F2): OmniVoice reads replies; the box is locked.
+        return f"{OMNIVOICE_REPLY_LEAD} {DEFAULT_HELP_COPY}"
     if preset not in prefill.OPENAI_SLOT_PRESETS:
         return DEFAULT_HELP_COPY
     if locked:
@@ -364,6 +370,7 @@ __all__ = [
     "LEAVE_MESSAGE",
     "LEAVE_TITLE",
     "NO_VOICE_COPY",
+    "OMNIVOICE_REPLY_LEAD",
     "PLAYBACK_FAILED_COPY",
     "PLAYED_COPY",
     "PROBE_TIMEOUT_SECONDS",

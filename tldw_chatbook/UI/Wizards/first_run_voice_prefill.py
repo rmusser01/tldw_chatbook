@@ -231,11 +231,38 @@ def default_box_locked(preset: str, table: object) -> bool:
     and the User Guide said it was "not the default voice"; so for those
     services the box is ticked and cannot be unticked.
 
+    Review round 2 (R2-F2): the same holds for a saved OmniVoice reply voice.
+    OmniVoice's save only ever makes it the default, so an unticked Next
+    posted nothing and OmniVoice kept reading replies while the box said it
+    would not. Picking another service is how to change it.
+
     Args:
         preset: The selected Service radio.
         table: The raw ``[app_tts]`` table.
     """
+    if preset == vs.VOICE_PRESET_OMNIVOICE:
+        return (
+            isinstance(table, Mapping)
+            and _text(table, "default_provider") == vs.VOICE_PRESET_OMNIVOICE
+        )
     return preset in OPENAI_SLOT_PRESETS and reply_voice_uses_openai_slot(table)
+
+
+def reply_voice_name(saved: SavedVoice | None) -> str:
+    """The provider reading replies when it is not the OpenAI-compatible slot.
+
+    Review round 2 (R2-F1): over a saved OmniVoice voice the help line named
+    nobody ("Replies will use this voice instead of .").
+
+    Returns:
+        "OmniVoice", another provider's id (e.g. ``kokoro``), or "" when the
+        slot itself reads replies or nothing is saved.
+    """
+    if saved is None:
+        return ""
+    if saved.preset == vs.VOICE_PRESET_OMNIVOICE:
+        return _PRESET_NAMES[vs.VOICE_PRESET_OMNIVOICE]
+    return saved.other_provider
 
 
 def _persisted_identity(draft: vs.VoiceSetupDraft) -> tuple[object, ...]:
@@ -403,6 +430,7 @@ __all__ = [
     "initial_voice_draft",
     "legacy_summary_detail",
     "raw_app_tts",
+    "reply_voice_name",
     "reply_voice_uses_openai_slot",
     "saved_voice_from_config",
     "service_name",

@@ -246,6 +246,11 @@ def test_a_saved_pocket_tts_address_on_any_port_fills_pocket_tts_axes(table) -> 
         (vs.VOICE_PRESET_POCKET_TTS, {"default_provider": "kokoro"}, False),
         (vs.VOICE_PRESET_POCKET_TTS, {"default_provider": "omnivoice"}, False),
         (vs.VOICE_PRESET_OMNIVOICE, {}, False),
+        # Review round 2 (R2-F2): OmniVoice reading replies cannot be
+        # unticked away -- an unticked Next posted nothing and it kept
+        # reading them.
+        (vs.VOICE_PRESET_OMNIVOICE, {"default_provider": "omnivoice"}, True),
+        (vs.VOICE_PRESET_OMNIVOICE, {"default_provider": "kokoro"}, False),
         (vs.VOICE_PRESET_NONE, {}, False),
     ),
 )
@@ -256,6 +261,23 @@ def test_the_default_box_is_locked_while_the_openai_slot_reads_replies(
     endpoint and, with no other default provider, it reads replies. Saving a
     service there is choosing the reply voice, whatever the box says."""
     assert prefill.default_box_locked(preset, table) is locked
+
+
+@pytest.mark.parametrize(
+    ("table", "name"),
+    (
+        ({"default_provider": "omnivoice"}, "OmniVoice"),
+        ({"default_provider": "kokoro"}, "kokoro"),
+        ({"default_provider": "openai", "OPENAI_BASE_URL": _OFFICIAL}, ""),
+    ),
+)
+def test_the_reply_voice_is_named_for_every_other_provider(table, name) -> None:
+    """Review round 2 (R2-F1): with OmniVoice reading replies, the help line
+    named nobody ("Replies will use this voice instead of .")."""
+    saved = prefill.saved_voice_from_config(table)
+
+    assert prefill.reply_voice_name(saved) == name
+    assert prefill.reply_voice_name(None) == ""
 
 
 def test_saved_omnivoice_default_prefills_omnivoice() -> None:

@@ -124,8 +124,9 @@ class VoiceSetupStep(OmniVoiceStepBase):
         self._refresh_saved()
         saved = self._saved
         self._preset = saved.preset if saved else voice_state.VOICE_PRESET_NONE
+        # The box is locked on wherever the pick is the reply voice; free, it
+        # starts unticked (another provider keeps replies; R2-F1).
         draft = self._initial_draft()
-        self._default_choice = draft.use_as_default
         with Vertical(classes="setup-voice"):
             yield Static("Set up a voice", classes="setup-title")
             yield Static(
@@ -317,6 +318,9 @@ class VoiceSetupStep(OmniVoiceStepBase):
             and self._custom_draft is not None
             else current
         )
+        # The box carries the user's own choice, never the last service's
+        # (locked) tick, which would read as a tick here (R2-F1).
+        base = voice_state.replace_draft(base, use_as_default=self._default_choice)
         self._apply_draft_to_controls(voice_state.apply_voice_preset(base, preset))
         self._start_probe()
 
@@ -539,7 +543,7 @@ class VoiceSetupStep(OmniVoiceStepBase):
                 self._preset,
                 locked=locked,
                 ticked=box.value,
-                reply_voice=saved.other_provider if saved is not None else "",
+                reply_voice=prefill.reply_voice_name(saved),
                 replaces=replaced,
             )
         )
