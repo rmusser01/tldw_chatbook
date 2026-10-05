@@ -928,7 +928,8 @@ class LocalWorkspaceRegistryService:
 
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
-            with self.db.connection() as conn:
+            database = self.db
+            with operation_owned_connection(database), database.connection() as conn:
                 row = conn.execute(
                     """
                     SELECT *
@@ -3202,7 +3203,8 @@ class LocalWorkspaceRegistryService:
         """
         safe_workspace_id = _normalize_required_text(workspace_id, "workspace_id")
         try:
-            with self.db.connection() as conn:
+            database = self.db
+            with operation_owned_connection(database), database.connection() as conn:
                 row = conn.execute(
                     """
                     SELECT enabled, updated_at FROM workspace_change_review
@@ -3813,3 +3815,13 @@ def next_local_workspace_identity(
         if workspace_id not in existing_ids and workspace_name not in existing_names:
             return workspace_id, workspace_name
         index += 1
+
+
+# Definition-time identities qualify only the optional hook connection scope.
+# They retain no connection, permission verdict, or reader result.
+_HOOK_WORKSPACE_READERS = tuple(
+    (LocalWorkspaceRegistryService, name, function, function.__code__,
+     function.__defaults__, function.__kwdefaults__, function.__closure__)
+    for name in ("get_workspace", "read_change_review_consent")
+    for function in (getattr(LocalWorkspaceRegistryService, name),)
+)

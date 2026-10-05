@@ -24281,3 +24281,33 @@ class TransactionContextManager:
 #
 # End of ChaChaNotes_DB.py
 #######################################################################################################################
+# Definition-time identities for the finite Character display reader only.
+_CHARACTER_REFRESH_READERS = tuple(
+    (
+        CharactersRAGDB,
+        name,
+        descriptor,
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        __file__,
+        __spec__,
+        getattr(__spec__, "origin", None),
+    )
+    for name in (
+        "get_local_authority_id",
+        "get_character_conversation_search_revision",
+        "get_connection",
+        "close_connection",
+        "transaction",
+    )
+    for descriptor in (vars(CharactersRAGDB)[name],)
+    for function in (
+        descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
+    )
+)

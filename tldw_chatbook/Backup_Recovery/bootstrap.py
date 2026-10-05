@@ -619,12 +619,131 @@ def _binding(
     # Declared mapping equality stays exact. Omit only absent aliases covered
     # by this profile's already enrolled and physically verified directory.
     entries = tuple(registry[name] for name in match["namespaces"])
-    for raw in effective_roots(roots, entries):
-        path = Path(raw).resolve(strict=True)
-        with pinned_directory(path.parent) as parent:
-            info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+    tree_reader = None
+    if os.name == "nt":
+        from types import FunctionType, MethodType
+
+        from ..Utils import windows_files
+
+        provenance = getattr(windows_files, "_WINDOWS_BINDING_TREE_ORIGINAL", None)
+        if type(provenance) is tuple and len(provenance) == 8:
+            tree_class, function, code, namespace, defaults, keywords, closure, name = (
+                provenance
+            )
+            tree_facade = os
+            if type(tree_facade) is tree_class:
+                tree_reader = object.__getattribute__(tree_facade, "__dict__").get(name)
+
+            def tree_current():
+                return (
+                    os is tree_facade
+                    and type(tree_facade) is tree_class
+                    and tree_class is getattr(windows_files, "WindowsOS", None)
+                    and tree_class
+                    is getattr(windows_files, "_WINDOWS_METADATA_CLASS_ORIGINAL", None)
+                    and getattr(windows_files, "_WINDOWS_BINDING_TREE_ORIGINAL", None)
+                    is provenance
+                    and type(function) is FunctionType
+                    and vars(tree_class).get(name) is function
+                    and type(tree_reader) is MethodType
+                    and tree_reader.__self__ is tree_facade
+                    and tree_reader.__func__ is function
+                    and object.__getattribute__(tree_facade, "__dict__").get(name)
+                    is tree_reader
+                    and function.__code__ is code
+                    and namespace is vars(windows_files)
+                    and function.__globals__ is namespace
+                    and function.__defaults__ is defaults
+                    and function.__kwdefaults__ is keywords
+                    and function.__closure__ is closure
+                )
+
+            if not tree_current():
+                tree_reader = None
+    if tree_reader is not None:
+        from ..Utils.private_paths import (
+            PrivatePathError,
+            PrivatePathResult,
+            PrivatePathStatus,
+            _describe_stat,
+            _offender_mode,
+            _offender_path,
+            _trusted_directory_owner,
+        )
+
+        selected = tuple(
+            Path(raw).resolve(strict=True) for raw in effective_roots(roots, entries)
+        )
+        if not tree_current():
+            raise ValueError("binding_tree_reader_changed")
+        observed = tree_reader(
+            tuple({node for path in selected for node in (*path.parents, path)})
+        )
+        if not tree_current():
+            raise ValueError("binding_tree_reader_changed")
+        for path in selected:
+            reader = path.parent / ".bootstrap-reader"
+            # Match the original missing-leaf parent walk, including its stricter
+            # final-parent rule. A sticky ancestor never admits a shared final parent.
+            for parent in reversed(path.parents or (path,)):
+                value = observed[parent]
+                if value is None:
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            reader,
+                            PrivatePathStatus.UNSAFE_PARENT,
+                            reason="missing_parent",
+                            offender_path=_offender_path(list(parent.parts[1:])),
+                        )
+                    )
+                info = value[0]
+                if not stat.S_ISDIR(info.st_mode):
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            reader,
+                            PrivatePathStatus.LINK_OR_NON_REGULAR,
+                            reason="non_directory_parent",
+                            offender_path=_offender_path(list(parent.parts[1:])),
+                        )
+                    )
+                mode = stat.S_IMODE(info.st_mode)
+                reason = (
+                    "untrusted_directory_owner"
+                    if not _trusted_directory_owner(info, os.geteuid())
+                    else "missing_leaf_in_shared_sticky_parent"
+                    if mode & 0o022 and mode & stat.S_ISVTX and parent == path.parent
+                    else "shared_writable_parent"
+                    if mode & 0o022 and not mode & stat.S_ISVTX
+                    else None
+                )
+                if reason is not None:
+                    raise PrivatePathError(
+                        PrivatePathResult(
+                            reader,
+                            PrivatePathStatus.UNSAFE_PARENT,
+                            reason=reason,
+                            offender_path=_offender_path(list(parent.parts[1:])),
+                            offender_detail=_describe_stat(info),
+                            offender_mode=_offender_mode(info),
+                        )
+                    )
+            if not path.name:
+                raise ValueError("invalid_windows_component")
+            value = observed[path]
+            if value is None:
+                raise FileNotFoundError(path)
+            info = value[0]
             if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
                 raise ValueError("root_unverified")
+    else:
+        for raw in effective_roots(roots, entries):
+            path = Path(raw).resolve(strict=True)
+            with pinned_directory(path.parent) as parent:
+                info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+                if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+                    raise ValueError("root_unverified")
+    if tree_reader is not None and not tree_current():
+        raise ValueError("binding_tree_reader_changed")
     return match
 
 

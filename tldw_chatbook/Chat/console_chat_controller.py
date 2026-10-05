@@ -29757,3 +29757,15 @@ _CONSOLE_RECOVERY_PRESENTATION_GETTERS = tuple(
     )
     for function in (getattr(ConsoleChatController, name),)
 )
+
+
+# Hook custody qualifies the original finite callback, never an injected route.
+_HOOK_AUTHORITY_VALUES_ORIGINAL = (
+    ConsoleChatController,
+    "_hook_authority_values",
+    ConsoleChatController._hook_authority_values,
+    ConsoleChatController._hook_authority_values.__code__,
+    ConsoleChatController._hook_authority_values.__defaults__,
+    ConsoleChatController._hook_authority_values.__kwdefaults__,
+    ConsoleChatController._hook_authority_values.__closure__,
+)

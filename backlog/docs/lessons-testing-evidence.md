@@ -18560,3 +18560,17 @@ cancellation releasing the display owner before real SQL callback retirement;
 the repair passes all five native controls, including final formatted source
 (historical-cancellation-formatted-native-green-2,33.968s). Keep setup refusal
 separate from a causal product RED.
+
+
+## A lazy ownership scope does not open a shared connection
+
+During PR3023's Workspace leak repair, review caught a proposed outer
+operation-owned connection context that only recorded ownership. The nested
+scoped public readers would still open and close two distinct native handles.
+The reviewed stock hook composition retains an actual supported
+`database.connection()` interval as well; all12 native lifetime/count/fallback
+controls pass (`hook-workspace-one-handle-native-green-2`). A separate actual
+cold-composite check then reproduces two opens in four other operations despite
+the same lazy outer scope (`workspace-cold-composite-native-red-1`). Distinguish
+ownership bookkeeping, real connection admission and physical retirement; prove
+the exact native work count rather than inferring grouping from nested contexts.

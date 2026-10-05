@@ -1330,3 +1330,16 @@ _WINDOWS_METADATA_METHODS_ORIGINAL = tuple(
     for name in ("stat", "_named_stat", "_stat_handle", "stat_many_for_admission")
 )
 _WINDOWS_METADATA_CLOSE_ERROR_ORIGINAL = _AdmissionMetadataCloseError
+
+# The binding batch admits only this definition-time body on an exact stock
+# receiver. Custom metadata readers keep their existing scalar path.
+_WINDOWS_BINDING_TREE_ORIGINAL = (
+    _WINDOWS_METADATA_CLASS_ORIGINAL,
+    WindowsOS.stat_many_for_admission,
+    WindowsOS.stat_many_for_admission.__code__,
+    WindowsOS.stat_many_for_admission.__globals__,
+    WindowsOS.stat_many_for_admission.__defaults__,
+    WindowsOS.stat_many_for_admission.__kwdefaults__,
+    WindowsOS.stat_many_for_admission.__closure__,
+    "stat_many_for_admission",
+)

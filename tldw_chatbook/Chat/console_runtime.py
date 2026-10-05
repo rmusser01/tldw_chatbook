@@ -3124,13 +3124,131 @@ class ConsoleRuntime:
         session = next(row for row in store.sessions() if row.id == session_id)
         from tldw_chatbook.DB.base_db import operation_owned_connection
 
-        with operation_owned_connection(getattr(store.persistence, "db", None)):
-            values = controller._hook_authority_values(session_id)
+        # Only the stock finite callback gains Workspace connection ownership.
+        # Custom/injected callbacks retain the original call and cleanup shape.
+        from tldw_chatbook.Chat import console_chat_controller as controller_module
+        from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+        from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
+        from tldw_chatbook.Workspaces import registry_service as registry_module
+        from tldw_chatbook.Workspaces.change_review_consent import (
+            ChangeReviewConsentService,
+        )
+
+        app = self._app
+        registry = getattr(app, "workspace_registry_service", None)
+        database = getattr(registry, "db", None)
+        consent = getattr(app, "change_review_consent_service", None)
+        hook_anchor = controller_module._HOOK_AUTHORITY_VALUES_ORIGINAL
+        controller_class, name, function, code, defaults, kwdefaults, closure = (
+            hook_anchor
+        )
+        reader_anchors = registry_module._HOOK_WORKSPACE_READERS
+        registry_class = reader_anchors[0][0]
+
+        def bindings_current():
             return (
-                session.workspace_id,
+                controller_module._HOOK_AUTHORITY_VALUES_ORIGINAL is hook_anchor
+                and controller_module.ConsoleChatController is controller_class
+                and registry_module.LocalWorkspaceRegistryService is registry_class
+                and registry_module._HOOK_WORKSPACE_READERS is reader_anchors
+                and inspect.getattr_static(type(controller), name) is function
+                and name not in vars(controller)
+                and function.__code__ is code
+                and function.__defaults__ is defaults
+                and function.__kwdefaults__ is kwdefaults
+                and function.__closure__ is closure
+                and function.__globals__ is controller_module.__dict__
+                and all(
+                    owner is registry_class
+                    and inspect.getattr_static(type(registry), label) is reader
+                    and label not in vars(registry)
+                    and reader.__code__ is reader_code
+                    and reader.__defaults__ is reader_defaults
+                    and reader.__kwdefaults__ is reader_kwdefaults
+                    and reader.__closure__ is reader_closure
+                    and reader.__globals__ is registry_module.__dict__
+                    for owner, label, reader, reader_code, reader_defaults, reader_kwdefaults, reader_closure in reader_anchors
+                )
+            )
+
+        stock = (
+            type(self) is _HOOK_CONTEXT_KEY_ORIGINAL_OWNER
+            and ConsoleRuntime is _HOOK_CONTEXT_KEY_ORIGINAL_OWNER
+            and type(store) is ConsoleChatStore
+            and type(controller) is controller_class
+            and controller.store is store
+            and controller.app is app
+            and controller._turn_context_provider is None
+            and type(registry) is registry_class
+            and type(database) is WorkspaceDB
+            and not database.is_memory_db
+            and type(consent) is ChangeReviewConsentService
+            and consent._registry is registry
+            and bindings_current()
+        )
+        if not stock:
+            with operation_owned_connection(getattr(store.persistence, "db", None)):
+                values = controller._hook_authority_values(session_id)
+                return (
+                    session.workspace_id,
+                    values["workspace_roots"],
+                    values["project_authority"],
+                )
+
+        chat_database = getattr(store.persistence, "db", None)
+        workspace_id = session.workspace_id
+        actor = (os.getpid(), threading.current_thread())
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            task = None
+
+        def require_current():
+            try:
+                current_task = asyncio.current_task()
+            except RuntimeError:
+                current_task = None
+            if (
+                self._disposed
+                or ConsoleRuntime is not _HOOK_CONTEXT_KEY_ORIGINAL_OWNER
+                or self._app is not app
+                or self._chat_store is not store
+                or self._chat_controller is not controller
+                or controller.store is not store
+                or controller.app is not app
+                or controller._turn_context_provider is not None
+                or not bindings_current()
+                or getattr(store.persistence, "db", None) is not chat_database
+                or getattr(app, "workspace_registry_service", None) is not registry
+                or registry.db is not database
+                or getattr(app, "change_review_consent_service", None) is not consent
+                or consent._registry is not registry
+                or not any(row is session for row in store.sessions())
+                or session.workspace_id != workspace_id
+                or os.getpid() != actor[0]
+                or threading.current_thread() is not actor[1]
+                or current_task is not task
+            ):
+                raise RuntimeError("Console hook workspace ownership changed.")
+
+        require_current()
+        with (
+            operation_owned_connection(chat_database),
+            operation_owned_connection(database),
+            database.connection(),
+        ):
+            require_current()
+            # Invoke the qualified original instead of a later mutable lookup.
+            values = function(controller, session_id)
+            require_current()
+            result = (
+                workspace_id,
                 values["workspace_roots"],
                 values["project_authority"],
             )
+        # Retirement can run callbacks; refuse a redirected result afterwards too.
+        require_current()
+        return result
 
     async def prepare_hooks_v2(
         self,
@@ -5528,3 +5646,7 @@ async def dispose_console_runtime(app: Any, *, view: Any | None = None) -> None:
     await runtime.dispose()
     if not runtime.hooks_v2_cleanup_pending:
         _attach(app, None)
+
+
+# Definition-time owner for the optional stock hook connection scope.
+_HOOK_CONTEXT_KEY_ORIGINAL_OWNER = ConsoleRuntime

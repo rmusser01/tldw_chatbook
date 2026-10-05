@@ -6782,7 +6782,7 @@ class ConsoleWorkspaceController:
                 )
                 database = getattr(registry, "db", None)
                 if type(database) is WorkspaceDB and not database.is_memory_db:
-                    availability_snapshot, bindings_snapshot = await run_owned_db_call(
+                    read_operation = run_owned_db_call(
                         database,
                         self._read_workspace_files_availability,
                         registry,
@@ -6790,11 +6790,29 @@ class ConsoleWorkspaceController:
                         workspace_ids,
                     )
                 else:
-                    availability_snapshot, bindings_snapshot = await asyncio.to_thread(
+                    read_operation = asyncio.to_thread(
                         self._capture_workspace_files_availability_for_registry,
                         registry,
                         workspace_ids,
                     )
+                read_task = asyncio.create_task(read_operation)
+                try:
+                    availability_snapshot, bindings_snapshot = await asyncio.shield(
+                        read_task
+                    )
+                except asyncio.CancelledError:
+                    # Keep the exact producer claim until its native callback and
+                    # owned connection have physically retired, even on recancel.
+                    while not read_task.done():
+                        try:
+                            await asyncio.shield(read_task)
+                        except asyncio.CancelledError:
+                            continue
+                        except Exception:  # noqa: BLE001 - preserve cancellation.
+                            break
+                    if not read_task.cancelled():
+                        read_task.exception()
+                    raise
                 if (
                     generation == self._workspace_files_availability_generation
                     and registry

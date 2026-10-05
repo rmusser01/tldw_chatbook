@@ -336,6 +336,16 @@ class Observation:
         target.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
 
+async def _await_probe_trace_settlement(store, *, deadline):
+    """Await original scheduler retirement within the captured-send allowance."""
+    while store.pending_provider_trace_settlement_work_count():
+        remaining = deadline - time.perf_counter()
+        assert (
+            remaining > 0
+        ), "Original provider trace settlement did not retire within send budget"
+        await asyncio.sleep(min(0.01, remaining))
+
+
 @pytest.mark.asyncio
 @pytest.mark.timeout(900)
 @private_profile_test
@@ -460,7 +470,9 @@ async def test_native_console_pause_probe(monkeypatch, tmp_path, request):
                 for _ in range(8):
                     await pilot.press("a")
                 await asyncio.sleep(0.5)
+            trace_store = controller.store
             for index in range(1, 4):
+                send_deadline = time.perf_counter() + MAX_CAPTURED_SEND_SECONDS
                 with observed.phase_scope(f"send_{index}"):
                     screen._session._sync_console_session_draft()
                     composer.load_draft(f"Native pause probe message {index}")
@@ -473,6 +485,11 @@ async def test_native_console_pause_probe(monkeypatch, tmp_path, request):
                     assert controller.run_state.status is ConsoleRunStatus.COMPLETED
                     await screen._sync_native_console_chat_ui()
                     await asyncio.sleep(0.25)
+                    assert controller.store is trace_store
+                    await _await_probe_trace_settlement(
+                        trace_store, deadline=send_deadline
+                    )
+                    assert controller.store is trace_store
             messages = controller.store.messages_for_session(
                 controller.store.active_session_id
             )

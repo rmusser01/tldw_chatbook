@@ -445,3 +445,53 @@ actual resolved union nodes; source-current, local/global hooks retired, no
 invalid observations or network attempts. Earlier native1 failed setup because
 the draft pinned a different directory wrapper and is excluded. The production
 candidate remains unapplied while its immediate-parent policy is corrected.
+
+
+Windows binding batching is now installed and independently reviewed against the
+actual private-path parent walk. The original native work-count plus all five
+permission/source/custom-reader/uncertain-close controls pass (13.344s driver,
+unchanged sources). Both complete binding calls stay within the original
+structural union bound; this is leaf work-count evidence, not a whole-app timing
+claim. A final defining-reader fence also refuses changes during parent-policy
+checks. The existing compatibility selection passes82 cases with one custody
+skip; two further cases stop at host limitations before relevant binding work
+(WinError1314 symlink privilege and an unchanged POSIX chmod assertion). Native
+Windows changed-ancestor, grouped-observation and handle-retirement controls
+pass. Original end-to-end limits remain pending.
+
+The original retry's exact seventh constructor owner reveals two genuine
+Workspace worker handles opened by the hook-key consent/get_workspace readers;
+the hook callback had only scoped the separate Chat persistence database. Nine
+source-qualified native callback controls reproduce five ownership failures
+(normal/error/cancel/custom-reader/retarget) while four supported ownership
+controls pass (50.937s driver, unchanged sources, no guard violations). The
+repair proposal is undergoing review and native acceptance. Review caught that
+an outer lazy ownership context alone cannot make two nested readers share a
+handle; the qualified stock composition must retain an actual supported
+connection interval as well. The distinct availability-cancellation callback
+lifetime is still a separate hypothesis.
+
+
+### 2026-10-05 finite callback and readiness evidence
+
+Hook grouping now retains one actual supported Workspace connection across the fresh original readers. `hook-workspace-one-handle-native-green-2` passes all12 cases (59.468s), including one stock physical handle, body failure/repeated cancellation/retarget, borrowed transactions and three inherited-alias fallbacks. Sources remain unchanged. Review caught the lazy-scope-only draft before acceptance.
+
+Character finite batching retains initial capture/REFRESHING publication. Frozen-candidate entry tests reproduce five changed-body executions before refusal (19.140s). Exact captured readers with post-admission pre-entry fences repair the gap. `character-finite-batch-entry-source-native-green-1` passes all31 work-count, source/error, borrowed/custom and queued-entry controls (84.828s, current sources).
+
+The first availability observer fails setup only: Python3.12 rejects local PY_UNWIND. With supported local events, original Native callback tests reproduce five early-release failures and two current successes (61.594s). Repeatedly shielding/draining the same captured task until physical callback retirement passes all7 in `workspace-availability-same-callback-native-green-1` (58.812s). Named/Default success, fresh retry and borrowed transactions remain.
+
+Owned public Workspace readers expose another cold-composite cost. `workspace-cold-composite-native-red-1` reproduces two physical handles for admit/status/Inspector capture/save-binding, while three borrowed controls pass (30.250s). Original results/queries, native closes, leases and observer retirement qualify before each work-count assertion. Composite grouping remains pending; do not undo the public reader cleanup.
+
+Original Character compatibility has91 passing bodies,16 bootstrap setup errors, one premature DOM assertion and one unassigned factory teardown error. Four existing-bootstrap marks and exact current idle widget/DOM readiness preserve original40-by-.05 bounds. `character-original-readiness-prerequisites-native-1` passes all18 selected bodies (27.875s); the mount node retains a separate constructor-owner teardown refusal. Its first adapted exact-owner witness fails selected-module setup and is excluded, not origin evidence.
+
+Exact47a9 Ubuntu trace evidence reaches its durable oracle with the third settlement callback still owned; prepared/claimed/store-run finish31-34ms later and teardown drains tozero. The probe now awaits original pending work inside the unchanged15-second Send phase before rereading durable states/links. `trace-probe-original-retirement-native-green-1` passes success/expiry/cancel (22.468s) with actual native return held through physical handle/lease/registration retirement. The earlier three children completed their proof but lacked the shared harness's normal success marker; only that final marker was added. Original whole timing limits remain pending.
+
+
+`original-retry-current-exact-owner-native-4` now passes the unchanged refused-echo retry and teardown (35.828s, sources unchanged). Its exact seven-constructor-owner v3 witness qualifies the actual bootstrap body, original code and close frames, zero invalid/global observations, retired hooks and no original close refusal. This verifies the original leak path after hook/availability corrections; it does not excuse other readiness or timing failures.
+
+
+Current four-callback checkpoint checks242 changed/new files against dev: baseline734 diagnostics, current733, zero new diagnostics. The original persistent diagnostic inventory reports no drift (652 owners/1444 TASK492/56 TASK31551/7616 TASK494/16 sinks), and the original remote-worker bundle check passes. Formatter changes to the two performance tests preserve their complete ASTs. These static checks do not establish responsiveness acceptance.
+
+The source-qualified original Character mount and canonical-writer exact-owner controls pass individually (21.328s and22.765s). All seven constructor owners are recorded and original close rows retire with no refusal. These individual runs do not explain the earlier cohort-only teardown failure; that remains unassigned.
+
+Cold receipt controls1-3 are setup-only and excluded. The latest captures the actual Inspector-to-bridge-to-receipt constructor chain, but its raw sqlite3.Connection prerequisite is incorrect: AgentRuns uses the process SQLite facade even on Windows. No actual hold was qualified, so no startup causal RED or production startup repair is claimed. The next control must qualify the original facade and helper lifetime.

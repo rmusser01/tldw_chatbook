@@ -1060,3 +1060,27 @@ class BaseDB(ABC):
         except Exception as e:
             logger.error(f"Failed to check database integrity: {e}")
             return False
+# Definition-time identities for the finite Character display reader only.
+_CHARACTER_REFRESH_READERS = tuple(
+    (
+        None,
+        name,
+        descriptor,
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        __file__,
+        __spec__,
+        getattr(__spec__, "origin", None),
+    )
+    for name in ("run_owned_db_call",)
+    for descriptor in (globals()[name],)
+    for function in (
+        descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
+    )
+)

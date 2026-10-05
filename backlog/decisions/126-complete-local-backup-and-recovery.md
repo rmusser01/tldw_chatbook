@@ -1937,3 +1937,31 @@ reads. No persistent worker, permission verdict, result cache, widened root,
 changed guard or relaxed time/helper/open budget is introduced. Actual native
 GREEN, refusal/error controls and original whole/platform evidence are required
 before accepting the optimization.
+
+
+### Fresh Windows binding ancestry observation (TASK-34406, 2026-10-05)
+
+Two actual unchanged binding calls observe the same enrolled twelve-root tree
+and retire their original native handles, then fail the work-count control at
+152 opens each against structural bound63 for24 resolved nodes. The earlier
+wrong-wrapper setup and synthetic wrong-parent-policy controls are excluded.
+This justifies grouping fresh metadata observations within one binding call;
+it supplies no cached permission or cross-call observation.
+
+Only the original defining WindowsOS tree-reader body and exact bound receiver
+may use the existing stat_many_for_admission API to observe the union of actual
+effective resolved roots and ancestors. Retain definition-time class/function,
+code/globals/defaults/closure and instance-bound-method identity. Customized or
+unsupported readers retain the original scalar/pinned-directory route. Drift
+after choosing the batch refuses before dispatch or result publication; it
+never switches to an unknown reader under that chosen interval. Original
+bottom-up named identity checks, descriptor policy and uncertain-close custody
+remain in the existing API. Every new binding invocation obtains a new tree.
+
+The original parent policy remains exact, including trusted owner checks,
+shared writable ancestor refusal, allowed sticky ancestors and stricter refusal
+of a shared sticky immediate parent for the missing .bootstrap-reader leaf.
+Drive-root empty-component refusal and every original POSIX loop statement
+remain. Native permission/custom/body-drift and protected-HANDLE close controls
+are required alongside the count GREEN. This leaf does not qualify whole
+Send/startup improvements or change any native/helper/responsiveness budget.
