@@ -33,8 +33,12 @@ from textual.css.query import NoMatches
 from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
-from Tests.UI._child_creation_original_admission import original_child_creation_admission  # noqa: F401
-from Tests.UI._original_prepared_fleet_db_lifetime import original_prepared_fleet_db_lifetime  # noqa: F401
+from Tests.UI._child_creation_original_admission import (
+    original_child_creation_admission,
+)  # noqa: F401
+from Tests.UI._original_prepared_fleet_db_lifetime import (
+    original_prepared_fleet_db_lifetime,
+)  # noqa: F401
 from Tests.UI.app_factory import (
     _build_test_app,
     drain_active_service_patches,
@@ -134,9 +138,9 @@ async def _await_tabs(console, pilot, expected: set[str]) -> None:
         except NoMatches:
             return False
 
-    assert await _settle(pilot, laid_out), (
-        f"tab strip never settled: {_open_tab_ids(console)} != {expected}"
-    )
+    assert await _settle(
+        pilot, laid_out
+    ), f"tab strip never settled: {_open_tab_ids(console)} != {expected}"
     await pilot.pause()
 
 
@@ -232,7 +236,9 @@ def _failure_toasts(notes: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return [note for note in notes if note[1] in {"error", "warning"}]
 
 
-async def _verify_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(request, tmp_path):
+async def _verify_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(
+    request, tmp_path
+):
     """AC #1 / #5: the real ✕ click runs the close worker and the tab goes."""
 
     app = _ready_app()
@@ -458,9 +464,9 @@ async def _verify_close_that_does_not_finish_is_reported_and_keeps_tab_state(
             runtime._voice_promotion_owner = owner
             try:
                 await _click(pilot, f"#console-close-session-tab-{saved.id}")
-                assert await _settle(pilot, lambda: bool(notes)), (
-                    "unfinished close was silent"
-                )
+                assert await _settle(
+                    pilot, lambda: bool(notes)
+                ), "unfinished close was silent"
             finally:
                 runtime._voice_promotion_owner = previous_owner
             message, severity = notes[-1]
@@ -496,9 +502,9 @@ async def _verify_close_flow_that_cannot_start_tells_the_user(request, monkeypat
         with monkeypatch.context() as patch:
             patch.setattr(console, "run_worker", refuse_worker)
             await _click(pilot, f"#console-close-session-tab-{blank.id}")
-            assert await _settle(pilot, lambda: bool(notes)), (
-                "unstartable close was silent"
-            )
+            assert await _settle(
+                pilot, lambda: bool(notes)
+            ), "unstartable close was silent"
         assert notes[-1] == (
             f'Couldn\'t close tab "{blank_title}": '
             "The close could not start. Try again in a moment.",
@@ -647,9 +653,9 @@ async def _verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
         try:
             failures_left[0] = 1
             await _click(pilot, f"#console-close-session-tab-{healed.id}")
-            assert await _settle(pilot, lambda: bool(notes)), (
-                "teardown failure was silent"
-            )
+            assert await _settle(
+                pilot, lambda: bool(notes)
+            ), "teardown failure was silent"
             assert notes == [
                 (
                     f'Closed tab "{titles[healed.id]}", but the Console did not '
@@ -686,7 +692,37 @@ async def _pending_close_app(request, kind, *, surviving_child=False):
 
     app = _ready_app()
     if kind != "chat_create":
-        yield app
+        from Tests.UI._prepared_close_runtime_owner import PreparedCloseRuntimeOwner
+
+        runtime_owner = PreparedCloseRuntimeOwner(app)
+        try:
+            yield app
+        finally:
+            primary = sys.exception()
+            try:
+                await runtime_owner.dispose_runtime()
+            except BaseException as cleanup:
+                if primary is None:
+                    raise
+                reasons = {
+                    "prepared_close_runtime_wrong_thread",
+                    "prepared_close_runtime_wrong_loop",
+                    "prepared_close_runtime_owner_changed",
+                    "prepared_close_runtime_not_retired",
+                }
+                reason = (
+                    cleanup.args[0]
+                    if type(cleanup) is RuntimeError
+                    and len(cleanup.args) == 1
+                    and type(cleanup.args[0]) is str  # noqa: E721 - reject custom static error argument types
+                    and cleanup.args[0] in reasons
+                    else None
+                )
+                primary.add_note(
+                    "prepared_close_cleanup_error:"
+                    + type(cleanup).__name__
+                    + (":" + reason if reason is not None else "")
+                )
         return
     temporary_root = request.getfixturevalue("tmp_path").resolve()
     directory = Path(mkdtemp(prefix="prepared-close-", dir=temporary_root)).absolute()
@@ -728,11 +764,19 @@ async def _pending_close_app(request, kind, *, surviving_child=False):
                 "prepared_close_database_not_retired",
                 "prepared_close_directory_has_live_storage",
             }
-            reason = (cleanup.args[0] if type(cleanup) is RuntimeError
-                      and len(cleanup.args) == 1 and type(cleanup.args[0]) is str  # noqa: E721 - reject custom static error argument types
-                      and cleanup.args[0] in reasons else None)
-            primary.add_note("prepared_close_cleanup_error:" + type(cleanup).__name__
-                             + (":" + reason if reason is not None else ""))
+            reason = (
+                cleanup.args[0]
+                if type(cleanup) is RuntimeError
+                and len(cleanup.args) == 1
+                and type(cleanup.args[0]) is str  # noqa: E721 - reject custom static error argument types
+                and cleanup.args[0] in reasons
+                else None
+            )
+            primary.add_note(
+                "prepared_close_cleanup_error:"
+                + type(cleanup).__name__
+                + (":" + reason if reason is not None else "")
+            )
 
 
 def _prepare_surviving_child(controller, session_id):
@@ -843,8 +887,11 @@ async def _arm_pending_round(
                 session_id=session_id,
             )
         if kind == "chat_create":
-            scope = (owner.request_connection_scope(prepared_runs)
-                     if owner is not None else nullcontext())
+            scope = (
+                owner.request_connection_scope(prepared_runs)
+                if owner is not None
+                else nullcontext()
+            )
             with scope:
                 return controller.request_chat_create_confirm(
                     prepared,
@@ -1015,7 +1062,17 @@ async def _verify_background_pending_close_names_consequences_and_cancels_only_i
                         lambda cancelled=cancelled, round_task=round_task: (
                             cancelled.is_set() and round_task.done()
                         ),
-                    )
+                    ), {
+                        "pending_kind": kind,
+                        "run_cancel_seen": cancelled.is_set(),
+                        "round_done": round_task.done(),
+                        "run_done": run_task.done(),
+                        "run_cancelled": run_task.cancelled(),
+                        "run_cancel_requests": run_task.cancelling(),
+                        "registered_run_is_exact_owner": (
+                            controller._active_stream_tasks.get(doomed.id) is run_task
+                        ),
+                    }
                     assert await round_task == result
                     assert run_task.cancelled()
                     assert not controller.has_pending_approval_round(doomed.id)
@@ -1121,13 +1178,13 @@ async def _verify_background_pending_close_releases_round_without_an_active_turn
                         ),
                     )
                     await _await_tabs(console, pilot, {keeper})
-                    assert await _settle(pilot, pending.done, timeout=2), (
-                        "closed session left its decision armed without an owning turn"
-                    )
+                    assert await _settle(
+                        pilot, pending.done, timeout=2
+                    ), "closed session left its decision armed without an owning turn"
                     assert await pending == expected
-                    assert not sibling.done(), (
-                        "closing the background tab answered the viewed tab"
-                    )
+                    assert (
+                        not sibling.done()
+                    ), "closing the background tab answered the viewed tab"
                     assert len(controller.pending_question_ids()) == 1
                     assert controller.pending_round_kinds(keeper) == {"question"}
                     assert not controller.has_pending_approval_round(doomed.id)
@@ -1187,9 +1244,9 @@ async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
                 )
                 assert doomed.id in controller._session_close_generations
                 release.set()
-                assert await _settle(pilot, pending.done, timeout=2), (
-                    "chat-create confirmation armed after the committed Close sweep"
-                )
+                assert await _settle(
+                    pilot, pending.done, timeout=2
+                ), "chat-create confirmation armed after the committed Close sweep"
                 assert await pending == {"allow": False, "remember": False}
                 assert not controller.pending_chat_create_ids()
                 assert not controller._parked_chat_create_payloads
@@ -1802,7 +1859,8 @@ def _observe_original_tab_sync_lifetime(request):
 
     if (
         os.environ.get("TLDW_TEST_TAB_SYNC_LIFETIME") != "1"
-        or request.node.name not in {
+        or request.node.name
+        not in {
             "test_session_close_navigation_journeys",
             "test_session_close_failure_and_retry_journeys",
             "test_session_close_pending_race_and_fleet_journeys",
@@ -1824,10 +1882,7 @@ def _observe_original_tab_sync_lifetime(request):
         )
     )
     observer = OriginalTabSyncLifetime()
-    source_paths = {
-        name: Path(module.__file__)
-        for name, module in observer.modules
-    }
+    source_paths = {name: Path(module.__file__) for name, module in observer.modules}
     helper_module = sys.modules[OriginalTabSyncLifetime.__module__]
     source_paths[helper_module.__name__] = Path(helper_module.__file__)
     before = {
@@ -1861,9 +1916,14 @@ def _observe_original_tab_sync_lifetime(request):
             )
             output.write_text(json.dumps(facts, indent=2) + "\n", encoding="utf-8")
             print(
-                "tab-sync-lifetime receipt=" + str(output)
-                + " events=" + str(len(facts["events"]))
-                + " overflow=" + str(facts["overflow"])
-                + " unmatched=" + str(facts["live_original_frames"])
-                + " restored=" + str(facts["restoration"])
+                "tab-sync-lifetime receipt="
+                + str(output)
+                + " events="
+                + str(len(facts["events"]))
+                + " overflow="
+                + str(facts["overflow"])
+                + " unmatched="
+                + str(facts["live_original_frames"])
+                + " restored="
+                + str(facts["restoration"])
             )

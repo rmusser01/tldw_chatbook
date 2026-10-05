@@ -105,6 +105,11 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # checked off-loop mapping, then publishes only its same-owner result.
         ("_refresh", "console-readiness-config"),
         ("_sync_native_console_chat_ui", "console-readiness-publication"),
+        # TASK-34406 / ADR-126: a selected readiness result that changes while
+        # publishing needs the existing coalesced whole-state replay. This
+        # conditional initial visible-state owner uses the Console's sync group;
+        # it is allowed, not required, and does not alter the boot policy.
+        ("_sync_native_console_chat_ui", "console-sync"),
         ("_refresh_console_skill_candidates", "default"),
         # ADR-197: one off-loop saved-consent snapshot for the Hooks indicator.
         ("_refresh_console_hooks", "console-hook-refresh"),
@@ -326,9 +331,9 @@ async def test_census_waits_for_the_serially_delayed_required_worker(
         assert 1.5 <= now < 2.0, "return once the required delayed starter arrives"
     else:
         assert delayed not in observed
-        assert 1.5 < now <= 10.1, (
-            "missing required work must stop at a bounded deadline"
-        )
+        assert (
+            1.5 < now <= 10.1
+        ), "missing required work must stop at a bounded deadline"
 
 
 def _normalize_thread_name(name: str) -> str:

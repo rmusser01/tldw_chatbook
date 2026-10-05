@@ -1867,6 +1867,7 @@ def is_git_metadata_write(path: Path) -> bool:
     return any((part.casefold() == folded for part in path.parts))
 _SENSITIVE_INPUT_DB_NAMES = _DB_PATH_ACCESSOR_NAMES
 _SENSITIVE_INPUT_ORIGINALS = (globals(), tuple(((name, globals()[name], globals()[name].__globals__, globals()[name].__code__) for name in ('_sensitive_guarded_readers_current', '_raw_inputs', '_raw_inputs_key', '_same_key', '_debug', '_sensitive_single_file_paths', '_sensitive_skill_trust_dir', '_sensitive_db_paths', '_direct_child_rule_container_dirs'))))
+_STARTUP_PATH_METADATA_ORIGINALS = (_SensitiveConfigInputBundle, tuple(_SensitiveConfigInputBundle.__dict__.items()), tuple(((namespace, name, callback, callback.__code__, callback.__globals__, callback.__defaults__, callback.__kwdefaults__, tuple((callback.__kwdefaults__ or {}).items()), callback.__closure__, tuple(((cell, cell.cell_contents) for cell in callback.__closure__ or ()))) for namespace, name, callback in (*((_SensitiveConfigInputBundle.__dict__, name, _SensitiveConfigInputBundle.__dict__[name]) for name in ('__init__', '_task', 'check')), *((globals(), name, globals()[name]) for name in ('_sensitive_reader_bindings', '_sensitive_cached_reader_bindings', '_sensitive_guarded_readers_current'))))))
 
 
 # ===========================================================================
@@ -5555,4 +5556,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("dd0fa4804b42fdd0b64aff147b00d542ce2b4bd146a149622d564a056fa5efb9")
+BUNDLE_SHA256 = _enter_worker_exchange("9e0f4cc683a423caa80a2c24f4bf0d7d199dd504ff0ee23cd8961080416444a6")

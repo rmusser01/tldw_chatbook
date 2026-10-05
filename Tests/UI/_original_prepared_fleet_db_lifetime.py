@@ -91,6 +91,16 @@ class OriginalPreparedFleetDBLifetime:
         self.request_stages, self.stage_lines, self.stage_frames = [], {}, set()
         self.stage_bound, self.stage_aliases, self.stage_origins = False, [], {}
         self.characters_origin_bound = False
+        self.characters_origin_gaps = {
+            "caller_code_capacity": 0,
+            "operation_capacity": 0,
+            "acquisition_capacity": 0,
+            "row_capacity": 0,
+            "live_operation_capacity": 0,
+            "live_acquisition_capacity": 0,
+            "operation_caller_source_gap": 0,
+            "acquisition_caller_source_gap": 0,
+        }
         (
             self.characters_origins,
             self.characters_operations,
@@ -647,7 +657,9 @@ class OriginalPreparedFleetDBLifetime:
                 )
             ):
                 if code not in self.characters_origin_codes:
-                    assert len(self.characters_origin_codes) < 64
+                    if len(self.characters_origin_codes) >= 64:
+                        self.characters_origin_gaps["caller_code_capacity"] += 1
+                        return None
                     rewrite = sys.modules.get("_pytest.assertion.rewrite")
                     config = (
                         self.config
@@ -746,8 +758,13 @@ class OriginalPreparedFleetDBLifetime:
             # no manufactured operation or additional repository call is issued.
             if operation not in self.storage._operations:
                 return
-            assert len(self.characters_operations) < 64
+            if len(self.characters_operations) >= 64:
+                self.characters_origin_gaps["operation_capacity"] += 1
+                return
             chain = self._characters_source_chain(frame)
+            if chain is None:
+                self.characters_origin_gaps["operation_caller_source_gap"] += 1
+                return
             self.characters_operations[key] = (operation, fixture, chain)
             self.references.extend(
                 (operation, operation.thread, operation.task, participant)
@@ -770,8 +787,13 @@ class OriginalPreparedFleetDBLifetime:
             assert attempt.thread is operation.thread and attempt.task is operation.task
             acquire_key = id(attempt)
             if acquire_key not in self.characters_acquisitions:
-                assert len(self.characters_acquisitions) < 128
+                if len(self.characters_acquisitions) >= 128:
+                    self.characters_origin_gaps["acquisition_capacity"] += 1
+                    return
                 chain = self._characters_source_chain(frame)
+                if chain is None:
+                    self.characters_origin_gaps["acquisition_caller_source_gap"] += 1
+                    return
                 self.characters_acquisitions[acquire_key] = (attempt, operation, chain)
                 self.references.extend((attempt, attempt.thread, attempt.task))
                 self._characters_append(
@@ -809,7 +831,9 @@ class OriginalPreparedFleetDBLifetime:
     def _characters_append(self, row):
         # These finite callbacks run with the GIL. Do not add a second lock order
         # while the original generator may itself hold storage._changed.
-        assert len(self.characters_origins) < 384
+        if len(self.characters_origins) >= 384:
+            self.characters_origin_gaps["row_capacity"] += 1
+            return
         row["origin_ordinal"] = len(self.characters_origins)
         row["observer_monotonic_ns"] = time.monotonic_ns()
         self.characters_origins.append(row)
@@ -819,7 +843,9 @@ class OriginalPreparedFleetDBLifetime:
         operations = tuple(
             item for item in self.storage._operations if item.participant is participant
         )
-        assert len(operations) <= 64
+        if len(operations) > 64:
+            self.characters_origin_gaps["live_operation_capacity"] += 1
+            operations = operations[:64]
         result = []
         for operation in operations:
             known = self.characters_operations.get(id(operation))
@@ -832,7 +858,9 @@ class OriginalPreparedFleetDBLifetime:
                     and self.characters_acquisitions[id(item)][1] is operation
                 )
             )
-            assert len(pending) <= 16
+            if len(pending) > 16:
+                self.characters_origin_gaps["live_acquisition_capacity"] += 1
+                pending = pending[:16]
             result.append(
                 {
                     "operation_object": id(operation),
@@ -1047,8 +1075,6 @@ class OriginalPreparedFleetDBLifetime:
                 return
             scope = current
         assert type(scope) is self.cleanup_type
-        if label == "owned_runtime_dispose" and phase == "start":
-            fixture["characters_origin_window"] = True
         declarations = tuple(scope.declarations)
         assert len(declarations) <= 3
         states = []
@@ -1300,6 +1326,9 @@ class OriginalPreparedFleetDBLifetime:
             )
             self.fixtures[id(app)] = fixture
             self._bind_characters_origins()
+            # This is the original yielded app, before the original caller can
+            # construct/mount its harness. Observe only its declared Characters.
+            fixture["characters_origin_window"] = True
             self.references.extend(
                 (app, chars, runtime, before, threading.current_thread())
             )
@@ -1570,8 +1599,29 @@ class OriginalPreparedFleetDBLifetime:
                 self.characters_origin_codes
             ),
             "characters_disposal_origins": self.characters_origins,
-            "characters_origin_limits": "Only the exact fixture Characters participant after its captured "
-            "Runtime.dispose START. Actual installed operation/acquisition identities and original "
+            "characters_origins_armed_before_mount": bool(self.fixtures)
+            and all(
+                fixture.get("characters_origin_window", False)
+                for fixture in self.fixtures.values()
+            ),
+            "characters_origin_gap_counts": self.characters_origin_gaps,
+            "characters_origin_capacity_complete": not any(
+                self.characters_origin_gaps.values()
+            ),
+            "characters_terminal_live_origins_complete": all(
+                operation["origin_observed"]
+                and all(
+                    attempt["origin_observed"]
+                    for attempt in operation["pending_acquisitions"]
+                )
+                for row in self.rows
+                if row["kind"] in {"owned_runtime_dispose", "owned_cleanup"}
+                and row["phase"] in {"return", "before_original_refusal"}
+                for state in row["declared_native_states"]
+                for operation in state["exact_characters_operations"]
+            ),
+            "characters_origin_limits": "Only the exact declared fixture Characters participant from its actual "
+            "fixture yield, before original harness mount. Actual installed operation/acquisition identities and original "
             "executing caller CodeTypes/globals/source; wrapper body/closure bindings retained. "
             "No extra DB reads, close, census, task scheduling, wait, guard or deadline. "
             "The synchronous worker chain does not by itself identify an absent async submitter.",
