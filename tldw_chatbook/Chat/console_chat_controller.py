@@ -150,6 +150,8 @@ from tldw_chatbook.Chat.console_chat_start import (
 )
 from tldw_chatbook.Chat.message_metadata import (
     AgentChatStartMetadata,
+    format_provider_history_text,
+    handoff_speaker_label,
     HANDOFF_LAUNCH_DRAFT,
     HANDOFF_LAUNCH_NOT_STARTED,
     HANDOFF_LAUNCH_REVIEW_REQUIRED,
@@ -19447,17 +19449,11 @@ class ConsoleChatController:
         title = "Transcript: " + (span[0].content.strip().splitlines() or [""])[0][:48]
         body_lines = []
         for message in span:
-            if message.role is ConsoleMessageRole.USER:
-                origin = getattr(message.metadata, "origin", None)
-                speaker = (
-                    "Agent handoff"
-                    if origin == "agent_chat_start"
-                    else "Unverified handoff"
-                    if origin == "untrusted"
-                    else "User"
-                )
-            else:
-                speaker = "Assistant"
+            speaker = (
+                handoff_speaker_label(message.metadata)
+                if message.role is ConsoleMessageRole.USER
+                else "Assistant"
+            )
             body_lines.append(f"**{speaker}:** {message.content}")
         content = (
             self._note_provenance_header(session_id, message_id)
@@ -28624,6 +28620,7 @@ class ConsoleChatController:
                 else base_text
             )
             take = allowed_counts.get(message.id, 0)
+            attachments = ()
             if take > 0:
                 # Partially-budgeted messages retain their images in POSITION
                 # order up to the reserved count (oldest-attached first),
@@ -28633,16 +28630,8 @@ class ConsoleChatController:
                     for attachment in message.attachments
                     if attachment.data is not None
                 ]
-                rows.append(
-                    _LightweightProviderHistoryRow(
-                        source_message_id=message.id,
-                        role=message.role.value,
-                        text=text,
-                        attachments=tuple(usable[:take]),
-                    )
-                )
-                continue
-            if not text:
+                attachments = tuple(usable[:take])
+            elif not text:
                 # An image-only user turn whose images all fell outside the
                 # budget (over-cap, or a non-vision model) must not vanish —
                 # a silently dropped turn distorts the conversation shape the
@@ -28653,24 +28642,21 @@ class ConsoleChatController:
                     if attachment.data is not None
                 ]
                 if message.role is ConsoleMessageRole.USER and omitted:
-                    placeholder = (
+                    text = (
                         "[image omitted]"
                         if len(omitted) == 1
                         else f"[{len(omitted)} images omitted]"
                     )
-                    rows.append(
-                        _LightweightProviderHistoryRow(
-                            source_message_id=message.id,
-                            role=message.role.value,
-                            text=placeholder,
-                        )
-                    )
-                continue
+                else:
+                    continue
             rows.append(
                 _LightweightProviderHistoryRow(
                     source_message_id=message.id,
                     role=message.role.value,
-                    text=text,
+                    text=format_provider_history_text(
+                        message.role.value, message.metadata, text
+                    ),
+                    attachments=attachments,
                 )
             )
         return rows
