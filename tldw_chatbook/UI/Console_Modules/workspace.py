@@ -5889,6 +5889,7 @@ class ConsoleWorkspaceController:
             CharacterConversationActivationRequest,
             ConsoleActivationResultKind,
         )
+        from ...DB.ChaChaNotes_DB import CharactersRAGDB
 
         db = getattr(self.app_instance, "chachanotes_db", None)
         if db is None:
@@ -5899,7 +5900,12 @@ class ConsoleWorkspaceController:
             else request
         )
         try:
-            with db.transaction() as connection:
+            with (
+                operation_owned_connection(db)
+                if type(db) is CharactersRAGDB and not db.is_memory_db
+                else nullcontext(),
+                db.transaction() as connection,
+            ):
                 authority_row = connection.execute(
                     "SELECT local_authority_id FROM rag_identity_context "
                     "WHERE context_name = 'default' LIMIT 2"

@@ -15,17 +15,26 @@ from Tests.UI.test_console_retrieval_controller import _controller as retrieval_
 from Tests.UI.test_console_review_selection_controller import (
     _controller as review_owner,
 )
+from tldw_chatbook.Character_Chat.character_conversation_navigation import (
+    LocalCharacterConversationTarget,
+    ResolvedLocalCharacterKey,
+)
 from tldw_chatbook.Character_Chat.local_character_persona_service import (
     LocalCharacterPersonaService,
 )
 from tldw_chatbook.Character_Chat.world_book_manager import WorldBookManager
 from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+from tldw_chatbook.Chat.console_conversation_activation import (
+    CharacterConversationActivationRequest,
+    ConsoleActivationResultKind,
+)
 from tldw_chatbook.Chat.console_expression_state import CharacterEmoteHistoryIdentity
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB, CharactersRAGDBError
 from tldw_chatbook.Event_Handlers.Chat_Events.chat_rag_events import (
     resolve_scope_for_session,
 )
 from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionController
+from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -38,6 +47,121 @@ def database(tmp_path):
     db.add_conversation({"id": "conversation", "title": "Finite readers"})
     try:
         yield db
+    finally:
+        with db.quiesce_connections(timeout_seconds=5):
+            pass
+        assert db.registered_connection_count() == 0
+
+
+def _revalidation_owner(database):
+    """Seed one real exact target and use the installed shared revalidator."""
+    character_id = database.add_character_card({"name": "Finite revalidation"})
+    authority = database.get_local_authority_id()
+    database.add_conversation(
+        {
+            "id": "character-conversation",
+            "title": "Exact target",
+            "character_id": character_id,
+            "assistant_kind": "character",
+            "assistant_id": str(character_id),
+            "assistant_authority_id": authority,
+        }
+    )
+    controller = ConsoleWorkspaceController.__new__(ConsoleWorkspaceController)
+    controller.app_instance = SimpleNamespace(chachanotes_db=database)
+    request = CharacterConversationActivationRequest(
+        LocalCharacterConversationTarget(
+            ResolvedLocalCharacterKey(authority, character_id),
+            "character-conversation",
+        ),
+        authority,
+        database.get_character_conversation_search_revision(),
+    )
+    return controller, request
+
+
+@pytest.mark.parametrize("typed_request", [False, True])
+@pytest.mark.parametrize("sql_failure", [False, True])
+def test_exact_revalidation_retires_new_worker_cache(
+    database, typed_request, sql_failure
+):
+    """Real async revalidation must not strand a cold handle after worker exit."""
+    controller, request = _revalidation_owner(database)
+    if sql_failure:
+        database.get_connection().execute(
+            "ALTER TABLE conversations RENAME TO unavailable_revalidation_table"
+        )
+    caller = database.get_connection()
+    for _ in range(2):
+        result = asyncio.run(
+            controller._revalidate_character_conversation_target(
+                request if typed_request else request.target
+            )
+        )
+        assert result is (ConsoleActivationResultKind.FAILED if sql_failure else None)
+        assert database.registered_connection_count() == 1
+        assert database.get_connection() is caller
+    assert caller.execute("SELECT 1").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("owner", ["borrowed", "memory", "custom"])
+def test_exact_revalidation_preserves_caller_owned_cache(tmp_path, owner):
+    """Revalidation must not settle borrowed transactions or excluded owners."""
+    db = (
+        CharactersRAGDB(":memory:", "revalidation-memory")
+        if owner == "memory"
+        else (CharactersRAGDB if owner == "borrowed" else _CustomDatabase)(
+            tmp_path / "revalidation-control.sqlite", "revalidation-control"
+        )
+    )
+    try:
+        controller, request = _revalidation_owner(db)
+
+        def read():
+            connection = db.get_connection()
+            if owner == "borrowed":
+                try:
+                    with (
+                        pytest.raises(RuntimeError, match="borrowed rollback"),
+                        db.transaction(),
+                    ):
+                        connection.execute(
+                            "UPDATE conversations SET title = 'Uncommitted' "
+                            "WHERE id = 'character-conversation'"
+                        )
+                        assert (
+                            controller._revalidate_character_conversation_target_sync(
+                                request.target
+                            )
+                            is None
+                        )
+                        assert db.get_connection() is connection
+                        assert connection.in_transaction
+                        assert (
+                            connection.execute(
+                                "SELECT title FROM conversations "
+                                "WHERE id = 'character-conversation'"
+                            ).fetchone()[0]
+                            == "Uncommitted"
+                        )
+                        raise RuntimeError("borrowed rollback")
+                finally:
+                    db.close_connection()
+                return
+            result = controller._revalidate_character_conversation_target_sync(request)
+            assert result is (
+                ConsoleActivationResultKind.FAILED if owner == "memory" else None
+            )
+            assert db.get_connection() is connection
+            assert connection.execute("SELECT 1").fetchone()[0] == 1
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(read).result(timeout=5)
+        assert db.registered_connection_count() == (1 if owner == "borrowed" else 2)
+        if owner == "borrowed":
+            assert db.get_conversation_by_id("character-conversation")["title"] == (
+                "Exact target"
+            )
     finally:
         with db.quiesce_connections(timeout_seconds=5):
             pass

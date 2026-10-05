@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 16:00'
+updated_date: '2026-10-05 16:33'
 labels:
   - console
   - performance
@@ -160,6 +160,16 @@ Reason: this corrects one shared materialized read through the installed resourc
 ADR required: no new ADR.
 ADR path: N/A; existing ADR120 and finite native callback ownership apply.
 Reason: routine finite Console-reader resource correction within standing resource-fix approval, not a fourth performance remedy or new visual-identity lifecycle contract.
+
+### Finite exact Character-target revalidation
+
+1. Retain clean 68e57dc67c startup-only zero-worker receipt, failed normal latency matrix, invalid first origin hook and corrected full-activity ownership diagnostic. The corrected hook traces five exited Chat handles to the shared exact-target transaction; constructor caches remain separate.
+2. Exercise the actual async revalidation route with real file-backed valid targets and SQL failure after acquisition, plus borrowed-transaction, memory and custom-owner controls. Observe genuine retention RED before implementation; join workers before counting and add no test ownership wrapper.
+3. Reuse installed operation_owned_connection at the shared synchronous revalidation boundary for exact native file-backed Chat only. Preserve transaction snapshots, authority/card/revision decisions, original fail-closed behavior, async dispatch, cancellation, all callers and borrowed/application caches. No global retirement, fourth performance remedy or dependency.
+4. Run proportional activation, caller and finite-owner regressions, strict resource observations, static/artifact guards and independent review. Freeze source and repeat guarded full-activity ownership; keep normal latency, native, Windows, participant and constructor-lifetime gaps explicit.
+ADR required: no new ADR.
+ADR path: N/A; existing ADR120 and installed finite native callback ownership apply.
+Reason: routine finite materialized-reader correction within standing resource-fix approval, preserving every activation authority and lifetime boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -204,4 +214,6 @@ Bounded remaining Console finite readers: six original to_thread offloads now re
 Clean 4448cbb210 guarded shutdown records 134 unique registrations/zero drops, six open connections and 27 DB descriptors after executor join: five constructor caches plus actual async projection Chat read; none from the six corrected finite readers. Native CUA succeeds in dedicated Terminal121371 at244x73: MRU Enter resumes exact Amber transcript without new tab; normal Ctrl+Q returns0/source guards hold,29 descriptors remain. Stray composer ;2d is retained as unresolved native input evidence, not clean qualification. Shared project_workspace_membership finite read now reuses installed exact-file operation_owned_connection. Actual direct service/reconcile tests remove test-added Chat cleanup:4 valid REDs,3 borrower/memory/custom controls pass pre-fix. Final59 targeted tests pass21.44s, no warnings,59 strict observations without DB files. Changed tests Ruff/format clean; production range format clean,72 inherited diagnostics unchanged; all11 artifact guards and whitespace pass. Independent scoped review has no findings. Evidence and testing-wrapper lesson recorded; fresh clean-head shutdown next. No global cache/lifetime/GC policy or fourth performance remedy; all AC and native/Windows/participant/latency/app-cache gaps stay open.
 
 Implemented bounded shared current/inventory/historical visual-reader retirement through installed exact-file ownership. Six real Character REDs plus two genuine linked-Persona REDs; nine borrower/memory/custom controls pass before correction. Initial fixture SQL collision and both failed covering runs are retained and excluded from passing evidence. Repair actual caller fixtures with isolated bootstrap profile, existing constructor retirement/exact DB registration, shipping sizing CSS, real Console readiness and current runtime close injection; no gate or assertion bypass. Final six-file run:196 pass in257.02s, exit0, all196 strict observations without DB files, no resource warnings; three installed textual-image0.8.5/Pillow12.1.1 getdata deprecations remain unsuppressed. New tests Ruff/format clean; modified ranges format clean,47 production and27 inherited fixture diagnostics unchanged. All11 artifact guards green, census143/floor140 unchanged. Independent final review has no findings; receipt and authority-capture ownership lesson recorded. Fresh clean-head shutdown remains next. No global lifetime/GC/cache policy, fourth performance remedy or qualification waiver; all AC and native/latency/Windows/participant/application-cache gaps remain open.
+
+Frozen68e57dc67c startup-only quit:180 unique registrations/zero drops, no exited worker handle after runner join, but five constructor caches/26 DB descriptors remain. Fresh normal10k/250k Keyword:300 exact queries pass, P95107.553750ms, loop15.419083ms, zero cleanup DB handles/files. Normal UI fails seven/eight activation loop windows plus one search, maximum80.175542ms; prep43.432792ms and busy58.636792ms meet unchanged limits. Incomplete first full-activity hook retained as invalid origin coverage; corrected pre-import hook records506 registrations, no drops/untraced retained handles and traces five exited workers to shared exact Character-target revalidation. Implemented only that shared finite transaction boundary with installed exact-file operation ownership. Four real typed/raw success/failure REDs, three borrower/memory/custom controls pass beforefix; initial shared-temp cleanup warnings retained, isolated RED warning-free. Final affected four-file run98pass145.00s, exit0/no warnings, all98 strict DB censuses empty. New tests/static range clean,69 inherited diagnostics identical; all11 artifact guards green. Independent read-only review no findings; origin-hook lesson and receipts updated. Fresh clean-head full-activity comparison next; no global app/GC/cache policy or fourth performance remedy. All AC/native/Windows/participant/latency/constructor-lifetime gaps stay open.
 <!-- SECTION:NOTES:END -->

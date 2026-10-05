@@ -1548,3 +1548,85 @@ final `visual-green-ready.log`, static JSON receipts and
 `visual-preflight-final.log`. A fresh clean-head shutdown comparison is next.
 Application-cache retirement, required native viewports/input, latency, Windows
 and participant criteria remain open; no fourth performance remedy or waiver.
+
+### Visual-reader clean-head resource and scale checks — 2026-10-05
+
+Frozen source `68e57dc67cccd09abe92ba81ff7b636bacde9051` passes the guarded
+startup-only quit diagnostic: 180 unique registrations, zero drops, return0,
+unchanged source/corpus and physical default-executor join. Five main-thread
+constructor caches and26 DB descriptors remain, with no worker-owned handle,
+active operation or pending acquisition. This small startup journey does not
+exercise exact Character activation and is not full resource qualification.
+Raw root: `/tmp/task31966-visual-shutdown-VRidTG`, with prepared/native receipt,
+`headless/owner-shutdown-diagnostic.json`, return receipt and `shutdown.log`.
+The separate theme executor remains live; no global producer-stop proof.
+
+Fresh normal scale root: `/tmp/task31966-visual-measure-0tOKKR`. Its guarded
+corpus has10,000 conversations/250,000 eligible messages plus four excluded
+messages, ready index/quick-check, and digest
+`315340b027a8f941d2055a0346d459df86de02e2991232a68d3f03e2690206e7`.
+The standalone Keyword check passes300 exact measured queries, zero correctness
+failures, P95107.553750ms and loop maximum15.419083ms; owned handles/descriptors
+are zero after cleanup. This is not UI latency evidence.
+
+The normal, uninstrumented UI matrix fails, exit1. All60 exact searches and eight
+exact OPENED activations complete at52x20 and120x50; source/corpus guards hold
+and app exception is None. Seven of eight activation loop windows exceed50ms
+(maximum80.175542ms), and one wide body search reaches50.049ms. Both preparation
+windows remain below50ms (maximum43.432792ms); every busy paint is below100ms
+(maximum58.636792ms). Narrow/wide lists show four/eleven rows from50 fetched.
+Eight registered handles at run_test unmount are not a physical runner-join
+census. Keep `corpus/build-receipt.json`, `keyword/keyword-receipt.json`,
+`ui/ui-evidence/ui-latency-evidence.json` and all three logs; limits are unchanged.
+
+The first broader origin probe installed its registration hook after importing
+the app. It records only five registrations while all12 retained handles lack
+trace tokens: seven exited workers/34 DB descriptors after runner join. Counts
+are observations, but origin coverage is invalid; zero dropped records does not
+repair that omission. Its script, log and receipt are retained unchanged under
+`ui-owner-probe.py`, `ui-owner.log` and `ui-owner-diagnostic` (script SHA256
+`7f22f056b06b0b9cec285de425f85a5501dadd4a55098368f2923b5edb1fb649`).
+
+The corrected hook runs before app imports. It records506 unique registrations,
+zero drops and no untraced retained handle. After Textual shutdown and physical
+runner join, ten native-open handles/33 DB descriptors remain, without active
+operations or pending acquisitions. Five are constructor caches; all five
+exited-worker handles originate from the shared exact Character-target
+revalidation transaction in workspace.py, not the repaired visual/projection or
+earlier finite readers. Tokens208/240/427/440/465 retain the exact acquisition
+stacks. Corrected script `ui-owner-probe-v2.py` SHA256
+`7b3437928708b597648892b686fd5ba002b46c05842d41f2ca11892ac55a9402`, log
+`ui-owner-v2.log`, receipt `ui-owner-diagnostic-v2/ui-owner-diagnostic.json`.
+Neither instrumented matrix's timings count as latency/native qualification.
+
+### Shared exact-target revalidation read — 2026-10-05
+
+The canonical coordinator, Roleplay preflight and post-commit validation all
+reach the same finite synchronous transaction. Four real typed/raw async
+success/SQL-failure regressions reproduce a cold worker cache after physical
+runner join (count2 rather than1); three borrower/memory/custom controls pass
+before correction. The first run also attempts shared pytest-temp garbage
+cleanup and emits unrelated removal warnings. It is retained, not warning-free
+evidence. Repeating in a fresh explicit task-owned temporary root gives the
+same four valid REDs/three controls with no pytest warnings.
+
+Only this shared transaction now reuses installed `operation_owned_connection`
+for the exact native file-backed Chat owner. Materialized values, transaction
+snapshot, authority/card/revision decisions, fail-closed outcomes, ordinary
+to_thread dispatch/cancellation and every borrower/application cache stay
+unchanged. The seven new cases pass the required read-only descriptor gate;
+independent scoped review finds no actionable issue. Broader affected verification
+and fresh clean-head full-activity comparison follow; no global lifetime policy,
+fourth performance remedy or qualification waiver. Raw root:
+`/tmp/task31966-revalidation-KL6lMh` (`red.log`, `red-isolated.log`, `green.log`).
+
+Final four-file finite-reader, activation coordinator, installed presentation
+and reuse/mode run: **98 pass in145.00s**, exit0, no pytest warnings and no DB
+files in all98 strict teardown observations (`affected.log`). New tests are
+Ruff/format clean, changed production range is format clean, and all69 inherited
+workspace Ruff diagnostics retain exactly the same normalized identity and
+multiplicity. All11 artifact guards pass (`preflight.log`), UI census143/floor140
+unchanged, whitespace clean. Existing ADR120/finite native-operation ownership
+governs this routine correction; no new architectural policy. Fresh clean-head
+full-activity resource comparison remains next; all qualification criteria stay
+open rather than extrapolating fixture cleanup to production shutdown.

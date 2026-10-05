@@ -18486,3 +18486,15 @@ Persona success/failure cases reproduced the leak after physical worker join.
 Keep every materializing read of that captured owner, including authority
 revalidation, inside the existing finite boundary. Character-only coverage does
 not prove the sibling Persona route. Evidence: [retained REDs and review](../../Docs/QA/task-31245/fixture-rebuild-2026-10-04.md).
+
+## Origin hooks must precede database getter imports
+
+TASK-31966, 2026-10-05: the first full-activity shutdown observer patched the
+participant registration hook after importing TldwCli. Existing database getters
+had already captured the original binding. The observer reported five records
+and zero drops, but every retained connection lacked an origin token. Installing
+the same hook before app imports recorded506 unique registrations and traced
+all five exited-worker handles to exact Character-target revalidation. Check
+coverage of retained identities, not just observer drop counts; preserve the
+incomplete attempt and do not use instrumented timings as latency evidence.
+Evidence: [both probes and corrected origins](../../Docs/QA/task-31245/fixture-rebuild-2026-10-04.md).
