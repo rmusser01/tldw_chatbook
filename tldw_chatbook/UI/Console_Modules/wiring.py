@@ -247,11 +247,19 @@ def _sync_character_context_presentation(
     sync = getattr(rail, "sync_character_context", None)
     if callable(sync):
         sync(state)
+
     # A scope may have no active character but still gain its first useful
     # context when the off-loop recent-chat read settles. Re-resolve the
     # render-only first-use default; this does not persist on read.
-    current_rail_state = screen._current_console_rail_state()
-    screen._sync_console_rail_visibility_if_changed(current_rail_state)
+    def sync_rail_visibility() -> None:
+        current_rail_state = screen._current_console_rail_state()
+        screen._sync_console_rail_visibility_if_changed(current_rail_state)
+
+    run_config_sync = getattr(screen, "_run_console_config_sync", None)
+    if callable(run_config_sync):
+        run_config_sync(sync_rail_visibility)
+    else:
+        sync_rail_visibility()
 
 
 def _displayed_console_composer_draft(screen: Any) -> str | None:
@@ -1750,6 +1758,13 @@ def build_console_controllers(
         ensure_console_chat_controller=(
             lambda: screen._ensure_console_chat_controller()
         ),
+        read_recovery_controller=lambda: (
+            screen._console_recovery_presentation_controller()
+            if callable(
+                getattr(screen, "_console_recovery_presentation_controller", None)
+            )
+            else screen._ensure_console_chat_controller()
+        ),
         composer_accessor=lambda: screen._console_composer_or_none(),
         restore_banked_raw_cli_stashes=(
             lambda session_id, composer: screen._raw_cli.restore_banked_stashes(
@@ -2214,7 +2229,10 @@ def build_console_controllers(
             )
         ),
         issue_message_speech=(
-            lambda message_id, outcome_callback, expected_destination, retry_failed_auto: (
+            lambda message_id,
+            outcome_callback,
+            expected_destination,
+            retry_failed_auto: (
                 screen._message.request_console_message_speech(
                     message_id,
                     outcome_callback,
@@ -2491,10 +2509,15 @@ def build_console_controllers(
             )
         ),
         capture_configuration_async=(
-            lambda session_id, controller=None: _capture_console_configuration_async(screen, session_id, controller)
+            lambda session_id, controller=None: _capture_console_configuration_async(
+                screen, session_id, controller
+            )
         ),
         launch_chain_async=(
-            lambda draft, session_id, stash=None, controller=None: _prepare_console_turn_to_runtime(
+            lambda draft,
+            session_id,
+            stash=None,
+            controller=None: _prepare_console_turn_to_runtime(
                 screen, draft, session_id, stash, controller
             )
         ),

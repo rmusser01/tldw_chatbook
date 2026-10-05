@@ -34,11 +34,11 @@ from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
 from Tests.UI._child_creation_original_admission import (
-    original_child_creation_admission,
-)  # noqa: F401
+    original_child_creation_admission,  # noqa: F401 - pytest fixture registration.
+)
 from Tests.UI._original_prepared_fleet_db_lifetime import (
-    original_prepared_fleet_db_lifetime,
-)  # noqa: F401
+    original_prepared_fleet_db_lifetime,  # noqa: F401 - pytest fixture registration.
+)
 from Tests.UI.app_factory import (
     _build_test_app,
     drain_active_service_patches,

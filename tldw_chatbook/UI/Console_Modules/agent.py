@@ -392,7 +392,11 @@ def _fleet_turn_activity(children: Sequence[Any], *, now: float) -> str:
     )
     line = f"{label}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{CONSOLE_TURN_ACTIVITY_TOOL_GLYPH} {longest.text}"
     started_at = getattr(longest, "started_at", None)
-    elapsed = _format_fleet_elapsed(max(0.0, now - started_at)) if started_at is not None else ""
+    elapsed = (
+        _format_fleet_elapsed(max(0.0, now - started_at))
+        if started_at is not None
+        else ""
+    )
     return f"{line}{CONSOLE_TURN_ACTIVITY_SEPARATOR}{elapsed}" if elapsed else line
 
 
@@ -414,13 +418,20 @@ def console_turn_activity_abandon_action(snapshot: Any, *, now: float) -> str:
         return ""
     steps = tuple(getattr(snapshot, "steps", ()) or ())
     step = next(
-        (s for s in reversed(steps) if getattr(s, "agent_kind", "") == AGENT_KIND_PRIMARY),
+        (
+            s
+            for s in reversed(steps)
+            if getattr(s, "agent_kind", "") == AGENT_KIND_PRIMARY
+        ),
         None,
     )
     if step is None or step.kind != STEP_TOOL_CALL:
         return ""
     started_at = getattr(step, "started_at", None)
-    if started_at is None or now - started_at < CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS:
+    if (
+        started_at is None
+        or now - started_at < CONSOLE_TURN_ACTIVITY_ABANDON_AFTER_SECONDS
+    ):
         return ""
     return CONSOLE_TURN_ACTIVITY_ABANDON_ACTION
 
@@ -1252,7 +1263,9 @@ class ConsoleAgentController:
             # test double that only implements ``live_snapshot``.
             historical = getattr(bridge, "historical_snapshot", None)
             if historical is not None:
-                snapshot = self._presentation_historical_snapshot(bridge, conversation_id)
+                snapshot = self._presentation_historical_snapshot(
+                    bridge, conversation_id
+                )
         status = f"Agent: {snapshot.status}"
         if snapshot.status == "running":
             status = f"Agent: running · step {snapshot.step}"
@@ -1867,10 +1880,15 @@ class ConsoleAgentController:
             try:
                 value = await asyncio.shield(worker)
             except asyncio.CancelledError:
-                try:
-                    await asyncio.shield(worker)
-                except Exception:  # noqa: BLE001 - retain cancellation identity.
-                    pass
+                while not worker.done():
+                    try:
+                        await asyncio.shield(worker)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:  # noqa: BLE001 - retain cancellation identity.
+                        break
+                if not worker.cancelled():
+                    worker.exception()
                 raise
             if (
                 self._console_historical_read is not state

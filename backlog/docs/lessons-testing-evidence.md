@@ -18534,3 +18534,29 @@ Trace calls through storage getters and park a real read while the actual owner-
 PR #2995 initially tried to restore a no-owning-turn fixture by stripping the primary cancellation and assistant registrations after arming a creation card. The production primary-source predicate requires those registrations, so the source was already stale before Close. A later denial could have passed without exercising the Close fence.
 
 The corrected two no-parent phases use actual surviving-child rows and trusted actor context, with a positive exact-record/source-live witness at the original parked-card or enrichment barrier. Owning-parent and primary grant cases retain their original primary setup. Preserve those positive witnesses alongside the denial, outcome and cleanup assertions; reaching a card alone does not prove that its execution authority is still live. Evidence: [fixture proposal](../../Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/task-8-surviving-child-fixture-proposal.json), [live witness](../../Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/task-8-surviving-child.json) and [review](../../Docs/superpowers/qa/2026-10-04-console-pr2995-latest-dev-integration/task-8-review.md).
+
+
+## Observe notification delivery before calling it expiry
+
+During PR3023's Windows keep-alive verification, the original callback test
+inspected an empty notification collection after its fixed0.3s sleep. A bounded
+original-code observer proved enqueue was accepted, inspection occurred at
+age0.342s, and original Textual delivery/add occurred at age0.499s under the
+unchanged12s timeout. There was no expiry. Waiting for actual delivery with the
+existing poll helper made both original callback journeys pass, including normal
+quit and privacy assertions (original-notification-loader-v3-native-1 and
+original-notification-delivery-native-green-1). Separate enqueue, delivery,
+inspection and expiry; a short sleep is not an asynchronous delivery barrier.
+
+## Legitimate generic closures need exact defining qualification
+
+PR3023's first historical repeated-cancellation control failed setup because it
+required every original function to have no closure. Python3.12's unchanged
+PEP695 run_owned_db_call legitimately captures its declared return type
+parameter. The corrected control qualifies the compiled defining code, exact
+type-parameter tuple and original closure cells rather than accepting arbitrary
+closures or removing source checks. It then reproduces double/triple/borrowed
+cancellation releasing the display owner before real SQL callback retirement;
+the repair passes all five native controls, including final formatted source
+(historical-cancellation-formatted-native-green-2,33.968s). Keep setup refusal
+separate from a causal product RED.

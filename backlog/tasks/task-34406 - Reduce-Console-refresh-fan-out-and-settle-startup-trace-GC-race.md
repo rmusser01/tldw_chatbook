@@ -256,3 +256,56 @@ Final formatted-source storage-coordinator-formatted-native-green-2 passes all3 
 Integrated Fleet native8 preserves current source and reaches the original later fleet-close scenario. Its sole child failure is the unchanged cancelled.is_set() and round_task.done() settlement assertion at test_console_session_tab_close.py:1035; no constructor-resource cleanup failure is reported. The diagnostic selected no applicable fixture owner, so its false source/coverage flags and empty rows provide no origin attribution. This is not a Fleet pass or a timing pass.
 
 Boot inventory follow-up plan: exact309b Perf Guard reports one unreviewed pair (_sync_native_console_chat_ui, console-sync). The existing coalesced replay after readiness/selection drift invokes the same whole Console synchronization needed for current visible state. Record that feature-owned conditional pair in the existing membership inventory, preserve mandatory-start set, scheduling policy and all module/concurrency/time budgets, then verify original census and policy cross-checks. No new ADR: existing ADR-126 same-owner readiness publication/replay.
+
+Character rail publication follow-up plan: the original whole probe records character_context._publish -> wiring._sync_character_context_presentation -> _current_console_rail_state -> inspector/readiness synchronous load_settings calls outside a checked display scope. Verify an actual warmed issued projection does not open main-thread native/config scopes during that original callback; obtain RED before wiring the render-only rail calculation through the existing _run_console_config_sync API. Keep widget/Character state publication, cold/expired retry, original body errors, live action reads and same-owner proof fences. ADR required: no; existing ADR-126 disposable presentation boundary applies.
+
+## Historical cancellation follow-up acceptance and plan
+
+- [ ] A historical presentation read keeps its exact pending state and callback ownership across repeated cancellation until the original callback and owned native handle retire. It cannot publish or rearm early; borrowed handles retain their original worker lifetime.
+- [ ] Single, double, triple cancellation, borrowed double cancellation and current successful publication have actual original-source native evidence.
+
+ADR required: no new ADR. Existing ADR-126 finite callback and same-owner publication boundaries apply. Before the production edit, qualify the unchanged original callback held after its first real SQL query; then repeatedly shield the same captured Task through further awaiting-worker cancellations, consume its terminal outcome and propagate original cancellation. Preserve current/stale source fences, admission, physical handle policy and all budgets. Run existing refresh batching controls and original whole evidence after the narrow repair.
+
+## Evals fixture ownership follow-up acceptance and plan
+
+- [ ] The private factory records and physically retires its exact constructor EvalsDB even after app fields are replaced; borrowed or foreign-path owners are excluded.
+- [ ] Unchanged original normal and queued MCP wiring tests leave no constructor Evals connection or ordinary resource lease behind.
+
+ADR required: no new ADR; this extends the existing test-owned constructor inventory and ADR-126 original-owner retirement proof. First retain actual constructor EvalsDB and native handle through original directory teardown to reproduce RED. Then redirect its constructor path into the existing private factory directory and include only its exact type/path owner in the existing inventory. Preserve native close/admission/census checks, foreign-worker refusal and borrowed owners. Verify retained/replaced-field controls and existing constructor retirement regressions before original shared-cohort checks.
+
+## Recovery presentation follow-up acceptance and plan
+
+- [ ] The three stock recovery display builders read their established current controller state without refreshing executable provider/agent-runtime selection on each repaint. Cold/custom/retired-owner routes and explicit card actions preserve live ensure/core behavior.
+- [ ] Actual mounted Console regression counts original ensure/core/settings entries and retains equal recovery state. Existing live binding, pre-dispatch and continuation recovery controls remain passing.
+
+ADR required: no new ADR; existing ADR-126 display versus live action and ADR-220 live recovery binding boundaries apply. Obtain actual original mounted callback RED, then introduce one read-only established-controller accessor qualified by the exact runtime/app/view/generation/controller/store pair. Wire only the display getters to that accessor, preserving original callback invocation and action ABI. No cached mapping, permission or dispatch authority is introduced; actions continue their fresh original ensure path. Verify owner/custom/cold fallback and existing recovery actions before original whole performance evidence.
+
+## Remaining native work-count qualification plan
+
+- [ ] Fresh Windows binding observations cover every actual enrolled root and all ancestors with original owner/mode/sticky, native identity and close-retention policy; no observation crosses a binding boundary.
+- [ ] Changed Character display preserves initial callback retirement and original REFRESHING publication; only its inner refresh pairs/recent groups share a finite exact-DB callback, with all original midpoint and post-retirement ownership checks.
+- [ ] Actual original-body work-count RED precedes either optimization, with native physical handle retirement and source hashes. Custom, borrowed, drift and refusal controls retain original paths.
+
+ADR required: existing ADR-126 amendment before production Character batching; existing fresh metadata observation policy applies to a Windows-only binding leaf. No new service, owner, authority or persistent cache is introduced. Read the retained proposals and run their actual original-source controls first; setup-only errors do not qualify as product RED. Original whole-Send/startup/helper budgets remain mandatory after the leaves, and a leaf saving cannot establish overall acceptance.
+
+
+## Original notification delivery prerequisite
+
+- [ ] The original live-screen callback journey waits for actual asynchronous notification delivery before inspecting its existing message and privacy assertions. Delivery timeout and all original keep-alive, screen, focus and quit checks remain intact.
+
+ADR required: no; routine test-driver synchronization. The source-qualified unchanged original native callback fails because inspection precedes original Textual delivery (inspection age0.342s, delivery age0.499s; timeout12s, no expiry, all original callback pairs complete/current, monitoring retired). Before changing the test, retain that RED receipt. Add one bounded existing _poll delivery prerequisite, preserve the existing0.3s screen-settlement wait and original final assertions; verify both content and modal callback cases with actual source-current native execution.
+
+
+## Startup cohort diagnostic inventory follow-up
+
+- [ ] The original diagnostic launcher accepts the exact authorized targeted workflow prefix including the four added storage controls, while missing, reordered or unknown entries still refuse before native launch.
+
+ADR required: no; existing diagnostic membership inventory. Both exact8c CI launchers refuse before native launch because their fixed expected PREFIX lacks the four added storage modules. Preserve that preflight RED; add only those four exact entries in their actual workflow order. Keep the original parser, snapshot checks, node order, source fences and every deadline unchanged. Five pure parser/actual snapshot-guard controls verify acceptance and omission/order/unknown refusal before implementation. Original actual cohort execution remains required on next pushed source.
+
+
+## Hook-key Workspace callback ownership follow-up
+
+- [ ] Actual background hook-key consent and policy reads physically retire newly opened Workspace handles on their producing worker; the original chat-store scope, fresh authority reads, custom/memory behavior and borrowed handle ownership remain intact.
+- [ ] Registry/database retarget, body failure and repeated cancellation refuse stale publication and cannot release ownership before physical callback retirement; original retry teardown retains exact-owner native evidence.
+
+ADR required: no new ADR; routine repair applies ADR-126's existing finite supported callback ownership contract. Original retry diagnostic3 positively retains seven exact constructor owners, two real Workspace worker handles/leases and their original source-qualified hook-key consent/get_workspace call chains. The retry body passes but exact factory close refuses with those handles and a distinct availability callback active. First qualify direct native callback lifetime RED controls after real callback retirement. Extend only the captured hook-key Workspace producer scope; where needed, original service readers capture their exact database and retain supported owned-connection cleanup so retarget cannot redirect a callback outside its captured owner. Preserve original fresh queries, actions, policy errors, custom ABI, borrowed transactions and all original budgets. Verify physical retirement and owner drift before rechecking the original retry. Treat the separate cancelled availability callback lifetime as its own hypothesis until positively reproduced.

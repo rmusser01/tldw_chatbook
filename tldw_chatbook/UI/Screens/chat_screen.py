@@ -170,6 +170,7 @@ from ..Console_Modules.session import (
 from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import (
     ConsoleChatController,
+    _CONSOLE_RECOVERY_PRESENTATION_GETTERS,
     ConsoleSubmitResult,
     build_console_provider_selection_from_settings,
 )
@@ -177,7 +178,7 @@ from ...Chat.console_context_compaction import (
     EffectiveMemoryKind,
     complete_durable_units,
 )
-from ...Chat.console_runtime import ensure_console_runtime
+from ...Chat.console_runtime import ConsoleRuntime, ensure_console_runtime
 from ...Widgets.Console.console_canvas_card import (
     ConsoleCanvasCardOpenRequested,
     ConsoleCanvasOpenRecoveryCard,
@@ -3366,6 +3367,7 @@ class ChatScreen(BaseAppScreen):
                 self, max_age=CONSOLE_SETTINGS_ESTIMATE_TTL_SECONDS
             )
             context_owner = context_reader._key(controller, session_id)
+
         def context_owner_current() -> bool:
             if context_reader is None:
                 return True
@@ -3382,7 +3384,9 @@ class ChatScreen(BaseAppScreen):
 
         try:
             effective_thinking_policy = (
-                await controller.effective_thinking_history_policy_for_session(session_id)
+                await controller.effective_thinking_history_policy_for_session(
+                    session_id
+                )
             )
         except KeyError:
             if not context_owner_current():
@@ -8077,10 +8081,8 @@ class ChatScreen(BaseAppScreen):
                 store, session_id, controller
             )
             staged_text = console_prompted_evidence_text(pending_launch)
-            context_window = (
-                spend.cached_context_window_for_display(
-                    self, self._ensure_console_provider_gateway(), settings
-                )
+            context_window = spend.cached_context_window_for_display(
+                self, self._ensure_console_provider_gateway(), settings
             )
             cache_key = (
                 history_key,
@@ -9791,6 +9793,70 @@ class ChatScreen(BaseAppScreen):
     def _ensure_console_prompt_history(self) -> PromptHistory:
         """Return the app-owned history shared across Console views."""
         return self._console_runtime().ensure_prompt_history()
+
+    def _console_recovery_presentation_controller(self) -> ConsoleChatController:
+        """Read the attached controller for recovery labels without reconfiguring it.
+
+        Display getters use existing run/preparation state. Explicit recovery
+        actions still refresh live provider and agent state through ensure.
+        Cold, custom or replaced view ownership retains that original path.
+        """
+        original_ensure, ensure_code = _CONSOLE_RECOVERY_ENSURE_DEFINITION
+        if (
+            inspect.getattr_static(self, "_ensure_console_chat_controller")
+            is not original_ensure
+            or original_ensure.__code__ is not ensure_code
+        ):
+            return self._ensure_console_chat_controller()
+        runtime = getattr(self, "_console_runtime_ref", None)
+        if type(runtime) is ConsoleRuntime:
+            controller = runtime.chat_controller
+            store = runtime.chat_store
+            if (
+                not runtime._disposed
+                and runtime.app is self.app_instance
+                and runtime.view is self
+                and runtime._attached_generation is not None
+                and runtime._attached_generation
+                == getattr(self, "_console_runtime_attachment_generation", None)
+                and not getattr(self, "_console_runtime_attachment_retired", False)
+                and type(controller) is ConsoleChatController
+                and type(store) is ConsoleChatStore
+                and controller.store is store
+            ):
+                for (
+                    name,
+                    original,
+                    code,
+                    defaults,
+                    kwdefaults,
+                    closure,
+                ) in _CONSOLE_RECOVERY_PRESENTATION_GETTERS:
+                    if (
+                        inspect.getattr_static(controller, name) is not original
+                        or original.__code__ is not code
+                        or original.__defaults__ is not defaults
+                        or original.__kwdefaults__ is not kwdefaults
+                        or original.__closure__ is not closure
+                    ):
+                        break
+                else:
+                    if (
+                        self._console_runtime_ref is runtime
+                        and runtime.app is self.app_instance
+                        and not runtime._disposed
+                        and runtime.view is self
+                        and runtime._attached_generation
+                        == self._console_runtime_attachment_generation
+                        and not getattr(
+                            self, "_console_runtime_attachment_retired", False
+                        )
+                        and runtime.chat_controller is controller
+                        and runtime.chat_store is store
+                        and controller.store is store
+                    ):
+                        return controller
+        return self._ensure_console_chat_controller()
 
     def _ensure_console_chat_controller(self) -> ConsoleChatController:
         """Return the native Console chat controller with fresh selection state.
@@ -15945,12 +16011,12 @@ class ChatScreen(BaseAppScreen):
             session_surface_builder=lambda: self._ensure_console_session_surface(),
             recovery_message_builder=(
                 lambda: (
-                    self._ensure_console_chat_controller().provider_continuation_recovery_message()
+                    self._console_recovery_presentation_controller().provider_continuation_recovery_message()
                 )
             ),
             recovery_replay_available_builder=(
                 lambda: (
-                    self._ensure_console_chat_controller().provider_continuation_replay_available()
+                    self._console_recovery_presentation_controller().provider_continuation_replay_available()
                 )
             ),
             on_recovery_action=(
@@ -18447,9 +18513,8 @@ class ChatScreen(BaseAppScreen):
             # coalesced request.
             self._console_sync_requested = False
             return
-        if (
-            getattr(self, "_console_sync_maintenance_paused", False)
-            or getattr(self, "_console_control_bar_replay_whole_sync", False)
+        if getattr(self, "_console_sync_maintenance_paused", False) or getattr(
+            self, "_console_control_bar_replay_whole_sync", False
         ):
             self._console_sync_requested = True
             return
@@ -19041,6 +19106,7 @@ class ChatScreen(BaseAppScreen):
         if parse.kind == KIND_COMMAND:  # Never on this pump (TASK-33622.16).
             self._console_unknown_send_armed = None
             from ..Console_Modules.command_handoff import run_console_command
+
             run_console_command(self, parse, session_id, stash or draft)
             return False
 
@@ -20066,6 +20132,7 @@ class ChatScreen(BaseAppScreen):
             text = format_permission_prompt_report(report)
         # Into the chat it was sent from, not the one showing now (TASK-33622.16).
         from ..Console_Modules.command_handoff import append_command_output
+
         await append_command_output(self._append_native_console_system_message, text)
 
     @on(Input.Changed, "#console-command-input")
@@ -21627,7 +21694,9 @@ class ChatScreen(BaseAppScreen):
             sync,
             maintenance_paused=getattr(self, "_console_sync_maintenance_paused", False),
             request_retry=lambda: self._request_console_control_bar_sync(delayed=True),
-            checked_projection=getattr(self, "_console_readiness_config_projection", None),
+            checked_projection=getattr(
+                self, "_console_readiness_config_projection", None
+            ),
         )
 
     def _sync_console_control_bar_under_config(
@@ -25277,6 +25346,12 @@ class ChatScreen(BaseAppScreen):
             self.notify("Settings reset to defaults", severity="success")
         except Exception as e:
             logger.error(f"Error resetting settings: {e}")
+
+
+_CONSOLE_RECOVERY_ENSURE_DEFINITION = (
+    ChatScreen._ensure_console_chat_controller,
+    ChatScreen._ensure_console_chat_controller.__code__,
+)
 
 
 def _lazy_summarize_preview_modal():

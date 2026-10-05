@@ -8292,8 +8292,7 @@ class ConsoleChatController:
             return self._cancel_temporary_capture_preparation(preparation)
         if (
             preparation.state is ConsoleTurnPreparationState.PAUSED
-            and preparation.pause_kind
-            is ConsolePreparationPauseKind.CONTEXT_COMPACTION
+            and preparation.pause_kind is ConsolePreparationPauseKind.CONTEXT_COMPACTION
         ):
             return self._cancel_context_compaction_hold(preparation)
         if (
@@ -8415,7 +8414,10 @@ class ConsoleChatController:
     def _consume_compaction_hold_answer(self, preparation_id: str | None) -> bool:
         """Whether this send's compaction hold was answered; clears it."""
 
-        if preparation_id is None or preparation_id not in self._compaction_hold_answered:
+        if (
+            preparation_id is None
+            or preparation_id not in self._compaction_hold_answered
+        ):
             return False
         self._compaction_hold_answered.discard(preparation_id)
         return True
@@ -8444,9 +8446,7 @@ class ConsoleChatController:
             return self._prepared_action_refusal(
                 self._preparation_by_id(preparation_id)
             )
-        compacted, visible_copy = await self.compact_context_now(
-            preparation.session_id
-        )
+        compacted, visible_copy = await self.compact_context_now(preparation.session_id)
         if not compacted:
             return self._prepared_action_refusal(
                 self._preparation_by_id(preparation_id), visible_copy
@@ -8455,9 +8455,7 @@ class ConsoleChatController:
         # even if the summary leaves it near the threshold.
         return await self._resume_compaction_hold(preparation_id)
 
-    async def send_without_compacting(
-        self, preparation_id: str
-    ) -> ConsoleSubmitResult:
+    async def send_without_compacting(self, preparation_id: str) -> ConsoleSubmitResult:
         """Send the held message once without compacting the chat.
 
         Args:
@@ -8473,9 +8471,7 @@ class ConsoleChatController:
             )
         return await self._resume_compaction_hold(preparation_id)
 
-    async def _resume_compaction_hold(
-        self, preparation_id: str
-    ) -> ConsoleSubmitResult:
+    async def _resume_compaction_hold(self, preparation_id: str) -> ConsoleSubmitResult:
         preparation = self._held_for_compaction(preparation_id)
         if preparation is None:
             return self._prepared_action_refusal(
@@ -15983,7 +15979,9 @@ class ConsoleChatController:
             return self._compose_local_provider(**kwargs)
         store = self.store
         session_id = kwargs.get("session_id")
-        session = next((item for item in store.sessions() if item.id == session_id), None)
+        session = next(
+            (item for item in store.sessions() if item.id == session_id), None
+        )
         revision = (
             store.session_settings_revision(session_id) if session is not None else None
         )
@@ -16127,7 +16125,9 @@ class ConsoleChatController:
             return None, None
 
         profile_id = (
-            turn_context.tool_policy_profile_id if turn_context is not None else "default"
+            turn_context.tool_policy_profile_id
+            if turn_context is not None
+            else "default"
         )
         profile_kwargs = {} if profile_id == "default" else {"profile_id": profile_id}
 
@@ -16218,7 +16218,9 @@ class ConsoleChatController:
                 raise RuntimeError("Watchlists source service unavailable")
             return local_watchlists_service.create_sources_exact_batch_sync(rows)
 
-        watchlists_command_service = getattr(self.app, "watchlists_command_service", None)
+        watchlists_command_service = getattr(
+            self.app, "watchlists_command_service", None
+        )
         if watchlists_command_service is None:
             watchlists_command_service = WatchlistsCommandService(
                 runtime_source_loader=load_default_runtime_source_state,
@@ -17325,9 +17327,7 @@ class ConsoleChatController:
 
             require_current()
             if store.library_policy_coordinator is not None:
-                await store.library_policy_coordinator.capture_for_execution(
-                    target.id
-                )
+                await store.library_policy_coordinator.capture_for_execution(target.id)
             require_current()
             approved_workspace_id = (
                 approved["workspace_id"] or CONSOLE_GLOBAL_WORKSPACE_ID
@@ -21584,7 +21584,9 @@ class ConsoleChatController:
         )
 
         original_provider = self._turn_context_provider
-        provider = context_provider if context_provider is not None else original_provider
+        provider = (
+            context_provider if context_provider is not None else original_provider
+        )
 
         def synchronous_capture() -> ConsoleTurnConfigurationSnapshot:
             if context_provider is None:
@@ -21710,7 +21712,9 @@ class ConsoleChatController:
                 "Console turn-context provider must return ConsoleTurnConfigurationSnapshot."
             )
         if context.session_id != session_id:
-            raise ValueError("Console turn-context provider returned a different session.")
+            raise ValueError(
+                "Console turn-context provider returned a different session."
+            )
         return context
 
     def resolve_turn_configuration_snapshot(
@@ -21733,7 +21737,10 @@ class ConsoleChatController:
         return self.resolve_runtime_turn_configuration_snapshot(session_id)
 
     def resolve_runtime_turn_configuration_snapshot(
-        self, session_id: str, *, mcp_definition_maximum: Mapping[str, str] | None = None
+        self,
+        session_id: str,
+        *,
+        mcp_definition_maximum: Mapping[str, str] | None = None,
     ) -> ConsoleTurnConfigurationSnapshot:
         """Capture configuration without consulting a screen-owned provider."""
 
@@ -21745,7 +21752,9 @@ class ConsoleChatController:
         from tldw_chatbook.Library.library_rag_state import library_rag_profile_top_k
 
         workspace_id = self.store.session_workspace_id(session_id)
-        roots, aliases, skipped = capture_change_review_admission(self.app, workspace_id)
+        roots, aliases, skipped = capture_change_review_admission(
+            self.app, workspace_id
+        )
         app_config = self._provider_config() if self._provider_config else {}
         console_config = app_config.get("console", {})
         if not isinstance(console_config, Mapping):
@@ -23494,7 +23503,8 @@ class ConsoleChatController:
                 threshold, which no caller should treat as history either.
         """
         persistence = (
-            _presentation_lineage[0] if _presentation_lineage is not None
+            _presentation_lineage[0]
+            if _presentation_lineage is not None
             else getattr(self.store, "persistence", None)
         )
         # task-32804.12 ([D2]): prefer the batch version reader so the
@@ -23531,10 +23541,14 @@ class ConsoleChatController:
             except Exception:
                 return None
         snapshots: list[DurableMessageSnapshot] = []
-        skip_id = _presentation_lineage[4] if _presentation_lineage is not None else (
-            uncommitted_user_message_id
-            if uncommitted_user_message_id is not None
-            else self._held_send_echo_id(session_id)
+        skip_id = (
+            _presentation_lineage[4]
+            if _presentation_lineage is not None
+            else (
+                uncommitted_user_message_id
+                if uncommitted_user_message_id is not None
+                else self._held_send_echo_id(session_id)
+            )
         )
         for native_id in active_ids:
             if native_id == skip_id:
@@ -29723,4 +29737,23 @@ class ConsoleChatController:
         )
 
 
-
+# Definition-time identities keep custom methods installed before a screen
+# import on their ordinary live refresh path. These labels grant no authority.
+_CONSOLE_RECOVERY_PRESENTATION_GETTERS = tuple(
+    (
+        name,
+        function,
+        function.__code__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        function.__closure__,
+    )
+    for name in (
+        "provider_continuation_recovery_message",
+        "provider_continuation_replay_available",
+        "provider_continuation_owner_is_live",
+        "trace_call_recovery_preparation",
+        "context_compaction_hold",
+    )
+    for function in (getattr(ConsoleChatController, name),)
+)

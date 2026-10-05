@@ -842,6 +842,7 @@ class ConsoleSessionController:
         chat_store_accessor: Callable[[], ConsoleChatStore],
         current_chat_store_accessor: Callable[[], ConsoleChatStore | None],
         ensure_console_chat_controller: Callable[[], Any],
+        read_recovery_controller: Callable[[], Any] | None = None,
         current_chat_controller_accessor: Callable[[], Any],
         build_current_provider_selection: Callable[[], Any],
         build_settings_summary: Callable[[], Any],
@@ -976,6 +977,8 @@ class ConsoleSessionController:
                 orchestration controller, used only by
                 `_activate_native_console_session` for its shared
                 `controller.store`/`controller.switch_session` sequence.
+            read_recovery_controller: Optional late-bound display-only accessor;
+                defaults to the live ensure path for custom controller callers.
             composer_accessor: `ChatScreen._console_composer_or_none` (DOM);
                 same shape as `dictation.py`'s/`hands_free.py`'s own
                 `composer_accessor`.
@@ -1074,6 +1077,11 @@ class ConsoleSessionController:
         self._chat_store_accessor = chat_store_accessor
         self._current_chat_store_accessor = current_chat_store_accessor
         self._ensure_console_chat_controller_fn = ensure_console_chat_controller
+        self._read_recovery_controller = (
+            ensure_console_chat_controller
+            if read_recovery_controller is None
+            else read_recovery_controller
+        )
         self._current_chat_controller_accessor = current_chat_controller_accessor
         self._build_current_provider_selection_fn = build_current_provider_selection
         self._build_settings_summary_fn = build_settings_summary
@@ -4253,7 +4261,10 @@ class ConsoleSessionController:
         }
 
     def _build_console_turn_execution_context(
-        self, session_id: str, *, mcp_definition_maximum: Mapping[str, str] | None = None
+        self,
+        session_id: str,
+        *,
+        mcp_definition_maximum: Mapping[str, str] | None = None,
     ) -> ConsoleTurnConfigurationSnapshot:
         """Capture one detached configuration snapshot for an owning session."""
         from ...Chat.attachment_core import max_history_images
@@ -4265,7 +4276,9 @@ class ConsoleSessionController:
 
         app_config = self._provider_readiness_app_config()
         selection = self._build_provider_selection_fn(session_id)
-        settings = self._ensure_console_chat_store().effective_session_settings(session_id)
+        settings = self._ensure_console_chat_store().effective_session_settings(
+            session_id
+        )
         model = selection.explicit_model or selection.configured_model
         console_config = (
             app_config.get("console", {}) if isinstance(app_config, Mapping) else {}
@@ -6513,7 +6526,7 @@ class ConsoleSessionController:
     def _console_trace_recovery_state(self) -> Any:
         """Project the active pre-dispatch pause, with a context hold's numbers."""
 
-        controller = self._ensure_console_chat_controller()
+        controller = self._read_recovery_controller()
         preparation = controller.trace_call_recovery_preparation()
         return self._read_trace_recovery_state()(
             preparation,

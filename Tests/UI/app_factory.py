@@ -209,6 +209,7 @@ def attach_chachanotes_db(app, *, client_id: str = "test-client"):
 
 def _record_created_databases(app: TldwCli, directory: Path) -> None:
     """Retain exact factory file owners before callers can replace app fields."""
+    from tldw_chatbook.DB.Evals_DB import EvalsDB
     from tldw_chatbook.DB.Library_Collections_DB import LibraryCollectionsDB
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
     from tldw_chatbook.DB.Workspace_DB import WorkspaceDB
@@ -234,6 +235,11 @@ def _record_created_databases(app: TldwCli, directory: Path) -> None:
             getattr(getattr(app, "scheduling_service", None), "db", None),
             ScheduledTasksDB,
             "scheduled_tasks.sqlite",
+        ),
+        (
+            getattr(getattr(app, "evaluation_orchestrator", None), "db", None),
+            EvalsDB,
+            "evals.db",
         ),
         (
             getattr(app, "local_research_service", None),
@@ -626,6 +632,10 @@ def _build_test_app(
             patch(
                 "tldw_chatbook.app_service_wiring.get_workspaces_db_path",
                 return_value=user_data_dir / "workspaces.sqlite",
+            ),
+            patch(
+                "tldw_chatbook.config.get_evals_db_path",
+                return_value=user_data_dir / "evals.db",
             ),
             patch(
                 "tldw_chatbook.app_service_wiring.get_scheduled_tasks_db_path",

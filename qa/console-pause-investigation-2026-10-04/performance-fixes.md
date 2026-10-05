@@ -365,3 +365,83 @@ Original artifact reproduction node cannot collect on Windows because its unchan
 Original boot census and scheduling-policy selection passes (98.797s driver, current sources unchanged). The observed conditional (_sync_native_console_chat_ui, console-sync) pair now names its same-owner readiness whole-state replay; mandatory membership, policy concurrency and every time/module budget remain unchanged. Earlier static225files reports baseline659/current658/zero new diagnostics; generated bundle and inventory final differential verification follows.
 
 Follow-up differential static225files: baseline659/current658/zero new diagnostics, including the regenerated artifact. All four new native/helper Python files format clean. The two existing modified fixture/census files were formatted with complete AST equivalence proven in followup-format-checkpoint-2.json; native receipts retain their exact earlier test-source hashes. The original lock3 and publication6 controls exercised the final production coordinator bytes. Next-head CI and original unobserved whole probe remain pending.
+
+
+### 2026-10-05 recovery repaint and exact-owner follow-ups
+
+The original mounted recovery repaint reproduces three ensure/core/settings
+entries for one display sync (23.922s, unchanged source). The established-controller
+display accessor removes those three execution-state refreshes while preserving
+the original getter results. Final formatted source passes the mounted control,
+including replaced property, custom ensure and stale view-generation refusal;
+explicit recovery actions still use the original live ensure path. The first
+partial wiring attempt still entered ensure once and is retained as a failed
+checkpoint, not success evidence. Existing live-binding and trace-action controls
+pass. The original real-screen continuation node also passes after opting into
+its required private bootstrap fixture (25.656s); the earlier failure occurred
+in raw config selection before the recovery action.
+
+Repeated historical cancellation reproduces early release/rearming on double,
+triple and borrowed double cancellation after the unchanged original callback
+executes real SQL. Single cancellation and normal publication pass the baseline.
+The repair continues shielding the same callback until physical retirement,
+then propagates cancellation. All five actual native cases pass33.141s. The
+initial draft's blanket no-closure qualification rejected the original PEP695
+generic run_owned_db_call before the causal assertion; that setup receipt is
+excluded. The qualifier retains the exact original type-parameter closure and
+compiled defining body instead.
+
+The actual constructor EvalsDB was outside the factory-owned directory and
+absent from its six-owner inventory. Two native controls retain its real handle
+through original teardown and reproduce deletion starting with the handle open.
+The factory now selects its private Evals path before construction and records
+that exact seventh constructor owner. Retained, replaced-field and borrowed
+negative controls pass29.968s. The unchanged original normal and queued MCP
+wiring nodes followed by original accepted-catalog custody now all pass
+66.234s in one real shared cohort, with source hashes unchanged. This verifies
+the evaluation-resource leak rather than attributing every earlier cleanup
+failure to it.
+
+The Character rail control preserves the identity of its actual warmed issued
+display projection. The corrected baseline fails both identity assertions; the
+checked render callback passes both after routing rail calculation through the
+existing display scope. An earlier equality-only control passed the original
+source and does not qualify as RED. The formatted follow-up cohort passes52
+cases but retains two original failures: private-bootstrap setup (subsequently
+repaired and independently verified above), and a standalone final Enter event
+that has not yet been causally attributed. No overall timing or completion
+claim follows from these targeted results.
+
+
+Notification source-qualified native v3 completes all original handler, enqueue,
+reap, delivery and add spans with current sources, no global events/overflow and
+retired hooks. The test inspects age0.342s before delivery at age0.499s; the
+original12s timeout has not expired. It fails on the empty collection. The test
+now awaits its actual original asynchronous delivery through the existing20s
+poll helper before its unchanged message/privacy checks. Both original content
+and modal callback journeys pass83.406s with unchanged sources and normal quit.
+This repairs a test prerequisite, not a production notification timeout.
+
+The original final-Enter standalone observer passes21.969s. Both original
+action_press entries see active=false and invoke original press; all pairs and
+hooks retire with current sources and no overflow. This does not attribute the
+earlier sporadic missing second action to the Button timer; no timer or fixture
+behavior was changed from that hypothesis. The broader original retry cohort
+remains RED: two selected-readiness2s limits, a missing response and one actual
+constructor-owner teardown refusal (15 cases,12PASS3FAIL1teardownerror,158.297s
+driver, sources unchanged). Exact outstanding owner attribution is pending.
+
+Exact8c cross-platform original whole receipts from push run37355120791 retain
+all1325 loaded production hashes equal to8c blobs. macOS Send5.119/3.316/2.466s
+and Ubuntu7.120/4.240/4.153s complete all three responses/traces/links, but complete
+remainsfalse. Helper counts macOS38/15/15 and Ubuntu51/17/25 exceed16 where
+shown; startup/main-loop gaps remain over their original limits. These are
+actual platform results, not simulated Windows behavior. Windows original
+whole and final-head acceptance remain pending.
+
+Corrected binding qualifier native RED2 completes both original binding calls
+and native retirement in8.343s. Opens152/152 exceed structural bound63 over24
+actual resolved union nodes; source-current, local/global hooks retired, no
+invalid observations or network attempts. Earlier native1 failed setup because
+the draft pinned a different directory wrapper and is excluded. The production
+candidate remains unapplied while its immediate-parent policy is corrected.

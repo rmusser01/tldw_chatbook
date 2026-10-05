@@ -1905,3 +1905,35 @@ Three genuine Windows causal regressions hold the unchanged original native open
 Fresh records, registry, binding, fingerprint, containment, startup-permission and installed operation-path observations must execute outside the shared coordinator. Pure metadata validation/publication remains synchronized. Before each observation retain the exact pending acquisition, actor, original installed operation/lease/path/hold and selected root/config/path; after it recheck those same owners and accepted pause/cancellation semantics. A checked per-call scope record captures the existing hold and original startup readmission metadata. If the live-hold continuation branch supplies authority, publication must recheck that exact hold still exists with its original names and has not begun retirement. An independently valid saved binding does not depend on an unrelated holder remaining live. The record grants no permission and never crosses another call or actor.
 
 Acquisitions and leases remain counted before the final fresh scope observation. Final revalidation repeats fresh startup permission and scope, followed by pure synchronized current-owner fences. Evidence reuse keeps its original per-call native observation, metadata epoch and same hold/evidence/path-entry identities; native operation checks move outside its coordinator intervals with exact postproof metadata checks. Source/selection drift, pause/cancel, retired continuation owner, changed operation/path/lease or evidence owner refuses and retires only the exact counted token. Custom/unqualified and pause-owned startup readmission behavior stays intact. No namespace widening, permission cache, skipped native proof, changed guard, timeout or performance ceiling is permitted.
+
+
+### Finite inner Character display refresh (TASK-34406, 2026-10-05)
+
+The actual original-source Windows work-count control completes the original
+three paired metadata readers, recent groups/details, native connection retirement
+and private cleanup, then fails because a changed display uses four owned DB
+callbacks instead of two. A pre-existing same-worker connection reproduces the
+same duplication while remaining borrowed. Fourteen owner-drift, custom-source
+and repeated-cancellation controls pass on the original source. This is causal
+leaf evidence; existing Send/startup/helper limits remain pending.
+
+Keep the initial change-detection callback physically retired before the original
+REFRESHING publication. Only the exact stock file-backed Character display route
+may combine its inner initial pair, bounded recent groups/details and final pair
+in one existing owned DB callback. Every original paired metadata read and its
+loop-side midpoint remain; the original post-pair ambient check remains on the
+loop. No GUI publication occurs inside that callback. After physical callback
+retirement recheck source bodies, exact receiver, ambient scope, generation and
+the captured presentation owner before publishing. Ordinary groups errors still
+require the final pair; metadata errors retain their distinct recovery outcome.
+Repeated cancellation drains the same callback before releasing its coalescing
+lock. Pre-existing worker connections retain original borrowed ownership.
+
+Definition-time original method/service metadata qualifies only that finite read
+seam. Preinstalled custom service, callback, subclass, memory or foreign receiver
+uses its preceding route. Source/body drift after qualification refuses before
+replacement invocation or publication. Direct actions keep their original fresh
+reads. No persistent worker, permission verdict, result cache, widened root,
+changed guard or relaxed time/helper/open budget is introduced. Actual native
+GREEN, refusal/error controls and original whole/platform evidence are required
+before accepting the optimization.
