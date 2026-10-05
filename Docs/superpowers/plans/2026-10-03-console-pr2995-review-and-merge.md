@@ -596,6 +596,18 @@ composed_static_owners:
 - Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged
 
 
+### Task17 extension: Record the reviewed five existing cleanup diagnostics
+
+ADR required: no
+ADR path: N/A for an inventory-only correction under existing persistent diagnostic governance.
+Reason: the selected diagnostic node reveals unchanged Task15 source has11 calls while its committed row still records6; existing statement review proves exactly five safe additions.
+
+- [ ] Resume the same Task17 implementer after root metadata handoff. Initial21pass/1fail report is frozen at task-17-report-before-inventory-fix.md; original brief at task-17-brief-before-inventory-fix.md; original task-17-safe-evidence/manifest.json and all64 artifacts remain byte-identical. Map that manifest's report SHA explicitly to the frozen initial report without rewriting history. No21 passing-case replay.
+- [ ] Read task-17-diagnostic-statements-review.txt: existing --statements --since100fa9d819 proves five added warning calls with fixed phases restriction, restriction_fallback, absence, abandonment and run_state plus type(exception).__name__. No removed/reworded/captured-exception/private-content/path/URL/sink change. Verify this exact drift before modifying metadata; unexpected drift returns to root.
+- [ ] Use the existing scripts/check_persistent_diagnostic_inventory.py --write only after that review. Assert the sole JSON data change is the console_chat_start.py owner row call_count6→11 and diagnostic_digestec602b5bd3b0fafe72cc→568a6855dc033a46aebc; derived TASK492 summary1437→1442 is not a stored waiver. Every other row/sink/privacy/method/threshold and exact upstream command_handoff row stays unchanged. No production or test edit and no inventory-check bypass.
+- [ ] Run only Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged with unchanged canonical profile/Python/PYTHONPATH/-p no:randomly/fresh basetemp/300s bounds, preserving original failure and all21 passes at54a. Retain complete actual argv/source/outputs/XML/exit; source whitespace and exact unowned/QA/ZIP carry. Freeze a separate compact task-17-diagnostic-fix-safe-evidence/manifest; append report with initial byte-exact prefix and transparent initial-report alias. Commit only the reviewed inventory row and return clean source ownership/closed processes. Independent Task17 scoped review uses the full original BASE through final source, including this bounded extension.
+
+
 ### Task 18: Repair stale interrupt fixtures and remove annotation-only host wiring
 
 ADR required: no new ADR
@@ -617,3 +629,14 @@ A fresh sole source implementer follows approved Task17; no children. Read own-S
 - Tests/Chat/test_console_interrupt_host_wiring.py::test_legacy_registry_payload_and_lock_names_alias_the_host
 - Tests/Chat/test_console_interrupt_host_wiring.py::test_approvals_register_the_permission_summary_as_the_after_remount_hook
 - Tests/Chat/test_console_ask_user_round.py::test_timeout_reads_console_config_when_no_seam
+
+
+### Task18 extension: Await actual mounted Stop control publication
+
+ADR required: no
+ADR path: N/A for a test-only synchronization repair; retain ADR094/219 native lifetime/custody.
+Reason: current-head CI establishes STREAMING with an idle Stop projection; the awaited sync may coalesce, and pilot.pause is not a publication-completion barrier. No lost-request product defect is demonstrated.
+
+- [ ] Read task-17-stop-ci-preflight.md and its exact frozen one-node receipts plus task-17-PR-fast-lane-failure-receipt.json. Preserve initial CI1fail/221pass/oldxfail/fivewarnings and unchanged06 local1PASS without treating the latter as a fix.
+- [ ] In Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target, add only await _wait_for_selector(chat, pilot, "#console-stop-generation.console-stop-active") after the existing sync/pilot.pause and before reading/asserting the Stop button. Reuse the already imported helper and its existing2second bound. Preserve every original statement, signature, marker, assertion, physical acceptance/provider entry,120second release guard,0.5second custody timeout, click/cancel/claim/drain/STOPPED/one-generation evidence. No production change, new helper, increased time, retry, skip/XFAIL or relaxed assertion.
+- [ ] Run only this exact node once after repair with the same canonical private profile/Python/PYTHONPATH/-p no:randomly/fresh basetemp/300s bounds; retain original failure/localpass and complete new receipts. If it fails the unchanged bound, retain flags/owned workers at the deadline and report before another change/run. Include exact body reversal/source/QA/ZIP carry and fatal Ruff/added-hunk formatter/whitespace in Task18 report and independent scoped review.
