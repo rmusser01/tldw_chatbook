@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from unittest.mock import Mock
 
 import httpx
@@ -1151,17 +1152,88 @@ def test_normalize_models_rejects_unsafe_or_oversized_model_ids(model_id):
         },
         {"many": list(range(300))},
         {"large": ["x" * 5000]},
+        {"not_finite": float("nan")},
+        {"pricing": {f"tier_{n}": {"input": n, "output": n} for n in range(90)}},
+        {"blob": ["x" * 4000 for _ in range(5)]},  # 20 KB serialized, over 16 KiB
+        {"k" * 129: 1},  # key over MODEL_METADATA_MAX_KEY_CHARS
     ],
 )
-def test_normalize_models_rejects_unbounded_metadata(metadata):
-    with pytest.raises(ValueError, match="metadata"):
-        normalize_models_response(
-            {"data": [{"id": "safe-model", "metadata": metadata}]},
-            provider="Custom",
-            provider_list_key="Custom",
-            endpoint_fingerprint="https://api.example.test/v1",
-            now_iso="2026-08-12T00:00:00Z",
-        )
+def test_normalize_models_keeps_a_model_but_none_of_its_unbounded_metadata(metadata):
+    """TASK-34363: one model's oversized details used to reject the whole list.
+
+    Only the field that breaks a bound is dropped; the model's other details stay.
+
+    Args:
+        metadata: Model details that exceed one of the metadata bounds.
+    """
+    models = normalize_models_response(
+        {"data": [{"id": "safe-model", "owned_by": "kept", "metadata": metadata},
+                  {"id": "plain", "owned_by": "x"}]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    assert [model.model_id for model in models] == ["safe-model", "plain"]
+    assert dict(models[0].metadata_raw_safe) == {"id": "safe-model", "owned_by": "kept"}
+    assert models[1].metadata_raw_safe["owned_by"] == "x"
+
+
+def test_a_model_with_a_huge_number_of_fields_is_handled_without_quadratic_work():
+    """Qodo #3019: 100k tiny top-level fields must not stall discovery."""
+    model = {"id": "wide", **{f"k{n}": n for n in range(100_000)}}
+    started = time.monotonic()
+    models = normalize_models_response(
+        {"data": [model, {"id": "plain", "owned_by": "x"}]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    assert time.monotonic() - started < 2.0
+    assert [found.model_id for found in models] == ["wide", "plain"]
+    assert dict(models[0].metadata_raw_safe) == {}
+
+
+def test_many_small_fields_under_the_field_cap_drop_largest_first():
+    """200 fields that fit one by one but not together: the biggest go, in one sorted pass."""
+    model = {"id": "many", **{f"k{n}": list(range(n % 7)) for n in range(200)}}
+    (found,) = normalize_models_response(
+        {"data": [model]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    kept = dict(found.metadata_raw_safe)
+    assert kept["id"] == "many" and 0 < len(kept) < len(model)
+    # Every dropped field is at least as large as every kept list field.
+    dropped_sizes = [len(value) for name, value in model.items() if name not in kept]
+    kept_sizes = [len(value) for name, value in kept.items() if name != "id"]
+    assert min(dropped_sizes) >= max(kept_sizes)
+
+
+def test_fields_that_only_overflow_together_lose_the_largest_and_keep_the_vision_hint():
+    """Vercel's shape: each field fits alone, tiered pricing pushes the total over 256 items."""
+    model = {
+        "id": "openai/gpt-5.6-sol",
+        "architecture": {"input_modalities": ["text", "image"]},
+        "extras": list(range(60)),
+        "pricing": {f"tier_{n}": {"input": n, "output": n} for n in range(68)},
+    }
+    (discovered,) = normalize_models_response(
+        {"data": [model]},
+        provider="Custom",
+        provider_list_key="Custom",
+        endpoint_fingerprint="https://api.example.test/v1",
+        now_iso="2026-08-12T00:00:00Z",
+    )
+
+    assert set(discovered.metadata_raw_safe) == {"id", "architecture", "extras"}
+    assert tuple(discovered.metadata_raw_safe["architecture"]["input_modalities"]) == ("text", "image")
 
 
 def test_normalize_models_drops_an_oversized_field_but_keeps_the_model():

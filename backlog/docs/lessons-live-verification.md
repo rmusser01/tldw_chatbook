@@ -3773,6 +3773,17 @@ found three bugs that had kept Together from working at all:
 
 Non-streamed replies worked, which is how these hid.
 
+The same day, a public listing hid a bug too. `test_public_listing_parses_through_discovery`
+passed for Vercel, but its no-key fixture keeps only the model ids. The real listing
+failed discovery for every user: seven models' tiered pricing exceeded the 256-item
+metadata bound, and one model's details rejected all 407 (TASK-34363). A fixture that
+stores less than the real response cannot test the parts it dropped.
+
+The same goes for a report that checks fewer levels than the parser does. The Fireworks
+capture printed "uncovered keys: none" and then failed replay: each tool-call object
+carried `index` and `name`, and `uncovered_keys` never looked inside call objects
+(TASK-34364).
+
 **What to do.** Treat a no-key probe as covering only what it actually saw (routes and
 the error mapping), and say so. 15 key-only listings remain unseen as of this entry. When
 a key arrives, run the capture and also run the app's own discovery and a streamed reply

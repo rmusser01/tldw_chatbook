@@ -32,7 +32,8 @@ _BODY = {
 class _Provider(BaseHTTPRequestHandler):
     requests: list[dict[str, Any]] = []
     # "ok", "echo" (bodies repeat the Authorization header), "refuse" (every
-    # round 401) or "truncate" (the stream ends without [DONE]).
+    # round 401), "truncate" (the stream ends without [DONE]) or
+    # "tool_stream_only" (every round 401 except the streamed tool call).
     mode = "ok"
 
     def log_message(self, *args: Any) -> None:
@@ -53,7 +54,9 @@ class _Provider(BaseHTTPRequestHandler):
         """Serve a chat completion, streamed when asked."""
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         type(self).requests.append({"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}, "body": body})
-        if type(self).mode == "refuse":
+        refused = type(self).mode == "refuse" or (
+            type(self).mode == "tool_stream_only" and not (body.get("stream") and "tools" in body))
+        if refused:
             self._send(json.dumps({"error": {"message": "Invalid API key"}}).encode(), status=401)
             return
         if body.get("stream"):
@@ -109,8 +112,9 @@ def test_azure_capture_uses_the_api_key_header_and_max_completion_tokens(
     assert capture_tool.USER_AGENT.startswith("python-requests")
     assert not any(r["body"] is None for r in _Provider.requests)  # no discovery for deployments
     assert fixture["base_url"] == capture_tool.PER_ACCOUNT
-    assert fixture["statuses"] == {"plain": 200, "tool": 200, "stream": 200}
+    assert fixture["statuses"] == {"plain": 200, "tool": 200, "stream": 200, "tool_stream": 200}
     assert fixture["stream_events"][-1] == "[DONE]"
+    assert fixture["tool_stream_events"][-1] == "[DONE]"
     out = capsys.readouterr().out
     assert _KEY not in out and _KEY not in json.dumps(fixture)
     assert "surprise_extra" in out  # the uncovered-key report names it
@@ -133,6 +137,7 @@ def test_tools_off_preset_skips_the_tool_round(provider: str, tmp_path: Path) ->
     """Nous ships native tools off, so no tool request is sent."""
     fixture = _run(tmp_path, "nous", {"TLDW_LIVE_NOUS_BASE_URL": provider})
     assert fixture["tool_call_response"] is None
+    assert fixture["tool_stream_events"] == [] and fixture["statuses"]["tool_stream"] is None
     assert not any(r["body"] and "tools" in r["body"] for r in _Provider.requests)
 
 
@@ -191,6 +196,28 @@ def test_a_capture_with_no_successful_round_writes_nothing(
     assert "FAILED: no round succeeded" in out and "captured 0 of 1" in out
 
 
+def test_a_capture_whose_only_good_round_is_the_tool_stream_is_written(
+    provider: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Qodo #3019: a complete streamed tool round alone is a usable capture."""
+    _Provider.mode = "tool_stream_only"
+    fixture = _run(tmp_path, "azure", {"TLDW_LIVE_AZURE_BASE_URL": provider, "TLDW_LIVE_AZURE_MODEL": "m"})
+    assert fixture["statuses"] == {"plain": 401, "tool": 401, "stream": 401, "tool_stream": 200}
+    assert fixture["tool_stream_events"][-1] == "[DONE]"
+    assert "FAILED: no round succeeded" not in capsys.readouterr().out
+
+
+def test_uncovered_keys_ignores_tool_calls_that_are_not_a_list() -> None:
+    """Qodo #3019: a malformed ``tool_calls`` value must not crash the report."""
+    fixture = {
+        "chat_response": {"id": "c", "choices": [{"index": 0, "finish_reason": "stop",
+                          "message": {"role": "assistant", "content": "ok", "tool_calls": 1}}]},
+        "tool_stream_events": [json.dumps({"choices": [{"index": 0, "delta": {"tool_calls": "x"}}]})],
+    }
+    report = capture_tool.uncovered_keys(_RECORD, fixture)
+    assert report["tool_call"] == [] and report["stream_tool_call"] == []
+
+
 def test_a_truncated_stream_is_flagged(provider: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """A stream cut off before [DONE] is kept as evidence but called out."""
     _Provider.mode = "truncate"
@@ -244,11 +271,13 @@ _RECORD = next(r for r in capture_tool.engine_presets() if r.key == "zenmux")  #
 
 
 def test_uncovered_keys_reports_each_level_and_subtracts_allowances() -> None:
-    """Body top/choice/message and stream event/choice/delta keys, minus the record's allowances."""
+    """Body top/choice/message/tool-call and stream event/choice/delta keys, minus allowances."""
     fixture = {
         "chat_response": {
             "id": "c", "choices": [{"index": 0, "finish_reason": "stop", "extra_choice": 1,
-                                    "message": {"role": "assistant", "content": "ok", "refusal": None, "extra_msg": 1}}],
+                                    "message": {"role": "assistant", "content": "ok", "refusal": None, "extra_msg": 1,
+                                                "tool_calls": [{"id": "t", "type": "function", "index": 0,
+                                                                "function": {"name": "f", "arguments": "{}"}}]}}],
             "service_tier": "default", "extra_top": 1,
         },
         "tool_call_response": None,
@@ -257,11 +286,18 @@ def test_uncovered_keys_reports_each_level_and_subtracts_allowances() -> None:
                 {"index": 0, "delta": {"content": "o", "delta_extra": 1}, "stream_choice_extra": 1}]}),
             "[DONE]",
         ],
+        "tool_stream_events": [
+            json.dumps({"choices": [{"index": 0, "delta": {"tool_calls": [
+                {"index": 0, "id": None, "type": "function", "name": None, "function": {"arguments": "{}"}}]}}]}),
+            "[DONE]",
+        ],
     }
     assert capture_tool.uncovered_keys(_RECORD, fixture) == {
         "top": ["event_extra", "extra_top"],
         "choice": ["extra_choice", "stream_choice_extra"],
         "message": ["delta_extra", "extra_msg"],
+        "tool_call": ["index"],
+        "stream_tool_call": ["name"],
     }
 
 
@@ -273,5 +309,17 @@ def test_uncovered_keys_is_empty_for_a_strict_shape_and_ignores_error_bodies() -
         "tool_call_response": {"error": {"message": "bad request"}},
         "stream_events": ["not json", "[DONE]"],
     }
-    assert capture_tool.uncovered_keys(_RECORD, fixture) == {"top": [], "choice": [], "message": []}
+    assert capture_tool.uncovered_keys(_RECORD, fixture) == {
+        "top": [], "choice": [], "message": [], "tool_call": [], "stream_tool_call": [],
+    }
+
+
+def test_uncovered_keys_subtracts_the_records_tool_call_allowance() -> None:
+    """Fireworks allows ``index``/``name`` on a call object; other extras still report."""
+    fireworks = next(r for r in capture_tool.engine_presets() if r.key == "fireworks")
+    call = {"id": "t", "type": "function", "index": 0, "name": None, "other": 1,
+            "function": {"name": "f", "arguments": "{}"}}
+    fixture = {"chat_response": {"id": "c", "choices": [{"index": 0, "finish_reason": "tool_calls",
+               "message": {"role": "assistant", "content": None, "tool_calls": [call]}}]}}
+    assert capture_tool.uncovered_keys(fireworks, fixture)["tool_call"] == ["other"]
 

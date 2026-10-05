@@ -518,15 +518,19 @@ class HostedChatStream(Iterator[dict[str, Any]]):
                 self._tools[index] = state
                 self._reserve_output(len(call_id) + len(name))
             else:
-                if "id" in raw_tool and raw_tool.get("id") != state.call_id:
+                # A continuation may repeat a field as null (Fireworks sends
+                # ``"id": null``) instead of omitting it. Null claims nothing,
+                # so it counts as not sent; any other value must still match
+                # the call's first delta (TASK-34364).
+                if raw_tool.get("id") is not None and raw_tool["id"] != state.call_id:
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool identity changed."
                     )
-                if "type" in raw_tool and raw_tool.get("type") != "function":
+                if raw_tool.get("type") is not None and raw_tool["type"] != "function":
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool type changed."
                     )
-                if "name" in function and function.get("name") != state.name:
+                if function.get("name") is not None and function["name"] != state.name:
                     raise HostedChatProtocolError(
                         "Hosted Chat stream tool name changed."
                     )
@@ -549,8 +553,27 @@ def normalize_hosted_chat_response(
     allowed_choice_keys: frozenset[str] = frozenset(),
     allowed_message_keys: frozenset[str] = frozenset(),
     tolerant_top_level_extras: bool = False,
+    allowed_tool_call_keys: frozenset[str] = frozenset(),
 ) -> HostedChatTurn:
-    """Normalize one non-streaming OpenAI-shaped Chat response."""
+    """Normalize one non-streaming OpenAI-shaped Chat response.
+
+    Args:
+        response: The decoded response body.
+        finish_policy: Validates the finish reason and reasoning content.
+        allowed_extra_keys: Tolerated extra top-level keys.
+        allowed_choice_keys: Tolerated extra choice-level keys (value rule).
+        allowed_message_keys: Tolerated extra message-level keys (value rule).
+        tolerant_top_level_extras: The long-tail tolerant profile switch.
+        allowed_tool_call_keys: Tolerated extra keys on each tool-call object
+            (value rule), validated then dropped (TASK-34364).
+
+    Returns:
+        The normalized turn.
+
+    Raises:
+        HostedChatProtocolError: The response does not match the strict shape
+            plus the given allowances.
+    """
     if not _json_shape_is_safe(response) or not isinstance(response, Mapping):
         raise HostedChatProtocolError("Hosted Chat response JSON is malformed.")
     _check_top_level_extras(
@@ -598,6 +621,7 @@ def normalize_hosted_chat_response(
     tool_calls = _normalize_tool_calls(
         message.get("tool_calls", ()),
         tolerant_extras=tolerant_top_level_extras,
+        allowed_keys=allowed_tool_call_keys,
     )
     if (
         len(text) + len(reasoning or "") + _tool_character_count(tool_calls)
@@ -1277,6 +1301,7 @@ def _normalize_tool_calls(
     value: object,
     *,
     tolerant_extras: bool = False,
+    allowed_keys: frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any], ...]:
     if value is None:
         return ()
@@ -1290,13 +1315,20 @@ def _normalize_tool_calls(
         if not isinstance(raw_call, Mapping):
             raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
         keys = set(raw_call)
-        if not _REQUIRED_TOOL_CALL_KEYS <= keys or (
-            not tolerant_extras and keys != _REQUIRED_TOOL_CALL_KEYS
-        ):
+        if not _REQUIRED_TOOL_CALL_KEYS <= keys:
+            raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
+        if not tolerant_extras:
             # Tolerant profile (controller ruling a): call objects may carry
             # extra keys (ollama emits ``index``); id/type/function stay
-            # mandatory and extras are dropped, never passed through.
-            raise HostedChatProtocolError("Hosted Chat tool call is malformed.")
+            # mandatory and extras are dropped, never passed through. A strict
+            # record may allow named extras (Fireworks: ``index``, ``name``).
+            _check_level_extras(
+                raw_call,
+                known=_REQUIRED_TOOL_CALL_KEYS,
+                allowed=allowed_keys,
+                tolerant=False,
+                label="tool call is malformed",
+            )
         call_id = _required_metadata(raw_call.get("id"), "tool ID")
         if raw_call.get("type") != "function" or call_id in call_ids:
             raise HostedChatProtocolError("Hosted Chat tool identity is malformed.")

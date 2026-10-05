@@ -130,6 +130,8 @@ class ProviderRecord:
             null, scalar, or shape-safe mapping).
         message_allowances: Tolerated extra message/delta-level keys
             (same value rule).
+        tool_call_allowances: Tolerated extra keys on a non-streamed tool
+            call object (same value rule).
         stream_include_usage: Send ``stream_options.include_usage`` on
             streaming requests (providers that only stream usage on request).
         stream_usage_optional: Accept a stream that ends without usage
@@ -217,6 +219,9 @@ class ProviderRecord:
     response_allowances: frozenset[str] = frozenset()
     choice_allowances: frozenset[str] = frozenset()
     message_allowances: frozenset[str] = frozenset()
+    # Extra keys on a non-streamed ``tool_calls[]`` object beyond id/type/
+    # function, under the same value rule (TASK-34364).
+    tool_call_allowances: frozenset[str] = frozenset()
     # Streamed-usage contract (TASK-33201). Strict records fail a stream that
     # ends without usage, and OpenAI-semantics providers only send streamed
     # usage when asked: ``stream_include_usage`` adds
@@ -363,6 +368,10 @@ TOGETHER = ProviderRecord(
     choice_allowances=frozenset({"logprobs"}),
     stream_include_usage=True,
 )
+# Fireworks, captured live 2026-10-04 (Tests/fixtures/cloud_live/fireworks.json,
+# TASK-33640): a non-streamed tool call carries ``index`` and ``name: null``
+# beside id/type/function, which failed every non-streamed tool reply
+# (TASK-34364). Streamed usage arrives without asking.
 FIREWORKS = ProviderRecord(
     key="fireworks",
     config_key="Fireworks",
@@ -393,6 +402,7 @@ FIREWORKS = ProviderRecord(
     base_url_suffix=None,
     reasoning_disposition="proprietary",  # reasoning_content, replayed on tool turns
     auth_scheme="bearer",
+    tool_call_allowances=frozenset({"index", "name"}),
 )
 CEREBRAS = ProviderRecord(
     key="cerebras",
