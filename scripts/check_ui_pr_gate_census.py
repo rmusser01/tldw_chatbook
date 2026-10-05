@@ -92,7 +92,33 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # (test_app_quit_in_flight_modals.py ~2.7 min, test_console_video_picker_cancel.py
 # ~1 min locally) stay out until the lane has a shard with room for them.
 # TASK-33003.20 adds the production approval batch geometry guard.
-MINIMUM_FILES = 136
+# TASK-34000.1 raised it to 139: the census held 138 files on dev (two past
+# the 136 floor), and Tests/UI/test_library_quit_guard.py joins it. It is a
+# deliberately lean core: 3 real-app boots, about 35-45 s locally; the typed
+# tail and a new note reach the DB before exit; a refused save keeps the
+# typist in place and Ctrl+Q asks. The other quit variants live in
+# test_library_quit_guard_extended.py, outside this lane: it was near its
+# 20-minute cap when they were written (TASK-34353 has since sharded it).
+# TASK-34000.2 raised it to 140: Tests/UI/test_library_notes_sync_attention.py
+# is one real-app boot over a real lasting-sync root wedged the way review
+# finding N-02 left it: the tree row, the Notes list and the editor say "needs
+# attention", and the real Recovery button heals the folder with no
+# "RuntimeError". Measured 24 s wall (14 s call) alone and 56 s wall under
+# local load, against the lane's 60 s per-file rule -- keep it a SINGLE test;
+# further attention variants go in non-gated files.
+# Re-measured at 142 after rebasing onto dev (138 files there + this branch's
+# four): TASK-34000.3's test_library_export_replace_confirm.py (two real-app
+# boots: a note and a prompt export ask before replacing) and the TASK-32633
+# slice's test_library_notes_sync_delete_restore.py (one boot: Delete holds the
+# synced folder, Undo returns it) joined the census without a floor bump of
+# their own, which left them free to be deleted unnoticed.
+# The wave's final review raised it to 143 (C1):
+# Tests/UI/test_library_note_autosave_recovers.py is two real-app boots, about
+# 20 s locally. A burst whose max wait had run out armed a 0 s timer, which
+# Textual never fires, so autosave stayed dead after Keep editing on a refused
+# quit and after a rail switch away and back. The unit test that should have
+# caught it asserted the 0.0 against a fake ``set_timer``; these read the row.
+MINIMUM_FILES = 143
 
 
 def read_census(path: Path) -> list[str]:

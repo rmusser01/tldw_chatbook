@@ -1,0 +1,30 @@
+# 22 fix round 1 (live, w1-t2-2, 160x45): with quotes open and the app idle, the bound note was changed in the database from outside (no editor, no save) and 'watcher line' was appended to quotes.md on disk; no key was pressed; waited 16 s for the folder's own pass
+-- operations (kind|state|reason):
+  10 create_note|completed|
+   1 resolve_keep_both|completed|
+   3 update_file|completed|
+   1 update_note|completed|
+-- roots (state|last_status_code):
+active|needs_attention
+-- bound note in DB:
+version=8
+version=1
+length=161 last16hex=7020736964652069646C65206C696E65
+length=146 last16hex=792D617070207C2031207C2061707032
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+second edit line and more tail two
+from the vault
+| riley-disk | 2 |
+app side idle line
+> The best time to plant a tree was 20 years ago.
+-- file on disk (md5):
+f9c998e4fc44b8b3b7ab148724df4c8b
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+second edit line and more tail two
+from the vault
+| riley-disk | 2 |
+watcher line

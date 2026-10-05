@@ -458,6 +458,10 @@ class LibraryNotesState:
     tree_inactive_managed_folder_ids: frozenset[str] = field(
         default_factory=frozenset
     )
+    # TASK-34000.2: sync folders whose lasting-sync root is held for
+    # attention, read live from the runtime (``library_notes_sync_attention``)
+    # -- their tree row and the list's idle status say so.
+    tree_attention_folder_ids: frozenset[str] = field(default_factory=frozenset)
     tree_selected_placement_id: str = ""
     tree_pending_target_placement_id: str = ""
     filter_browse_receipt: LibraryNotesTreeReceipt | None = None
@@ -498,6 +502,10 @@ class LibraryNotesState:
     autosave_state: str = "idle"
     autosave_timer: Timer | None = None
     autosave_generation: int = 0
+    #: TASK-34000.1: ``((note_id, session_generation, saved_revision),
+    #: started_at)`` for the burst of unsaved typing the debounce is
+    #: deferring, or None. Bounds that burst by the autosave max wait.
+    autosave_burst: tuple[tuple[str, int, int], float] | None = None
     confirming_delete: bool = False
     preview: bool = False
     context: bool = False

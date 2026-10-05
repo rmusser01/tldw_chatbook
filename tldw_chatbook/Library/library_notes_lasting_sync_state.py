@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from enum import StrEnum
 from math import ceil
 from typing import TYPE_CHECKING, Literal
@@ -1114,6 +1115,55 @@ _CHECK_REFUSAL_COPY: dict[str, str] = {
     "root_observation_mismatch": (
         "The folder changed while it was being checked. Check again."
     ),
+    # TASK-34000.2: what Recovery on an open sync entry can refuse with.
+    # Before these the row fell back to the exception class ("Recovery failed
+    # — RuntimeError") and sent the reader to Check changes, whose check
+    # refuses the very same open entry: a loop with no way out.
+    "postcondition_failed": (
+        "A sync write could not be confirmed on disk. Use Recovery to look again."
+    ),
+    "stale_observation": (
+        "The note or its file changed while sync was working. Use Recovery again."
+    ),
+    "operation_needs_attention": (
+        "A leftover temporary file still needs cleaning up. Use Recovery again."
+    ),
+    "binding_authority_changed": (
+        "This note's sync record changed during recovery. Check again."
+    ),
+    # Fix round 1 (review Important #1): the code the finding's own Recovery
+    # raised, and the other refusals a sync-folder action can surface.
+    "recovery_authority_changed": (
+        "This entry can't be settled as it is. Check changes, then use Recovery again."
+    ),
+    "operation_already_completed": (
+        "This entry was already completed. Check changes to refresh the folder."
+    ),
+    "operation_root_mismatch": (
+        "This entry belongs to another folder. Check changes to refresh the list."
+    ),
+    "file_observation_failed": (
+        "The file could not be read while sync was working. Use Recovery again."
+    ),
+    "root_lease_required": (
+        "This folder isn't held by this window right now. Reconnect it, then check again."
+    ),
+    "root_authority_mismatch": (
+        "The folder changed while this action was running. Check again."
+    ),
+    "root_direction_changed": (
+        "The folder's sync direction changed meanwhile. Check again."
+    ),
+    "invalid_execution_result": (
+        "Sync returned an unusable result for this action. Check again."
+    ),
+    "changed_since_resolution": (
+        "The note or file changed after this resolution. Check changes to review it."
+    ),
+    "undo_expired": (
+        "This resolution can no longer be undone. Check changes to review the folder."
+    ),
+    "stale_operation_token": "This action refers to an older check. Check again.",
 }
 
 #: task-32534 AC#1: reason code -> (row phrase, the root row's next action).
@@ -1132,6 +1182,26 @@ _CHECK_FAILURE_ROW: dict[str, tuple[str, str]] = {
         "another Chatbook owns this profile",
         "close_other_process_and_restart",
     ),
+    # TASK-34000.2: Recovery refusals that Recovery itself can move forward.
+    "postcondition_failed": ("a sync write wasn't confirmed", "resolve_cleanup"),
+    "stale_observation": ("the note or file changed meanwhile", "resolve_cleanup"),
+    "operation_needs_attention": (
+        "a temporary file still needs cleanup",
+        "resolve_cleanup",
+    ),
+    "binding_authority_changed": ("the sync record changed", "sync_now"),
+    # Fix round 1 (review Important #1).
+    "recovery_authority_changed": ("entry can't be settled as it is", "sync_now"),
+    "operation_already_completed": ("entry was already completed", "sync_now"),
+    "operation_root_mismatch": ("entry belongs to another folder", "sync_now"),
+    "file_observation_failed": ("the file couldn't be read", "resolve_cleanup"),
+    "root_lease_required": ("folder isn't held by this window", "reconnect_folder"),
+    "root_authority_mismatch": ("the folder changed meanwhile", "sync_now"),
+    "root_direction_changed": ("the sync direction changed", "sync_now"),
+    "invalid_execution_result": ("sync returned an unusable result", "sync_now"),
+    "changed_since_resolution": ("the note or file changed since", "sync_now"),
+    "undo_expired": ("undo is no longer available", "sync_now"),
+    "stale_operation_token": ("refers to an older check", "sync_now"),
 }
 
 
@@ -1204,7 +1274,109 @@ def check_failure_row(
     return f"{verb} failed — {phrase}", next_action
 
 
+#: TASK-34000.2 fix round 1: root statuses under which Recovery's pass did
+#: not leave the folder healthy (the row says so; the line must agree).
+_UNHEALTHY_ROOT_STATUSES = frozenset({"failed", "needs_attention", "partial", "offline"})
+RECOVERY_FINISHED_HEALTHY = "Recovery finished; the folder was checked again."
+RECOVERY_FINISHED_UNHEALTHY = (
+    "Recovery finished, but the check found a problem — see the row."
+)
+
+
+def recovery_finished_line(runtime: object, root_id: str) -> str:
+    """Return Manage sync folders' status line after a Recovery that ran.
+
+    TASK-34000.2 fix round 1 (review Minor #1): Recovery settles the open entry
+    and re-checks the folder, and that check can itself end in a failed or
+    held status. The line reads the status the runtime published for this
+    root instead of asserting "checked again" over a row that says otherwise.
+    A runtime that cannot say (no snapshot, no such root) keeps the plain line.
+
+    Args:
+        runtime: The sync runtime owner (or a test double) with ``snapshot()``.
+        root_id: The folder Recovery ran on.
+
+    Returns:
+        One of the two ``RECOVERY_FINISHED_*`` sentences.
+    """
+
+    snapshot = getattr(runtime, "snapshot", None)
+    if not callable(snapshot):
+        return RECOVERY_FINISHED_HEALTHY
+    try:
+        roots = getattr(snapshot(), "roots", ())
+    except Exception:  # noqa: BLE001 - a status line, never the action
+        return RECOVERY_FINISHED_HEALTHY
+    for root in roots:
+        if getattr(root, "root_id", None) == root_id:
+            if getattr(root, "status", "") in _UNHEALTHY_ROOT_STATUSES:
+                return RECOVERY_FINISHED_UNHEALTHY
+            return RECOVERY_FINISHED_HEALTHY
+    return RECOVERY_FINISHED_HEALTHY
+
+
+#: Manage sync folders: one root row's status, in the user's terms. Moved
+#: here from ``library_notes_sync_controller.py`` (TASK-32633 slice) with the
+#: rest of this screen's presentation copy.
+ROOT_STATUS_LABELS = {
+    "up_to_date": "✓ Up to date",
+    "changes_available": "◌ Changes available",
+    "paused": "Ⅱ Paused",
+    "offline": "⚠ Offline",
+    "passive": "Ⅱ Open in another process",
+    "needs_attention": "⚠ Needs attention",
+    #: task-32604 fix round 2: not a runtime status -- the label a root wears
+    #: when the runtime stopped watching. "✓ Up to date" is the last thing
+    #: PUBLISHED, not the truth, once nothing is carrying changes either way.
+    "not_watching": "⚠ Sync stopped",
+    "partial": "⚠ Partial",
+    "failed": "✕ Failed",
+    "unsupported": "✕ Blocked",
+    "starting": "◌ Starting",
+}
+
+
+def root_status_label(
+    status: str, published_at: float | None, *, now: datetime | None = None
+) -> str:
+    """The status label for one root row, dated when it claims to be healthy.
+
+    TASK-32633 slice (review finding N-03): until every note-write path tells
+    lasting sync about its write, a live root's "✓ Up to date" can be stale.
+    The healthy label therefore says when the runtime last confirmed it --
+    "✓ Up to date as of HH:MM", the local wall clock of the publication that
+    carried the status (``NotesSyncRootRuntimeSnapshot.published_at``); a
+    confirmation from another day carries its date too ("as of 2026-10-03
+    08:25"), so yesterday's minute never reads as today's. The paint never
+    invents a time: a snapshot without one keeps the bare label (every
+    production publication carries one -- pinned by
+    ``Tests/Architecture/test_notes_sync_snapshot_construction.py``).
+
+    Args:
+        status: The runtime status code.
+        published_at: Epoch seconds of the publication, or ``None``.
+        now: The current moment, for tests; defaults to the wall clock.
+
+    Returns:
+        The label, in the codebase's local-time spelling (tz-aware, then
+        localised, like ``note_file_written_label``).
+    """
+
+    label = ROOT_STATUS_LABELS.get(status, status.replace("_", " ").title())
+    if status != "up_to_date" or published_at is None:
+        return label
+    confirmed = datetime.fromtimestamp(published_at, tz=UTC).astimezone()
+    today = (datetime.now(tz=UTC) if now is None else now).astimezone().date()
+    stamp = confirmed.strftime("%H:%M" if confirmed.date() == today else "%Y-%m-%d %H:%M")
+    return f"{label} as of {stamp}"
+
+
 __all__ = [
+    "ROOT_STATUS_LABELS",
+    "root_status_label",
+    "RECOVERY_FINISHED_HEALTHY",
+    "RECOVERY_FINISHED_UNHEALTHY",
+    "recovery_finished_line",
     "LASTING_SYNC_HISTORY_PAGE_SIZE",
     "LastingSyncApplyBlocker",
     "LastingSyncHistory",

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved · Export cancelled — Index on FAT.md was left unchanged. · Next: Keep        │
+│   a  │ Library notes · Ready                                        │  o  editing; changes save automatically.                                               │
+│   v  │ Notes (122)                                                  │  t      ‹ Notes      Index — start here                                                │
+│      │ These notes live in the Library's own database — for notes   │  e                                                                                     │
+│      │ that live in a folder on disk, switch to Folder files. To    │  s                                                                                     │
+│      │ copy or keep a folder synced, choose Add from files.         │      In the Library database only — no file on disk                                    │
+│      │                                                              │     S                                                                                  │
+│      │ Filter                                                       │              Edit           Preview            Info               Save         Use in  │
+│      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                                                        │
+│      │ ▊ Filter notes… (Enter)                                    ▎ │     ┌────────────────────────────────────────────────────────────────────────────────┐ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     │Properties                                                                      │ │
+│      │                                                              │     │Keywords                                                                        │ │
+│      │    New     Sort: Newest     Select                           │     │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│ │
+│ ---> │    Add from files…     Export                                │     │▊ moc                                                                          ▎│ │
+│      │ Folders & placement                                          │     │▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│ │
+│      │    New folder     Add to folder     Move note                │     │                                                                                │ │
+│      │    ○ Remove placement                                        │     │Created   2026-10-01 13:47 · 3d ago                                             │ │
+│      │                                                              │     │Modified  2026-10-01 13:47 · 3d ago                                             │ │
+│      │                                                              │<--- │Version   v1                                                                    │ │
+│      │  ▸ Agent_Lessons                                             │     │Words     45 words                                                              │ │
+│      │  ▸ Journal                                                   │     │Linked from (0) — no notes link here yet                                        │ │
+│      │  ▸ Meetings                                                  │     │Reuse & Export                                                                  │ │
+│      │  ▸ Projects                                                  │     │      Copy                                                                      │ │
+│ ---> │  ▸ Recipes                                                   │     │  Export Markdown                                                               │ │
+│      │  ▸ Research                                                  │     │  Export text                                                                   │ │
+│      │  ▸ Study                                                     │     │Export cancelled — Index on FAT.md was left unchanged.                          │ │
+│      │  ▾ Unfiled                                                   │     │Danger                                                                          │ │
+│      │    Ideas inbox · 1d                                          │     │    ┃    Delete    ┃                                                            │ │
+│      │    Reading list · 2d                                         │     │                                                                                │ │
+│      │    Index — start here · 3d                                   │     │                                                                                │ │
+│      │    Meeting Notes 2026-09-30 · 4d                             │     │                     ╭──────────────────────────────────────────────────────────╮ │
+│      │    Gardening log · 6d                                        │     │                     │                                                          │ │
+│      │    📚 Reading queue 2026 ✨ · 1w                             │     │                     │ Note export cancelled. Index on FAT.md was left          │ │
+│      │    A very long note title that keeps going so we can test …  │     │                     │ unchanged.                                               │ │
+│      │    Daily log 2026-09-21 · 1w                                 │     │                     │                                                          │ │
+│      │    Daily log 2026-09-20 · 2w                                 │     └─────────────────────╰──────────────────────────────────────────────────────────╯ │
+│      └──────────────────────────────────────────────────────────────┘     Export cancelled — Index on FAT.md was left unchanged.                             │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter delete note | esc back to note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

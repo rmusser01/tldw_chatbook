@@ -2642,6 +2642,110 @@ class NotesDeviceStateStore:
                 )
         return self.get_operation(operation_id)
 
+    def settle_operation_attention(
+        self,
+        operation_id: str,
+        *,
+        expected: NotesSyncBindingRecord,
+        replacement: NotesSyncBindingRecord,
+    ) -> NotesSyncOperationRecord:
+        """Atomically close one attention entry at a proven binding baseline.
+
+        TASK-34000.2: an ``update_file``/``update_note`` fenced at attention
+        held its whole root -- every Check refused it and nothing could close
+        it, so the folder stopped syncing both ways for good. The caller (the
+        executor's ``settle_attention``) decides which baseline is PROVEN on
+        disk and in Notes; this commits that baseline and completes the
+        entry in one transaction, so the planner -- never this method --
+        decides what happens to whatever changed since. The binding row is
+        compare-and-set against ``expected`` exactly like
+        :meth:`commit_binding_stage`; a replacement equal to ``expected``
+        keeps the reviewed baseline.
+
+        Args:
+            operation_id: The attention entry to complete.
+            expected: The binding row as the caller read it.
+            replacement: The baseline to record (same ownership).
+
+        Returns:
+            The completed operation record.
+
+        Raises:
+            TypeError: If either binding is not a ``NotesSyncBindingRecord``.
+            NotesDeviceStateError: On an ownership change, a stale binding or
+                an entry that is no longer in attention.
+        """
+
+        validate_notes_sync_opaque_id(operation_id, field_name="operation_id")
+        if type(expected) is not NotesSyncBindingRecord:
+            raise TypeError("expected must be a NotesSyncBindingRecord.")
+        if type(replacement) is not NotesSyncBindingRecord:
+            raise TypeError("replacement must be a NotesSyncBindingRecord.")
+        if (
+            replacement.binding_id != expected.binding_id
+            or replacement.root_id != expected.root_id
+            or replacement.note_scope_id != expected.note_scope_id
+            or replacement.note_id != expected.note_id
+            or replacement.state is not expected.state
+        ):
+            raise NotesDeviceStateError("A binding baseline cannot change ownership.")
+        timestamp = _now()
+        with self.transaction(immediate=True) as connection:
+            changed = connection.execute(
+                """
+                UPDATE notes_sync_bindings
+                SET normalized_relative_path = ?, stable_identity_digest = ?,
+                    utf8_bom = ?, newline = ?, final_newline = ?,
+                    file_mode = ?, content_digest = ?, note_version = ?,
+                    updated_at = ?
+                WHERE binding_id = ? AND root_id = ? AND note_scope_id = ?
+                  AND note_id = ? AND normalized_relative_path = ?
+                  AND stable_identity_digest = ? AND state = ?
+                  AND utf8_bom = ? AND newline = ? AND final_newline = ?
+                  AND file_mode = ? AND content_digest = ? AND note_version = ?
+                """,
+                (
+                    replacement.normalized_relative_path,
+                    replacement.stable_identity_digest,
+                    int(replacement.serialization.utf8_bom),
+                    replacement.serialization.newline,
+                    int(replacement.serialization.final_newline),
+                    replacement.serialization.mode,
+                    replacement.content_digest,
+                    replacement.note_version,
+                    timestamp,
+                    expected.binding_id,
+                    expected.root_id,
+                    expected.note_scope_id,
+                    expected.note_id,
+                    expected.normalized_relative_path,
+                    expected.stable_identity_digest,
+                    expected.state.value,
+                    int(expected.serialization.utf8_bom),
+                    expected.serialization.newline,
+                    int(expected.serialization.final_newline),
+                    expected.serialization.mode,
+                    expected.content_digest,
+                    expected.note_version,
+                ),
+            ).rowcount
+            if changed != 1:
+                raise NotesDeviceStateError("The requested binding baseline is stale.")
+            completed = connection.execute(
+                """
+                UPDATE notes_sync_operations
+                SET state = 'completed', reason_code = NULL, updated_at = ?
+                WHERE operation_id = ? AND binding_id = ?
+                  AND state = 'needs_attention'
+                """,
+                (timestamp, operation_id, expected.binding_id),
+            ).rowcount
+            if completed != 1:
+                raise NotesDeviceStateError(
+                    "The requested attention settlement is stale."
+                )
+        return self.get_operation(operation_id)
+
     def resolve_unbound_operation_disconnect(
         self,
         operation_id: str,

@@ -467,7 +467,10 @@ not available.
 | Esc (folder change running) | Leaves Folder files for Library notes, exactly as it does when nothing is running — the folder change is abandoned and the previously linked folder is kept. The same applies to the "‹ Library / Notes" cue, the **Library notes** button, switching rail rows, the command palette and Ctrl+Q: a running folder change never blocks the way out |
 
 Folder files does not register **Ctrl+S** and does not replace it with another
-save shortcut. File edits save automatically.
+save shortcut. File edits save automatically, and **Ctrl+Q** writes a pending
+edit to the file before Chatbook exits. If that write cannot finish (the file
+changed on disk, or the write fails), Chatbook asks 'Quit and discard unsaved
+changes to "<file>"?' with **Keep editing** selected instead of exiting.
 
 ## Related settings & docs
 

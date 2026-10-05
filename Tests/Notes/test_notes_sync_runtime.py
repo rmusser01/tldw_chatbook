@@ -2291,6 +2291,37 @@ async def test_explicit_cleanup_action_runs_under_the_root_lease(
 
 
 @pytest.mark.asyncio
+async def test_completed_cleanup_replans_and_a_conflict_is_held_not_stamped_healthy(
+    tmp_path: Path,
+) -> None:
+    """TASK-32633 fix round 2 (review 2, deferred Minor 3): the completed-
+    cleanup branch re-plans instead of publishing ``up_to_date`` unchecked.
+    With both sides changed after the cleanup the root ends held, and no
+    healthy status -- hence no healthy time -- is ever published."""
+
+    store = _store(tmp_path)
+    _pending_operation(store)
+    store.mark_operation_attention("operation-1", "replacement_cleanup_pending")
+    adapter = _Adapter([_input(file_digest=_B, note_digest=_C)])
+    adapter.executor = _PartialCleanupExecutor()
+    owner, _, _ = _owner(store=store, admitted=True, adapter=adapter)
+    await owner.start()
+    published: list[str] = []
+    owner.add_status_listener(lambda snapshot: published.append(snapshot.status))
+
+    root = owner.snapshot().roots[0]
+    assert root.action_id == "operation-1"
+    await owner.resolve_cleanup("root-1", root.action_id)
+
+    assert adapter.executor.cleanup == ["operation-1"]
+    assert adapter.observe_calls == 1, "exactly one re-plan"
+    after = owner.snapshot().roots[0]
+    assert (after.status, after.next_action) == ("needs_attention", "review_changes")
+    assert "up_to_date" not in published
+    await owner.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_cleanup_attention_retains_the_operation_for_review(
     tmp_path: Path,
 ) -> None:
@@ -2305,9 +2336,12 @@ async def test_cleanup_attention_retains_the_operation_for_review(
     await owner.resolve_cleanup("root-1", "operation-1")
 
     root = owner.snapshot().roots[0]
+    # TASK-34000.2 fix round 1: a cleanup still pending is Recovery's to
+    # finish, the same control ``_classify_incomplete_block`` names for this
+    # entry at startup -- not a Review whose check refuses the open entry.
     assert (root.status, root.next_action, root.action_id) == (
         "needs_attention",
-        "review_changes",
+        "resolve_cleanup",
         "operation-1",
     )
     await owner.shutdown()

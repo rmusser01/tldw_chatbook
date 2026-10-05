@@ -220,7 +220,6 @@ from ...Library.library_notes_state import (
     LibraryNotesListState,
     LibraryNotesOperationState,
     build_library_notes_list_state,
-    build_note_export_content,
     patch_note_records_after_save,
     resolve_note_template_placeholders,
     sort_notes_records,
@@ -289,7 +288,6 @@ from ...Library.library_skills_state import (
     coerce_skill_editor_mode,
     coerce_skill_reader_mode,
 )
-from ...Prompt_Management.prompt_markdown_export import render_prompt_markdown
 from ...Prompt_Management.prompt_variables import (
     PromptVariableApplication,
     compile_prompt_variables,
@@ -533,9 +531,8 @@ from ..Library_Modules.library_ingest_state import LibraryIngestState
 from ..Library_Modules.library_media_state import (
     LibraryMediaState,
 )
-from ..Library_Modules.library_notes_state import (
-    LibraryNotesState,
-)
+from ..Library_Modules.library_notes_state import LibraryNotesState
+from ..Library_Modules import library_notes_sync_attention as notes_sync_attention
 from ..Library_Modules.library_notes_work_session import (
     NotesWorkSessionEvent,
     NotesWorkSessionPhase,
@@ -778,8 +775,9 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS,
     _LIBRARY_SLASH_CANVAS_FILTERS,
     LIBRARY_NOTES_AUTOSAVE_SECONDS,
+    LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS,
     LIBRARY_NOTE_CONTENT_MAX_CHARS,
-    LIBRARY_NOTE_BLANK_SEED_TITLE,
+    LIBRARY_NOTE_BLANK_SEED_TITLE,  # noqa: F401 - re-exported; GC moved out
     LIBRARY_PROMPT_TEXT_MAX_CHARS,
     LIBRARY_PROMPT_SAVE_STATUS_COPY,
     LIBRARY_SKILL_TEXT_MAX_CHARS,
@@ -9871,6 +9869,11 @@ class LibraryScreen(BaseAppScreen):
             self._artifacts_controller.dispose()
         # No super().on_unmount(): the dispatcher already invokes
         # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
+        # TASK-34000.2 fix round 1: the sync runtime's status listener is
+        # paired with mount/unmount for the same reason as the registry's.
+        notes_sync_attention.release_library_notes_sync_attention_listener(
+            getattr(self, "_notes_controller", None)
+        )
         registry = self._library_ingest_registry()
         if registry is not None:
             registry.remove_listener(self._handle_library_ingest_registry_changed)
@@ -11218,14 +11221,19 @@ class LibraryScreen(BaseAppScreen):
             return False
         return self._acquire_file_notes_transition("screen")
 
-    async def flush_pending_work(self) -> bool:
-        """Persist pending note edits before the app navigates away.
+    async def flush_pending_work(self, *, quitting: bool = False) -> bool:
+        """Persist pending note edits before the app navigates away or quits.
 
         The app awaits this from ``handle_screen_navigation`` before
         discarding this screen instance -- without it, a note edit whose
         debounced autosave has not fired yet (the timer re-arms on every
         keystroke) would be destroyed with the screen when the user switches
-        tabs mid-edit.
+        tabs mid-edit. ``confirm_quit`` awaits it too (TASK-34000.1).
+
+        Args:
+            quitting: The quit hook asks its own question, so the veto toasts
+                stay quiet, and an untouched new note waits for
+                ``prepare_for_quit`` (after every quit prompt said yes).
 
         Returns:
             True only for the coordinator's typed ``PERMITTED`` result and
@@ -11236,12 +11244,16 @@ class LibraryScreen(BaseAppScreen):
         if self._prompts_state.mutation_in_flight:
             return False
         file_notes_flush_allowed = await self._flush_active_file_notes()
-        note_flush = await self._flush_library_note_save()
+        note_flush = await (
+            self._flush_library_note_save(gc_untouched_blank=False)
+            if quitting
+            else self._flush_library_note_save()
+        )
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
-        if not prompt_flush_allowed:
+        if not prompt_flush_allowed and not quitting:
             self._notify_prompt_dirty_veto()
-        if not skill_flush_allowed:
+        if not skill_flush_allowed and not quitting:
             # task-449: the app-level navigation veto only logs, so tell
             # the user why the tab switch was refused -- same toast as the
             # in-screen Back / row-switch / rail-switch vetoes. Notes show
@@ -11254,6 +11266,18 @@ class LibraryScreen(BaseAppScreen):
             and prompt_flush_allowed
             and skill_flush_allowed
         )
+
+    async def confirm_quit(self) -> bool:
+        """Ctrl+Q flushes pending Library work, or asks first (TASK-34000.1)."""
+        from ..Library_Modules.library_pending_work import confirm_library_quit
+
+        return await confirm_library_quit(self)
+
+    async def prepare_for_quit(self) -> None:
+        """The quit is approved: drop an untouched new note (TASK-34000.1)."""
+        from ..Library_Modules.library_pending_work import prepare_library_quit
+
+        await prepare_library_quit(self)
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Admit route context through the Library-owned navigation controller."""
@@ -17369,7 +17393,9 @@ class LibraryScreen(BaseAppScreen):
         # ``build_library_notes_list_state`` -- whether a note is OPEN is a
         # fact about the screen beside the list, not about the rows.
         state = dataclasses.replace(
-            state, note_open=bool(self._notes_state.selected_note_id)
+            state,
+            note_open=bool(self._notes_state.selected_note_id),
+            sync_attention=bool(self._notes_state.tree_attention_folder_ids),
         )
         if self._notes_state.select_mode:
             projection = self._build_library_notes_tree_projection()
@@ -17399,13 +17425,8 @@ class LibraryScreen(BaseAppScreen):
                     expanded_folder_ids=getattr(
                         self._notes_state, "tree_expanded_ids", set()
                     ),
-                    protected_folder_ids=getattr(
-                        self._notes_state, "tree_protected_folder_ids", frozenset()
-                    ),
-                    inactive_managed_folder_ids=getattr(
-                        self._notes_state,
-                        "tree_inactive_managed_folder_ids",
-                        frozenset(),
+                    **notes_sync_attention.library_notes_tree_folder_sets(
+                        self._notes_state
                     ),
                 )
                 if branches
@@ -17442,6 +17463,9 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.tree_protected_folder_ids = frozenset()
         self._notes_state.tree_inactive_managed_folder_ids = frozenset()
         self._notes_state.filter_browse_receipt = None
+        notes_sync_attention.schedule_library_notes_sync_attention(
+            getattr(self, "_notes_controller", None)
+        )
 
     def _library_notes_placement_order(self) -> str:
         """Return the repository placement order the Sort value asks for.
@@ -21127,10 +21151,13 @@ class LibraryScreen(BaseAppScreen):
             return
         self._notes_state.autosave_state = "idle"
         self._invalidate_library_note_autosave()
-        generation = self._notes_state.autosave_generation
-        self._notes_state.autosave_timer = self.set_timer(
-            LIBRARY_NOTES_AUTOSAVE_SECONDS,
-            lambda: self._fire_library_note_autosave(generation),
+        from ..Library_Modules.library_note_autosave import arm_library_note_autosave
+
+        arm_library_note_autosave(  # TASK-34000.1: debounce capped by a max wait
+            self,
+            snapshot,
+            debounce=LIBRARY_NOTES_AUTOSAVE_SECONDS,
+            max_wait=LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS,
         )
 
     @on(Input.Changed, "#library-note-title")
@@ -21152,9 +21179,6 @@ class LibraryScreen(BaseAppScreen):
         return self._notes_controller.handle_library_note_context_keywords_changed(
             event
         )
-
-    def _fire_library_note_autosave(self, generation: int) -> None:
-        return self._notes_controller._fire_library_note_autosave(generation)
 
     @on(Button.Pressed, "#library-note-save")
     def handle_library_note_save(self, event: Button.Pressed) -> None:
@@ -21336,72 +21360,32 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.shortcut_status = ""
         self._notes_state.autosave_state = "saving"
         self._update_library_note_meta_static(content=snapshot.body)
-        if (
-            autosave_generation is not None
-            and autosave_generation != self._notes_state.autosave_generation
-        ):
+        from ..Library_Modules import library_note_autosave as autosave
+
+        # The burst ends here, when its save starts, not when its timer fired.
+        if not autosave.note_save_starts(self._notes_state, autosave_generation):
             return
         outcome = await self._library_note_session.request_save(explicit=explicit)
-        self._apply_library_note_save_outcome(outcome)
+        # TASK-34000.1 (N-07): a refused AUTOSAVE never moves a typing user.
+        if explicit or not autosave.keep_autosave_veto_in_place(self, outcome):
+            self._apply_library_note_save_outcome(outcome)
 
-    async def _flush_library_note_save(self) -> NoteFlushOutcome:
-        """Cross the coordinator's pending-work barrier before navigation."""
+    async def _flush_library_note_save(
+        self, *, gc_untouched_blank: bool = True
+    ) -> NoteFlushOutcome:
+        """Cross the coordinator's pending-work barrier before navigation.
+
+        Args:
+            gc_untouched_blank: False keeps this session's untouched new note,
+                unsaved (the quit discards it later, in ``prepare_for_quit``).
+        """
         self._invalidate_library_note_autosave()
-        if (
-            self._notes_state.session_blank_id
-            and self._notes_state.session_blank_id == self._notes_state.selected_note_id
-            # task-3315: never start a SECOND destructive op from the
-            # untouched-blank GC while a discard/delete is already running
-            # or admitted -- fall through to the session flush, whose own
-            # destructive guard vetoes navigation until it settles.
-            and not self._library_note_session.destructive_running
-            and self._library_note_session.destructive_admission is None
-        ):
-            fields = self._read_library_note_editor_fields()
-            if fields is not None:
-                raw_title, raw_content, raw_keywords_text = fields
-                # task-3315 (LIB-14 regression, pre-arc dev churn): the
-                # session coordinator seeds a Blank note's title with the
-                # literal seed and ``_read_library_note_editor_fields`` now
-                # projects the SNAPSHOT rather than the widgets (13cf08f90,
-                # notes-adaptive PR #1439) -- the editor presents that seed
-                # as an empty placeholder-only Input, so it must count as
-                # blank here or the untouched-blank GC never fires and every
-                # abandoned Blank note leaves a permanent "Untitled" row
-                # (exactly what task-2858 AC#5 forbids).
-                # (P0, xhigh review + live-verify round) The seed only
-                # counts as blank while it is still THE SEED. Keying on
-                # string equality alone destroyed a note the user
-                # deliberately titled "Untitled" (body empty) on
-                # navigate-away, with no prompt and no undo -- a string
-                # cannot tell the create seam's default from the same
-                # letters typed by a human, so the provenance marker
-                # decides. An emptied-out title is blank either way.
-                # (rebase note: task-4021 independently re-derived this
-                # same root cause -- the literal seed must count as blank
-                # too, or this GC branch is unreachable -- but its version
-                # lacked the ``_notes_state.title_user_edited`` provenance
-                # guard below; dev's fuller check is kept as-is and covers
-                # task-4021's reachability claim too.)
-                title_blank = not raw_title.strip() or (
-                    raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE
-                    and not self._notes_state.title_user_edited
-                )
-                if title_blank and not any(
-                    value.strip() for value in (raw_content, raw_keywords_text)
-                ):
-                    # task-32556 AC#1: a note the user never touched is
-                    # discarded silently on purpose (the guide documents
-                    # that). A title the user actually TYPED -- whitespace,
-                    # so still blank -- is a different event: keystrokes went
-                    # in, the row vanished, and nothing said so. Name it.
-                    typed_a_blank_title = bool(raw_title) and not raw_title.strip()
-                    await self._gc_pending_blank_note()
-                    if typed_a_blank_title:
-                        notify = getattr(self.app_instance, "notify", None)
-                        if callable(notify):
-                            notify("Empty note discarded", severity="information")
-                    return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
+        from ..Library_Modules.library_pending_work import (
+            gc_untouched_session_blank_note,
+        )
+
+        if await gc_untouched_session_blank_note(self, discard=gc_untouched_blank):
+            return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
         before = self._library_note_session.snapshot
         before_saved_revision = before.saved_revision if before is not None else None
         outcome = await self._library_note_session.flush()
@@ -21442,9 +21426,6 @@ class LibraryScreen(BaseAppScreen):
         if validation_field:
             self._focus_library_note_validation_field(validation_field)
         return outcome
-
-    async def _gc_pending_blank_note(self) -> None:
-        return await self._notes_controller._gc_pending_blank_note()
 
     @on(Button.Pressed, "#library-note-conflict-overwrite")
     def handle_library_note_conflict_overwrite(self, event: Button.Pressed) -> None:
@@ -21500,11 +21481,13 @@ class LibraryScreen(BaseAppScreen):
         storage-location fields). It rejects null bytes and other
         shell-metacharacter/traversal patterns; a rejected path is a quiet
         warning notice with no write and no crash, same as any other
-        failure in this method. This method awaits nothing (the write is a
-        plain synchronous ``Path.write_text``), so it is a plain method
-        rather than a coroutine -- Textual's ``call_after_refresh`` (its
-        only caller, via ``_export_library_note``'s ``FileSave`` callback)
-        accepts either.
+        failure in this method. The write itself is
+        ``library_file_export.export_library_note_file`` (TASK-34000.3): it
+        asks before replacing an existing file, writes atomically, and
+        reports the full path. This method awaits nothing, so it is a plain
+        method rather than a coroutine -- Textual's ``call_after_refresh``
+        (its only caller, via ``_export_library_note``'s ``FileSave``
+        callback) accepts either.
 
         Args:
             selected_path: The chosen destination, or ``None`` if the
@@ -21543,31 +21526,19 @@ class LibraryScreen(BaseAppScreen):
                 failure_next_action="choose another destination and try again",
             )
             return
-        try:
-            validated_path.write_text(
-                build_note_export_content(
-                    title, content, keywords_text, note_id, export_format
-                ),
-                encoding="utf-8",
-            )
-        except Exception as exc:
-            logger.opt(exception=True).warning(
-                f"Error exporting Library note {note_id!r} to '{validated_path}'."
-            )
-            if callable(notify):
-                notify(f"Error exporting note: {type(exc).__name__}", severity="error")
-            self._finish_library_notes_operation(
-                active_operation,
-                success=False,
-                failure_next_action="check the destination and try again",
-            )
-            return
-        if callable(notify):
-            notify(
-                f"Note exported successfully to {validated_path.name}",
-                severity="information",
-            )
-        self._finish_library_notes_operation(active_operation, success=True)
+        # Lazy: keeps the export seam off the Library preimport closure.
+        from ..Library_Modules.library_file_export import export_library_note_file
+
+        export_library_note_file(
+            self,
+            validated_path,
+            export_format,
+            title,
+            content,
+            keywords_text,
+            note_id,
+            active_operation,
+        )
 
     @on(Button.Pressed, "#library-note-context-export-md")
     @on(Button.Pressed, "#library-note-export-md")
@@ -27885,9 +27856,11 @@ class LibraryScreen(BaseAppScreen):
         Mirrors ``_write_library_note_export_file`` exactly: runs the
         dialog-returned path through ``validate_path_simple`` (the same
         base-directory-free validator this screen uses for every other
-        user-chosen save path) before writing, and is a plain (not async)
-        method since the write is a synchronous ``Path.write_text`` --
-        ``call_after_refresh`` (its only caller) accepts either.
+        user-chosen save path), then hands the write to
+        ``library_file_export.export_library_prompt_file`` (TASK-34000.3:
+        asks before replacing an existing file, atomic write, full-path
+        receipt). A plain (not async) method -- ``call_after_refresh`` (its
+        only caller) accepts either.
 
         Args:
             selected_path: The chosen destination, or ``None`` if the
@@ -27931,20 +27904,10 @@ class LibraryScreen(BaseAppScreen):
         }
         if artifact_fields:
             detail.update(artifact_fields)
-        try:
-            validated_path.write_text(render_prompt_markdown(detail), encoding="utf-8")
-        except Exception as exc:
-            logger.warning(
-                "Failed to export Library prompt {} (category={}).",
-                prompt_id,
-                type(exc).__name__,
-            )
-            notify(f"Error exporting prompt: {type(exc).__name__}", severity="error")
-            return
-        notify(
-            f"Prompt exported successfully to {validated_path.name}",
-            severity="information",
-        )
+        # Lazy: keeps the export seam off the Library preimport closure.
+        from ..Library_Modules.library_file_export import export_library_prompt_file
+
+        export_library_prompt_file(self, validated_path, detail, prompt_id, notify)
 
     @on(Button.Pressed, "#library-prompt-duplicate")
     def handle_library_prompt_duplicate(self, event: Button.Pressed) -> None:
@@ -31104,11 +31067,9 @@ class LibraryScreen(BaseAppScreen):
             failure_message = (
                 "Could not verify affected folders — no changes were made."
             )
-        if failure_message:
-            pass
-        elif not callable(delete_note):
+        if not failure_message and not callable(delete_note):
             failure_message = "Note deletion is unavailable."
-        else:
+        elif not failure_message:
             try:
                 deleted = bool(
                     await self._run_library_service_call(
@@ -31131,6 +31092,10 @@ class LibraryScreen(BaseAppScreen):
                 failure_message = "Could not delete this note."
 
         if deleted:
+            # TASK-32633 (N-03): a deleted synced note is a deletion review.
+            await notes_sync_attention.signal_library_note_lasting_sync(
+                self, admission.note_id
+            )
             self._remove_library_note_source_record(admission.note_id)
             self._notes_state.delete_receipt = LibraryNoteDeleteReceipt(
                 note_id=admission.note_id,
