@@ -22531,8 +22531,9 @@ class ChatScreen(BaseAppScreen):
             # Enter and Send converge on the same visible-action handler.
             # Scheduling it on the app pump preserves the keypress snapshot;
             # app-owned runtime custody owns accepted work, except that a Send
-            # held for hook review goes on in a ChatScreen worker (TASK-33621.28).
-            # TASK-33620.5: an idle chat send is painted "Sending…" first.
+            # held for hook review or a slash command goes on in a worker
+            # (TASK-33621.28, TASK-33622.16). TASK-33620.5: an idle chat send
+            # is painted "Sending…" first; commands dispatch unchanged.
             from ..Console_Modules import send_acknowledgement
 
             send_acknowledgement.schedule_acknowledged_send(self, pending_send)
