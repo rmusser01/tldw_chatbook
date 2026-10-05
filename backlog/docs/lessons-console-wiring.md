@@ -266,3 +266,18 @@ weeks. It turned up only because TASK-32369 drove a real handler through
 must cover both the non-stream re-raise and the stream queue consumer
 (`_QueueItem.error` and its `item.kind == "error"` branch). Its test should drive
 the real failure through `stream_chat`, which is the path Console sends on.
+
+## A parent descriptor census does not survey private test children
+
+**TASK-31966 Model-row verification, 2026-10-04.** A parent-only census observed
+no retained database files after private-profile cases, but loading the same
+read-only observer in the children made all six mounted Model processes fail
+retirement on harness-owned Library/Workspace SQLite files even while every
+body passed. Those cases had not imported the existing opt-in ownership fixture;
+the new cases also called a factory binding in an imported helper, outside its
+capture. Reusing the module's factory and `owned_console_apps` retired the actual
+owners after harness/workers stopped. The final 15-test run passed with required
+child and parent gates; each mounted child census was empty. Activate resource
+observers in the process that executes the app (`PYTEST_PLUGINS` survives the
+private helper's disabled autoload), inspect child receipts, and do not promote
+a clean parent census into child or terminal application-lifetime evidence.

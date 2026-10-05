@@ -516,7 +516,9 @@ copy while suppressing its layout, then restores its bounded one-row guidance.
 
 Final focused check: **25 passed in 164.77s**, no pytest warnings, strict
 descriptor gate exit 0 and no retained database files at any of its 25 teardown
-observations. Admission/lease descriptors remain; this is not whole-app final
+observations in the parent pytest process. This did not census its private test
+children; the Model-row check below covers that additional boundary.
+Admission/lease descriptors remain; this is not whole-app final
 resource retirement. Command covered the new mounted module, the existing
 private-profile Send-disabled contracts and design-token governance. The new
 test/checker paths format clean and the new test is Ruff clean. The production
@@ -759,3 +761,59 @@ unqualified. Logs: `/tmp/task31966-send-config-phases.log`,
 `/tmp/task31966-send-config-summary-phases.log`,
 `/tmp/task31966-send-summary-query-cost.log`. Raw diagnostic and normal
 `ui-evidence/ui-latency-evidence.json` receipts are retained under each root.
+
+## Approved Model-value lookup correction — mounted verification
+
+The user approved narrowing only the three Model-value lookups after the
+query-cost attribution above. The shared summary application now resolves each
+mounted row by native ID lookup, then queries that row for its value. Missing
+containers/children still skip safely; replacement widgets receive fresh
+structured values. The recovery query, update frequency, config scopes,
+ownership, geometry and GC/cache policy are unchanged.
+
+Mounted RED at 52x20 and 120x50 observes the real native query evaluator while
+forwarding every call: both cases fail `4 == 1`, after confirming actual hidden
+row contents and unchanged focus. Missing/remounted child and container coverage
+already passes before the fix. Log: `/tmp/task31966-model-query-red.log` (two
+failed, one passed in 19.44s). Its pytest exit cleanup reports unrelated old
+garbage-directory removal warnings; these were not hidden or cleaned up by this
+work. The first GREEN is four passed in 18.87s, no pytest warnings, in a fresh
+explicit temporary root (`/tmp/task31966-model-query-green.log`).
+
+A stricter run loaded the read-only census in the private pytest children as
+well as the parent. All six mounted bodies passed, but the process gate correctly
+failed on unretired harness-owned `library_collections.sqlite` and
+`workspaces.sqlite` files. The new tests originally used an imported factory
+binding outside the existing opt-in ownership fixture; the older Model cases
+also had not opted in. Reusing the module's factory and the existing
+`owned_console_apps` fixture repairs test retirement after harness/workers stop,
+without new production cleanup. Failed log:
+`/tmp/task31966-model-final-tests.log`.
+
+Final affected Model-section and design-token run: **15 passed in 55.98s**, no
+pytest warnings, required retirement gate exit 0 in parent and private children.
+Each of the six mounted Model child logs records an empty private-file census;
+the parent retains only admission/lease descriptors. Child logs are under
+`/tmp/task31966-model-owned-71i643/pytest`; parent log:
+`/tmp/task31966-model-owned-tests.log`. The committed observer
+`Docs/QA/task-31245/descriptor_census_probe.py` was loaded through `PYTEST_PLUGINS`
+so disabling child plugin autoload did not omit it. This is test-fixture retirement
+evidence, not terminal app-owner/native/Windows qualification.
+
+All eleven artifact guards pass (`/tmp/task31966-model-preflight.log`). The changed
+test file is Ruff/format clean, the changed production range is format clean,
+and whitespace is clean. Full-file production Ruff retains the same 200 existing
+diagnostics as HEAD, comparing code/message after normalizing the line number in
+the existing duplicate-definition message; no new diagnostic. JSON receipts:
+`/tmp/task31966-model-ruff-base-exact.json` and
+`/tmp/task31966-model-ruff-current.json`.
+
+Independent read-only review found no Critical, Important or Minor finding in
+this bounded production/test patch. It confirmed native mutation-versioned
+lookup freshness and declined to judge the still-pending full qualification.
+
+Fresh clean-head scale and query-attribution measurements remain pending. This
+does not close the 50ms/100ms limits or any native, Windows, participant or final
+application-owner resource gap. TASK31966/TASK31245 remain In Progress with all
+qualification acceptance criteria open. Existing ADR120/150/161/198 apply; no
+new architectural decision or semantic gate waiver.

@@ -9140,9 +9140,13 @@ class ChatScreen(BaseAppScreen):
             ("console-model-section-max-tokens", summary_state.max_tokens),
             ("console-model-section-streaming", summary_state.streaming),
         ):
-            rows = self.query(f"#{section_id} .console-model-section-value")
-            if rows:
-                rows.first(Static).update(value or "—")
+            try:
+                row = self.query_one(f"#{section_id}").query_one(
+                    ".console-model-section-value", Static
+                )
+            except NoMatches:
+                continue
+            row.update(value or "—")
         # TASK-33005.3: the rail line shows the one word; red only when blocked.
         word = summary_state.readiness_label
         blocked = getattr(summary_state.readiness, "operability", "") == "not_ready"

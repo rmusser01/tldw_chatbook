@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 02:32'
+updated_date: '2026-10-05 02:55'
 labels:
   - console
   - performance
@@ -90,6 +90,16 @@ global policy change or claim qualification completion.
 ADR required: no new ADR.
 ADR path: N/A; existing ADR120, ADR150, ADR161 and ADR198 above apply.
 Reason: a local rendering-idempotence correction preserves every authority, sizing, ownership and GC/cache policy boundary. User approved this bounded design after the ed124 restyle evidence.
+
+### Approved Model-value scoped lookups — 2026-10-04
+
+1. Add mounted regressions proving the three Model-value updates do not evaluate whole-screen queries while preserving structured values, hidden-rail updates, absent rows and remounted children/containers.
+2. Resolve each existing row container with native ID lookup and query only that container for its value; preserve original update, missing-row, focus and config/ownership behavior. Do not bundle recovery lookup, memo, update equality or GC policy changes.
+3. Verify RED/GREEN, affected Model-section contracts, design-token and artifact guards, static analysis and strict resource observations with targeted runs only.
+4. Freeze clean source and remeasure native-query attribution and the real-owner scale matrix under unchanged limits; retain residual failures and external qualification gaps.
+ADR required: no new ADR.
+ADR path: N/A; existing ADR120, ADR150, ADR161 and ADR198 apply.
+Reason: the approved change only narrows a DOM lookup to its current mounted owner, using native caches and preserving all freshness, authority, visual and lifetime contracts.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -106,4 +116,6 @@ Frozen ca793ee190 measurements: identical small real-node observer eliminates al
 Same measured ca793ee190 source/corpus: existing GC observer retained 30 paired gen-2 collections, zero drops, callback max 0.021166 ms, unchanged thresholds. Several wide collections last 66–79 ms, but a 58.262666 ms wide activation window contains no gen-2 collection. Existing synchronous observer retained 66 >=20ms spans with no drops: shared config/control boundary has 20–60ms spans without gen-2 overlap; selected reflows include 59–104ms gen-2 overlap. Paint observers are <=3.245ms in these activation diagnostics. First-activation cProfile tables have inconsistent cumulative/internal and caller accounting, so are not used to choose authority/cache changes. All failed diagnostics retained; original branch/head restored after each exact-source detached run. Next bounded probe design separates native config scope entry/render/exit without skipping any checks, awaits or cross-pass caches; no production remedy yet selected. Existing ADR120/150/161/198 and all open qualification gaps remain. Full limits/receipts in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
 
 Approved throwaway native config entry/render/exit and rendering-substep probes completed at exact clean ca793ee190 against its original verified 10k/250k corpus. Original isolated branch/head restored after every failed matrix; all 60 exact searches/eight opened activations complete, no app exception, clean source/unchanged corpus, no drops or policy changes. Entry 2.2485–29.051625ms, render 2.925458–46.569666ms, exit 0.032–1.292667ms inside first-probe activation refreshes; none overlap gen-2. Summary extension attributes most summary cost to widget application, not state building. Final native query observer proves four screen-wide queries consume 6.501790–15.040541ms per rooted application; retained Static updates <0.24ms. Proposed bounded correction: scope only the three Model-value lookups to mounted row containers with native queries, preserving missing/remounted rows, live hidden-rail updates and all authority checks; await design approval before production edits. All eight activation loop intervals still fail every diagnostic; GC and other work remain separate contributors. No terminal resource/native/Windows/participant qualification or semantic gate waiver, all AC open. Digests, raw roots, failed matrices and scope limits retained in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
+
+Implemented the approved three Model-value scoped native lookups; recovery query, config/ownership boundaries, visual geometry and GC/cache policy unchanged. Mounted RED at both widths observes four whole-screen query evaluations rather than one; missing/remounted coverage already passes. Initial GREEN four pass. Final complete Model-section plus design-token check: 15 passed in 55.98s, no pytest warnings, required read-only descriptor gates pass in BOTH parent and private test children after reusing existing opt-in Console constructor ownership. Every mounted child census is empty; parent admission/lease remain. Earlier parent-only retirement claims are explicitly limited, not terminal lifetime proof. Eleven artifact guards green; changed test Ruff/format and production-range format clean; same 200 inherited full-file Ruff diagnostics, whitespace clean. No new ADR (existing ADR120/150/161/198); fresh clean-head scale/query attribution remains pending, all qualification AC open. See Docs/QA/task-31245/fixture-rebuild-2026-10-04.md for retained RED/failed strict run/child receipts and limits.
 <!-- SECTION:NOTES:END -->
