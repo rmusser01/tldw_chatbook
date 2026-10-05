@@ -335,11 +335,17 @@ def _focus_chain_stops_to_model(screen) -> list[str | None]:
 
     Returns:
         The id of each stop after the Provider control; the last is the Model
-        field's. Empty if Model does not follow Provider.
+        field's. Empty if either is off the focus chain (disabled or hidden)
+        or Model does not follow Provider, so the caller records the provider
+        and goes on to the next.
     """
     chain = screen.focus_chain
-    start = chain.index(screen.query_one("#settings-provider-search", Input))
-    end = chain.index(screen.query_one("#model-search-picker-input", Input))
+    provider_control = screen.query_one("#settings-provider-search", Input)
+    model = screen.query_one("#model-search-picker-input", Input)
+    if provider_control not in chain or model not in chain:
+        return []
+    start = chain.index(provider_control)
+    end = chain.index(model)
     return [widget.id for widget in chain[start + 1 : end + 1]]
 
 
