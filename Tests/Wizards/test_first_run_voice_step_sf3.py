@@ -252,6 +252,36 @@ async def test_rerun_over_a_custom_endpoint_writes_nothing() -> None:
     assert shown == [custom["OPENAI_BASE_URL"]]
 
 
+#: Settings ▸ Speech & TTS used to save this: a pocket-tts /tts address with
+#: a format the server never returns (review round 2, G8-R2-F1 / G8-R2-F3).
+_POCKET_TTS_MP3_APP_TTS = {
+    "OPENAI_BASE_URL": "http://127.0.0.1:8766/tts",
+    "OPENAI_AUTH_MODE": "none",
+    "default_provider": "openai",
+    "default_model": "pocket-tts",
+    "default_voice": "alba",
+    "default_format": "mp3",
+}
+
+
+@pytest.mark.asyncio
+async def test_an_untouched_rerun_over_an_unspeakable_saved_voice_writes_nothing() -> (
+    None
+):
+    """Review round 2 (G8-R2-F1): Next re-validated the saved draft before
+    the delta gate, so an untouched step was refused ("PocketTTS returns WAV
+    audio only …") although it writes nothing, and retrying Next could never
+    get past it."""
+    step, app, outcome, before, after = await _commit_through_real_writer(
+        _POCKET_TTS_MP3_APP_TTS, None
+    )
+
+    assert step._preset == voice_state.VOICE_PRESET_CUSTOM
+    assert outcome == (True, "")
+    assert app.saves == []
+    assert after == before
+
+
 @pytest.mark.asyncio
 async def test_rerun_prefill_names_the_saved_voice(monkeypatch) -> None:
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-sent")

@@ -16,11 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from typing import (
-    Any,
-    Dict,
-    Mapping,
-)
+from typing import Any, Dict, Mapping
 
 from textual import on
 from textual.app import ComposeResult
@@ -819,15 +815,17 @@ class VoiceSetupStep(OmniVoiceStepBase):
             draft = voice_state.replace_draft(
                 draft, sample_text=voice_state.DEFAULT_SAMPLE_TEXT
             )
+        # Gate first: an untouched step writes nothing, so it never refuses
+        # over a saved value it would not write (review round 2, G8-R2-F1).
+        if not prefill.should_persist_voice_config(
+            draft, self._baseline, acted_this_run=self._tested_this_run
+        ):
+            return True, ""
         validation = voice_state.validate_voice_setup_draft(draft)
         if not validation.configuration_valid:
             return False, validation.errors[
                 0
             ] if validation.errors else "Review the Voice setup fields."
-        if not prefill.should_persist_voice_config(
-            draft, self._baseline, acted_this_run=self._tested_this_run
-        ):
-            return True, ""
         found = (
             self._find_openai_credential()
             if draft.authentication_mode == "api_key"
