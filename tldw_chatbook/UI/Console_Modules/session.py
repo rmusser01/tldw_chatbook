@@ -297,6 +297,12 @@ from ..character_display_text import sanitize_character_display_label
 from .reaction_preview import ConsoleReactionPreviewCoordinator
 
 if TYPE_CHECKING:
+    from textual.timer import Timer
+    from textual.worker import Worker
+
+    from ...Chat.console_conversation_activation import (
+        CharacterConversationActivationRequest,
+    )
     from ...Chat.conversation_local_marks_service import (
         ConversationLocalMarksService,
         ManualUnreadToken,
@@ -800,6 +806,34 @@ class ConsoleSessionController:
         self,
         screen: "ChatScreen",
         *,
+        resume_screen_is_torn_down: Callable[[], bool],
+        read_resume_asyncio: Callable[[], Any],
+        resume_isawaitable: Callable[[Any], bool],
+        read_resume_logger: Callable[[], Any],
+        read_resume_startup_worker: Callable[[], Worker | None],
+        write_resume_startup_worker: Callable[[Worker | None], None],
+        read_resume_dispatch_worker: Callable[[], Worker | None],
+        read_resume_local_conversation_id: Callable[[], str | None],
+        write_resume_local_conversation_id: Callable[[str | None], None],
+        read_resume_character_target: Callable[
+            [], CharacterConversationActivationRequest | None
+        ],
+        write_resume_character_target: Callable[
+            [CharacterConversationActivationRequest | None], None
+        ],
+        write_resume_startup_in_progress: Callable[[bool], None],
+        read_resume_handoff_timers: Callable[[], Sequence[Timer]],
+        write_resume_handoff_timers: Callable[[list[Timer]], None],
+        consume_resume_chat_handoff: Callable[..., Any],
+        consume_resume_roleplay_repair: Callable[[], Any],
+        consume_resume_prompt_insert: Callable[[], Any],
+        consume_resume_fleet_completion: Callable[[], Any],
+        open_resume_character_target: Callable[
+            [CharacterConversationActivationRequest], Any
+        ],
+        open_resume_local_conversation: Callable[[str], Any],
+        consume_resume_conversation_return: Callable[[], Any],
+        reconcile_resume_session_with_registry: Callable[[], None],
         read_trace_recovery_dispatch: Callable[[], Callable[..., Any]],
         read_trace_recovery_state: Callable[[], Callable[..., Any]],
         read_trace_recovery_started: Callable[[], Callable[..., Any]],
@@ -881,7 +915,36 @@ class ConsoleSessionController:
         exception only for the framework services above; the moved family
         itself never reaches through `_screen` or into the DOM.
 
+        Resume orchestration keeps its nullable requests, timers and exact Workers
+        on the reusable screen visit. Every read/write and sibling operation below
+        is a named late-bound callable. The four module callbacks retain the
+        screen's live helper, asyncio, awaitability and logger patch routes.
+        First-chat consumption, store access and UI sync remain this owner's
+        existing operations; no callback grants execution authority.
+
         Args:
+            resume_screen_is_torn_down: Invoke the current screen-module teardown helper.
+            read_resume_asyncio: Read the current screen-module asyncio binding.
+            resume_isawaitable: Invoke the current screen-module awaitability check.
+            read_resume_logger: Read the current screen-module logger binding.
+            read_resume_startup_worker: Read the exact nullable visit startup Worker.
+            write_resume_startup_worker: Replace the nullable visit startup Worker.
+            read_resume_dispatch_worker: Read the exact nullable dispatch Worker.
+            read_resume_local_conversation_id: Read the nullable saved conversation request.
+            write_resume_local_conversation_id: Replace the nullable saved conversation request.
+            read_resume_character_target: Read the exact nullable typed character request.
+            write_resume_character_target: Replace the nullable typed character request.
+            write_resume_startup_in_progress: Set the visit presentation gate.
+            read_resume_handoff_timers: Read the current visit handoff timers.
+            write_resume_handoff_timers: Replace the visit handoff timer list.
+            consume_resume_chat_handoff: Consume the current chat handoff with release policy.
+            consume_resume_roleplay_repair: Consume the current roleplay repair intent.
+            consume_resume_prompt_insert: Consume the current pending prompt insertion.
+            consume_resume_fleet_completion: Consume a fleet completion; may return an awaitable.
+            open_resume_character_target: Open the exact typed character request.
+            open_resume_local_conversation: Open the exact saved conversation ID.
+            consume_resume_conversation_return: Consume the remaining conversation-return intent.
+            reconcile_resume_session_with_registry: Reconcile the fallback with the registry.
             current_chat_controller_accessor: Live controller read without initialization.
             build_current_provider_selection: Late-bound current selection snapshot.
             build_settings_summary: Late-bound opaque presentation snapshot.
@@ -1090,10 +1153,157 @@ class ConsoleSessionController:
         # saved defaults for; see `_maybe_refresh_stale_default_console_settings`.
         self._pristine_defaults_checked: tuple[str, object] | None = None
 
+        self._resume_screen_is_torn_down = resume_screen_is_torn_down
+        self._read_resume_asyncio = read_resume_asyncio
+        self._resume_isawaitable = resume_isawaitable
+        self._read_resume_logger = read_resume_logger
+        self._read_resume_startup_worker = read_resume_startup_worker
+        self._write_resume_startup_worker = write_resume_startup_worker
+        self._read_resume_dispatch_worker = read_resume_dispatch_worker
+        self._read_resume_local_conversation_id = read_resume_local_conversation_id
+        self._write_resume_local_conversation_id = write_resume_local_conversation_id
+        self._read_resume_character_target = read_resume_character_target
+        self._write_resume_character_target = write_resume_character_target
+        self._write_resume_startup_in_progress = write_resume_startup_in_progress
+        self._read_resume_handoff_timers = read_resume_handoff_timers
+        self._write_resume_handoff_timers = write_resume_handoff_timers
+        self._consume_resume_chat_handoff = consume_resume_chat_handoff
+        self._consume_resume_roleplay_repair = consume_resume_roleplay_repair
+        self._consume_resume_prompt_insert = consume_resume_prompt_insert
+        self._consume_resume_fleet_completion = consume_resume_fleet_completion
+        self._open_resume_character_target = open_resume_character_target
+        self._open_resume_local_conversation = open_resume_local_conversation
+        self._consume_resume_conversation_return = consume_resume_conversation_return
+        self._reconcile_resume_session_with_registry = (
+            reconcile_resume_session_with_registry
+        )
+
         self._read_trace_recovery_dispatch = read_trace_recovery_dispatch
         self._read_trace_recovery_state = read_trace_recovery_state
         self._read_trace_recovery_started = read_trace_recovery_started
         self._read_trace_recovery_finished = read_trace_recovery_finished
+
+    async def settle_and_start_resume_navigation(self) -> None:
+        """Start one visible request after the prior visit's rollback settles."""
+        if self._resume_screen_is_torn_down():
+            self._write_resume_startup_in_progress(False)
+            return
+        previous = self._read_resume_startup_worker()
+        if previous is not None:
+            if not previous.is_finished and (not previous.is_cancelled):
+                previous.cancel()
+            await self._read_resume_asyncio().shield(
+                self._read_resume_asyncio().gather(
+                    previous.wait(), return_exceptions=True
+                )
+            )
+        if (
+            not self.is_current
+            or self._resume_screen_is_torn_down()
+            or self._read_resume_startup_worker() is not previous
+            or (
+                self._read_resume_local_conversation_id() is None
+                and self._read_resume_character_target() is None
+            )
+        ):
+            return
+        self._write_resume_startup_in_progress(True)
+        self._write_resume_startup_worker(
+            self.run_worker(
+                self.consume_resume_navigation_startup(),
+                exclusive=True,
+                group="console-resume-navigation-startup",
+            )
+        )
+
+    async def retire_resume_navigation_startup(self) -> bool:
+        """Retire an older request and drain its rollback before a newer choice.
+
+        Returns:
+            Whether an older request or unfinished startup worker was present.
+        """
+        worker = self._read_resume_startup_worker()
+        dispatch = self._read_resume_dispatch_worker()
+        had_request = bool(
+            self._read_resume_local_conversation_id() is not None
+            or self._read_resume_character_target() is not None
+            or (worker is not None and (not worker.is_finished))
+        )
+        for timer in self._read_resume_handoff_timers():
+            timer.stop()
+        self._write_resume_handoff_timers([])
+        self._write_resume_local_conversation_id(None)
+        self._write_resume_character_target(None)
+        if dispatch is not None:
+            if not dispatch.is_finished and (not dispatch.is_cancelled):
+                dispatch.cancel()
+            await self._read_resume_asyncio().shield(
+                self._read_resume_asyncio().gather(
+                    dispatch.wait(), return_exceptions=True
+                )
+            )
+        if worker is not None:
+            if not worker.is_finished and (not worker.is_cancelled):
+                worker.cancel()
+            await self._read_resume_asyncio().shield(
+                self._read_resume_asyncio().gather(
+                    worker.wait(), return_exceptions=True
+                )
+            )
+            if self._read_resume_startup_worker() is worker:
+                self._write_resume_startup_worker(None)
+        if had_request:
+            self._write_resume_startup_in_progress(False)
+        return had_request
+
+    async def consume_resume_navigation_startup(self) -> None:
+        """Consume older Console intents before the explicit resume target."""
+        target = self._read_resume_local_conversation_id()
+        typed_target = self._read_resume_character_target()
+        worker = self._read_resume_startup_worker()
+        cancelled = False
+        opened: bool | None = None
+        try:
+            if target is None and typed_target is None:
+                return
+            self.consume_pending_console_first_chat_intent(defer_presentation=True)
+            await self._consume_resume_chat_handoff(suppress_released_failure=True)
+            self._consume_resume_roleplay_repair()
+            await self._consume_resume_prompt_insert()
+            fleet_result = self._consume_resume_fleet_completion()
+            if self._resume_isawaitable(fleet_result):
+                await fleet_result
+            if typed_target is not None:
+                opened = await self._open_resume_character_target(typed_target)
+            else:
+                opened = await self._open_resume_local_conversation(target)
+        except self._read_resume_asyncio().CancelledError:
+            # The opener settles owned hydration before propagating cancellation.
+            # Keep this exact request for the next ordinary visible visit.
+            cancelled = True
+            raise
+        finally:
+            if not cancelled and (
+                self._read_resume_local_conversation_id() == target
+                and self._read_resume_character_target() is typed_target
+            ):
+                self._write_resume_local_conversation_id(None)
+                self._write_resume_character_target(None)
+            if self._read_resume_startup_worker() is worker:
+                self._write_resume_startup_in_progress(False)
+        await self._consume_resume_conversation_return()
+        if opened is True:
+            return
+        store = self._ensure_console_chat_store()
+        if store.active_session_id is not None:
+            return
+        try:
+            self._reconcile_resume_session_with_registry()
+        except Exception:
+            self._read_resume_logger().opt(exception=True).debug(
+                "Unable to reconcile Console after failed saved-chat startup resume"
+            )
+        await self._sync_native_console_chat_ui()
 
     # -- Framework services (live-read via `@property`) --------------------
 
@@ -1102,6 +1312,11 @@ class ConsoleSessionController:
         """`Screen.run_worker`, bound. See `__init__`'s docstring for why
         this is a property rather than a value snapshotted once."""
         return self._screen.run_worker
+
+    @property
+    def is_current(self) -> bool:
+        """Read the current framework visit at use time."""
+        return self._screen.is_current
 
     @property
     def is_attached(self) -> bool:

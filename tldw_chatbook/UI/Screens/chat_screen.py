@@ -7436,6 +7436,10 @@ class ChatScreen(BaseAppScreen):
             rag_top_k_accessor=lambda: _console_library_rag_profile_top_k(),
             read_trace_recovery_dispatch=lambda: dispatch_trace_call_recovery_action,
             read_trace_recovery_state=lambda: trace_call_recovery_state,
+            resume_screen_is_torn_down=lambda: _console_screen_is_torn_down(self),
+            read_resume_asyncio=lambda: asyncio,
+            resume_isawaitable=lambda result: inspect.isawaitable(result),
+            read_resume_logger=lambda: logger,
         )
         # ADR-097: closed Inspect must not import its collectors at first paint.
         self._console_environment_owner = None
@@ -16725,128 +16729,14 @@ class ChatScreen(BaseAppScreen):
             self._resume_navigation_startup_in_progress = False
             return
         self._resume_navigation_dispatch_worker = self.run_worker(
-            self._settle_and_start_resume_navigation(),
+            self._session.settle_and_start_resume_navigation(),
             exclusive=True,
             group="console-resume-navigation-dispatch",
         )
 
-    async def _settle_and_start_resume_navigation(self) -> None:
-        """Start one visible request after the prior visit's rollback settles."""
-        if _console_screen_is_torn_down(self):
-            self._resume_navigation_startup_in_progress = False
-            return
-        previous = self._resume_navigation_startup_worker
-        if previous is not None:
-            if not previous.is_finished and not previous.is_cancelled:
-                previous.cancel()
-            await asyncio.shield(
-                asyncio.gather(previous.wait(), return_exceptions=True)
-            )
-        if (
-            not self.is_current
-            or _console_screen_is_torn_down(self)
-            or self._resume_navigation_startup_worker is not previous
-            or (
-                self._pending_resume_local_conversation_id is None
-                and self._pending_character_conversation_target is None
-            )
-        ):
-            return
-        self._resume_navigation_startup_in_progress = True
-        self._resume_navigation_startup_worker = self.run_worker(
-            self._consume_resume_navigation_startup(),
-            exclusive=True,
-            group="console-resume-navigation-startup",
-        )
-
     async def _retire_resume_navigation_startup(self) -> bool:
         """Retire an older request and drain its rollback before a newer choice."""
-        worker = self._resume_navigation_startup_worker
-        dispatch = self._resume_navigation_dispatch_worker
-        had_request = bool(
-            self._pending_resume_local_conversation_id is not None
-            or self._pending_character_conversation_target is not None
-            or (worker is not None and not worker.is_finished)
-        )
-        for timer in getattr(self, "_console_resume_handoff_timers", ()):
-            timer.stop()
-        self._console_resume_handoff_timers = []
-        self._pending_resume_local_conversation_id = None
-        self._pending_character_conversation_target = None
-        if dispatch is not None:
-            if not dispatch.is_finished and not dispatch.is_cancelled:
-                dispatch.cancel()
-            await asyncio.shield(
-                asyncio.gather(dispatch.wait(), return_exceptions=True)
-            )
-        if worker is not None:
-            if not worker.is_finished and not worker.is_cancelled:
-                worker.cancel()
-            await asyncio.shield(
-                asyncio.gather(worker.wait(), return_exceptions=True)
-            )
-            if self._resume_navigation_startup_worker is worker:
-                self._resume_navigation_startup_worker = None
-        if had_request:
-            self._resume_navigation_startup_in_progress = False
-        return had_request
-
-    async def _consume_resume_navigation_startup(self) -> None:
-        """Consume older Console intents before the explicit resume target."""
-        target = self._pending_resume_local_conversation_id
-        typed_target = self._pending_character_conversation_target
-        worker = self._resume_navigation_startup_worker
-        cancelled = False
-        opened: bool | None = None
-        try:
-            if target is None and typed_target is None:
-                return
-            self._session.consume_pending_console_first_chat_intent(
-                defer_presentation=True,
-            )
-            await self._consume_pending_chat_handoff(
-                suppress_released_failure=True,
-            )
-            self._consume_pending_console_roleplay_repair()
-            await self._consume_pending_console_prompt_insert()
-            fleet_result = self._fleet.consume_pending_console_fleet_completion()
-            if inspect.isawaitable(fleet_result):
-                await fleet_result
-            if typed_target is not None:
-                opened = await self._workspace.open_character_navigation_target(
-                    typed_target
-                )
-            else:
-                opened = await self._workspace.open_console_workspace_conversation(
-                    target
-                )
-        except asyncio.CancelledError:
-            # The opener settles owned hydration before propagating cancellation.
-            # Keep this exact request for the next ordinary visible visit.
-            cancelled = True
-            raise
-        finally:
-            if not cancelled and (
-                self._pending_resume_local_conversation_id == target
-                and self._pending_character_conversation_target is typed_target
-            ):
-                self._pending_resume_local_conversation_id = None
-                self._pending_character_conversation_target = None
-            if self._resume_navigation_startup_worker is worker:
-                self._resume_navigation_startup_in_progress = False
-        await self._consume_pending_conversation_resume()
-        if opened is True:
-            return
-        store = self._ensure_console_chat_store()
-        if store.active_session_id is not None:
-            return
-        try:
-            self._workspace._reconcile_console_session_with_registry()
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Unable to reconcile Console after failed saved-chat startup resume"
-            )
-        await self._sync_native_console_chat_ui()
+        return await self._session.retire_resume_navigation_startup()
 
     def _notify_console_fleet_teardown_if_any(self) -> None:
         """One-shot toasts reporting the LAST Console instance's teardown.

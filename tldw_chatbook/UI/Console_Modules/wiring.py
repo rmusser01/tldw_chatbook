@@ -762,6 +762,10 @@ class _DeferredConsoleTerminalController:
 def build_console_controllers(
     screen: "ChatScreen",
     *,
+    resume_screen_is_torn_down: Callable[[], bool],
+    read_resume_asyncio: Callable[[], Any],
+    resume_isawaitable: Callable[[Any], bool],
+    read_resume_logger: Callable[[], Any],
     read_trace_recovery_dispatch: Callable[[], Callable[..., Any]],
     read_trace_recovery_state: Callable[[], Callable[..., Any]],
     rag_source_types_accessor: Callable[[], tuple[str, ...]],
@@ -790,6 +794,10 @@ def build_console_controllers(
     can see everything the pre-move constructions could.
 
     Args:
+        resume_screen_is_torn_down: Invoke the live screen-module teardown helper.
+        read_resume_asyncio: Read the live screen-module asyncio binding.
+        resume_isawaitable: Invoke the live screen-module awaitability check.
+        read_resume_logger: Read the live screen-module logger binding.
         screen: The Console screen (`ChatScreen`) to wire. Mutated in place;
             taken as a parameter rather than imported so this module has no
             import cycle with `Screens/chat_screen.py`.
@@ -1518,6 +1526,60 @@ def build_console_controllers(
     #: docstring for the full map of what moved and why.
     screen._session = ConsoleSessionController(
         screen,
+        resume_screen_is_torn_down=resume_screen_is_torn_down,
+        read_resume_asyncio=read_resume_asyncio,
+        resume_isawaitable=resume_isawaitable,
+        read_resume_logger=read_resume_logger,
+        read_resume_startup_worker=lambda: screen._resume_navigation_startup_worker,
+        write_resume_startup_worker=lambda worker: setattr(
+            screen, "_resume_navigation_startup_worker", worker
+        ),
+        read_resume_dispatch_worker=lambda: screen._resume_navigation_dispatch_worker,
+        read_resume_local_conversation_id=lambda: (
+            screen._pending_resume_local_conversation_id
+        ),
+        write_resume_local_conversation_id=lambda target: setattr(
+            screen, "_pending_resume_local_conversation_id", target
+        ),
+        read_resume_character_target=lambda: (
+            screen._pending_character_conversation_target
+        ),
+        write_resume_character_target=lambda target: setattr(
+            screen, "_pending_character_conversation_target", target
+        ),
+        write_resume_startup_in_progress=lambda active: setattr(
+            screen, "_resume_navigation_startup_in_progress", active
+        ),
+        read_resume_handoff_timers=lambda: getattr(
+            screen, "_console_resume_handoff_timers", ()
+        ),
+        write_resume_handoff_timers=lambda timers: setattr(
+            screen, "_console_resume_handoff_timers", timers
+        ),
+        consume_resume_chat_handoff=lambda **kwargs: (
+            screen._consume_pending_chat_handoff(**kwargs)
+        ),
+        consume_resume_roleplay_repair=lambda: (
+            screen._consume_pending_console_roleplay_repair()
+        ),
+        consume_resume_prompt_insert=lambda: (
+            screen._consume_pending_console_prompt_insert()
+        ),
+        consume_resume_fleet_completion=lambda: (
+            screen._fleet.consume_pending_console_fleet_completion()
+        ),
+        open_resume_character_target=lambda target: (
+            screen._workspace.open_character_navigation_target(target)
+        ),
+        open_resume_local_conversation=lambda target: (
+            screen._workspace.open_console_workspace_conversation(target)
+        ),
+        consume_resume_conversation_return=lambda: (
+            screen._consume_pending_conversation_resume()
+        ),
+        reconcile_resume_session_with_registry=lambda: (
+            screen._workspace._reconcile_console_session_with_registry()
+        ),
         on_draft_session_changed=lambda: (
             screen._hooks.cancel_pending(),
             screen.call_after_refresh(

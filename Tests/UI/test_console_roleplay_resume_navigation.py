@@ -753,6 +753,126 @@ async def test_mounted_resume_never_focuses_setup_modal_before_final_opener(
         assert focus_events == ["final"]
 
 
+def _resume_session(screen: ChatScreen) -> session_module.ConsoleSessionController:
+    """Wire a real Session; unexpected non-Resume dependencies fail at their call."""
+
+    def unused(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("unexpected non-Resume dependency")
+
+    return session_module.ConsoleSessionController(
+        screen,
+        resume_screen_is_torn_down=lambda: (
+            chat_screen_module._console_screen_is_torn_down(screen)
+        ),
+        read_resume_asyncio=lambda: chat_screen_module.asyncio,
+        resume_isawaitable=lambda result: chat_screen_module.inspect.isawaitable(
+            result
+        ),
+        read_resume_logger=lambda: chat_screen_module.logger,
+        read_resume_startup_worker=lambda: screen._resume_navigation_startup_worker,
+        write_resume_startup_worker=lambda worker: setattr(
+            screen, "_resume_navigation_startup_worker", worker
+        ),
+        read_resume_dispatch_worker=lambda: screen._resume_navigation_dispatch_worker,
+        read_resume_local_conversation_id=lambda: (
+            screen._pending_resume_local_conversation_id
+        ),
+        write_resume_local_conversation_id=lambda target: setattr(
+            screen, "_pending_resume_local_conversation_id", target
+        ),
+        read_resume_character_target=lambda: (
+            screen._pending_character_conversation_target
+        ),
+        write_resume_character_target=lambda target: setattr(
+            screen, "_pending_character_conversation_target", target
+        ),
+        write_resume_startup_in_progress=lambda active: setattr(
+            screen, "_resume_navigation_startup_in_progress", active
+        ),
+        read_resume_handoff_timers=lambda: getattr(
+            screen, "_console_resume_handoff_timers", ()
+        ),
+        write_resume_handoff_timers=lambda timers: setattr(
+            screen, "_console_resume_handoff_timers", timers
+        ),
+        consume_resume_chat_handoff=lambda **kwargs: (
+            screen._consume_pending_chat_handoff(**kwargs)
+        ),
+        consume_resume_roleplay_repair=lambda: (
+            screen._consume_pending_console_roleplay_repair()
+        ),
+        consume_resume_prompt_insert=lambda: (
+            screen._consume_pending_console_prompt_insert()
+        ),
+        consume_resume_fleet_completion=lambda: (
+            screen._fleet.consume_pending_console_fleet_completion()
+        ),
+        open_resume_character_target=lambda target: (
+            screen._workspace.open_character_navigation_target(target)
+        ),
+        open_resume_local_conversation=lambda target: (
+            screen._workspace.open_console_workspace_conversation(target)
+        ),
+        consume_resume_conversation_return=lambda: (
+            screen._consume_pending_conversation_resume()
+        ),
+        reconcile_resume_session_with_registry=lambda: (
+            screen._workspace._reconcile_console_session_with_registry()
+        ),
+        read_trace_recovery_dispatch=unused,
+        read_trace_recovery_state=unused,
+        read_trace_recovery_started=unused,
+        read_trace_recovery_finished=unused,
+        app_instance=screen.app_instance,
+        chat_store_accessor=unused,
+        current_chat_store_accessor=unused,
+        ensure_console_chat_controller=unused,
+        current_chat_controller_accessor=unused,
+        build_current_provider_selection=unused,
+        build_settings_summary=unused,
+        apply_settings_summary=unused,
+        settings_initial_draft=unused,
+        composer_accessor=unused,
+        restore_banked_raw_cli_stashes=unused,
+        effective_console_provider_model=unused,
+        provider_readiness_app_config=unused,
+        build_provider_selection=unused,
+        scratch_snapshot_provider=unused,
+        rag_source_types_accessor=unused,
+        rag_top_k_accessor=unused,
+        sync_native_console_chat_ui=unused,
+        sync_chat_core_state=unused,
+        sync_temporary_chip=unused,
+        sync_settings_summary=unused,
+        sync_control_bar=unused,
+        sync_command_popup=unused,
+        note_follow_intent=unused,
+        focus_composer_if_needed=unused,
+        invalidate_persisted_rows_cache=unused,
+        mark_conversation_row_broken=unused,
+        refresh_effective_scope_and_sync=unused,
+        session_surface_accessor=unused,
+        switcher_authority_accessor=unused,
+        console_runtime_accessor=unused,
+        set_active_workspace_for_session=unused,
+        resume_workspace_conversation=unused,
+        workspace_initial_session_title=unused,
+        merge_workspace_rows=unused,
+        session_id_for_workspace_conversation=unused,
+        ensure_console_image_view=unused,
+        visual_identity_db_accessor=unused,
+        reaction_preview_coordinator_accessor=unused,
+        refresh_character_avatar=unused,
+        screen_mounted_accessor=unused,
+        first_chat_presentation_snapshot=unused,
+        apply_first_chat_control_selection=unused,
+        restore_first_chat_focus=unused,
+        capture_fork_image_selections=unused,
+        validate_fork_image_selections=unused,
+        workspace_display_name=unused,
+    )
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_resume_navigation_continues_after_chat_handoff_release(
@@ -781,10 +901,9 @@ async def test_resume_navigation_continues_after_chat_handoff_release(
 
     screen.app_instance = SimpleNamespace(pending_handoffs=handoffs)
     screen._handoff_consumption_in_progress = False
-    screen._session = SimpleNamespace(
-        _start_character_console_session=release_handoff,
-        consume_pending_console_first_chat_intent=lambda **_kwargs: False,
-    )
+    screen._session = _resume_session(screen)
+    screen._session._start_character_console_session = release_handoff
+    screen._session.consume_pending_console_first_chat_intent = lambda **_kwargs: False
     screen._stage_handoff_as_console_live_work = lambda _payload: None
     screen._consume_pending_console_roleplay_repair = lambda: False
     screen._consume_pending_console_prompt_insert = _async_spy(events, "prompt")
@@ -798,7 +917,7 @@ async def test_resume_navigation_continues_after_chat_handoff_release(
     screen._pending_resume_local_conversation_id = "resume-target"
     screen._resume_navigation_startup_in_progress = True
 
-    await screen._consume_resume_navigation_startup()
+    await screen._session.consume_resume_navigation_startup()
 
     assert handoffs.has_pending(HandoffChannel.CHAT)
     assert events == ["chat-handoff-released", "prompt", "resume:resume-target"]
@@ -827,9 +946,8 @@ async def test_resume_navigation_propagates_logged_chat_handoff_acquisition_fail
     screen = ChatScreen.__new__(ChatScreen)
     screen.app_instance = SimpleNamespace(pending_handoffs=FailingHandoffStore())
     screen._handoff_consumption_in_progress = False
-    screen._session = SimpleNamespace(
-        consume_pending_console_first_chat_intent=lambda **_kwargs: False,
-    )
+    screen._session = _resume_session(screen)
+    screen._session.consume_pending_console_first_chat_intent = lambda **_kwargs: False
     screen._consume_pending_console_roleplay_repair = lambda: False
     screen._consume_pending_console_prompt_insert = _async_spy([], "prompt")
     screen._fleet = SimpleNamespace(
@@ -847,7 +965,7 @@ async def test_resume_navigation_propagates_logged_chat_handoff_acquisition_fail
     screen._resume_navigation_startup_in_progress = True
 
     with pytest.raises(RuntimeError, match="private acquisition failure"):
-        await screen._consume_resume_navigation_startup()
+        await screen._session.consume_resume_navigation_startup()
 
     assert opener_calls == []
     assert screen._pending_resume_local_conversation_id is None
