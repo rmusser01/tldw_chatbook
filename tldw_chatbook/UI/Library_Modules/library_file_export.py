@@ -18,7 +18,10 @@ Every one of those exports now comes through here:
   callable (the W003 freeze shape, ``scripts/textual_wait_push_census.tsv``).
 * ``write_export_text`` writes through a temporary file in the destination's
   own directory and ``os.replace``, so a write that fails partway leaves the
-  previous file intact and no temporary file behind.
+  previous file intact and no temporary file behind. A NEW file is published
+  no-clobber, so one that appears after the seam looked is asked about, never
+  replaced -- on a volume without hard links too (FAT32/exFAT sticks, many
+  SMB/NFS mounts), where the shared writer reserves the name exclusively.
 * ``remember_export_directory`` / ``library_export_picker_location`` make
   the next export picker in the same session open where the last export
   went, instead of always in the home folder.
@@ -70,7 +73,15 @@ _LAST_EXPORT_DIRECTORY_ATTR = "_library_last_export_directory"
 
 
 def describe_export_folder(folder: Path) -> str:
-    """Name ``folder`` the way the prompt shows it: ``~/exp`` under home, else absolute."""
+    """Name ``folder`` the way the prompt shows it: ``~/exp`` under home, else absolute.
+
+    Args:
+        folder: The folder to name. It is not read from disk.
+
+    Returns:
+        ``~`` for the home folder itself, ``~/<relative path>`` for a folder
+        under it, and the absolute path for one anywhere else.
+    """
     try:
         relative = folder.relative_to(Path.home())
     except ValueError:
@@ -85,6 +96,12 @@ def describe_export_destination(destination: Path) -> str:
     prompt editor's status line clipped one to "Prompt exported successfully
     to"), so the home folder is shortened to ``~`` the way the picker shows
     it; anywhere else the path is absolute.
+
+    Args:
+        destination: The file that was written.
+
+    Returns:
+        ``<folder>/<file name>``, the folder named by ``describe_export_folder``.
     """
     return f"{describe_export_folder(destination.parent)}/{destination.name}"
 
@@ -97,6 +114,10 @@ def replace_prompt_message(destination: Path, picked: Path | None = None) -> str
         picked: The path the user chose when it was a symlink to
             ``destination``; the prompt then says so, so the user confirms
             the file that really changes.
+
+    Returns:
+        The prompt's message: the question, then one sentence on what
+        Replace does.
     """
     message = (
         f'Replace "{destination.name}" in {describe_export_folder(destination.parent)}?'
@@ -115,6 +136,17 @@ def resolve_export_destination(destination: Path) -> Path:
     on the link itself would instead swap the link for a regular file and
     leave the target stale. A dangling link, or no link at all, is written
     at the chosen path.
+
+    Args:
+        destination: The validated path the user chose in the picker.
+
+    Returns:
+        The link's resolved target when ``destination`` is a symlink to an
+        existing regular file; otherwise ``destination`` itself.
+
+    Raises:
+        OSError: ``destination`` could not be examined for a reason other
+            than not being there -- its folder is not searchable, say.
     """
     if destination.is_symlink():
         try:
@@ -130,6 +162,18 @@ def export_destination_exists(destination: Path) -> bool:
     """Whether writing ``destination`` would replace something already there.
 
     A dangling symlink counts: ``os.replace`` would swap the link itself out.
+
+    Args:
+        destination: The path the export would write (see
+            ``resolve_export_destination``).
+
+    Returns:
+        True when a file, a folder or a symlink -- dangling or not -- is at
+        ``destination``; False when nothing is.
+
+    Raises:
+        OSError: ``destination`` could not be examined for a reason other
+            than not being there -- its folder is not searchable, say.
     """
     return destination.is_symlink() or destination.exists()
 
@@ -148,16 +192,21 @@ def write_export_text(
         destination: The file to write (already resolved through
             ``resolve_export_destination`` by the seam's callers).
         content: The text to write.
-        overwrite: ``False`` publishes with a no-clobber link instead of a
-            replace, so a file that appeared since the caller looked is
-            never silently overwritten -- ``FileExistsError`` is raised and
-            the caller asks. This closes the check-then-write window on the
-            "nothing was there" path.
+        overwrite: ``False`` publishes no-clobber instead of replacing, so
+            a file that appeared since the caller looked is never silently
+            overwritten -- ``FileExistsError`` is raised and the caller
+            asks. This closes the check-then-write window on the "nothing
+            was there" path. The publish is a hard link where the volume has
+            them and an exclusive create plus rename where it does not
+            (``atomic_file_ops._publish_no_clobber``), so a new file also
+            lands on a FAT32/exFAT stick or an SMB/NFS mount.
 
     Raises:
         FileNotFoundError: The destination's folder does not exist.
-        FileExistsError: ``overwrite`` is False and a file is there now.
-        OSError: The write or the replace failed; the previous file is intact.
+        FileExistsError: ``overwrite`` is False and something is there now.
+            It is left untouched.
+        OSError: The write or the publish failed; the previous file is
+            intact, and no temporary file or placeholder is left behind.
     """
     if not destination.parent.is_dir():
         raise FileNotFoundError(f"No such directory: {destination.parent}")
@@ -172,7 +221,15 @@ def write_export_text(
 
 
 def library_export_picker_location(app: Any) -> str:
-    """The folder the next export picker opens in: the last export's, else home."""
+    """The folder the next export picker opens in: the last export's, else home.
+
+    Args:
+        app: The running app, which ``remember_export_directory`` records on.
+
+    Returns:
+        The folder this session last exported to, while it still exists;
+        otherwise the home folder.
+    """
     remembered = getattr(app, _LAST_EXPORT_DIRECTORY_ATTR, None)
     if remembered:
         folder = Path(remembered)
@@ -185,7 +242,13 @@ def library_export_picker_location(app: Any) -> str:
 
 
 def remember_export_directory(app: Any, destination: Path) -> None:
-    """Record ``destination``'s folder as where this session last exported to."""
+    """Record ``destination``'s folder as where this session last exported to.
+
+    Args:
+        app: The running app. One that cannot take the attribute (a slotted
+            or frozen stand-in) is left as it is.
+        destination: The file just written, as the user chose it.
+    """
     try:
         setattr(app, _LAST_EXPORT_DIRECTORY_ATTR, str(destination.parent))
     except (
@@ -228,6 +291,12 @@ def request_export_write(
 
     Returns:
         ``on_replace``'s result when no prompt was needed; otherwise ``None``.
+
+    Raises:
+        OSError: ``destination`` could not be examined
+            (``export_destination_exists``), or a synchronous ``on_replace``
+            raised one. A ``FileExistsError`` is never raised: it opens the
+            prompt.
     """
 
     def _answered(replace: bool | None) -> Any:
@@ -484,6 +553,38 @@ async def export_library_report_file(
 
 # --- the Collections legacy-recovery export ----------------------------------------
 
+#: How the recovery service says "something is at the destination" when it
+#: was given no file to replace (``overwrite_identity=None``):
+#: ``legacy_export_target_exists`` when the file is there as the export
+#: starts, ``legacy_export_target_changed`` when it turns up between then
+#: and the publish (``LegacyCollectionsRecovery._export_target`` and
+#: ``_publish_export``). The second reason also covers a file that changed
+#: under a CONFIRMED replace, so it is only read this way for a publish
+#: that confirmed nothing.
+_RECOVERY_DESTINATION_TAKEN_REASONS = frozenset(
+    {"legacy_export_target_exists", "legacy_export_target_changed"}
+)
+
+
+def _recovery_found_destination_taken(exc: Exception, target: Path) -> bool:
+    """Whether a refused no-clobber recovery publish is the Replace question.
+
+    Args:
+        exc: What ``export_json(..., overwrite_identity=None)`` raised.
+        target: The destination that publish was for.
+
+    Returns:
+        True when the service refused because something is at ``target``
+        and it is still there to ask about. False for every other failure,
+        and for a name that was taken and released again.
+    """
+    if getattr(exc, "reason", None) not in _RECOVERY_DESTINATION_TAKEN_REASONS:
+        return False
+    try:
+        return export_destination_exists(target)
+    except OSError:
+        return False
+
 
 async def export_library_collections_recovery(
     controller: LibraryCollectionsController, selected_path: Path | None
@@ -494,7 +595,9 @@ async def export_library_collections_recovery(
     recovery`` carried before TASK-34000.3. The recovery service already
     publishes atomically and guards the target's identity; what it lacked
     was the question. The replace check runs on the ``.json``-normalized
-    destination, the path actually written.
+    destination, the path actually written. A file that appears after that
+    check is refused by the service, and that refusal opens the same
+    Replace prompt instead of being reported as a failed export.
 
     Args:
         controller: The collections controller that opened the picker.
@@ -524,7 +627,11 @@ async def export_library_collections_recovery(
         # no-clobber, refusing (``legacy_export_target_changed``) a file that
         # appeared since. Reading the identity here whatever ``overwrite``
         # said gave it permission to replace that file, so the no-clobber
-        # claim held only by timing (final review M3).
+        # claim held only by timing (final review M3). That refusal is the
+        # late collision the other exports raise ``FileExistsError`` for, so
+        # it is raised as one and the seam asks. After a Replace nothing is
+        # re-raised: a refusal then is a failure, and this runs as the
+        # prompt's own callback, where no one would catch it.
         try:
             overwrite_identity = None
             if overwrite and target.exists():
@@ -536,6 +643,8 @@ async def export_library_collections_recovery(
                 overwrite_identity=overwrite_identity,
             )
         except Exception as exc:
+            if not overwrite and _recovery_found_destination_taken(exc, target):
+                raise FileExistsError(target.name) from None
             _report_recovery_export_failure(controller, exc)
             return
         remember_export_directory(controller.app, destination)

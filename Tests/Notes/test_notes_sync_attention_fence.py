@@ -136,9 +136,12 @@ async def test_the_open_note_keeps_its_held_line_while_the_runtime_cannot_say(
         # Hold the folder with the note still open: a failed pass.
         await owner._publish("root-1", "failed", "review_changes")
         await attention.load_library_note_location(host, "note-1")
-        path, _written, held = host._library_note_location
+        path, written, held = host._library_note_location
         assert path == str(vault.file)
         assert held is True
+        # PR #3021 review: the label now goes through the shared path
+        # validator. The production runtime's own answer must pass it.
+        assert written, "the validator refused the production runtime's own path"
         presented = host.presented
 
         owner._maintenance_close_admission()

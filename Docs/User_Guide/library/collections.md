@@ -197,7 +197,10 @@ every one of those writes — so read and export are the only two things you
 can do with them (task-32057). The export picker opens in the folder you last
 exported to this session; if the chosen `.json` file already exists, a
 "Replace existing file?" prompt names it and its folder, with **Cancel**
-focused, and only **Replace** overwrites it. The status line then reads
+focused, and only **Replace** overwrites it. The same prompt opens if
+another program creates that file after you pick it, while the export is
+running: the export never replaces a file it has not asked about. The status
+line then reads
 "Legacy recovery export complete: ~/exp/legacy-collections-recovery.json".
 
 Profiles with no legacy records never see any of this.

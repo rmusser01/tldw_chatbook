@@ -33,6 +33,7 @@ from typing import Any
 from loguru import logger
 
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_NOTES
+from ...Utils.path_validation import validate_path_simple
 from .canvas_sync import _sync_library_canvas
 from .screen_constants import LIBRARY_NOTES_SOURCE_DATABASE
 
@@ -93,13 +94,38 @@ def note_file_written_label(path: str) -> str:
     Obsidian and a note saved here are the same question to the reader, and
     only the filesystem answers both. Local time in the codebase's
     absolute-timestamp spelling, built tz-aware then localised (task-32640).
+
+    The path is the sync runtime's answer, not something this module built,
+    so it goes through the shared validator before the filesystem sees it
+    (PR #3021 review). This is a status line: whatever is wrong with the
+    path, the answer is "no label" and nothing is raised into the UI.
+
+    Args:
+        path: The absolute path of the file the open note is kept in step
+            with (``NotesSyncRuntime.note_file_location``), or ``""``.
+
+    Returns:
+        ``YYYY-MM-DD HH:MM`` in local time, or ``""`` when there is no path,
+        the validator refuses it, it is not absolute, or the file cannot be
+        read.
     """
 
     if not path:
         return ""
     try:
-        modified = os.stat(path).st_mtime
-    except OSError:
+        # A stat-only boundary: the validator's shell-metacharacter guards
+        # are for paths that reach a shell, and ``;``, ``&&`` or ``$(`` are
+        # legal in a note's file name. Traversal, NUL and ``~`` expansion
+        # are refused either way.
+        validated = validate_path_simple(
+            path, require_exists=True, reject_shell_metacharacters=False
+        )
+        if not validated.is_absolute():
+            # The runtime's contract is an absolute path; a relative one
+            # would be read against the process's working directory.
+            return ""
+        modified = os.stat(validated).st_mtime
+    except (OSError, ValueError):
         return ""
     return (
         datetime.fromtimestamp(modified, tz=UTC).astimezone().strftime("%Y-%m-%d %H:%M")
