@@ -680,3 +680,82 @@ All qualification criteria remain open. Logs:
 `/tmp/task31966-send-ui-gc.log`, `/tmp/task31966-send-ui-sync-spans.log` and
 `/tmp/task31966-send-activation-profile.log`; roots share the retained
 `/tmp/task31966-send-measure-v0Z4Cs` container.
+
+### Checked config phases and summary-query attribution
+
+The approved throwaway entry/render/exit probe and its rendering-substep
+extensions ran at the same exact clean `ca793ee190` source, using the original
+verified scale corpus and Keyword receipt. Each run restored the isolated
+`codex/switcher-workstream-burndown` branch to `6e637de859`; no production,
+test, script or package input changed. Native context-manager entry, body,
+exception suppression and exit were forwarded, including all source checks
+and locks. A runnable forwarding self-check covered success, entry failure,
+body failure, suppression, nesting and exit failure. No config payloads,
+paths, authority bypass, retained snapshot or GC-policy change was added.
+
+The first probe retained 84 refresh roots, 112 complete scopes, 535 substep
+records and 28 paired main-thread gen-2 collections; all drop counters were
+zero. In the 58 refreshes inside activation windows, primary entry took
+**2.248500–29.051625 ms**, rendering **2.925458–46.569666 ms**, and exit
+**0.032000–1.292667 ms**. None of those scopes overlapped gen-2. Wall and
+thread CPU clocks are retained separately; entry wall time is not proof of
+pure config IO or lock contention. The settings-summary substep reached
+35.509250 ms. Root `ui-config-phases-diagnostic`; script
+`/tmp/task31966-config-phases.py`, SHA256
+`94a59b23c36a2c270b789e4ba6d85302fee48126f911dd6ab57c40d9aabc9634`.
+
+The summary build/apply extension retained 81 roots, 109 complete scopes,
+594 substeps and 26 paired collections, no drops. Its 13 summary refreshes
+inside activation windows spent 260.167375 ms inclusively in summary sync:
+35.168917 ms in state building and 224.927667 ms in widget application.
+The application substep peaked at 21.928791 ms. Substeps overlap their parents
+and must not be added as independent costs. Existing readiness/context memo
+expansion is not justified by these measurements. Root
+`ui-config-summary-phases-diagnostic`; script
+`/tmp/task31966-config-phases-v2.py`, SHA256
+`f3d7d56051ffc91cc86ea531b57bff9c43c94c9dbf8ded364851d9c0e7960362`.
+
+The final forwarding observer timed native `DOMQuery.nodes` evaluation and
+`Static.update` during summary application, retaining only calls >=0.1 ms.
+No query/update or enclosing-phase record was dropped. In each of the 14
+rooted summary applications inside activation windows, **four uncached
+ChatScreen-wide queries** consumed **6.501790–15.040541 ms** within application
+spans of 12.959291–19.341708 ms. Across all summary applications in activation
+windows (including those outside a tracked config-refresh root), 88 retained
+queries totalled 262.259913 ms. Retained updates peaked at 0.213000 ms; absence
+of below-threshold updates is not proof of zero cost. The source confirms
+three compound Model-value lookups and one recovery lookup evaluate the whole
+screen tree; the native query evaluator walks all descendants. Root
+`ui-summary-query-cost-diagnostic`; script
+`/tmp/task31966-summary-query-cost.py`, SHA256
+`6b9d72a7ec14ce42e5631a1299879b5b7ee5a8387569fad910d582edbd88d5d1`;
+its receipt also pins the unchanged parent probe's digest.
+
+All three failed matrices completed all 60 exact searches and eight exact
+opened activations, with no app exception, clean/unchanged source and unchanged
+corpus digest. Every activation still exceeded 50 ms: respective narrow/wide
+ranges were **81.973167–130.844042 / 142.210250–258.761375 ms**,
+**55.353833–109.873875 / 103.075167–159.956750 ms**, and
+**64.060375–98.809167 / 88.148041–179.260875 ms**. First-probe wide activation
+3 also failed busy paint at 154.760625 ms. Thresholds remained 700/10/10.
+Wrappers perturb allocations/scheduling; these are attribution receipts, not
+controlled speed comparisons or substitute acceptance evidence. The final
+retained post-unmount app has 14 registered handles and open DB descriptors,
+not terminal application-owner retirement proof.
+
+The proposed next bounded correction is to resolve the three Model-value rows
+through their mounted section containers using native lookups, rather than
+scan the entire screen three times. Preserve missing rows, fresh structured
+values, remount/recompose behavior, hidden-rail updates and every config/ownership
+check. Do not bundle recovery lookup, update equality, cross-pass memo, cache
+policy or GC changes. Obtain approval before implementation and prove mounted
+RED/GREEN plus the unchanged scale limits afterward. This is not claimed to
+remove all stalls: first-probe narrow activation 1's longest 81.973167 ms
+interval overlaps neither gen-2 nor a tracked config refresh; other intervals
+contain substantial GC. Existing ADR120/150/161/198 apply; no new ADR for this
+behavior-preserving local-query proposal. TASK31966 and TASK31245 stay In
+Progress; native/Windows/participant/resource and dependent semantics remain
+unqualified. Logs: `/tmp/task31966-send-config-phases.log`,
+`/tmp/task31966-send-config-summary-phases.log`,
+`/tmp/task31966-send-summary-query-cost.log`. Raw diagnostic and normal
+`ui-evidence/ui-latency-evidence.json` receipts are retained under each root.
