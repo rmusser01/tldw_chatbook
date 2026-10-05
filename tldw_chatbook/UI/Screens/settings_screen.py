@@ -145,6 +145,7 @@ from ...Chat.console_session_settings import (
     build_console_settings_readiness,
     build_target_default_console_session_settings,
     chat_defaults_held_fields,
+    chat_defaults_value,
     normalize_console_model_value,
     readiness_words,
     settings_provider_catalog,
@@ -1317,6 +1318,13 @@ CONSOLE_DEFAULT_FIELD_NAMES = {
 # The fallbacks with a built-in value: their controls are never blank at
 # rest, and Save refuses a blank (TASK-33007.7).
 CONSOLE_BUILT_IN_FALLBACK_FIELDS = ("streaming", "temperature", "top_p")
+# Ends the focused guide's Validation row while a fallback row reads
+# "built-in": Save writes only edits, so keeping the value shown takes a
+# change and a change back (the row's help says a provider's comes first).
+CONSOLE_PIN_BUILT_IN_HINT = (
+    "to put the shown value ahead of a provider's own, change it, change it "
+    "back and save"
+)
 
 
 # TASK-18600: the Console agent's run budget, driven by ONE spec table
@@ -7028,31 +7036,27 @@ class SettingsScreen(BaseAppScreen):
             return DEFAULT_CONSOLE_SIDECHAT_PROMPT_TEMPLATE
         return value.strip()
 
-    @staticmethod
-    def _coerce_float_default(
-        value: object,
-        fallback: float,
-        *,
-        minimum: float,
-        maximum: float,
-    ) -> float:
-        if isinstance(value, bool):
-            return fallback
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return fallback
-        if minimum <= number <= maximum:
-            return number
-        return fallback
+    def _loaded_chat_default(self, name: str, built_in: object = "") -> object:
+        """Read a global fallback as a new chat reads it (TASK-33007.7).
+
+        The default chain's own coercion, so a row's value cannot disagree
+        with its Source word (``chat_defaults_held_fields``) on a hand-edited
+        value only one reading accepts.
+
+        Args:
+            name: A generation field, e.g. ``"temperature"``.
+            built_in: Shown when ``[chat_defaults]`` holds no usable value:
+                tldw's own value, or blank for an optional field.
+
+        Returns:
+            The value a new chat takes from ``[chat_defaults]``, else
+            ``built_in``.
+        """
+        value = chat_defaults_value(self._app_config_mapping(), name)
+        return built_in if value is None else value
 
     def _loaded_console_default_streaming(self) -> bool:
-        chat_defaults = self._chat_defaults()
-        if "streaming" in chat_defaults:
-            return coerce_bool_setting(chat_defaults.get("streaming"), True)
-        if "enable_streaming" in chat_defaults:
-            return coerce_bool_setting(chat_defaults.get("enable_streaming"), True)
-        return True
+        return bool(self._loaded_chat_default("streaming", True))
 
     def _loaded_console_default_user_display_name(self) -> str:
         try:
@@ -7067,77 +7071,35 @@ class SettingsScreen(BaseAppScreen):
             return "User"
 
     def _loaded_console_default_temperature(self) -> float:
-        return self._coerce_float_default(
-            self._chat_defaults().get("temperature", 0.7),
-            0.7,
-            minimum=0.0,
-            maximum=2.0,
-        )
+        return float(self._loaded_chat_default("temperature", 0.7))
 
     def _loaded_console_default_top_p(self) -> float:
-        return self._coerce_float_default(
-            self._chat_defaults().get("top_p", 0.95),
-            0.95,
-            minimum=0.0,
-            maximum=1.0,
-        )
+        return float(self._loaded_chat_default("top_p", 0.95))
 
     def _loaded_console_default_min_p(self) -> float | str:
-        return self._loaded_optional_float_default("min_p", minimum=0.0, maximum=1.0)
+        return self._loaded_chat_default("min_p")
 
     def _loaded_console_default_top_k(self) -> int | str:
-        return self._loaded_optional_int_default("top_k", minimum=0)
+        return self._loaded_chat_default("top_k")
 
     def _loaded_console_default_max_tokens(self) -> int | str:
-        return self._loaded_optional_int_default("max_tokens", minimum=1)
+        return self._loaded_chat_default("max_tokens")
 
     def _loaded_console_default_seed(self) -> int | str:
-        return self._loaded_optional_int_default("seed", minimum=0)
+        return self._loaded_chat_default("seed")
 
     def _loaded_console_default_presence_penalty(self) -> float | str:
-        return self._loaded_optional_float_default(
-            "presence_penalty",
-            minimum=-2.0,
-            maximum=2.0,
-        )
+        return self._loaded_chat_default("presence_penalty")
 
     def _loaded_console_default_frequency_penalty(self) -> float | str:
-        return self._loaded_optional_float_default(
-            "frequency_penalty",
-            minimum=-2.0,
-            maximum=2.0,
-        )
+        return self._loaded_chat_default("frequency_penalty")
 
     def _loaded_console_default_choice(self, key: str, allowed: frozenset[str]) -> str:
         value = str(self._chat_defaults().get(key, "") or "").strip().lower()
         return value if value in allowed else ""
 
     def _loaded_console_default_thinking_budget_tokens(self) -> int | str:
-        return self._loaded_optional_int_default("thinking_budget_tokens", minimum=1024)
-
-    def _loaded_optional_float_default(
-        self,
-        key: str,
-        *,
-        minimum: float,
-        maximum: float,
-    ) -> float | str:
-        value = self._chat_defaults().get(key, "")
-        if value is None or str(value).strip() == "":
-            return ""
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return ""
-        return number if minimum <= number <= maximum else ""
-
-    def _loaded_optional_int_default(self, key: str, *, minimum: int) -> int | str:
-        value = self._chat_defaults().get(key, "")
-        if value is None or str(value).strip() == "":
-            return ""
-        invalid_sentinel = minimum - 1
-        coerced = coerce_int_setting(value, invalid_sentinel, minimum=minimum)
-        return coerced if minimum <= coerced else ""
+        return self._loaded_chat_default("thinking_budget_tokens")
 
     def _console_behavior_loaded_values(self) -> dict[str, object]:
         values = {
@@ -9481,6 +9443,8 @@ class SettingsScreen(BaseAppScreen):
             )
 
             refresh_console_fallbacks(self)
+            # The focused fallback's guide drops its pin hint once edited.
+            self._refresh_console_behavior_field_guidance()
         if category is SettingsCategoryId.IMAGE_GENERATION:
             # Image Gen's Save/Revert live INSIDE the panel (not the generic
             # top guided-action bar, excluded above like THEME/INTERNAL_
@@ -10369,6 +10333,15 @@ class SettingsScreen(BaseAppScreen):
     def _stage_console_default_value(self, key: str, value: object) -> None:
         category = SettingsCategoryId.CONSOLE_BEHAVIOR
         loaded = self._console_behavior_loaded_values().get(key)
+        if (
+            isinstance(value, str)
+            and not isinstance(loaded, str)
+            and value.strip() == self._console_input_value(loaded)
+        ):
+            # An Input repeating a saved value its normaliser refuses (a
+            # hand-edited Temperature of 3.0, shown as a new chat reads it)
+            # is no edit: Save keeps the saved value.
+            value = loaded
         if key in self._console_unsaved_built_in_fallbacks():
             # TASK-33007.7: nothing is saved for this field, so its control
             # shows the built-in value and Save would add the key. Going back
@@ -10548,13 +10521,15 @@ class SettingsScreen(BaseAppScreen):
                     "Purpose",
                     "Global keeps one arrangement across workspace switches for continuity.",
                 ),
+                # One Consequences row, so the guide keeps the three shown
+                # rows the Inspector composes (Saved as goes in config key).
                 (
                     "Consequences",
-                    "Per workspace restores each workspace's saved arrangement.",
-                ),
-                (
-                    "Retention",
-                    "Prior global and workspace records are retained when modes change.",
+                    (
+                        "Per workspace restores each workspace's saved "
+                        "arrangement. Prior global and workspace records are "
+                        "retained when modes change."
+                    ),
                 ),
                 ("Saved as", "console.rail_layout_scope"),
                 ("Applies", "After Save; the next Console layout read uses it."),
@@ -10712,11 +10687,18 @@ class SettingsScreen(BaseAppScreen):
         name = CONSOLE_DEFAULT_FIELD_NAMES.get(self._active_settings_field_id or "")
         if name is not None:
             spec = MODEL_CONFIG_FIELDS[name]
+            validation = spec.valid_range
+            draft = self._settings_drafts.get(SettingsCategoryId.CONSOLE_BEHAVIOR)
+            if name in self._console_unsaved_built_in_fallbacks() and (
+                draft is None or name not in draft.dirty_keys
+            ):
+                # The row reads "built-in": say how to keep the shown value.
+                validation = f"{validation}; {CONSOLE_PIN_BUILT_IN_HINT}"
             return (
                 ("Focused setting", spec.label),
                 ("Purpose", spec.help),
                 ("Saved as", f"chat_defaults.{name}"),
-                ("Validation", spec.valid_range),
+                ("Validation", validation),
             )
         return (
             (

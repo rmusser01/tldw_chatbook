@@ -11,6 +11,7 @@ from Tests.UI.test_destination_shells import (
     DestinationHarness,
     _active_destination_screen,
     _build_test_app,
+    _console_config_key_saved_as,
     _visible_text,
     _wait_for_selector,
 )
@@ -118,10 +119,43 @@ async def test_console_rail_layout_scope_search_lands_with_persistence_guidance(
         assert "Global keeps one arrangement across workspace switches" in visible
         assert "Per workspace restores each workspace's saved arrangement" in visible
         assert "Prior global and workspace records are retained" in visible
-        assert "Saved as: console.rail_layout_scope" in visible
-        assert dict(screen._console_behavior_field_guidance_rows())[
-            "Applies"
-        ].startswith("After Save")
+        # TASK-33007.7: the key sits in the closed config key disclosure, and
+        # "Applies" is painted, not only returned (it used to be a fourth
+        # shown row with no widget to hold it).
+        assert _console_config_key_saved_as(screen) == (
+            "Saved as: console.rail_layout_scope"
+        )
+        assert "Applies: After Save; the next Console layout read uses it." in visible
+
+
+@pytest.mark.asyncio
+@private_profile_test
+def test_every_console_behavior_guide_fits_the_three_composed_rows(request):
+    """The Inspector composes three guide rows and refreshes them by index;
+    a guide with a fourth shown row loses it silently (Rail layout scope's
+    "Applies" did). "Saved as" goes in the config key disclosure."""
+    screen = settings_screen_module.SettingsScreen(_build_test_app())
+    field_ids = (
+        None,
+        "settings-console-context-budget-mode",
+        "settings-console-show-model-thinking",
+        RAIL_LAYOUT_SCOPE.lstrip("#"),
+        RAIL_LABEL_TOGGLE.lstrip("#"),
+        "settings-console-sidechat-model",
+        "settings-console-sidechat-prompt-template",
+        "settings-console-default-user-display-name",
+        "settings-console-paste-collapse-threshold",
+        "settings-console-max-parallel-runs",
+        "settings-console-tool-result-display-chars",
+        *settings_screen_module.PERMISSION_SUMMARY_FIELD_IDS,
+        *settings_screen_module.CONSOLE_DEFAULT_FIELD_NAMES,
+    )
+    for field_id in field_ids:
+        screen._active_settings_field_id = field_id
+        rows = screen._console_behavior_field_guidance_rows()
+        shown, config_key = screen._split_config_key_row(rows)
+        assert len(shown) == 3, (field_id, shown)
+        assert config_key, field_id
 
 
 @pytest.mark.asyncio
@@ -280,8 +314,9 @@ async def test_console_rail_label_setting_is_searchable_and_has_focused_guidance
         assert "Purpose: Choose the collapsed Console rail label style." in visible
         assert "Consequences: Stacked uses narrower 3-column handles" in visible
         assert "Horizontal uses the established 13- and 11-column handles." in visible
-        assert "Saved as: console." in visible
-        assert "stack_collapsed_rail_labels" in visible
+        saved_as = _console_config_key_saved_as(screen)
+        assert "Saved as: console." in saved_as
+        assert "stack_collapsed_rail_labels" in saved_as
         assert "Applies: After saving, when Console is next opened." in visible
         assert "Save: staged - press s to save, r to revert" in visible
 

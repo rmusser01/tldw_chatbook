@@ -44,8 +44,10 @@ from ...Chat.console_session_settings import (
 )
 from ...config import coerce_bool_setting
 from ...Widgets.Console.console_settings_field_row import (
+    BLANK_CHOICE_PROMPT,
     BLANK_FIELD_HELP,
     CORE_FIELDS,
+    REQUIRED_FIELDS,
     SAMPLING_FIELDS,
     SAMPLING_TITLE,
     hidden_fields_line,
@@ -54,7 +56,6 @@ from ...Widgets.Console.console_settings_field_row import (
 from ..Screens.settings_config_models import SettingsCategoryId
 from ..Screens.settings_screen import (
     CLOSED_ENUM_SELECT_OPTIONS,
-    CONSOLE_BUILT_IN_FALLBACK_FIELDS,
     MODEL_PROFILE_INPUT_PLACEHOLDERS,
     MODEL_PROFILE_SELECT_FIELD_KEYS,
     MODEL_PROFILE_STREAMING_SELECT_OPTIONS,
@@ -92,15 +93,9 @@ _BUILT_IN = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.BUILT_IN]
 #: and their closed Sampling disclosure.
 CONSOLE_FALLBACKS_ID = "settings-console-fallbacks"
 CONSOLE_SAMPLING_ID = "settings-console-sampling"
-#: A blank global-fallback enum: nothing is saved, so the provider decides.
-#: One short word, because the control column is 16 cells.
-NOT_SET_PROMPT = "Not set"
 #: A fallback ``[chat_defaults]`` does not hold shows tldw's own value, which
 #: a provider's table outranks (the default chain's order).
 UNSET_FALLBACK_HELP = "not set here · a provider's own setting comes first"
-#: A cleared Temperature or Top P: Save refuses a blank, so the row says so
-#: and adds the range its placeholder carries.
-REQUIRED_FALLBACK_HELP = "needs a value"
 #: The global fallbacks' Sampling title when no sampler holds a value;
 #: nothing inherits on this surface, so it is not Model defaults' word.
 NO_SAMPLER_SET = "none set"
@@ -579,7 +574,8 @@ def _console_fallback_control(screen: SettingsScreen, name: str) -> Widget:
             id=console_fallback_id(name),
             classes="settings-compact-select",
             allow_blank=True,
-            prompt=NOT_SET_PROMPT,
+            # Chat settings' word for the same state: nothing is sent.
+            prompt=BLANK_CHOICE_PROMPT,
             compact=True,
         )
     return Input(
@@ -658,7 +654,9 @@ def refresh_console_fallbacks(screen: SettingsScreen) -> None:
     (tldw's own Streaming, Temperature or Top P) reads "built-in" and says a
     provider's own setting comes first, as the default chain orders them; a
     blank optional row leaves the choice to the provider. A cleared
-    Temperature or Top P says it needs a value, because Save refuses a blank.
+    Temperature or Top P says it is required, because Save refuses a blank.
+    The Sampling title names only samplers ``[chat_defaults]`` holds or the
+    draft edited, never a built-in value shown at rest.
 
     Args:
         screen: The Settings screen that owns the card.
@@ -678,7 +676,8 @@ def refresh_console_fallbacks(screen: SettingsScreen) -> None:
         name = names[str(control.id)]
         text = control_text(control)
         if name in SAMPLING_FIELDS:
-            shown_sampling[name] = text
+            # A built-in Top P is shown, not set: the title leaves it out.
+            shown_sampling[name] = text if name in held or name in dirty else ""
         word, help_text = row_copy(
             name,
             text,
@@ -686,9 +685,9 @@ def refresh_console_fallbacks(screen: SettingsScreen) -> None:
             (None, _PROVIDER),
             saved_word=_CONSOLE_BEHAVIOR if name in held else _BUILT_IN,
         )
-        if not text and name in CONSOLE_BUILT_IN_FALLBACK_FIELDS:
-            valid = MODEL_PROFILE_INPUT_PLACEHOLDERS.get(draft_key(name))
-            help_text = " · ".join(filter(None, (REQUIRED_FALLBACK_HELP, valid)))
+        if not text and name in REQUIRED_FIELDS:
+            # Chat settings' copy for the same state, with the table's range.
+            help_text = f"Required: {MODEL_CONFIG_FIELDS[name].valid_range}."
         elif word == _BUILT_IN:
             help_text = UNSET_FALLBACK_HELP
         source.update(word)

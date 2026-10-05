@@ -4834,12 +4834,22 @@ only that the word was non-empty, and the live-capture procedure itself wrote
 1. A source word is a claim about one layer. Derive it from that layer's own
    data with the resolver's coercion (`chat_defaults_held_fields`), never from
    "the control shows something": a loader's fallback makes an unset key look
-   saved.
+   saved. Read the value beside it with the same coercion
+   (`chat_defaults_value`). The round-1 fix moved only the word, and the
+   round-2 review measured the split on hand-edited keys: `streaming = 0`
+   read "Off | built-in" while a new chat streamed, and `temperature = 3.0`
+   read "0.7 | Console Behavior" while a new chat got 3.0.
 2. For every config-backed row, write one case with the key absent and compare
    it with the neighbouring surface that reads the same key.
 3. Take the "at rest" capture on the shipped template. List every key the
    capture procedure writes; a written key that the feature displays is a
    hidden fixture.
+4. When copy moves into a closed disclosure, grep the tests for the copy, not
+   only for the ids. `Tests/UI/test_destination_shells.py::_visible_text`
+   checks each Static's own `display`, not a collapsed ancestor, so four
+   tests kept asserting "Saved as: ..." as visible text after it moved into
+   the closed "config key" disclosure (review round 2). Read it inside the
+   disclosure (`_console_config_key_saved_as`).
 
 ## A guard test must be PROVEN to discriminate — twice in one day it wasn't (2026-08-08, tasks 1359/2832)
 
