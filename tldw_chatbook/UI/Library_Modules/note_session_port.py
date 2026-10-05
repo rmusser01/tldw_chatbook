@@ -48,6 +48,10 @@ class _LibraryDatabaseNoteSessionPort:
         #: task-32604: a zero-argument accessor for the app-owned lasting-sync
         #: runtime, or None in a harness that has no runtime at all.
         self._notes_sync_runtime = notes_sync_runtime
+        #: Final review I1: notes whose last save hinted a sync pass that this
+        #: port has not yet waited for. Only a note bound to a synced folder
+        #: is ever in here, so only such a note ever waits.
+        self._sync_pass_hinted: set[str] = set()
 
     @staticmethod
     def _keyword_strings(records: Any) -> tuple[str, ...]:
@@ -178,6 +182,51 @@ class _LibraryDatabaseNoteSessionPort:
             await self._signal_lasting_sync(note_id)
         return reply
 
+    async def settle_before_save(self, note_id: str) -> bool:
+        """Let the sync pass this note's previous save hinted land first.
+
+        Final review I1. The sync executor fences a folder when a note moves
+        on between a pass admitting its ``update_file`` and that write
+        completing, and the folder then syncs in neither direction until the
+        user presses Recovery. TASK-34000.1's max wait made a second save
+        inside that window routine: an autosave fires mid-typing and the
+        session re-saves at once for the keys that landed during it. So a
+        save of a note whose previous save hinted a pass waits for that pass,
+        bounded and shielded (``RESAVE_SYNC_PASS_WAIT_SECONDS``). Past the
+        bound it proceeds, and a hold it causes is visible and healable as
+        before. TASK-34000.51 owns the durable fix in the runtime.
+
+        The session calls this before it reads the draft it is about to save
+        (``DatabaseNoteSessionCoordinator._drive_saves``), so what is saved
+        after the wait is the latest draft, not one the wait made stale.
+
+        Args:
+            note_id: The note about to be saved.
+
+        Returns:
+            Whether this waited. False, without suspending, for a note in no
+            synced folder and for a note whose hinted pass was already waited
+            for: such a save is not delayed at all.
+        """
+        if note_id not in self._sync_pass_hinted:
+            return False
+        self._sync_pass_hinted.discard(note_id)
+        accessor = self._notes_sync_runtime
+        try:
+            runtime = accessor() if callable(accessor) else None
+            # Lazy: only a synced note's re-save ever needs the Notes UI helper.
+            from . import library_notes_sync_attention as sync_attention
+
+            await sync_attention.await_sync_pass(
+                runtime, timeout=sync_attention.RESAVE_SYNC_PASS_WAIT_SECONDS
+            )
+        except Exception as error:  # noqa: BLE001 - a wait never fails the save
+            logger.warning(
+                "Waiting for a lasting-sync pass before a save failed; error_type={}",
+                type(error).__name__,
+            )
+        return True
+
     async def _signal_lasting_sync(self, note_id: str) -> None:
         """Hint the app-owned sync runtime without ever failing the save."""
         accessor = self._notes_sync_runtime
@@ -186,8 +235,10 @@ class _LibraryDatabaseNoteSessionPort:
         try:
             runtime = accessor()
             note_changed = getattr(runtime, "note_changed", None)
-            if callable(note_changed):
-                await note_changed(note_id)
+            if callable(note_changed) and await note_changed(note_id):
+                # A root was hinted: this note is bound, and a pass is on its
+                # way. The next save of it waits for that pass (I1).
+                self._sync_pass_hinted.add(note_id)
         except Exception as error:  # noqa: BLE001 - bounded, metadata only
             logger.warning(
                 "Lasting sync was not signalled for a saved note; error_type={}",

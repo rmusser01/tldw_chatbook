@@ -811,3 +811,42 @@ def test_the_lease_refusal_still_names_the_other_window() -> None:
     assert lasting_state._CHECK_REFUSAL_COPY["root_unavailable"].startswith(
         "That folder can't be read right now. Check that it still exists"
     )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "postcondition_failed",
+        "stale_observation",
+        "operation_needs_attention",
+        "binding_authority_changed",
+        "recovery_authority_changed",
+        "operation_already_completed",
+        "operation_root_mismatch",
+        "file_observation_failed",
+        "root_lease_required",
+        "root_authority_mismatch",
+        "root_direction_changed",
+        "invalid_execution_result",
+        "changed_since_resolution",
+        "undo_expired",
+        "stale_operation_token",
+    ],
+)
+def test_recovery_refusals_read_as_plain_copy_with_a_forward_action(reason: str):
+    """TASK-34000.2 AC#3 (review finding N-02): "Recovery failed — RuntimeError".
+
+    `postcondition_failed` was missing from both tables, so the row fell
+    back to the exception class and sent the reader to a Check that refused
+    the same open entry. Every refusal Recovery can raise now has plain copy
+    and a next action that moves forward -- never back to that loop.
+    """
+    failure, next_action = lasting_state.check_failure_row(
+        RuntimeError(reason), root_id="root-1", verb="Recovery"
+    )
+    assert failure.startswith("Recovery failed — "), failure
+    assert "RuntimeError" not in failure
+    assert reason not in failure
+    assert next_action in {"resolve_cleanup", "sync_now", "reconnect_folder"}
+    assert next_action != "review_changes"
+    assert reason in lasting_state._CHECK_REFUSAL_COPY

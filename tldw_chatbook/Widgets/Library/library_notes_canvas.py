@@ -227,19 +227,50 @@ NOTE_LOCATION_DATABASE_ONLY = "In the Library database only — no file on disk"
 #: for the relationship (Keep a folder synced), not an internal name.
 NOTE_LOCATION_SYNCED_PREFIX = "In a synced folder"
 
+#: The inline delete prompt (task-32268: rendered inside Info, under Delete).
+DELETE_CONFIRM_COPY = "Delete this note? Undo will be available in the Notes list."
+#: TASK-32633 (review finding N-03, third sentence): deleting a note that
+#: lives in a sync folder never touches its file -- lasting sync holds the
+#: folder for review, and in this release only restoring the note resolves
+#: it (TASK-34000.15). Said in the prompt, in plain words, and kept short:
+#: the Info confirm clips at 120x36 (N-10) and every extra line makes it
+#: worse.
+DELETE_CONFIRM_COPY_SYNCED = (
+    "Delete this note? Its file stays on disk; the synced folder waits for "
+    "review until the note is restored. Undo will be available in the Notes list."
+)
+
+
+def delete_confirm_copy(*, synced: bool) -> str:
+    """The delete prompt's sentence for a note in, or not in, a sync folder."""
+
+    return DELETE_CONFIRM_COPY_SYNCED if synced else DELETE_CONFIRM_COPY
+
+#: TASK-34000.2: said right after the world when the note's sync folder is
+#: held for attention -- nothing typed here reaches the file until it is
+#: resolved, so it outranks the path and the write time for the row's cells.
+NOTE_LOCATION_ATTENTION = "⚠ Sync needs attention"
+#: TASK-34000.2: the Notes list's idle status while any sync folder is held,
+#: and the control that resolves it (the list toolbar's own button label).
+SYNC_ATTENTION_LIST_STATUS = "⚠ A sync folder needs attention"
+SYNC_ATTENTION_NEXT_ACTION = "Open Manage sync folders."
+
 #: Below this many cells for the path, the write time is dropped to buy the
 #: path room. Eight cells is "…/x.md" plus an ellipsis -- less than that and
 #: the path is noise either way.
 _NOTE_LOCATION_PATH_FLOOR = 8
 
 
-def library_note_location_line(path: str, written: str, width: int) -> str:
+def library_note_location_line(
+    path: str, written: str, width: int, *, attention: bool = False
+) -> str:
     """Answer "where does this note live?" in one row (task-32640).
 
     The rule, in the order a reader can predict it: the world is stated
-    first and is never shortened; the path follows, middle-elided so its
-    filename survives; the write time follows that, and is the first thing
-    dropped when the row runs out of cells.
+    first and is never shortened; a held sync folder is said next and is
+    never shortened either (TASK-34000.2); the path follows, middle-elided
+    so its filename survives; the write time follows that, and is the first
+    thing dropped when the row runs out of cells.
 
     Args:
         path: The bound file's absolute path, or ``""`` for a note that
@@ -249,27 +280,27 @@ def library_note_location_line(path: str, written: str, width: int) -> str:
         width: Cells the row has. ``0`` or less means "not measured yet",
             where nothing is elided -- the Static's own overflow handling
             is a better answer than a guessed width.
+        attention: Whether the file's sync folder is held for attention.
 
     Returns:
         The single line to render.
     """
     if not path:
         return NOTE_LOCATION_DATABASE_ONLY
+    world = NOTE_LOCATION_SYNCED_PREFIX
+    if attention:
+        world = f"{world} · {NOTE_LOCATION_ATTENTION}"
     written_clause = f"file written {written}" if written else ""
     if width <= 0:
-        return " · ".join(
-            part for part in (NOTE_LOCATION_SYNCED_PREFIX, path, written_clause) if part
-        )
-    fixed = len(NOTE_LOCATION_SYNCED_PREFIX) + 3
+        return " · ".join(part for part in (world, path, written_clause) if part)
+    fixed = len(world) + 3
     budget = width - fixed - (len(written_clause) + 3 if written_clause else 0)
     if budget < _NOTE_LOCATION_PATH_FLOOR and written_clause:
         written_clause = ""
         budget = width - fixed
     budget = max(budget, _NOTE_LOCATION_PATH_FLOOR)
     shown = elide_path_middle(path, budget=budget)
-    return " · ".join(
-        part for part in (NOTE_LOCATION_SYNCED_PREFIX, shown, written_clause) if part
-    )
+    return " · ".join(part for part in (world, shown, written_clause) if part)
 
 
 def library_note_property_block(
@@ -855,6 +886,10 @@ class LibraryNotePresentationState:
     #: task-32640: when that file was last written, as the filesystem
     #: reports it, or ``""`` (no file, or it could not be read).
     location_written: str = ""
+    #: TASK-34000.2: whether that file's sync folder is held for attention
+    #: (an open entry, a conflict, a failed pass) -- the location row and the
+    #: status line then say so instead of a plain "Saved".
+    location_attention: bool = False
     region: Literal["editor", "context"] = "editor"
     presentation: Literal["edit", "preview"] = "edit"
     compact: bool = False
@@ -1046,7 +1081,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         #: task-32640: the last (path, written) the controller resolved for
         #: the open note, so a resize can re-state the location row without
         #: another binding read.
-        self._note_location: tuple[str, str] = ("", "")
+        self._note_location: tuple[str, str, bool] = ("", "", False)
         self._tree_focus_intent_generation: Callable[[], int] | None = None
         self.add_class("w-fill")
         self.styles.min_width = 40
@@ -1280,8 +1315,23 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 next_action = "Start typing."
             else:
                 next_action = "Keep editing; changes save automatically."
+            # TASK-34000.2: a held sync folder outranks any healthy wording. A
+            # plain "Saved" over "In a synced folder" told a user typing into a
+            # wedged folder that the file had it; it has the Notes copy only.
+            attention = (
+                NOTE_LOCATION_ATTENTION
+                if state.location_attention
+                and state.location_path
+                and not state.conflict
+                else ""
+            )
+            if attention:
+                status = f"{status} in Notes" if status.startswith("Saved") else status
+                if next_action:
+                    next_action = SYNC_ATTENTION_NEXT_ACTION
             return line(
                 f"{status}{transfer}",
+                attention,
                 f"Next: {next_action}" if next_action else "",
             )
         if self.mode == "create":
@@ -1325,7 +1375,16 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         state = self.list_state
         status = state.operation_status if state is not None else ""
         running = state is not None and state.operation_running
-        status = status or ("Updating notes…" if running else "Ready")
+        # TASK-34000.2: "Ready" over a held sync folder was the finding's own
+        # lie; the held folder outranks the idle wording (never an operation's).
+        held = not status and not running and state is not None and state.sync_attention
+        status = status or (
+            "Updating notes…"
+            if running
+            else SYNC_ATTENTION_LIST_STATUS
+            if held
+            else "Ready"
+        )
         # task-32616 AC#3: measured at dev 3b26c66ce0, both panes carried a
         # "Next:" at once and they disagreed -- this pane's "Create a note or
         # add from files." beside the work pane's "Start typing." for the
@@ -1340,7 +1399,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # step, and it becomes "Keep editing" as soon as the body has words.
         note_open = state is not None and state.note_open
         next_action = (
-            "" if running or note_open else "Create a note or add from files."
+            ""
+            if running or note_open
+            else SYNC_ATTENTION_NEXT_ACTION
+            if held
+            else "Create a note or add from files."
         )
         return line(status, f"Next: {next_action}" if next_action else "")
 
@@ -2804,6 +2867,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 presentation_state.location_path,
                 presentation_state.location_written,
                 self._effective_pane_width(),
+                attention=presentation_state.location_attention,
             ),
             id="library-note-location",
             markup=False,
@@ -3100,7 +3164,7 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Mount the delete prompt where task-32268 requires it: in Danger."""
         with Vertical(id="library-note-delete-confirmation"):
             yield Static(
-                "Delete this note? Undo will be available in the Notes list.",
+                delete_confirm_copy(synced=False),
                 id="library-note-delete-confirm-copy",
                 markup=False,
             )
@@ -3458,7 +3522,11 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # task-32143 AC#2: was a two-selector loop -- the second home,
         # `#library-note-meta`, was never displayed. One meta line now.
         # task-32640: kept current from the state, not from the note record.
-        self._note_location = (state.location_path, state.location_written)
+        self._note_location = (
+            state.location_path,
+            state.location_written,
+            state.location_attention,
+        )
         self._restate_note_location()
         context_meta = self.query_one("#library-note-context-meta", Static)
         meta_copy = library_note_property_block(
@@ -3546,6 +3614,13 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         self.query_one("#library-note-wide-utilities").display = False
         self.query_one("#library-note-conflict-region").display = conflict
         self.query_one("#library-note-delete-confirmation").display = confirming_delete
+        if confirming_delete:
+            # TASK-32633 (N-03): a synced note's delete says what happens to
+            # its file, read from the same live location the row states.
+            confirm_copy = self.query_one("#library-note-delete-confirm-copy", Static)
+            wanted = delete_confirm_copy(synced=bool(state.location_path))
+            if self._static_text(confirm_copy) != wanted:
+                confirm_copy.update(wanted)
 
         locked = confirming_delete or state.destructive_running or bulk_read_only
         # task-32106 (PR #2571 re-review, NEW-2): DISABLED, not read-only,
@@ -3727,8 +3802,10 @@ class LibraryNotesCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             row.display = True
         if not row.display:
             return
-        path, written = self._note_location
-        copy = library_note_location_line(path, written, self._effective_pane_width())
+        path, written, attention = self._note_location
+        copy = library_note_location_line(
+            path, written, self._effective_pane_width(), attention=attention
+        )
         if self._static_text(row) != copy:
             row.update(copy)
 

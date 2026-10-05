@@ -1,0 +1,27 @@
+16:04:55 start note=v1 len=74 root=up_to_date ops=[] file=74B
+16:05:01 key 40 note=v1 len=74 root=up_to_date ops=[] file=74B
+16:05:07 key 80 note=v2 len=141 root=up_to_date ops=[] file=142B
+16:05:13 key 120 note=v2 len=141 root=up_to_date ops=[] file=142B
+16:05:19 key 160 note=v4 len=211 root=up_to_date ops=[] file=212B
+16:05:26 key 200 note=v4 len=211 root=up_to_date ops=[] file=212B
+16:05:32 key 240 note=v6 len=280 root=up_to_date ops=[] file=281B
+16:05:38 key 280 note=v8 len=350 root=up_to_date ops=[] file=351B
+16:05:44 key 320 note=v8 len=350 root=up_to_date ops=[] file=351B
+16:05:50 key 360 note=v10 len=418 root=up_to_date ops=[] file=419B
+16:05:56 key 400 note=v10 len=418 root=up_to_date ops=[] file=419B
+typed 404 keys in 62 s
+16:05:59 stopped+2s note=v11 len=478 root=up_to_date ops=[] file=479B
+16:06:01 stopped+4s note=v11 len=478 root=up_to_date ops=[] file=479B
+16:06:03 stopped+6s note=v11 len=478 root=up_to_date ops=[] file=479B
+16:06:05 stopped+8s note=v11 len=478 root=up_to_date ops=[] file=479B
+after typing: file == note + final newline (byte for byte, 479 B)
+operations: update_file:completed, update_file:completed, update_file:completed, update_file:completed, update_file:completed, update_file:completed, update_file:completed, update_file:completed, update_file:completed, update_file:completed
+7:│   N  ┌──────────────────────────────────────────────────────────────┐  N  Saved 16:05 · Next: Keep editing; changes save automatically.                      │
+11:│      │ that live in a folder on disk, switch to Folder files. To    │  s   In a synced folder · /private/tmp/claude-501/-U…quotes.md                         │
+33:│      │  ▾ VSync  ⇄ Sync managed                                     │     ┃ quick brown fox jumps over the lazy dog the quick brown fox jumps over the     ┃ │
+--- I4 live: type a tail, Ctrl+Q at once
+16:06:23
+app exited after ~1s
+at exit: note=v12 tail= quit-tail root= file == note + final newline (byte for byte, 489 B)
+log: tracebacks=0 ZeroDivision=0 app_stopping=2 warn/err=0
+after exit (re-read): root=up_to_date incomplete=0 operations=11

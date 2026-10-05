@@ -1,0 +1,53 @@
+Final whole-branch review fixes (TASK-34000 wave 1a) -- live evidence
+Isolated harness, 160x45, 2026-10-04 (local clock), golden profile.
+Code: worktree task-34000-wave1 (APP_WT), fix wave on top of ec7b35a1a1. tmux socket w1-ff-1.
+Production autosave timings: 2 s debounce, 10 s max wait. Nothing was patched.
+Captures (.txt / .ansi) are the screen at each step; this file is the database and the disk.
+
+==== C1, route 2: Keep editing after a refused quit (note "Ideas inbox", not synced)
+  before                                   notes row: v1, 154 chars
+  16:01:20  title + trailing space, Ctrl+Q inside the debounce
+            prompt 'Quit and discard unsaved changes to "Ideas inbox"?'  (c1-01)
+            row unchanged: v1, 154 chars
+  16:01:21 -> 16:01:33  the prompt stays up 12 s, past the 10 s max wait
+  16:01:33  Enter (Keep editing); status "Title begins or ends with whitespace -- remove it to save."
+  16:01:47  title fixed (Backspace), " c1route2" typed in the body, hands off
+            +1 s  v2, 154 chars        the fixed draft saved at once
+            +3 s  v3, 163 chars, ends " c1route2"
+            status "Saved 16:01"  (c1-02)
+  On ec7b35a1a1 the same steps leave the row at v1 and the status at "Unsaved changes".
+
+==== C1, route 3: a rail switch away and back
+  16:02:19  "x" typed in the body, rail -> Media inside the debounce  (c1-03)
+            row unchanged: v3, 163 chars (the dirty note session is retained, unsaved)
+            then rail -> Prompts; away from Notes for 38 s in all
+  16:02:57  rail -> Notes, no key pressed
+            +2 s  v4, 164 chars, ends "c1route2x"   the retained draft saved on its own  (c1-04)
+  16:03:15  "yz" typed, hands off
+            +3 s  v5, 166 chars, ends "c1route2xyz"; status "Saved 16:03"  (c1-05)
+  Ctrl+Q: exits with no prompt.
+
+==== I1: steady typing in a synced note (root "VSync" <-> <run>-vault/quotes.md, seeded, 74 bytes)
+  404 keys in 62 s (one key about every 0.15 s). Samples are in i1-typing-60s-samples.txt:
+    note v1 -> v11 (10 autosaves: nine while typing, one after it stopped)
+    notes_sync_roots.last_status_code = up_to_date at every sample
+    notes_sync_operations not completed: none at any sample
+    the file followed each save (note length + 1 for the final newline)
+  8 s after typing stopped: note v11, 478 chars; file 479 bytes == the note + its final newline,
+  byte for byte. notes_sync_operations: 10 x update_file | completed, nothing else.
+  Screen: tree "VSync  <-> Sync managed", editor "Saved 16:05", "In a synced folder"  (i1-03)
+
+==== I4: Ctrl+Q right after typing in the synced note
+  16:06:23  " quit-tail" typed, Ctrl+Q 0.4 s later, inside the debounce
+            the app exited about 1 s later, with no prompt
+  at exit   note v12, ends " quit-tail"; file 489 bytes == the note + its final newline
+            root up_to_date; 11 operations, all completed
+  relaunch (REUSE=1, same data): list "Library notes - Ready", tree "VSync  <-> Sync managed";
+            root up_to_date, 0 open operations, the file's md5 unchanged by the relaunch  (i4-01)
+
+==== Run log, all three launches of this run
+  0 Tracebacks, 0 ZeroDivisionError, 0 ERROR / WARNING lines, 3 app_stopping records
+  (one per deliberate Ctrl+Q). 0 references to the real ~/.config or ~/.local.
+  No harness process left after kill-server; the real-profile snapshot is identical before and after.
+  The vault sits beside the run directory, not under its HOME (private_path_overlap; see the
+  TASK-32633 slice evidence).

@@ -82,10 +82,14 @@ Tests/UI/test_library_conversation_reader_freshness.py
 Tests/UI/test_library_export_cancel.py
 Tests/UI/test_library_export_destination_validation.py
 Tests/UI/test_library_export_progress_apply.py
+Tests/UI/test_library_export_replace_confirm.py
 Tests/UI/test_library_footer_focus.py
 Tests/UI/test_library_grip_capture.py
+Tests/UI/test_library_notes_sync_attention.py
+Tests/UI/test_library_notes_sync_delete_restore.py
 Tests/UI/test_library_notes_work_session.py
 Tests/UI/test_library_prompt_history_controller.py
+Tests/UI/test_library_quit_guard.py
 Tests/UI/test_library_rag_legacy_chunk_report.py
 Tests/UI/test_library_reader_console_delete_refresh.py
 Tests/UI/test_library_url_ingest_submit.py
@@ -138,3 +142,7 @@ Tests/UI/test_speech_settings_save_equivalence.py
 
 # TASK-33003.20: production batch geometry, isolated profile and shipping CSS.
 Tests/UI/test_approval_batch_geometry.py
+
+# TASK-34000 wave 1a final review (C1): autosave after its burst's max wait ran
+# out. Appended, so no other file changes shard.
+Tests/UI/test_library_note_autosave_recovers.py

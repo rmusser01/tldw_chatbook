@@ -18574,3 +18574,31 @@ cold-composite check then reproduces two opens in four other operations despite
 the same lazy outer scope (`workspace-cold-composite-native-red-1`). Distinguish
 ownership bookkeeping, real connection admission and physical retirement; prove
 the exact native work count rather than inferring grouping from nested contexts.
+
+## A `git archive` baseline is not a checkout: git-reading tests switch branches there
+
+**TASK-34000.1, 2026-10-03.** Pairing architecture failures against a
+`git archive HEAD` export of the base, two
+`test_persistent_diagnostic_inventory.py` cases
+(`test_task_15743_reviewed_delta_is_complete`,
+`..._exception_types_survive_loguru_forwarding`) passed on "base" and failed on
+the branch. That looked like a regression, but both name Console files the
+branch never touched. Each test branches on `_task_15743_archaeology_available()`.
+In the worktree, the pinned commits resolve and the test diffs them with
+`git diff`. In the export there is no `.git`, so it takes the current-source
+fallback, which is a different assertion. The comparison was between two
+different tests, not between base and branch.
+
+**What to do.** Before you read a base-pass/branch-fail split from an export as
+your regression, grep the test for `subprocess`/`git`. If it shells out to git,
+the export cannot pair it. Check instead whether the failure names only files
+your branch leaves alone: compare its message against
+`git diff --name-only $(git merge-base HEAD origin/dev)..HEAD`. If it does,
+record that unchanged source scope; it alone does not establish a baseline.
+Use an equivalent Git-enabled base, or prove the historical predicate and its
+inputs are unchanged, before calling the failure pre-existing. Changed callers,
+imports or runtime ordering can fail an unchanged test. Say how you established it.
+Related, from the same session: on macOS `/bin/bash` 3.2 has no `mapfile`, and
+node ids that contain spaces (`[...-Q3 retro.md]`) split under `$(cat list)`.
+Both produced "no tests ran" on the base arm. Drive node lists through a tiny
+Python `subprocess.run([... *nodes])` runner instead.

@@ -3704,12 +3704,12 @@ class LibraryPromptsController:
             ).rstrip()
             or "prompt"
         )
-        default_filename = f"{safe_name}.md"
+        from .library_file_export import library_export_picker_location  # lazy, TASK-34000.3
         await self.app.push_screen(
             FileSave(
-                location=str(Path.home()),
+                location=library_export_picker_location(self.app),
                 title="Export Prompt as Markdown",
-                default_file=default_filename,
+                default_file=f"{safe_name}.md",
             ),
             callback=lambda path: self.call_after_refresh(
                 self._write_library_prompt_export_file,

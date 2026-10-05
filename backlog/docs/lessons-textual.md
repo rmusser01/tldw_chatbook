@@ -229,6 +229,25 @@ delay, branch on `> 0` rather than trusting whoever edits it next, and keep a te
 the zero case still schedules. And when a perf arm comes back looking free, check that
 the thing you were measuring actually ran before you believe it.
 
+**It recurred: TASK-34000.1, found by the whole-branch review on 2026-10-04.** The
+Library note autosave got a maximum wait, and its delay was computed as
+`max(0.0, min(debounce, burst_start + max_wait - now))`. No constant was zero, so nothing
+looked like this entry; the zero appeared only once a burst outlived its max wait (a quit
+prompt held open, a rail switch away and back, or a key landing between the deadline and
+the callback). The timer callback was also the only thing that ended a burst, so every
+later keystroke armed another dead timer: autosave stopped for good under a header that
+still said "changes save automatically", and stopping the app raised
+`ZeroDivisionError`. The unit test asserted `delays[9] == 0.0`, with the comment "saves
+at once", against a fake `set_timer` that recorded the delay and never ran a timer, and
+it passed the task's own reviews.
+
+**What to do, in addition.** A *computed* delay is the same trap as a zero constant:
+clamp it to a small positive floor where it is computed (`AUTOSAVE_MIN_DELAY_SECONDS`,
+0.05 s), not at the call. A fake `set_timer` cannot tell a delay that fires from one that
+never will, so at least one test must arm the worst-case delay on a real message pump
+(`App().run_test()`, a dozen lines) and assert that the callback ran and that leaving
+`run_test()` did not raise.
+
 ---
 
 ## Monkeypatching an `@on`-decorated handler on the class does not patch it

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes ┌─ Export Note as Markdown ────────────────────────────────────────────────────────────────────────────────────────────────────┐
+┌───────────────│ /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/9a6612d8-88a3-469a-a5da-1307bdff44b8/scratchpad/n… │───────────────┐
+│   N  ┌────────│                                                                                                                              │               │
+│   a  │ Library│                                                                                                                              │               │
+│   v  │ Notes (│   /   / …   w1-t3-1   /   home   /   exp                                                                                     │               │
+│      │ These n│                                                                                                                              │               │
+│      │ that li│                                                                                                                              │               │
+│      │ copy or│      Name                                                                                       Size            Modified     │               │
+│      │        │ Sort Discovery order                                           ▼ Ascending                                                 ▼ │       Use in  │
+│      │ Filter │Loaded · 2 entries                                                                                                            │               │
+│      │ ▊▔▔▔▔▔▔│                                                                                                                              │─────────────┐ │
+│      │ ▊ Filte│   📁 ..                                                                                                                —     │             │ │
+│      │ ▊▁▁▁▁▁▁│   📄 precious.md                                                                               780 B    2026-10-03 18:57     │             │ │
+│      │        │   📄 Weekly review coach.md                                                                     21 B    2026-10-03 18:51     │▔▔▔▔▔▔▔▔▔▔▔▔▎│ │
+│      │    New │                                                                                                                              │            ▎│ │
+│ ---> │    Add │                                                                                                                              │▁▁▁▁▁▁▁▁▁▁▁▁▎│ │
+│      │ Folders│                                                                                                                              │             │ │
+│      │    New │                                                                                                                              │             │ │
+│      │    ○ Re│                                                                                                                              │             │ │
+│      │        │                                                                                                                              │             │ │
+│      │        │                                                                                                                              │             │ │
+│      │  ▸ Agen│                                                                                                                              │             │ │
+│      │  ▸ Jour│                                                                                                                              │             │ │
+│      │  ▸ Meet│                                                                                                                              │             │ │
+│      │  ▸ Proj│                                                                                                                              │             │ │
+│ ---> │  ▸ Reci│                                                                                                                              │             │ │
+│      │  ▸ Rese│                                                                                                                              │             │ │
+│      │  ▸ Stud│                                                                                                                              │             │ │
+│      │  ▾ Unfi│                                                                                                                              │             │ │
+│      │    Idea│                                                                                                                              │             │ │
+│      │    Read│File name: ┌──────────────────────────────────────────────────────────────────────────────┐       Save            Cancel      │             │ │
+│      │    Inde│           │  Index  start here.md                                                        │                                   │             │ │
+│      │    Meet│           └──────────────────────────────────────────────────────────────────────────────┘                                   │             │ │
+│      │    Gard│                                                                                 ╭──────────────────────────────────────────────────────────╮ │
+│      │    📚 R└─────────────────────────────────────────────────────────────────────────────────│                                                          │ │
+│      │    A very long note title that keeps going so we can test …  │     │                     │ Note exported successfully to ~/exp/precious.md          │ │
+│      │    Daily log 2026-09-21 · 1w                                 │     │                     │                                                          │ │
+│      │    Daily log 2026-09-20 · 1w                                 │     └─────────────────────╰──────────────────────────────────────────────────────────╯ │
+│      └──────────────────────────────────────────────────────────────┘     Export…                                                                            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ esc Cancel  ^l Edit path directly  ^f Search in directory  ^h Toggle hidden files  f5 Refresh directory  ^r Show recent locations  ^s Select this folder

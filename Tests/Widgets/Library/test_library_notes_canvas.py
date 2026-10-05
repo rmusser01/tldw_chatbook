@@ -1259,3 +1259,70 @@ async def test_source_empty_with_loading_root_slices_suppresses_empty_line(
             "#library-notes-pager-folders-root", Button
         )
         assert "Loading" in str(pager.label)
+
+
+# -- TASK-34000.2 (review finding N-02): a held sync folder outranks "Ready"/"Saved".
+
+
+async def test_list_status_names_a_held_sync_folder_instead_of_ready(
+    widget_pilot,  # noqa: F811
+):
+    """The list's idle "Ready" was the finding's own lie over a wedged folder.
+
+    A held folder replaces the idle wording and its next action names the
+    control that resolves it; a running operation's own status still wins.
+    """
+    held = replace(_list_state(), sync_attention=True)
+    async with await widget_pilot(LibraryNotesCanvas, list_state=held) as pilot:
+        await pilot.pause()
+        authority = pilot.app.query_one("#library-notes-authority", Static)
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text == (
+            "Library notes · ⚠ A sync folder needs attention · "
+            "Next: Open Manage sync folders."
+        )
+        assert "Ready" not in text
+
+    running = replace(held, operation_running=True, operation_status="")
+    async with await widget_pilot(LibraryNotesCanvas, list_state=running) as pilot:
+        await pilot.pause()
+        authority = pilot.app.query_one("#library-notes-authority", Static)
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert text == "Library notes · Updating notes…"
+
+
+async def test_editor_status_says_a_held_sync_folder_needs_attention(
+    widget_pilot,  # noqa: F811
+):
+    """"Saved · Next: Keep editing" over a held folder told the user the file
+    had the text; it has the Notes copy only. The held state is said, the
+    save is scoped to Notes, and the next action names the resolving control.
+    A note with no file, or an unheld folder, keeps the healthy wording.
+    """
+    held = replace(
+        _editor_state(),
+        location_path="/vault/quotes.md",
+        location_written="2026-10-03 13:49",
+        location_attention=True,
+    )
+    async with await widget_pilot(
+        LibraryNotesCanvas, mode="editor", presentation_state=held
+    ) as pilot:
+        await pilot.pause()
+        canvas = pilot.app.query_one(LibraryNotesCanvas)
+        authority = canvas.query_one("#library-notes-authority", Static)
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert "Saved in Notes" in text, text
+        assert "⚠ Sync needs attention" in text, text
+        assert "Next: Open Manage sync folders." in text, text
+        assert "Keep editing" not in text, text
+
+        canvas.apply_session_state(replace(held, location_attention=False))
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert "needs attention" not in text, text
+        assert "Next: Keep editing; changes save automatically." in text, text
+
+        # No file: the flag is meaningless and must not paint a warning.
+        canvas.apply_session_state(replace(held, location_path=""))
+        text = getattr(authority.renderable, "plain", str(authority.renderable))
+        assert "needs attention" not in text, text
