@@ -46,11 +46,11 @@ import pytest
 
 pytestmark = pytest.mark.bootstrap_profile
 
+from Tests.UI.app_factory import _build_test_app
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
 )
-from Tests.UI.app_factory import _build_test_app
 from Tests.UI.console_fixture_ownership import (  # explicit pytest fixture export
     owned_console_apps as owned_console_apps,  # noqa: PLC0414
 )
@@ -73,17 +73,15 @@ from tldw_chatbook.Chat.console_switcher_state import (
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
-from tldw_chatbook.Widgets.Console.console_rename_session_modal import (
-    ConsoleRenameSessionModal,
-)
 from tldw_chatbook.Widgets.Console.console_fork_chat_modal import (
     ConsoleForkChatModal,
+)
+from tldw_chatbook.Widgets.Console.console_rename_session_modal import (
+    ConsoleRenameSessionModal,
 )
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSwitcherChoice,
 )
-
-pytestmark = pytest.mark.bootstrap_profile
 
 
 @pytest.mark.asyncio

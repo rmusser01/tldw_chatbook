@@ -1308,3 +1308,50 @@ Fresh clean-source shutdown evidence remains pending. Neither these tests nor
 fixture cleanup proves all app/process caches closed, latency qualification,
 native input/geometry, Windows or participant usability. All corresponding
 workstream gates remain open; no final follow-up PR is ready yet.
+
+### Latest-dev integration and unread-owner shutdown checkpoint — 2026-10-05
+
+All twenty task-owned commits were rebased from dev `3146bbd8da2f` onto
+`74557e202ac38c6d29510d0940a062ca7cc7f38b`. Eighteen patches replay unchanged.
+The rename patch retains upstream project-state validation, fork admission and
+all resume-controller arguments alongside its title fences and rename delegate.
+The fixture patch keeps upstream's explicit stale-model setup. Independent
+read-only review finds no actionable conflict-resolution issue.
+
+Clean combined source `78345fc75e7e5cd3bc521f161053ca51d31629af` passes the
+affected rename/controller/unread/finite-owner batch: **267 passed in 413.28s**,
+process exit zero. Parent and actual child logs contain no pytest warnings.
+Seventeen census reports retain 283 observations, none with database files.
+All eleven artifact guards pass. Raw receipts:
+`/tmp/switcher-rebase-74557-VeyPxU/tests.log`, private child logs under its
+`pytest` directory and `preflight.log`. A duplicated bootstrap marker from the
+replay is subsequently removed, and inherited import ordering is normalized;
+production code is unchanged by this mechanical test cleanup.
+
+The installed guarded 30-conversation/60-message/28-card fixture is freshly
+prepared for that clean head. Corpus digest:
+`390de49d79688f88b682f2a2942aa07428e453f68cbbfbc89b47f89005d1f666`;
+preparation retires every registered handle. The unchanged weak-key origin
+observer (digest `c31e69b6519d76c56d144e4f891ad62305ccdd1f3ccc5de480dbd4bfa3652fc7`)
+performs actual headless quit and joins the default executor. Return code is
+zero; source/corpus guards hold; 131 distinct registrations, zero dropped.
+After runner join, **13 native-open connections and 39 database descriptors
+remain**, with zero active storage operations or pending acquisitions.
+
+Eight retained Chat worker handles originate from two world-book summaries,
+three cached RAG metadata reads, two annotation reads and one citation-count
+read. No retained handle originates from the corrected unread readers. Five
+main-thread constructor owners remain: shared Chat/citation context, Evals,
+Library collections, Subscriptions and Workspaces. All eight worker threads
+have exited; the separate theme executor is still live. This does not prove
+every application producer has stopped or justify blanket owner closure.
+Because upstream changed before this run, total counts are **not** a controlled
+same-source improvement over the old ten-connection trace. The narrow unit
+RED/GREEN remains the unread correction's causal evidence.
+
+Raw source-bound artifacts: `/tmp/task31966-marks-shutdown-7SGQDg/prepared`
+and `headless/owner-shutdown-diagnostic.json`, `headless/native-return.json`,
+with the invocation logs alongside. The shutdown observer ran separately from
+latency measurement; another interpreter was running targeted tests, so this is
+resource-identity evidence, not a timing measurement. Native, latency, Windows,
+participant and terminal app-cache qualification remain open.
