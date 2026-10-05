@@ -17239,10 +17239,28 @@ class ConsoleChatController:
             }
 
         async def start():
-            if self.store.library_policy_coordinator is not None:
-                await self.store.library_policy_coordinator.capture_for_execution(
+            from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+
+            store, coordinator = self.store, self._chat_start
+
+            def require_current() -> None:
+                if (
+                    self.store is not store
+                    or self._chat_start is not coordinator
+                    or self._owner_loop is not loop
+                    or store._sessions.get(target.id) is not target
+                ):
+                    raise RecoveryRequired("console_snapshot_owner_changed")
+
+            require_current()
+            if store.library_policy_coordinator is not None:
+                await store.library_policy_coordinator.capture_for_execution(
                     target.id
                 )
+            require_current()
+            approved_workspace_id = (
+                approved["workspace_id"] or CONSOLE_GLOBAL_WORKSPACE_ID
+            )
             request = AgentChatStartRequest(
                 str(uuid4()),
                 approved["source_run_id"],
@@ -17254,10 +17272,11 @@ class ConsoleChatController:
                 target.agent_handoff_revision,
                 self.store.conversation_context_epoch(target.id),
                 approved["opening_prompt"],
-                self.resolve_turn_configuration_snapshot(target.id),
-                approved["workspace_id"] or CONSOLE_GLOBAL_WORKSPACE_ID,
+                await self.capture_turn_configuration_snapshot(target.id),
+                approved_workspace_id,
             )
-            return await self._chat_start.start(request)
+            require_current()
+            return await coordinator.start(request)
 
         outcome = asyncio.run_coroutine_threadsafe(start(), loop).result()
         return {"launch_status": outcome.launch_status, "reason": outcome.reason}

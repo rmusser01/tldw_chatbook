@@ -1299,3 +1299,36 @@ Preparation is Evidence-only. Root may install/execute the ready test draft seri
 
 Merged native leaf19/source-stable:16PASS3FAIL1deselected71.97pytest78.938driver. All7 passive probe controls pass, retaining actual stock bundle/identities and independent original acquisition/native counts. Startup mechanism/custom-before/custom-after/all-configured positive routes pass; original stock intendedRED records1320Nativeopens/6checks/threeactualgetters/cohorts and sixfinalcensuszeros. Maintenance active/timeout fail the original gathered-result assertion after controlled retrieval; merged fixture advertises old refresh_if_scope_changed while real sync calls refresh_presentation_if_scope_changed. Correct only that fixture name and rerun allsixoriginalscenarios; no guard/wait/assertion modification. ADR required:no; existing lifecycle applies.
 Merged maintenance fixture minimal rename GREEN: all6originalscenarios pass31.141driver/fullsourceStable; assertions, controlled retrieval barrier, original pause/drain and cleanup unchanged. Passive whole observer retains original production callables and aliases, captures attempts at original local START, normal timings at supported returns/context yields, explicit exception gaps, original sampler/audit/heartbeat and budgets. All7actualnativeleaf controls pass on latestdev integration; pure18code/masks/global0/hook-retirement controls and AST conservation pass. Next run the original committed whole probe without startup candidate production changes; retain all3sends/traces and original budgets. The original49config compatibility baseline exactdev74557 retains15PASS34FAIL23.49pytest31.5driver; failednode sets exactly match earliercurrent, unsupported saved owner launcher excluded before valid actual rerun.
+
+
+# Automatic created-chat capture: integration proposal
+
+Evidence-only draft. Register this amendment before installing production or test changes. Native RED/GREEN and complete merged-source acceptance remain root-owned and pending.
+
+## Acceptance criteria addition (TASK-34403 / TASK-34406)
+
+- An approved automatic created-chat start reads original stock MCP configuration sources off the Console owner loop, composes the detached snapshot on that loop, and preserves the original approved destination and source fields.
+- Replacing the exact target, store or start coordinator during preparation refuses before coordinator admission. Stock snapshot owner/source/settings changes retain their existing refusal; all actual native readers retire normally.
+- A handoff edit, including changing it and restoring the opening text, or a context-epoch change during MCP preparation does not replace the request's original revision/epoch. The unchanged coordinator refuses it before automatic claims, attempts, provider calls or accepted transcript nodes.
+- Preserve the original library-capture destination cases, prepared-close/ticket guards and initial-start cleanup controls without changing their assertions, deadlines or source readers.
+
+## Bounded implementation plan
+
+1. Install the focused test module first and obtain a genuine RED for the actual original source read on the owning loop. Keep all stock reader and async snapshot guards installed; observe original read code via the existing source-bound probe.
+2. Keep request configuration capture at its original argument position and use the supported async snapshot API. Capture the approved workspace before that await. Pin exact store/start-coordinator/target ownership around the existing library capture and the new configuration await; propagate the established snapshot-owner refusal before coordinator admission.
+3. Qualify actual reader thread placement and owner-drift negatives. Retain fresh immutable request fields through edit/ABA/context interleavings. Existing coordinator checks and durable outcomes remain unchanged.
+4. Run both original `test_created_start_keeps_approved_destination_during_library_capture` cases, prepared exact-runtime/destination cases, prepared decision/close cases, and initial identity failure/cleanup cases. Whole-source native performance and original App journeys remain separate obligations.
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md and the existing automatic-chat-start ADR/plan.
+Reason: extend the already supported async stock-source snapshot preparation to one newly merged entry point. No authority, destination, persistence, budget, retry, scheduling or cleanup contract is added.
+
+## Qualification limits
+
+The native fixture draft captures the coordinator boundary to prevent App/provider work while preserving the actual production `_start_created_chat` and stock MCP reader/snapshot code. It does not qualify full coordinator admission or durable cleanup; the original native-start tests cover those contracts. The tiny pure draft qualifier executes the exact parsed method body with explicit in-memory boundary doubles and compares baseline, unsafe reordered and final draft behavior. It provides no native storage, SQL, permission or App performance evidence.
+
+### Automatic created-chat native qualification (2026-10-05)
+
+The unchanged automatic-created route reached the actual original MCP store and permission-reader bodies on the Console owner loop. The focused native baseline was 12 failures in 95.566 seconds, with all managed source hashes unchanged; held interleavings failed at that positive worker-placement requirement before any ownership inference. The equal-target replacement case separately reproduced missing refusal. After using the existing async snapshot API at the original request argument position and retaining exact store/coordinator/loop/target ownership, all 12 focused cases passed in 78.27 seconds (84.719-second driver), including actual native read cancellation retirement. The 20 original approved-destination, initial admission, prepared close, repeated cancellation and post-drain cleanup cases passed in 27.846 seconds (33.844-second driver), source-stable. No original timeout, request revision, context epoch, provider admission or durable cleanup assertion changed.
+
+Startup path-selection v2 native baseline is 9 passes and 5 failures in49.659seconds, source-stable. Persisted actual receipts show1320Native facade entries/3source operations for independent getters and the installed builder, versus777entries/1operation under the existing finite config operation. All three original getter/user-directory bodies remain observed. Custom, borrowed and changed-default aliases retain the dynamic route; all configured paths use0Native entries, partially configured uses880/2. Callback replacement, same-function body mutation and the final post-retirement pause each demonstrate an escaping dictionary. Existing source-retarget and during-read pause guards already refuse. This is bounded work-count and publication evidence; startup timing acceptance remains pending.
