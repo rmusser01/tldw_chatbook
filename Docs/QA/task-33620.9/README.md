@@ -351,3 +351,32 @@ These are temporary logs, not portable evidence. The 55 acceptance-fixture
 descriptors, full corrected resource rerun and native/Windows/participant/scale
 and Qodo gates remain open. Controlled test-owned abandonment is not proof of
 warning-free production emergency teardown or terminal abandoned Tasks.
+
+### Acceptance-fixture owner adoption — TASK-34403
+
+The remaining acceptance module reproduces in isolation: **19 passed in
+12.85s**, no warnings, strict exit **1**, **55 SQLite descriptors**. Thirteen
+helper-returned databases and four directly built accepted-cancellation owners
+explain the files; the two publication controls already close their own caller
+handles. The real `_ready_store` implementation and every sibling imported
+binding remain unchanged.
+
+The module now wraps only its own helper binding and explicitly registers the
+four direct database/controller pairs before starting their submits. It reuses
+the installed opt-in shared awaited-shutdown/quiescence fixture. Original
+rollback, policy, attachment, cancellation and publication assertions remain;
+the existing failed-drain/healthy/foreign-owner control remains in coverage.
+No constructor interception, production/shared-profile/cache/GC change, foreign
+close or warning suppression.
+
+Acceptance, complete preparation and durable non-retention controls pass
+**133 tests, 1 deselected in 63.31s**, without warnings, strict exit **0**,
+zero DB files at all 133 teardowns. Independent scoped review finds no actionable
+issue. Changed test format clean; its three inherited Ruff findings are unchanged.
+Raw receipts: `/tmp/switcher-emergency-context-ciQIs5/acceptance-{red,green}.log`.
+All eleven artifact guards pass; receipt:
+`/tmp/switcher-emergency-context-ciQIs5/acceptance-preflight.log`.
+The prior complete 349-case failure and unchanged 1,000-send result remain
+historical; this follow-up does not rerun that long body or claim a fresh full
+corrected batch. Native/Windows/participant/scale and current-head Qodo gates
+remain open, separately from these repaired test-owner paths.
