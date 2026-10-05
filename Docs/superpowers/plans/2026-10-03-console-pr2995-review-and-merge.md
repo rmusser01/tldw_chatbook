@@ -542,3 +542,78 @@ Reason: actual entered wrapper and admitted immutable-base controls prove the sa
 - [x] Preserve exact interim report/publication/fixture manifests and brief at before-typed-adapter snapshots, plus every frozen initial140/interim81 child receipt/map. Same implementer resumes at root metadata BASE with only the two authorized marker lines present. Read own-SDD task-16-typed-adapter-brief.md and exact frozen five-keyword proposal. Persona staged handoff already passes; only typed node remains failed and reproduces missing monitor on immutable6cd with its marker overlay. Preserve all57 distinct prior passing cases and teardown warnings/sink-error attribution; no passing node replay.
 - [x] Add only five keywords to the typed test's existing screen SimpleNamespace: _ui_responsiveness_monitor=lambda:None; _send_console_message_from_visible_action_observed=lambda **kwargs: ChatScreen._send_console_message_from_visible_action_observed(screen, **kwargs); _console_visible_send_session_id=lambda:session.id; _console_pending_send=None; _console_visible_draft_session_id=session.id. Real wrapper/observed/answer/card/composer/controller/worker paths remain used. Keep every original namespace key, signature/body statement/assertion/wait/deadline and both selected markers; remove five keywords and two marker lines to recover original owner AST/text with only added-hunk wrapping exempt. No production source/config/admission/shared helper/proxy/fake answer change.
 - [x] Run only still-failed typed node on corrected stable source, sharedPython/WT PYTHONPATH/canonical profile/existing300s timeout. Preserve all earlier56+Persona passes and old failure/setup/native/profile/QA/ZIP/limit receipts. Fatal Ruff on two test owners, added-hunk format with typed95 inherited formatter units retained, whitespace and complete source/body/AST/evidence carry required. Freeze separate task-16-typed-adapter-safe-evidence/manifest and append report with exact interim prefix; current publication manifest transparently preserves all original/interim snapshots. Commit only two test decorators and five namespace keywords, return clean closed-process handoff. First independent Task16 integration review precedes publication and fresh external/normal merge gates.
+
+
+### Task 17: Integrate latest-dev command timing, origin and captured-draft fixes
+
+ADR required: no new ADR
+ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/219-console-chat-destinations-and-bounded-starts.md; backlog/decisions/220-console-human-decision-coordination-ownership.md.
+Reason: compose landed TASK-33622.16 with the approved native/runtime/decision ownership, with no authority, schema, dependency, loading or UI-token boundary change.
+
+One fresh implementer owns source/index/HEAD through a clean handoff. Read own-SDD task-17-latest-dev-preflight.md and task-17-latest-dev-preflight-selection.json for exact incoming declarations, composition candidates, 19-path hashes, protected owners, source-bound QA pins and selected IDs. Published source BASE06cfe2f6a30236dcd8f81893ebf49bc3d0b78036 descends from previous dev a78a9a900b4901e33c031f830dd2d80224d5147d; selected incoming dev8c4dfe59a243ce0cec8e131aff3935646c64b298 adds10commits/19paths. Root commits requirement metadata before dispatch. Do not read other plans' SDD directories or change the shared human checkout. No children, external replies/push/arming/merge or branch cleanup.
+
+- [ ] Pin root metadata BASE and recovery ref/bundle; rebase once onto selected8c4dfe59, preserving all incoming commits and feature commits. If remote dev advances, report its actual delta without expanding or silently retargeting. Preserve any unexpected historical replay conflict and return its exact hunk; no blanket ours/theirs.
+- [ ] Verify16 incoming files equal selected-dev whole-file bytes. Compose exactly wiring.build_console_controllers skill append kwargs/session_id forwarding, the three disjoint changed ChatScreen methods and production-diagnostic-inventory command_handoff row. Verify selected sketches/hashes and exact upstream declaration AST carry. Retain every other feature method/helper, including literal native automatic start, accepted receipt/physical custody, runtime Close/source fencing, pending handoff edits/clears and the Task16 typed-answer marker/adapter.
+- [ ] Run only the22 exact IDs below, in the selection's four groups, on the actual integrated source. Use shared Python3.12 at /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python, WT PYTHONPATH, canonical private pytest profiles, fresh basetemps, -p no:randomly and existing300s timeout. Record actual collection/IDs/full argv/source hashes/complete stdout+stderr/log/JUnit/exits/warnings. Freeze any failure before proposing a same-node comparison or source repair. No original58/35/61/27/cohort/full-owner replay, full suite, installs, blanket bootstrap plugin, new skip/XFAIL, warning suppression or time/budget increases.
+- [ ] Retain controller29301/store22344/interrupt6479/compaction4185/screen25218lines+759methods and ready1033/preimport557+425347LOC+135111bytes/app686/CSS608090 limits. Actual composed screen25192/759 has26line slack; no cap row change is justified. Unchanged controllers/store/interrupt/compaction and loading/runtime/import/timer/CSS/route owners carry by exact hashes. Two helpers stay lazy, so no new loading/payload node is selected. Historical35loading and actual Task16 payload557/415370/127527 remain source-specific evidence.
+- [ ] Preserve all tracked unowned/QA bytes, original1983 QA digest and original2118-entry ZIP at63166118bytes/SHA256acecbdfb6ddbafe6df679c39f9f137f2bfb49a1f87b62556e1345021f8384c84. Preserve the existing527 public follow-up files and all previous manifests/rulings/review packages byte-for-byte. Run fatal Ruff on actual incoming Python paths, scoped added-hunk formatter assessment and whitespace; retain inherited formatting/warnings rather than reflowing owners.
+- [ ] Freeze task-17-report.md plus compact additive task-17-safe-evidence manifest/source+QA carry maps. Keep reports/maps/receipts exact without copying earlier bulk archives. Commit only actual needed composition overlays; no empty source commit. Return clean source/index/HEAD and closed owned processes. Root performs one independent scoped integration review before Task18 Qodo repairs, any separately justified Stop correction, one additive publication and fresh current-head Qodo/CI/PerfGuard/latest-dev/normal merge gates.
+
+**Selected exact nodes (22):**
+
+command_origin_and_exact_wiring:
+
+- Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[enter]
+- Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_never_lands_on_the_chat_switched_to[send-button]
+- Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[appended]
+- Tests/UI/test_console_command_origin_chat.py::test_a_named_system_prompt_takes_only_the_draft_its_send_captured[replaced]
+- Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[doctor]
+- Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[skills]
+- Tests/UI/test_console_command_origin_chat.py::test_a_command_answers_in_the_chat_it_was_sent_from[fewer-permission-prompts]
+- Tests/UI/test_console_command_origin_chat.py::test_a_command_never_starts_in_a_chat_it_was_not_sent_from
+
+command_timing_cancellation_and_draft:
+
+- Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[lazy-enter]
+- Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[lazy-send-button]
+- Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[eager-enter]
+- Tests/UI/test_console_video_send_freeze.py::test_the_cost_confirm_answers_its_keys_and_escape_starts_nothing[eager-send-button]
+- Tests/UI/test_console_video_send_freeze.py::test_another_command_runs_while_a_generation_is_in_flight
+- Tests/UI/test_console_video_send_freeze.py::test_a_command_whose_modal_wait_is_cancelled_ends_quietly
+- Tests/UI/test_console_video_send_freeze.py::test_stop_keeps_a_draft_typed_during_the_generation[enter]
+- Tests/UI/test_console_video_send_freeze.py::test_stop_keeps_a_draft_typed_during_the_generation[send-button]
+- Tests/UI/test_console_video_send_freeze.py::test_a_failed_generation_never_writes_into_the_chat_switched_to[typed]
+- Tests/UI/test_console_video_send_freeze.py::test_a_failed_image_batch_still_offers_a_command_its_take_left_behind
+
+changed_visible_send_plain_answer_control:
+
+- Tests/UI/test_console_ask_user_typed_answers.py::test_typed_answer_resolves_a_real_round_through_the_real_card_and_composer
+
+composed_static_owners:
+
+- Tests/Architecture/test_screen_size_ratchet.py::test_screen_does_not_grow_past_its_budget[tldw_chatbook/UI/Screens/chat_screen.py]
+- Tests/Architecture/test_screen_size_ratchet.py::test_budget_is_not_left_slack_after_a_wave[tldw_chatbook/UI/Screens/chat_screen.py]
+- Tests/Architecture/test_persistent_diagnostic_inventory.py::test_production_diagnostic_inventory_and_sink_topology_are_unchanged
+
+
+### Task 18: Repair stale interrupt fixtures and remove annotation-only host wiring
+
+ADR required: no new ADR
+ADR path: backlog/decisions/220-console-human-decision-coordination-ownership.md (dated annotation-only clarification); backlog/decisions/219-console-chat-destinations-and-bounded-starts.md.
+Reason: reuse existing test binding and imported types while preserving all runtime live dependencies and authorization behavior.
+
+A fresh sole source implementer follows approved Task17; no children. Read own-SDD task-17-interrupt-preflight.md and Ruling75 for complete constructor/type/caller census, plus exact Qodo feedback in task-17-initial-feedback.json. The recovery finding4179836584 is addressed separately by existing ADR126/219 policy and frozen10case evidence; no paired-store restore, new schema/migration or imported authority change is authorized.
+
+- [ ] On the actual integrated BASE, run the two existing stale test owners Tests/Chat/test_console_decision_clock.py and Tests/UI/test_buddy_speech.py before repair to retain constructor RED (44 source-inferred cases). Preserve all actual collected IDs/failures/output, with shared Python3.12/WT PYTHONPATH/canonical private profiles/-p no:randomly/fresh basetemp/unchanged300s timeout.
+- [ ] Replace only their actual InterruptRoundHost import with make_interrupt_host as InterruptRoundHost from Tests.Chat.console_interrupt_test_bindings. Keep separate KIND_SETTER_ATTRS/FakeSeamsFull imports in the clock owner. No fixture/helper attribute addition is needed. Preserve all six original positional call sites, function bodies/assertions/signatures/decorators/parameterization/waits/deadlines/events/cleanup.
+- [ ] Add an accurate Google-style docstring to ConsoleChatStartCoordinator.authorizes(authorization, session_id)->bool, documenting nullable authorization and exact live coordinator/store/active-object/session-incarnation check. It establishes neither accepted state nor current primary visibility. Preserve executable method AST exactly; no docstring-only test.
+- [ ] Replace exactly17 annotation references to self._read_global_Any()/self._read_global_Mapping() in InterruptRoundHost with existing imported Any/Mapping. Delete only their two keyword-only constructor parameters, two assignments, and matching controller/test-helper lambda arguments. Result120required keywords and33runtime global getters; retain all86controller readers and one write-through callback. Preserve non-annotation executable AST in every other method and exact runtime lookup/patch/nullability/order/alias/lock authority. Separate build_tool_review_hook Any interface and compaction accessors stay exact. No broad receiver/global bypass, dependency bag, proxy, import or new abstraction.
+- [ ] Run the same two corrected test owners (44source-inferred cases) and only four binding selectors below (eight source-inferred cases), retaining all actual IDs/argv/source/exits/log/XML/warnings. Prove import reversal recovers both owner bodies and annotation removal/reversal preserves all nonconstructor executable methods. Verify unchanged unowned source/QA/ZIP; preserve old RED and all historical passes/warnings. Fatal Ruff/added-hunk formatter/whitespace plus actual host/controller size measurements; existing downward/slack rules apply only to a demonstrated shrink, never raise caps.
+- [ ] Commit only authorized source/test overlays, freeze task-18-report.md and compact additive task-18-safe-evidence/source+AST manifest, return clean source/index/HEAD/closed processes. Root dispatches independent scoped spec/quality review. All four new Qodo threads remain open until reviewed repairs/rebuttal are published with evidence; one fresh current-head Qodo and normal checks/PerfGuard/ancestry precede merge.
+
+**Selected binding controls:**
+
+- Tests/Chat/test_console_owner_live_bindings.py::test_interrupt_remount_reads_replaced_sink_and_controller_state
+- Tests/Chat/test_console_interrupt_host_wiring.py::test_legacy_registry_payload_and_lock_names_alias_the_host
+- Tests/Chat/test_console_interrupt_host_wiring.py::test_approvals_register_the_permission_summary_as_the_after_remount_hook
+- Tests/Chat/test_console_ask_user_round.py::test_timeout_reads_console_config_when_no_seam
