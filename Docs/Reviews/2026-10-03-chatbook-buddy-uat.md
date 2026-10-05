@@ -138,6 +138,14 @@ Rebased onto dev `a78a9a900b4901e33c031f830dd2d80224d5147d` after PR3015's liter
 
 The newly documented merge procedure requires rebasing. `MERGE_QUEUE` is unset, so the queue is off; auto-merge was disabled before the sync. Fresh hosted gates and resolved review threads still govern the protected merge. This integration does not repeat accepted human/native/voice UAT or provider/audio calls. Historical receipts retain their tested sources. Existing ADR094/139/147/103/218 apply. [Separate rebase receipt](artifacts/buddy-uat-20261003/pr3011-rebase-dev-20261004.json).
 
+## Reviewed Console-command integration — 2026-10-04
+
+Rebased cleanly onto dev `8c4dfe59a243ce0cec8e131aff3935646c64b298` after reviewed PR3006 moved slash commands off the message pump and protected their captured drafts and origin chats. The complete tested tree (`37340608a7233c74b7e6bb94751fcfaa7052851b`) matches the pinned expected combination. All fifteen owned tests and seven of eight Buddy modules are unchanged; eighteen incoming files match dev exactly. The shared Console screen retains both incoming command behavior and Buddy Resume/shutdown guards. Independent review found no actionable compatibility issue.
+
+The targeted run exercised 56 incoming controlled cases and eleven Buddy send/Resume/shutdown cases. Its first attempt passed 66 cases in 861.20s; one case stopped at a SQLite disk I/O error during app construction, before Resume ran. The seven startup stack files are unchanged and the retained fixture database passes read-only quick_check. That same case passed unchanged in a fresh owned temporary root in 21.91s. Both attempts and their exact node match are retained; no persistent cause or SQLite repair is claimed. All 67 selected cases have passing evidence across those runs. Nine incoming modules compile. Scoped Ruff286/286 and Bandit13/13 comparisons introduce no findings; the same five files require formatting on both arms. Backlog4999, profile, diagnostic and whitespace guards pass.
+
+The earlier published head `e1cfc73e6611ff9e39d3c5d94080f7792ef6e6e7` completed every required hosted gate, including its three UI shards in5m34s,11m38s and15m50s, within the unchanged twenty-minute cap. These passing gates retain their earlier-base attribution. Fresh hosted gates apply to the rebase; queue mode remains off and auto-merge stays disabled. Accepted human/native/voice UAT is preserved; no provider/audio calls or full local suite. Existing ADR094/139/147/097/044/103/218 apply. [Separate command integration receipt](artifacts/buddy-uat-20261003/pr3011-command-dev-20261004.json).
+
 ## Coverage limits and retained attempts
 
 - TASK-32108 is closed against its four recorded qualification outcomes. TASK-31585 AC9 retains the separate exact-native-revision and full application-configured OpenAI human realtime coverage limits. Earlier Chatbook native and local human voice acceptance is preserved; server React evidence remains separate.

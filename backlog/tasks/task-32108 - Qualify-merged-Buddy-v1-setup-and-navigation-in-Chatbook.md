@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:32'
-updated_date: '2026-10-05 00:29'
+updated_date: '2026-10-05 00:52'
 labels: []
 dependencies: []
 priority: high
@@ -108,6 +108,8 @@ Current provider-base integration completed: merged dev49206beea90d35ea9e6842ffa
 PR3011 CI follow-up: all1535 hosted UI cases passed on ae297322cd7be531b70192d62e910a4cc068c521, but the second job reached its20-minute cap during pytest shutdown and was canceled, so its required aggregate is not green. Reused the existing published one-line third-shard fix from PR2918 under ADR103, preserving complete census/order,cap,dependencies and failure enforcement. All34 targeted CI contract checks pass in0.961s; independent review found no issues. Buddy source and test assertions remain unchanged and accepted UAT is preserved. CI budget task records the pre-edit plan and pending current-head hosted duration qualification. Report and separate pr3011-ui-shard-budget-20261004.json retain the canceled job and exact tested head instead of overstating CI acceptance.
 
 Current merge-rule integration: rebased onto a78a9a900b4901e33c031f830dd2d80224d5147d after GitHub reported only append-only lesson conflicts. Both sides retained; the entire resolved working tree equals the pinned expected combination. All15 owned tests and7 of8 Buddy modules are unchanged; the coordinator adopts the incoming literal error toast. All144 targeted Buddy/CI contract cases pass in8.533s,8 modules compile, coordinator Ruff0/0 and Backlog4998/profile/diagnostic/whitespace guards pass. Independent review finds no issues; three shards and required enforcement remain intact. MERGE_QUEUE is unset/off and auto-merge was disabled before sync. New source-bound report/receipt retain historical attribution and fresh hosted gates remain required. Accepted human/native/voice UAT stays accepted without a repeat; no provider/audio calls. Added the verified obsolete-always-job cancellation incident to live-verification lessons. Existing ADR094/139/147/103/218 apply; no new boundary.
+
+Reviewed PR3006 integration: clean rebase onto dev8c4dfe59a243ce0cec8e131aff3935646c64b298 at tested37340608a7233c74b7e6bb94751fcfaa7052851b; entire tree equals pinned combination. All15 owned tests and7 Buddy modules unchanged;18 incoming files exact dev. 56 controlled incoming cases plus11 Buddy integration cases qualified: initial66pass/1 SQLite startup I/O failure, then the exact failed case passes unchanged in a fresh owned root (21.91s). Original failure retained, startup sources unchanged and fixture quick_check ok; no persistent cause claimed. Compile9, Ruff286/286, Bandit13/13 and zero introduced format failures; Backlog4999/profile/diagnostic/whitespace guards pass. Independent review no findings. Prior e1 hosted gates all passed with all3 UI jobs within20min; retain old-source attribution and require fresh gates. Source-bound report/receipt updated; accepted human/native/voice UAT preserved and no provider/audio/full-suite calls. Existing ADR094/139/147/097/044/103/218; no new boundary.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
