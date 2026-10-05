@@ -152,3 +152,23 @@ Raw receipts additionally include `affected.log`, `refusal-isolated.log`,
 `refusal-profile-green.log`, `affected-final.log`, and `barrier-green.log` in
 the same private root. The preparation-file Ruff ratchet remains three
 inherited diagnostics with zero additions or removals; it was not bulk-formatted.
+
+The complete original seven-file selection at
+`cc3e3137e45ee8e2d36ffa81d55bb244a2b97337` finished **340 passed, 4 failed,
+1 warning in 493.80s**, process exit **1**. Its existing 1,000-send retention
+case passed in 334.19s; neither count nor timeout was reduced. Two shutdown
+cases fail retained-controller and held-COMMITTING assertions; two postdispatch
+fixtures fail issued-generation retirement and unknown-delivery assertions.
+All four reproduce in an isolated selection with their parameter controls:
+**4 failed, 10 passed, 1 warning in 8.33s**. The warning is a diagnostic
+ContextVar token reset during abandoned-task finalization, not suppressed.
+Source/ownership review is ongoing; unchanged controller and durable-round-one
+files are not a substitute for frozen-base execution or a reason to waive them.
+
+Read-only census records all 344 teardowns. Retained database descriptors begin
+at a real durable queued-recovery fixture and reach **155**; both test-owned
+SQLite databases and the private workspace database remain at final teardown.
+This is failed retirement, not a constructor cache allowance or terminal pass.
+Raw receipts: `affected-complete.log` and `four-failures-isolated.log` in the
+same private root. Draft publication must retain these failures and the separate
+native/Windows/participant/latency HOLD gates.
