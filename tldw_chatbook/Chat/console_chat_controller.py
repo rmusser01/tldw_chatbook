@@ -6848,7 +6848,7 @@ class ConsoleChatController:
         # until it really returns, while the existing caller handles Stop.
         from tldw_chatbook.Agents.activation import worker_guard
 
-        owned_call = functools.partial(self._run_owned_chat_db_operation, function)
+        owned_call = functools.partial(self._run_owned_chat_worker_call, function)
         worker = worker_guard(self._agent_bridge)(owned_call)
         task = self._retain_maintenance_task(asyncio.to_thread(worker, **kwargs))
         return await asyncio.shield(task)
@@ -12280,6 +12280,16 @@ class ConsoleChatController:
 
         db = getattr(self.store.persistence, "db", None)
         return not bool(getattr(db, "is_memory_db", False))
+
+    def _run_owned_chat_worker_call(
+        self, call: Callable[..., Any], /, *args: Any, **kwargs: Any
+    ) -> Any:
+        """Retire this worker's Notes handle without spanning foreign sources."""
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        database = getattr(self.store.persistence, "db", None)
+        with operation_owned_connection(database):
+            return call(*args, **kwargs)
 
     def _run_owned_chat_db_operation(
         self, call: Callable[..., Any], /, *args: Any, **kwargs: Any

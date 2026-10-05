@@ -67,3 +67,46 @@ Native matrix at 0ecd8327 (run37241740746) remains RED: Linux shared controls pa
 Creation-marker actual native RED: warm reused admission allowed a newly inserted malformed exact unfinished intent while full derivation refused (two failing controls). Added exact ancestor-intent absence stamps and reuse fallback. Final root follow-up through real TokenUser-default-owner launcher:32passed2 genuine ordinary-token privilege skips13.29s normalexit0. Launcher asserts actual native default owner, actual stdlib and child file owners, restores original owner after success/error, and refuses required elevated custody. Local actual owner controls2passed0.87s. The original required three-version elevated jobs keep their unmodified token. Mac dependency tracer retains unknown relative reads and adds call-site diagnostics. Final three-OS performance, elevated fixture rerun and real DeepSeek UAT still pending.
 
 Follow-up pre-integration root gate: 19 actual targeted controls pass in 5.04 seconds with normal exit zero, including repository coordinator/full-proof publication races, complete exact creation-intent evidence and real Windows fixture owner/restoration/refusal. Differential AST/lint check over 24 changed/new Python files retains 88 existing diagnostics and introduces zero. YAML verification confirms all three native hosts, the original three elevated-custody Python versions and no allowed-failure setting. These subsystem receipts do not establish whole-app budget success. Mac relative-call diagnostics read frame metadata only, avoiding source-line formatting that would itself open files; unknown paths remain included pending actual native evidence.
+
+### Checkpoint bced62b: functional regression and native qualification
+
+The eighth local native whole-app test is a qualified **functional failure**, not
+another three-message latency result. Exact committed production source
+`bced62b9289a1085f05b598422ec59e281df205f` loaded with ordinary timers, maintenance,
+native storage guards and the actual capture path enabled. It ran 1 failed /
+3 passed in 66.20s. The first user turn durably committed at phase offset 6.977s,
+then the controller failed at 15.458s with `agent_activation_required` before
+any provider entry (`provider_calls=0`). There are no three-reply trace receipts
+for this checkpoint. Windows send phase 15.530s and 96,498 opens cannot be used
+as evidence that a completed conversation meets the registered budgets.
+Evidence: `console-performance-fix-eighth.json`, `perf-eighth-local.xml` and log.
+
+Native macOS in Actions run
+[37244879946](https://github.com/rmusser01/tldw_chatbook/actions/runs/37244879946)
+independently reproduces the same before-provider activation failure: zero
+provider calls, successful durable commit, failed controller. Its 2.933s first
+send is also not a completed-send performance result. The new finite controller
+wrapper encloses the broad maintenance agent callback; the focused native
+reproduction and scope correction are in progress. This regression therefore
+has cross-platform scope.
+
+The checkpoint's three genuine elevated Windows custody jobs are green with
+`TLDW_REQUIRE_ELEVATED_CUSTODY=1`: Python 3.12.10, 3.13 and 3.14 each execute
+**40 passed, zero skipped, zero errors**, in 14.412s / 17.794s / 18.675s. Each job
+also verifies that the ordinary test-fixture launcher restores the original
+administrative default owner before those capability controls. Original actual
+elevated ownership and negative custody tests are retained. This qualifies the
+previous elevated test gap at this revision; final-source native requalification
+still follows.
+
+The macOS shared controls report 907 tests: 877 passed, 21 failed, 9 skipped,
+zero errors. Three dependency completeness failures now contain actual stacks
+showing only relative lstat probes from the unchanged real-profile write audit
+hook through `_protected` and CPython `realpath`. The observer is corrected by
+exact installed code identity and raw input attribution, with native same-name
+unknown-read and descriptor-write controls; no production admission dependency
+or profile guard is weakened. Five native config-sync subprocess failures are
+an obsolete character presentation fixture method. The remaining thirteen
+pause-drain failures require independent lifetime investigation; they remain
+reported until their actual source is proved. Linux and Windows full results
+were still pending when this entry was recorded.

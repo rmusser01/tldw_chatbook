@@ -310,7 +310,7 @@ def test_console_native_retry_uses_one_screen_owned_timer(tmp_path, case):
 _WORKER_RETRY = _NATIVE_RETRY.split("try:\n screen._sync_console_control_bar('stale")[0] + r'''
 import asyncio
 from contextlib import nullcontext
-async def no_async():pass
+async def no_async(*args,**kwargs):pass
 def no_sync(*args,**kwargs):pass
 screen._console_sync_in_progress=False;screen._console_sync_requested=False
 screen._console_chat_store=None
@@ -323,7 +323,7 @@ screen._retrieval=SimpleNamespace(
  _refresh_active_dictionaries_summary_if_scope_changed=no_async,
  _refresh_active_world_books_summary_if_scope_changed=no_async)
 screen._character=SimpleNamespace(_refresh_active_character_avatar_if_scope_changed=no_async)
-screen._character_context=SimpleNamespace(refresh_if_scope_changed=no_async)
+screen._character_context=SimpleNamespace(refresh_presentation_if_scope_changed=no_async)
 screen._workspace=SimpleNamespace(tick_workspace_build_scope=nullcontext)
 for name in ('_record_ui_worker_started','_record_ui_worker_finished','_sync_console_chat_core_state','_sync_console_settings_summary','_sync_console_settings_recovery_surfaces','_sync_console_live_work_readiness_rows','_dispatch_active_console_roleplay_refresh','_sync_console_workspace_context','_dispatch_console_rail_preference_prune'):
  setattr(screen,name,no_sync)

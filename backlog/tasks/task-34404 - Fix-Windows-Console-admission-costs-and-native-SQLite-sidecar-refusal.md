@@ -5,7 +5,7 @@ status: In Progress
 created_date: 2026-10-04 19:52
 assignee:
 - '@codex'
-updated_date: 2026-10-04 23:18
+updated_date: 2026-10-04 23:54
 ---
 
 ## Description
@@ -22,6 +22,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [x] #4 Native isolated restore and pending readmission complete on supported ordinary Windows while preserving full directory metadata and device synchronization, exact pinned identity and existing authority refusal guarantees.
 - [x] #5 Failed or interrupted bootstrap directory creation retries reestablish the exact created-entry durability barrier before pending publication, while corrupt, foreign, moved, changed-parent or live creation evidence remains fail closed and native resources retire after each attempt.
 - [x] #6 Warm native admission observes exact ancestor creation intents and preserves the full derivation refusal when unfinished evidence appears.
+- [ ] #7 macOS dependency observation distinguishes only actual real-profile write-guard path probes by exact code identity, while unknown relative production reads remain visible and native admission dependencies are fully stamped.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -35,6 +36,7 @@ Reason: Windows admission evidence and elevated default-token ownership change s
 Native restore follow-up authorized after whole-HEAD qualification: identify the exact failing directory handle, fresh owner/DACL, and requested native rights in the existing full directory barrier; compare against primary Microsoft OpenFileById/NtFlushBuffersFileEx contracts. Preserve normal metadata/device synchronization, no-reparse identity binding, and propagated failures. If a boundary correction is supported, amend ADR-126 before production changes, add a meaningful native RED oracle, then verify the three real restore/readmission workflows. ADR required: yes for any changed directory durability or publication boundary; ADR path remains backlog/decisions/126-complete-local-backup-and-recovery.md. Investigation is read-only while the next integrated performance measurement is pending.
 Bootstrap retry amendment: real native post-mkdir rights-denial control proves the minimal boundary has a required-barrier coverage gap (1 failed in 0.88s); original HEAD _pending-only control observes that prior containing entry, distinct from whole-HEAD baseline. Add bounded durable exact creation intents and actual native exclusive locks in control_records; inspect exact caller-derived intent names across the lexical requested chain on retry, retaining private-record/named-binding/parent identity checks and full file/containing/removal barriers. Tests cover native process death and failed-barrier retries, incomplete/corrupt/foreign/moved/substituted/live records, changed parents, external FileExists, failure propagation and finite handle retirement. No bootstrap.py edit, imported path authority, heuristic owner scan or native flush change. ADR required: yes; amend existing backlog/decisions/126-complete-local-backup-and-recovery.md, linked spec/plan amendments precede code.
 Creation-intent evidence follow-up: exact warm native reuse/full derivation divergence requires complete ancestor intent dependencies; no new ADR for this routine input-completeness fix; existing ADR126 applies. Read-only cache observes exact absent markers and falls back to original strict initializer for any present marker.
+Native macOS run 37244879946 qualifies three dependency-oracle failures: relative lstat of registry.lock and exact bootstrap creation markers occurs only inside the unchanged real-profile audit hook -> _protected -> CPython realpath path. Add narrowly separate observer-only probe records identified by exact installed guard code objects and real relative input. Keep production descriptor-relative paths and any unknown relative read in dependency paths; prove actual native macOS positive classification and unknown/raw relative negative controls. ADR required: no; ADR path: N/A. Reason: test-only observer attribution preserves all production admission and profile write protection contracts.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
