@@ -807,7 +807,7 @@ a note inside an active root that you save in the editor is written to its
 file on its own, on the same terms a file you edit on disk is read into its
 note — you do not have to run **Check changes**, and the row reads
 "✓ Up to date as of HH:MM", the minute that write was confirmed, because by
-then it is (task-32604). **Ctrl+Q** right after such a save waits for that
+then it is (task-32604). **Ctrl+Q** from the Library right after such a save waits for that
 write before Chatbook exits — up to five seconds; if the folder's sync takes
 longer than that, the file receives the edit when Chatbook next starts. This
 depends on lasting
