@@ -232,6 +232,11 @@ async def test_enter_commits_single_keyboard_filtered_result():
         assert search_input.value == "anthropic/claude-x"
         assert app.selected_models == ["anthropic/claude-x"]
 
+        # TASK-33007.9: the choice is selected like the Provider's, so the
+        # next key filters afresh instead of landing at the filter's index.
+        await pilot.press("o")
+        assert search_input.value == "o"
+
 
 @pytest.mark.asyncio
 async def test_keyboard_result_commit_restores_visible_input_focus():
@@ -446,6 +451,11 @@ async def test_escape_clears_filter_without_losing_committed_model():
         assert picker.value == "saved-model"
         assert search_input.value == "saved-model"
         assert not _results(app).display
+
+        # TASK-33007.9: the restored model is selected, not left under the
+        # filter's selection, so the next key replaces it whole.
+        await pilot.press("o")
+        assert search_input.value == "o"
 
 
 @pytest.mark.asyncio
@@ -1101,7 +1111,9 @@ async def test_a_returning_window_focus_selects_the_model_unless_text_is_being_t
     regains focus. Here the blur has dropped the filter and put the committed
     model back by then, so that focus selects it like any other and the next
     key replaces it. Text still being typed keeps its caret: a filter when the
-    window was away for less than the blur timer, and a Custom ID always."""
+    window was away for less than the blur timer, with the list it filtered,
+    and a Custom ID always, scrolled back into view after the blur showed the
+    head of an id wider than the field."""
     app = PickerTestApp(
         {"OpenRouter": ["saved-model"]},
         _entries("OpenRouter", ["anthropic/claude-x", "openai/gpt-y"]),
@@ -1123,6 +1135,7 @@ async def test_a_returning_window_focus_selects_the_model_unless_text_is_being_t
         assert field.has_focus and _results(app).display
         assert field.value == "cl"
         assert field.selection == Selection.cursor(2)
+        assert _result_prompts(_results(app)) == ["anthropic/claude-x"]
 
         app.post_message(events.AppBlur())
         await _until(
@@ -1138,16 +1151,25 @@ async def test_a_returning_window_focus_selects_the_model_unless_text_is_being_t
 
         await pilot.click("#model-search-picker-custom")
         await _until(pilot, lambda: field.has_focus)
-        await pilot.press("x", "y")
-        assert picker.custom_mode and field.value == "xy"
+        await pilot.press(*_WIDE_MODEL)
+        assert picker.custom_mode and field.value == _WIDE_MODEL
+        assert field.content_region.width < len(_WIDE_MODEL)
+        assert _painted_field(app, field).rstrip().endswith("/its-tail")
         app.post_message(events.AppBlur())
         await _until(pilot, lambda: not field.has_focus)
         await pilot.pause(0.2)
+        assert _painted_field(app, field).startswith(_WIDE_HEAD)  # at rest
         app.post_message(events.AppFocus())
         await _until(pilot, lambda: field.has_focus)
         await pilot.pause()
-        assert field.value == "xy"
-        assert field.selection == Selection.cursor(2)
+        assert field.value == _WIDE_MODEL
+        assert field.selection == Selection.cursor(len(_WIDE_MODEL))
+        # The view is back on the caret, and so is the terminal cursor: an end
+        # caret sits in the cell just past the last painted character.
+        assert _painted_field(app, field).rstrip().endswith("/its-tail")
+        assert app.cursor_position == field.cursor_screen_offset
+        area = field.content_region
+        assert area.x <= app.cursor_position.x <= area.right
 
 
 @pytest.mark.asyncio
