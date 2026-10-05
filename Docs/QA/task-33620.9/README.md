@@ -264,3 +264,45 @@ inherited Ruff diagnostics and no additions. Raw receipts are
 `/tmp/switcher-queued-retirement-Kk49kF/{red,green,preflight}.log`.
 The complete seven-file resource batch, emergency warnings and all native,
 Windows, participant and scale gaps remain open.
+
+### Empty frozen-authority admission — TASK-34410
+
+At published `a9e65dcabc518474b38a8d2e8bc7b10375e9bb7f`, the original
+direct/agent shutdown controls pass **2 tests in 1.14s**, without warnings,
+but strict retirement exits **1**. A read-only allocation trace ties the
+agent's three retained workspace SQLite/WAL/SHM descriptors to
+`_run_agent_reply` → `frozen_workspace_roots` → the default registry factory.
+The captured binding authority is empty: the helper opens a database solely
+to return no roots. This is unnecessary admission, not evidence that the
+process-wide registry must be closed by test teardown.
+
+Four real-SQLite regressions fail before repair (**4 failed in 1.05s**, no
+warnings): empty tuples and iterators both create the default database or
+reopen a supplied handle. Their exact test-owned cleanup leaves zero DB files.
+The three-line production guard materializes the captured iterable inside the
+existing fail-closed boundary and returns before a registry read when empty.
+Nonempty authority retains every live binding/root/locator/identity check;
+no cache lifetime, constructor, foreign-owner, warning or GC policy changes.
+
+The four new regressions, existing nonempty authority/retarget controls,
+original preparation/shutdown/cancellation controls and queued recovery cases
+pass **22 tests in 7.77s**, without warnings, strict exit **0**, zero DB files
+at every teardown. Independent scoped review finds no actionable issue. All
+eleven artifact guards pass. The new test is Ruff/format clean; the source's
+eight inherited Ruff findings and normalized formatting debt are unchanged.
+No complete seven-file or 1,000-send rerun is claimed by this bounded result.
+
+Raw receipts: `/tmp/switcher-workspace-root-m7n8QI/{red,unit-red,green,preflight}.log`
+and `static.json`; these temporary paths are not portable evidence. Runnable
+empty/nonempty authority controls:
+
+```sh
+python -m pytest Tests/Tools/test_frozen_workspace_root_read_admission.py \
+  Tests/Chat/test_console_turn_execution_context.py::test_frozen_workspace_binding_maximum_excludes_later_roots \
+  -p no:cacheprovider --tb=short
+```
+
+All earlier failed receipts remain above. Emergency ContextVar warnings, the
+complete affected resource batch, native/Windows/participant/scale qualification
+and current-head Qodo review remain open; exhausted Qodo credits are not a
+review waiver.

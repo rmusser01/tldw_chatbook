@@ -354,3 +354,19 @@ loop guard preserves the live-loop peer. Check every admission ledger when
 retiring an unreachable owner, not only its ticket's original registry. The
 25-body-pass receipt still reports two ContextVar warnings and retained SQLite
 files; ledger retirement is not normal shutdown or resource qualification.
+
+## Check empty authority before admitting a registry owner
+
+**TASK-34410, PR3024, 2026-10-05.** After exact fixture-owner retirement,
+the original agent shutdown control still retained three workspace SQLite/WAL/SHM
+descriptors while its direct control retained none. Allocation tracing found
+`frozen_workspace_roots` constructing the shared registry with an empty captured
+binding maximum, only to return no roots. Four real-SQLite tuple/iterator tests
+failed on default database creation or supplied-handle reopening. Returning
+before admission for empty authority repaired the strict 22-case batch without
+closing the shared cache or weakening nonempty live-binding validation.
+
+Trace why a cache is admitted before inventing its teardown policy. An empty
+authority result does not need a database read; unnecessary construction can
+look like a lifetime leak. Keep the existing nonempty/retarget controls and
+close only the regression's own database handles.
