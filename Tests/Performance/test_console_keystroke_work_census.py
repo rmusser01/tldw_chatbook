@@ -153,6 +153,7 @@ _TYPING_BURST_CALLERS: list[str] = []
 #: TASK-33644: why the GC census pass failed. The pass records rather than
 #: asserts, so the census is still reported before the test fails on it.
 _GC_PASS_FAILURES: list[str] = []
+_STORAGE_UNIT_OBSERVER_RECEIPTS: list[dict[str, Any]] = []
 #: The app package's own frames (not the venv's, whose path also names the
 #: repository).
 _APP_PACKAGE = str(Path(__file__).resolve().parents[2] / "tldw_chatbook") + os.sep
@@ -193,45 +194,15 @@ def _count_os_open(event: str, args: tuple[Any, ...]) -> None:
 
 def _count_storage_units(
     monkeypatch: pytest.MonkeyPatch, counts: dict[str, int], counting: dict[str, Any]
-) -> None:
-    """Count the ADR-125/ADR-126 storage units by wrapping their real seams.
-
-    Harness-only: every wrapper calls straight through, so production
-    behaviour is unchanged. Counts every thread, because a unit paid on a
-    worker still costs the user a core and the GIL; the phases that use
-    these counters stop the wall-clock-driven credential poll so a slow
-    machine cannot bill extra ticks to the unit being measured.
-
-    * ``config_admissions`` -- OUTERMOST ``config_participants.operation``
-      entries per thread (nested ones reuse the open scope and pay nothing).
-      Every guarded config reader routes through the module attribute.
-    * ``storage_admissions`` -- ``storage_admission._acquire_storage``, the
-      one module-global every ``acquire_storage`` call reaches however the
-      caller imported the public name.
-    * ``helper_spawns`` -- ``HelperLease.start``: one ``python -I -S``
-      private-SQLite helper child each.
-    * ``os_opens`` -- ``os.open``, the admission directory walk's unit (one
-      per path component), counted from the ``open`` audit event (``mode``
-      is ``None`` only for ``os.open``; ``builtins.open`` is not counted).
-      Never by replacing ``os.open``: the raw participants require
-      ``os.open in os.supports_dir_fd``, so a wrapper turns every config
-      read into ``RecoveryRequired('raw_source_selection_changed')``.
-
-    Args:
-        monkeypatch: pytest fixture that owns (and undoes) the wrappers.
-        counts: census mapping; the ``IO_UNITS`` keys are added here.
-        counting: shared ``{"on": bool}`` switch.
-    """
-    import contextlib
-    import threading
-
+) -> Any:
+    """Count original callback code locally, preserving stock source selection."""
     from tldw_chatbook.Backup_Recovery import config_participants, storage_admission
     from tldw_chatbook.DB.private_sqlite_process import HelperLease
+    from Tests.Performance.console_storage_unit_observer import OriginalStorageUnitObserver
 
     for key in IO_UNITS:
         counts[key] = 0
     lock = threading.Lock()
-    depth = threading.local()
 
     def bump(key: str) -> None:
         if counting["on"]:
@@ -240,43 +211,17 @@ def _count_storage_units(
             if counting.get("burst") and key in ("storage_admissions", "helper_spawns"):
                 _TYPING_BURST_CALLERS.append(_caller(key))
 
-    real_operation = config_participants.operation
-
-    @contextlib.contextmanager
-    def counted_operation(*args: Any, **kwargs: Any) -> Any:
-        level = getattr(depth, "level", 0)
-        if level == 0:
-            bump("config_admissions")
-        depth.level = level + 1
-        try:
-            with real_operation(*args, **kwargs) as active:
-                yield active
-        finally:
-            depth.level = level
-
-    monkeypatch.setattr(config_participants, "operation", counted_operation)
-
-    real_acquire = storage_admission._acquire_storage
-
-    def counted_acquire(*args: Any, **kwargs: Any) -> Any:
-        bump("storage_admissions")
-        return real_acquire(*args, **kwargs)
-
-    monkeypatch.setattr(storage_admission, "_acquire_storage", counted_acquire)
-
-    real_start = HelperLease.start
-
-    def counted_start(cls: type, *args: Any, **kwargs: Any) -> Any:
-        bump("helper_spawns")
-        return real_start(*args, **kwargs)
-
-    monkeypatch.setattr(HelperLease, "start", classmethod(counted_start))
-
-    if not _OS_OPEN_AUDIT["installed"]:
-        # Audit hooks cannot be removed; one per process, re-aimed per census.
-        sys.addaudithook(_count_os_open)
-        _OS_OPEN_AUDIT["installed"] = True
-    monkeypatch.setitem(_OS_OPEN_AUDIT, "bump", bump)
+    observer = OriginalStorageUnitObserver(counts, counting, bump)
+    try:
+        observer.install(config_participants, storage_admission, HelperLease)
+        if not _OS_OPEN_AUDIT["installed"]:
+            sys.addaudithook(_count_os_open)
+            _OS_OPEN_AUDIT["installed"] = True
+        monkeypatch.setitem(_OS_OPEN_AUDIT, "bump", bump)
+    except BaseException:
+        observer.close()
+        raise
+    return observer
 
 
 def _capture_media_cleanup_timer(
@@ -369,247 +314,259 @@ async def _census(
         Mapping of counter name to calls observed during the typing burst
         (plus the storage-unit keys when requested).
     """
-    _scratch_env(monkeypatch, tmp_path, quiet_scheduler=storage_units)
+    storage_observer = None
+    try:
+        _scratch_env(monkeypatch, tmp_path, quiet_scheduler=storage_units)
 
-    from textual.pilot import Pilot
+        from textual.pilot import Pilot
 
-    real_wait_for_screen = Pilot._wait_for_screen
+        real_wait_for_screen = Pilot._wait_for_screen
 
-    async def wait_for_screen(self: Any, timeout: float = 120.0) -> bool:
-        # On the review Windows host the second full app's storage and
-        # widget admission can exceed Textual's 30s default before typing
-        # starts. This changes only the watchdog, never the work census.
-        return await real_wait_for_screen(self, timeout=max(timeout, 120.0))
+        async def wait_for_screen(self: Any, timeout: float = 120.0) -> bool:
+            # On the review Windows host the second full app's storage and
+            # widget admission can exceed Textual's 30s default before typing
+            # starts. This changes only the watchdog, never the work census.
+            return await real_wait_for_screen(self, timeout=max(timeout, 120.0))
 
-    monkeypatch.setattr(Pilot, "_wait_for_screen", wait_for_screen)
+        monkeypatch.setattr(Pilot, "_wait_for_screen", wait_for_screen)
 
-    from tldw_chatbook.app import TldwCli
-    from tldw_chatbook.Chat.console_chat_models import (
-        ConsoleChatMessage,
-        ConsoleMessageRole,
-    )
-    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-    from tldw_chatbook.UI.Console_Modules import session as session_module
-    from tldw_chatbook.UI.Console_Modules import (
-        console_spend_projection as spend_module,
-    )
-    from tldw_chatbook.UI.Screens import chat_screen as screen_module
-
-    from tldw_chatbook.Chat import console_session_settings as settings_module
-
-    counts: dict[str, int] = {
-        "messages_for_session": 0,
-        "snapshots": 0,
-        "settings_readiness_builds": 0,
-        "template_default_builds": 0,
-        "snapshot_rows": 0,
-        "spend_history_rows": 0,
-        "cost_rows": 0,
-        "cost_snapshot_rows": 0,
-        "cost_projection_estimate_rows": 0,
-        "context_rows": 0,
-        "context_estimate_max_rows": 0,
-        "cleanup_candidate_queries_completed": 0,
-    }
-    counting = {"on": False}
-
-    real_messages_for_session = ConsoleChatStore.messages_for_session
-
-    def counted_messages_for_session(
-        self: ConsoleChatStore, session_id: str
-    ) -> list[Any]:
-        result = real_messages_for_session(self, session_id)
-        if counting["on"]:
-            counts["messages_for_session"] += 1
-            counts["snapshots"] += len(result)
-            caller = inspect.currentframe().f_back
-            if caller is not None:
-                site = f"{Path(caller.f_code.co_filename).name}:{caller.f_lineno}"
-                key = f"snapshot_caller:{site}"
-                counts[key] = counts.get(key, 0) + 1
-        return result
-
-    monkeypatch.setattr(
-        ConsoleChatStore, "messages_for_session", counted_messages_for_session
-    )
-
-    real_snapshot = ConsoleChatStore._snapshot
-
-    def counted_snapshot(message: Any) -> Any:
-        if counting["on"]:
-            counts["snapshot_rows"] += 1
-        return real_snapshot(message)
-
-    monkeypatch.setattr(ConsoleChatStore, "_snapshot", staticmethod(counted_snapshot))
-
-    def _count_projected_rows(module: Any, name: str, key: str) -> None:
-        real = getattr(module, name)
-
-        def counted(messages: Any, *args: Any, **kwargs: Any) -> Any:
-            if counting["on"]:
-                counts[key] += len(messages)
-            return real(messages, *args, **kwargs)
-
-        monkeypatch.setattr(module, name, counted)
-
-    _count_projected_rows(
-        spend_module, "build_console_spend_history_projection", "spend_history_rows"
-    )
-    _count_projected_rows(
-        spend_module, "build_console_current_cost_messages", "cost_rows"
-    )
-    _count_projected_rows(
-        spend_module, "build_console_context_messages", "context_rows"
-    )
-    _count_projected_rows(screen_module, "build_cost_snapshot", "cost_snapshot_rows")
-    _count_projected_rows(
-        screen_module, "_estimate_tokens_locally", "cost_projection_estimate_rows"
-    )
-    real_context_estimate = screen_module.build_console_context_estimate
-
-    def counted_context_estimate(messages: Any, *args: Any, **kwargs: Any) -> Any:
-        if counting["on"]:
-            # Textual may coalesce a different number of one-row draft
-            # repaint calls in each mounted app. The largest input to any
-            # call is the deterministic O(N) signal: 400 means the whole
-            # transcript returned to the typing path.
-            counts["context_estimate_max_rows"] = max(
-                counts["context_estimate_max_rows"], len(messages)
-            )
-        return real_context_estimate(messages, *args, **kwargs)
-
-    monkeypatch.setattr(
-        screen_module, "build_console_context_estimate", counted_context_estimate
-    )
-
-    def _count_calls(module: Any, name: str, key: str) -> None:
-        real = getattr(module, name)
-
-        def counted(*args: Any, **kwargs: Any) -> Any:
-            if counting["on"]:
-                counts[key] += 1
-            return real(*args, **kwargs)
-
-        monkeypatch.setattr(module, name, counted)
-
-    # TASK-24301: the derivation legs. Patched on the modules the Console
-    # session controller resolves them through, so a call that routes around
-    # the memo is still seen.
-    # TASK-33005 final review I-6: ChatScreen and the defaults module bind the
-    # builder at import, so patching only its home module counted 0 forever.
-    from tldw_chatbook.Chat import console_settings_defaults as defaults_module
-
-    for module in (settings_module, screen_module, defaults_module):
-        _count_calls(
-            module, "build_console_settings_readiness", "settings_readiness_builds"
+        from tldw_chatbook.app import TldwCli
+        from tldw_chatbook.Chat.console_chat_models import (
+            ConsoleChatMessage,
+            ConsoleMessageRole,
         )
-    _count_calls(
-        session_module,
-        "default_console_session_settings",
-        "template_default_builds",
-    )
-
-    trace_maintenance: list[tuple[Any, Any]] = []
-    media_cleanup: list[Any] = []
-    if storage_units:
-        _count_storage_units(monkeypatch, counts, counting)
-        media_cleanup = _capture_media_cleanup_timer(monkeypatch, TldwCli)
-        # The 1 Hz legacy trace-maintenance loop (armed 5 s after ready,
-        # runs forever) is wall-clock driven: left running, a slow machine
-        # bills more of its ticks to whatever is being measured. Captured
-        # instead of scheduled; the ``trace`` phase bills it per tick.
-        from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
-
-        real_schedule = ConsoleRuntime._schedule_legacy_trace_maintenance
-        monkeypatch.setattr(
-            ConsoleRuntime,
-            "_schedule_legacy_trace_maintenance",
-            lambda runtime, database, normalizer_factory: trace_maintenance.append(
-                (database, normalizer_factory, runtime, real_schedule)
-            ),
+        from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+        from tldw_chatbook.UI.Console_Modules import session as session_module
+        from tldw_chatbook.UI.Console_Modules import (
+            console_spend_projection as spend_module,
         )
+        from tldw_chatbook.UI.Screens import chat_screen as screen_module
 
-    app = TldwCli()
-    if storage_units:
-        real_candidates = app.media_db.get_deletion_candidates
+        from tldw_chatbook.Chat import console_session_settings as settings_module
 
-        def counted_candidates(*args: Any, **kwargs: Any) -> Any:
-            result = real_candidates(*args, **kwargs)
+        counts: dict[str, int] = {
+            "messages_for_session": 0,
+            "snapshots": 0,
+            "settings_readiness_builds": 0,
+            "template_default_builds": 0,
+            "snapshot_rows": 0,
+            "spend_history_rows": 0,
+            "cost_rows": 0,
+            "cost_snapshot_rows": 0,
+            "cost_projection_estimate_rows": 0,
+            "context_rows": 0,
+            "context_estimate_max_rows": 0,
+            "cleanup_candidate_queries_completed": 0,
+        }
+        counting = {"on": False}
+
+        real_messages_for_session = ConsoleChatStore.messages_for_session
+
+        def counted_messages_for_session(
+            self: ConsoleChatStore, session_id: str
+        ) -> list[Any]:
+            result = real_messages_for_session(self, session_id)
             if counting["on"]:
-                counts["cleanup_candidate_queries_completed"] += 1
+                counts["messages_for_session"] += 1
+                counts["snapshots"] += len(result)
+                caller = inspect.currentframe().f_back
+                if caller is not None:
+                    site = f"{Path(caller.f_code.co_filename).name}:{caller.f_lineno}"
+                    key = f"snapshot_caller:{site}"
+                    counts[key] = counts.get(key, 0) + 1
             return result
 
-        monkeypatch.setattr(app.media_db, "get_deletion_candidates", counted_candidates)
-    async with app.run_test(size=(170, 48)) as pilot:
-        await _settle(pilot)
+        monkeypatch.setattr(
+            ConsoleChatStore, "messages_for_session", counted_messages_for_session
+        )
 
-        store = pilot.app.screen._ensure_console_chat_store()
-        workspace_id = store.workspace_context.active_workspace_id
-        session = store.ensure_session(title="census", workspace_id=workspace_id)
-        # Restore the linear fixture in one pass. Appending 400 rows one at a
-        # time repeatedly rebuilt the entire tree and made Windows setup
-        # exceed the watchdog before the first measured keystroke.
-        store._ingest_linear_messages(
-            session.id,
-            (
-                ConsoleChatMessage(
-                    role=(
-                        ConsoleMessageRole.USER
-                        if index % 2 == 0
-                        else ConsoleMessageRole.ASSISTANT
-                    ),
-                    content=f"census message {index} " + ("lorem ipsum " * 6),
+        real_snapshot = ConsoleChatStore._snapshot
+
+        def counted_snapshot(message: Any) -> Any:
+            if counting["on"]:
+                counts["snapshot_rows"] += 1
+            return real_snapshot(message)
+
+        monkeypatch.setattr(ConsoleChatStore, "_snapshot", staticmethod(counted_snapshot))
+
+        def _count_projected_rows(module: Any, name: str, key: str) -> None:
+            real = getattr(module, name)
+
+            def counted(messages: Any, *args: Any, **kwargs: Any) -> Any:
+                if counting["on"]:
+                    counts[key] += len(messages)
+                return real(messages, *args, **kwargs)
+
+            monkeypatch.setattr(module, name, counted)
+
+        _count_projected_rows(
+            spend_module, "build_console_spend_history_projection", "spend_history_rows"
+        )
+        _count_projected_rows(
+            spend_module, "build_console_current_cost_messages", "cost_rows"
+        )
+        _count_projected_rows(
+            spend_module, "build_console_context_messages", "context_rows"
+        )
+        _count_projected_rows(screen_module, "build_cost_snapshot", "cost_snapshot_rows")
+        _count_projected_rows(
+            screen_module, "_estimate_tokens_locally", "cost_projection_estimate_rows"
+        )
+        real_context_estimate = screen_module.build_console_context_estimate
+
+        def counted_context_estimate(messages: Any, *args: Any, **kwargs: Any) -> Any:
+            if counting["on"]:
+                # Textual may coalesce a different number of one-row draft
+                # repaint calls in each mounted app. The largest input to any
+                # call is the deterministic O(N) signal: 400 means the whole
+                # transcript returned to the typing path.
+                counts["context_estimate_max_rows"] = max(
+                    counts["context_estimate_max_rows"], len(messages)
                 )
-                for index in range(seeded_messages)
-            ),
-        )
-        assert store.message_count(session.id) == seeded_messages
-        await _settle(pilot, passes=10)
+            return real_context_estimate(messages, *args, **kwargs)
 
-        # The fixture itself changed the transcript. Pay the legitimate cold
-        # projection rebuild before the measured unchanged typing burst; a
-        # real restored conversation also paints context and cost before input.
-        screen = pilot.app.screen
-        screen._active_console_settings_context_estimate()
-        screen._build_console_cost_state()
-        if known_evidence:
-            _settle_known_connection_evidence(pilot.app, screen)
-            await _settle(pilot, passes=10)  # Its one refresh is not typing.
-
-        # The composer is the DEFAULT focus at rest; never call focus() here.
-        # The first Input in walk order is a settings field, and a probe that
-        # focuses it types into the wrong widget and measures nothing.
-        assert type(pilot.app.focused).__name__ == "ConsoleComposerBar", (
-            "census is only meaningful with the composer focused; got "
-            f"{type(pilot.app.focused).__name__}"
+        monkeypatch.setattr(
+            screen_module, "build_console_context_estimate", counted_context_estimate
         )
 
-        # Hold the wall-clock timers still for the burst, as trace maintenance
-        # is above. The 0.25 s credential poll builds readiness each tick
-        # (billed per tick by the ``idle`` phase): left running, the slower
-        # 400-message run billed more ticks to typing (34 vs 39 builds).
-        screen._stop_console_credential_poll_timer()
-        if storage_units:
-            # The 0.2 s trailing draft-spend refresh, which a loaded machine
-            # that leaves a >0.2 s gap between two presses fires mid-burst
-            # (measured: 49 config admissions, not 27); the ``pause`` phase
-            # fires it exactly once.
-            screen._console_draft_spend_refresh.delay_seconds = 3600.0
+        def _count_calls(module: Any, name: str, key: str) -> None:
+            real = getattr(module, name)
 
-        _TYPING_BURST_CALLERS.clear()
-        counting["burst"] = True
-        counting["on"] = True
-        for _ in range(KEYSTROKES):
-            await pilot.press("a")
-        counting["on"] = False
-        counting["burst"] = False
+            def counted(*args: Any, **kwargs: Any) -> Any:
+                if counting["on"]:
+                    counts[key] += 1
+                return real(*args, **kwargs)
 
+            monkeypatch.setattr(module, name, counted)
+
+        # TASK-24301: the derivation legs. Patched on the modules the Console
+        # session controller resolves them through, so a call that routes around
+        # the memo is still seen.
+        # TASK-33005 final review I-6: ChatScreen and the defaults module bind the
+        # builder at import, so patching only its home module counted 0 forever.
+        from tldw_chatbook.Chat import console_settings_defaults as defaults_module
+
+        for module in (settings_module, screen_module, defaults_module):
+            _count_calls(
+                module, "build_console_settings_readiness", "settings_readiness_builds"
+            )
+        _count_calls(
+            session_module,
+            "default_console_session_settings",
+            "template_default_builds",
+        )
+
+        trace_maintenance: list[tuple[Any, Any]] = []
+        media_cleanup: list[Any] = []
         if storage_units:
-            await _census_idle_and_visit(
-                pilot, counts, counting, trace_maintenance, monkeypatch, media_cleanup
+            storage_observer = _count_storage_units(monkeypatch, counts, counting)
+            media_cleanup = _capture_media_cleanup_timer(monkeypatch, TldwCli)
+            # The 1 Hz legacy trace-maintenance loop (armed 5 s after ready,
+            # runs forever) is wall-clock driven: left running, a slow machine
+            # bills more of its ticks to whatever is being measured. Captured
+            # instead of scheduled; the ``trace`` phase bills it per tick.
+            from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+            real_schedule = ConsoleRuntime._schedule_legacy_trace_maintenance
+            monkeypatch.setattr(
+                ConsoleRuntime,
+                "_schedule_legacy_trace_maintenance",
+                lambda runtime, database, normalizer_factory: trace_maintenance.append(
+                    (database, normalizer_factory, runtime, real_schedule)
+                ),
             )
 
-    return counts
+        app = TldwCli()
+        if storage_units:
+            real_candidates = app.media_db.get_deletion_candidates
+
+            def counted_candidates(*args: Any, **kwargs: Any) -> Any:
+                result = real_candidates(*args, **kwargs)
+                if counting["on"]:
+                    counts["cleanup_candidate_queries_completed"] += 1
+                return result
+
+            monkeypatch.setattr(app.media_db, "get_deletion_candidates", counted_candidates)
+        async with app.run_test(size=(170, 48)) as pilot:
+            await _settle(pilot)
+
+            store = pilot.app.screen._ensure_console_chat_store()
+            workspace_id = store.workspace_context.active_workspace_id
+            session = store.ensure_session(title="census", workspace_id=workspace_id)
+            # Restore the linear fixture in one pass. Appending 400 rows one at a
+            # time repeatedly rebuilt the entire tree and made Windows setup
+            # exceed the watchdog before the first measured keystroke.
+            store._ingest_linear_messages(
+                session.id,
+                (
+                    ConsoleChatMessage(
+                        role=(
+                            ConsoleMessageRole.USER
+                            if index % 2 == 0
+                            else ConsoleMessageRole.ASSISTANT
+                        ),
+                        content=f"census message {index} " + ("lorem ipsum " * 6),
+                    )
+                    for index in range(seeded_messages)
+                ),
+            )
+            assert store.message_count(session.id) == seeded_messages
+            await _settle(pilot, passes=10)
+
+            # The fixture itself changed the transcript. Pay the legitimate cold
+            # projection rebuild before the measured unchanged typing burst; a
+            # real restored conversation also paints context and cost before input.
+            screen = pilot.app.screen
+            screen._active_console_settings_context_estimate()
+            screen._build_console_cost_state()
+            if known_evidence:
+                _settle_known_connection_evidence(pilot.app, screen)
+                await _settle(pilot, passes=10)  # Its one refresh is not typing.
+
+            # The composer is the DEFAULT focus at rest; never call focus() here.
+            # The first Input in walk order is a settings field, and a probe that
+            # focuses it types into the wrong widget and measures nothing.
+            assert type(pilot.app.focused).__name__ == "ConsoleComposerBar", (
+                "census is only meaningful with the composer focused; got "
+                f"{type(pilot.app.focused).__name__}"
+            )
+
+            # Hold the wall-clock timers still for the burst, as trace maintenance
+            # is above. The 0.25 s credential poll builds readiness each tick
+            # (billed per tick by the ``idle`` phase): left running, the slower
+            # 400-message run billed more ticks to typing (34 vs 39 builds).
+            screen._stop_console_credential_poll_timer()
+            if storage_units:
+                # The 0.2 s trailing draft-spend refresh, which a loaded machine
+                # that leaves a >0.2 s gap between two presses fires mid-burst
+                # (measured: 49 config admissions, not 27); the ``pause`` phase
+                # fires it exactly once.
+                screen._console_draft_spend_refresh.delay_seconds = 3600.0
+
+            _TYPING_BURST_CALLERS.clear()
+            counting["burst"] = True
+            counting["on"] = True
+            for _ in range(KEYSTROKES):
+                await pilot.press("a")
+            counting["on"] = False
+            counting["burst"] = False
+
+            if storage_units:
+                await _census_idle_and_visit(
+                    pilot, counts, counting, trace_maintenance, monkeypatch, media_cleanup
+                )
+
+        return counts
+    finally:
+        if storage_observer is not None:
+            original_error = sys.exc_info()[1]
+            receipt = storage_observer.close()
+            _STORAGE_UNIT_OBSERVER_RECEIPTS.append(receipt)
+            if not receipt["complete"]:
+                if original_error is not None:
+                    original_error.add_note("Original storage-unit observer evidence is incomplete.")
+                else:
+                    raise AssertionError("Original storage-unit observer evidence is incomplete: " + json.dumps(receipt))
 
 
 def _settle_known_connection_evidence(app: Any, screen: Any) -> None:

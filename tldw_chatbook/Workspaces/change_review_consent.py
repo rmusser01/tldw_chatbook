@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from enum import Enum
+import inspect
 from queue import Empty, Full, Queue
 from threading import RLock, Thread
+import sys
 import time
 from typing import Callable, Protocol
 
 from tldw_chatbook.Workspaces.models import RuntimeBindingStatus
+
+
+class _WorkspaceCompositeEntryError(RuntimeError):
+    """A qualified optional connection failed before the first original read."""
 
 
 class ChangeReviewState(str, Enum):
@@ -185,13 +192,35 @@ class ChangeReviewConsentService:
             if self._disposed:
                 return ChangeReviewAdmission()
             capability = self._capability_reader()
-            consent = self._registry.read_change_review_consent(workspace_id)
-            if (
-                capability.state is not ChangeReviewState.ENABLED
-                or consent.state is not ChangeReviewState.ENABLED
-            ):
+            try:
+                registry = self._registry
+                registry_module = sys.modules.get(
+                    "tldw_chatbook.Workspaces.registry_service"
+                )
+                scope = nullcontext(None)
+                if registry_module is not None and _workspace_consent_current(
+                    self, registry_module
+                ):
+                    scope = registry_module._workspace_composite_context(
+                        registry,
+                        lambda: _workspace_consent_current(self, registry_module)
+                        and self._registry is registry,
+                        enabled=(
+                            type(workspace_id) is str and bool(workspace_id.strip())  # noqa: E721 -- stock input avoids custom validation callbacks
+                        ),
+                    )
+                with scope as check:
+                    consent = self._registry.read_change_review_consent(workspace_id)
+                    if check is not None:
+                        check()
+                    if (
+                        capability.state is not ChangeReviewState.ENABLED
+                        or consent.state is not ChangeReviewState.ENABLED
+                    ):
+                        return ChangeReviewAdmission()
+                    return self._admit_enabled_locked(workspace_id, consent)
+            except _WorkspaceCompositeEntryError:
                 return ChangeReviewAdmission()
-            return self._admit_enabled_locked(workspace_id, consent)
 
     def status(self, workspace_id: str) -> ChangeReviewStatus:
         """Return a revision-consistent alias-only Settings projection.
@@ -205,27 +234,51 @@ class ChangeReviewConsentService:
         """
         with self._lock:
             capability = self._capability_reader()
-            consent = self._registry.read_change_review_consent(workspace_id)
-            roots: list[RootReadiness] = []
-            if (
-                not self._disposed
-                and capability.state is ChangeReviewState.ENABLED
-                and consent.state is ChangeReviewState.ENABLED
-            ):
-                for binding in self._current_bindings(workspace_id):
-                    # Folder bindings are canonicalized at registry admission and
-                    # READY bindings are rechecked for symlink/resolve drift.
-                    root = binding.locator
-                    entry = self._readiness.get((workspace_id, root))
-                    if entry is not None and entry.revision == consent.revision:
-                        roots.append(
-                            RootReadiness(
-                                alias=binding.binding_id,
-                                state=entry.state,
-                                reason=entry.reason,
-                            )
-                        )
-            return ChangeReviewStatus(capability, consent, tuple(roots))
+            try:
+                registry = self._registry
+                registry_module = sys.modules.get(
+                    "tldw_chatbook.Workspaces.registry_service"
+                )
+                scope = nullcontext(None)
+                if registry_module is not None and _workspace_consent_current(
+                    self, registry_module
+                ):
+                    scope = registry_module._workspace_composite_context(
+                        registry,
+                        lambda: _workspace_consent_current(self, registry_module)
+                        and self._registry is registry,
+                        enabled=(
+                            type(workspace_id) is str and bool(workspace_id.strip())  # noqa: E721 -- stock input avoids custom validation callbacks
+                        ),
+                    )
+                with scope as check:
+                    consent = self._registry.read_change_review_consent(workspace_id)
+                    if check is not None:
+                        check()
+                    roots: list[RootReadiness] = []
+                    if (
+                        not self._disposed
+                        and capability.state is ChangeReviewState.ENABLED
+                        and consent.state is ChangeReviewState.ENABLED
+                    ):
+                        for binding in self._current_bindings(workspace_id):
+                            # Folder bindings are canonicalized at registry admission and
+                            # READY bindings are rechecked for symlink/resolve drift.
+                            root = binding.locator
+                            entry = self._readiness.get((workspace_id, root))
+                            if entry is not None and entry.revision == consent.revision:
+                                roots.append(
+                                    RootReadiness(
+                                        alias=binding.binding_id,
+                                        state=entry.state,
+                                        reason=entry.reason,
+                                    )
+                                )
+                    return ChangeReviewStatus(capability, consent, tuple(roots))
+            except _WorkspaceCompositeEntryError:
+                return ChangeReviewStatus(
+                    capability, ChangeReviewConsent(ChangeReviewState.UNAVAILABLE), ()
+                )
 
     def toggle(
         self,
@@ -448,3 +501,84 @@ class ChangeReviewConsentService:
         for key in tuple(self._readiness):
             if key[0] == workspace_id:
                 self._readiness.pop(key, None)
+
+
+_WORKSPACE_COMPOSITE_CONSENT_OWNER = ChangeReviewConsentService
+_WORKSPACE_COMPOSITE_CONSENT_LOOKUP = inspect.getattr_static(
+    ChangeReviewConsentService, "__getattribute__"
+)
+_WORKSPACE_COMPOSITE_CONSENT_REGISTRY_DESCRIPTOR = inspect.getattr_static(
+    ChangeReviewConsentService, "_registry", None
+)
+_WORKSPACE_COMPOSITE_CONSENT_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (
+            name,
+            (
+                function,
+                function.__code__,
+                function.__globals__,
+                function.__defaults__,
+                function.__kwdefaults__,
+                tuple((function.__kwdefaults__ or {}).items()),
+                function.__closure__,
+                tuple(
+                    (cell, cell.cell_contents) for cell in function.__closure__ or ()
+                ),
+            ),
+        )
+        for name in (
+            "admit_turn",
+            "status",
+            "_admit_enabled_locked",
+            "_current_bindings",
+            "_schedule_locked",
+        )
+        for function in (vars(ChangeReviewConsentService)[name],)
+    ),
+    (
+        _default_capability_reader,
+        _default_capability_reader.__code__,
+        _default_capability_reader.__globals__,
+        _default_capability_reader.__defaults__,
+        _default_capability_reader.__kwdefaults__,
+        tuple((_default_capability_reader.__kwdefaults__ or {}).items()),
+        _default_capability_reader.__closure__,
+        tuple(
+            (cell, cell.cell_contents)
+            for cell in _default_capability_reader.__closure__ or ()
+        ),
+    ),
+)
+
+
+def _workspace_consent_current(service, registry_module):
+    defining, path, spec, origin, methods, capability = (
+        _WORKSPACE_COMPOSITE_CONSENT_SOURCE
+    )
+    owner = _WORKSPACE_COMPOSITE_CONSENT_OWNER
+    return (
+        ChangeReviewConsentService is owner
+        and type(service) is owner
+        and inspect.getattr_static(owner, "__getattribute__")
+        is _WORKSPACE_COMPOSITE_CONSENT_LOOKUP
+        and inspect.getattr_static(owner, "_registry", None)
+        is _WORKSPACE_COMPOSITE_CONSENT_REGISTRY_DESCRIPTOR
+        and globals() is defining
+        and __file__ == path
+        and __spec__ is spec
+        and getattr(__spec__, "origin", None) == origin
+        and service._capability_reader is capability[0]
+        and _default_capability_reader is capability[0]
+        and registry_module._workspace_function_current(capability)
+        and all(
+            vars(owner).get(name) is record[0]
+            and name not in vars(service)
+            and registry_module._workspace_function_current(record)
+            for name, record in methods
+        )
+    )

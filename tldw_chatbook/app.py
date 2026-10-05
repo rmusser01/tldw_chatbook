@@ -4224,6 +4224,57 @@ class TldwCli(
         # feature CSS exactly like an in-app navigation does.
         self._ensure_screen_owned_css(resolved_tab)
 
+        if resolved_tab == TAB_CHAT:
+            from tldw_chatbook.Chat.console_runtime import _initial_receipt_preparer
+
+            runtime = self.console_runtime
+            prepare = _initial_receipt_preparer(runtime)
+            if prepare is not None:
+                owner_task, owner_loop = asyncio.current_task(), asyncio.get_running_loop()
+                owner_thread = threading.current_thread()
+                runtime_identity = self._current_runtime_identity()
+                initial_stack = tuple(self.screen_stack)
+                initial_current_tab = self.current_tab
+                initial_database = self.chachanotes_db
+                initial_database_path = getattr(initial_database, "db_path", None)
+                initial_marks = self.conversation_local_marks_service
+                initial_route_value = getattr(self, "_initial_tab_value", TAB_CHAT)
+
+                def require_initial_owner() -> None:
+                    if _initial_receipt_preparer(runtime) is None:
+                        raise RuntimeError("initial_receipt_source_changed")
+                    current_stack = tuple(self.screen_stack)
+                    if (
+                        asyncio.current_task() is not owner_task
+                        or asyncio.get_running_loop() is not owner_loop
+                        or threading.current_thread() is not owner_thread
+                        or self.console_runtime is not runtime
+                        or runtime._app is not self
+                        or runtime._disposed
+                        or self.chachanotes_db is not initial_database
+                        or getattr(initial_database, "db_path", None) != initial_database_path
+                        or self.conversation_local_marks_service is not initial_marks
+                        or getattr(self, "_initial_tab_value", TAB_CHAT) != initial_route_value
+                        or self._current_runtime_identity() != runtime_identity
+                        or self.current_tab != initial_current_tab
+                        or len(current_stack) != len(initial_stack)
+                        or any(now is not before for now, before in zip(current_stack, initial_stack))
+                        or getattr(self, "_initial_screen_pushed", False)
+                        or self._shutting_down
+                        or self._exit
+                    ):
+                        raise RuntimeError("initial_screen_owner_changed")
+
+                # Existing initial-setup custody is already counted by the
+                # navigation drain. Accepted startup may finish while a new
+                # maintenance/navigation admission fence is closed.
+                async with self._screen_navigation_lock():
+                    require_initial_owner()
+                    if _initial_receipt_preparer(runtime) is None:
+                        raise RuntimeError("initial_receipt_source_changed")
+                    await prepare(self, require_current=require_initial_owner)
+                    require_initial_owner()
+
         new_screen = screen_class(self)
         # TASK-31520: retain the initial screen exactly like a navigated-to
         # one. Without this, a reusable initial tab (chat is the default!)

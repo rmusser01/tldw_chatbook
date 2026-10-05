@@ -1084,3 +1084,30 @@ _CHARACTER_REFRESH_READERS = tuple(
         descriptor.__func__ if isinstance(descriptor, staticmethod) else descriptor,
     )
 )
+
+
+# Defining originals for finite Workspace connection ownership only.
+_WORKSPACE_OWNED_CONNECTION_SOURCE = (
+    globals(),
+    __file__,
+    __spec__,
+    getattr(__spec__, "origin", None),
+    tuple(
+        (
+            function,
+            function.__code__,
+            function.__globals__,
+            function.__defaults__,
+            function.__kwdefaults__,
+            tuple((function.__kwdefaults__ or {}).items()),
+            function.__closure__,
+            tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+        )
+        for function in (
+            operation_owned_connection,
+            operation_owned_connection.__wrapped__,
+            BaseDB._get_connection,
+        )
+    ),
+    (BaseDB, BaseDB._get_connection),
+)

@@ -4121,31 +4121,151 @@ class ConsoleRuntime:
                 return None
             if self._activity_receipts is not None:
                 return self._activity_receipts
-            db = getattr(self._app, "chachanotes_db", None)
+            app = self._app
+            db = getattr(app, "chachanotes_db", None)
             db_path = getattr(db, "db_path", None) if db is not None else None
+            marks = getattr(app, "conversation_local_marks_service", None)
+            receipt_source = getattr(_INITIAL_ACTIVITY_RECEIPT_SCOPE, "proof", None)
+            require_source = (receipt_source[1] if receipt_source is not None
+                              and receipt_source[0] is self else None)
             if not db_path or str(db_path) == ":memory:":
                 return None
             from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
             runs_db = AgentRunsDB(Path(db_path).parent / "agent_runs.db")
+            published = False
             try:
                 service = _LazyConsoleActivityReceiptService(
                     runs_db,
-                    getattr(self._app, "conversation_local_marks_service", None),
+                    marks,
                 )
                 # Dispose writes its lifetime latch under this same lock. Never
                 # publish an owner between that latch and its resource snapshot.
                 with self._canvas_native_lock:
-                    if self._disposed:
+                    if (
+                        (require_source is not None and not require_source())
+                        or self._disposed
+                        or self._app is not app
+                        or getattr(app, "chachanotes_db", None) is not db
+                        or getattr(db, "db_path", None) != db_path
+                        or getattr(app, "conversation_local_marks_service", None) is not marks
+                    ):
                         return None
                     self._agent_runs_db = runs_db
                     self._activity_receipts = service
+                    published = True
                     return service
             finally:
                 # AgentRunsDB.close affects only the calling thread. A worker's
                 # held initialization connection cannot be closed by app exit.
-                if self._disposed or get_ident() != self._receipt_owner_thread_id:
+                if (not published or self._disposed
+                        or get_ident() != self._receipt_owner_thread_id):
                     runs_db.close()
+
+    async def _prepare_initial_activity_receipts(
+        self, app: Any, *, require_current: Callable[[], None]
+    ) -> bool:
+        """Prepare only stock receipt storage under the initial startup task.
+
+        The original synchronous reader and UI-bound bridge APIs stay unchanged.
+        A selected callback retains custody through physical return, including
+        repeated cancellation of this awaiting startup task.
+        """
+        from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+        anchor = _INITIAL_ACTIVITY_RECEIPT_READERS
+        scope = anchor[2]
+        if _initial_receipt_preparer(self) is None:
+            raise RuntimeError("initial_receipt_source_changed")
+        database = getattr(app, "chachanotes_db", None)
+        path = getattr(database, "db_path", None)
+        if (
+            type(database) is not CharactersRAGDB
+            or database.is_memory_db
+            or not path
+        ):
+            return False
+        require_current()
+        if (
+            self._app is not app
+            or getattr(app, "console_runtime", None) is not self
+            or self._disposed
+            or threading.get_ident() != self._receipt_owner_thread_id
+            or (self._canvas_policy_watch_task is not None
+                and self._canvas_policy_watch_task.get_loop() is not asyncio.get_running_loop())
+        ):
+            raise RuntimeError("initial_receipt_owner_changed")
+        if self._activity_receipts is not None:
+            return True
+        marks = getattr(app, "conversation_local_marks_service", None)
+        generation = self.generation
+        owner_thread = threading.current_thread()
+        owner_loop, owner_task = asyncio.get_running_loop(), asyncio.current_task()
+        if owner_thread.ident != self._receipt_owner_thread_id:
+            raise RuntimeError("initial_receipt_owner_changed")
+        reader = MethodType(anchor[1][0][1], self)
+
+        def source_current() -> bool:
+            return (
+                _INITIAL_ACTIVITY_RECEIPT_READERS is anchor
+                and _INITIAL_ACTIVITY_RECEIPT_SCOPE is scope
+                and _initial_receipt_preparer(self) is not None
+                and self._app is app
+                and getattr(app, "console_runtime", None) is self
+                and not self._disposed
+                and self.generation == generation
+                and getattr(app, "chachanotes_db", None) is database
+                and getattr(database, "db_path", None) == path
+                and getattr(app, "conversation_local_marks_service", None) is marks
+            )
+
+        def initialize() -> Any:
+            previous = getattr(scope, "proof", None)
+            scope.proof = (self, source_current)
+            try:
+                if not source_current():
+                    raise RuntimeError("initial_receipt_source_changed")
+                result = reader()
+                if not source_current():
+                    raise RuntimeError("initial_receipt_source_changed")
+                return result
+            finally:
+                if previous is None:
+                    del scope.proof
+                else:
+                    scope.proof = previous
+
+        coroutine = asyncio.to_thread(initialize)
+        try:
+            pending = asyncio.create_task(coroutine, name="initial_console_receipts")
+        except BaseException:
+            coroutine.close()
+            raise
+        try:
+            result = await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not pending.cancelled():
+                try:
+                    pending.result()
+                except Exception:
+                    pass
+            raise
+        if (
+            threading.current_thread() is not owner_thread
+            or asyncio.get_running_loop() is not owner_loop
+            or asyncio.current_task() is not owner_task
+            or not source_current()
+        ):
+            raise RuntimeError("initial_receipt_owner_changed")
+        require_current()
+        return result is not None
 
     def ensure_agent_bridge(
         self,
@@ -5650,3 +5770,50 @@ async def dispose_console_runtime(app: Any, *, view: Any | None = None) -> None:
 
 # Definition-time owner for the optional stock hook connection scope.
 _HOOK_CONTEXT_KEY_ORIGINAL_OWNER = ConsoleRuntime
+
+
+# Only the selected finite worker carries a publication source proof. Direct
+# customized readers keep their original ABI and may delegate to the original.
+_INITIAL_ACTIVITY_RECEIPT_SCOPE = threading.local()
+_INITIAL_ACTIVITY_RECEIPT_ABSENT = object()
+
+# Definition-time bodies for the optional finite initial Console preparation.
+_INITIAL_ACTIVITY_RECEIPT_READERS = (
+    ConsoleRuntime,
+    tuple(
+        (name, function, function.__code__, function.__globals__,
+         function.__defaults__, function.__kwdefaults__, function.__closure__)
+        for name in ("ensure_activity_receipt_service", "_prepare_initial_activity_receipts")
+        for function in (getattr(ConsoleRuntime, name),)
+    ),
+    _INITIAL_ACTIVITY_RECEIPT_SCOPE,
+    (inspect.getattr_static(ConsoleRuntime, "__getattribute__"),
+     inspect.getattr_static(ConsoleRuntime, "__getattr__", _INITIAL_ACTIVITY_RECEIPT_ABSENT),
+     inspect.getattr_static(ConsoleRuntime, "_app", _INITIAL_ACTIVITY_RECEIPT_ABSENT),
+     _INITIAL_ACTIVITY_RECEIPT_ABSENT),
+)
+
+
+def _initial_receipt_preparer(runtime: Any) -> Any | None:
+    owner, records, scope, lookup = _INITIAL_ACTIVITY_RECEIPT_READERS
+    if (type(runtime) is not owner or ConsoleRuntime is not owner
+            or _INITIAL_ACTIVITY_RECEIPT_SCOPE is not scope
+            or lookup[0] is not object.__getattribute__
+            or lookup[1] is not lookup[3] or lookup[2] is not lookup[3]
+            or inspect.getattr_static(owner, "__getattribute__") is not lookup[0]
+            or inspect.getattr_static(owner, "__getattr__", lookup[3]) is not lookup[1]
+            or inspect.getattr_static(owner, "_app", lookup[3]) is not lookup[2]):
+        return None
+    for name, function, code, namespace, defaults, kwdefaults, closure in records:
+        if (
+            inspect.getattr_static(owner, name, None) is not function
+            or name in vars(runtime)
+            or function.__code__ is not code
+            or function.__globals__ is not namespace
+            or namespace is not globals()
+            or function.__defaults__ is not defaults
+            or function.__kwdefaults__ is not kwdefaults
+            or function.__closure__ is not closure
+        ):
+            return None
+    return MethodType(records[1][1], runtime)

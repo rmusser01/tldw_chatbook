@@ -202,3 +202,25 @@ run.
 - [ADR-010: Console conversation-local marks](010-console-conversation-local-marks.md)
 - [ADR-031: TUI keybinding and footer-hint conventions](031-tui-keybinding-and-footer-hint-conventions.md)
 - [ADR-083: Console edge rails and workspace-owned conversation Tree](083-console-edge-rails-and-workspace-tree-ownership.md)
+
+
+## Finite initial Console receipt preparation (2026-10-05)
+
+Reason: explicitly define the original receipt initializer's asynchronous startup and same-App/database publication contract. No persistent preparation service, readiness capability, storage/schema change, permission cache or new authority is introduced.
+
+Proposal before any managed production edit:
+- The original resolved initial Chat route prepares only its durable receipt store before constructing its Console screen. Other destinations and original synchronous/custom/headless Runtime APIs keep their preceding routes.
+- Only exact stock Runtime/helper/reader defining metadata qualifies the optional worker route. Preinstalled custom functions/instance shadows, subclasses and memory/custom database receivers retain their original route. After selection, queued/body/default/class drift refuses before replacement invocation; there is no custom fallback inside the selected interval.
+- Source qualification for publication is scoped only to the selected finite worker through a thread-local proof restored in its original finally; preinstalled class/instance/subclass wrappers may continue delegating to the original synchronous reader. The proof contains the exact Runtime and its captured source-current check, and is not a service, cache, authority or reusable task.
+- The original initializer captures the actual App, ChaChaNotes owner/path and marks-service owner before construction. Publication must still belong to that same owner after native construction, and every newly created refused initialization connection retires on its original source thread. Existing service/native borrowers are not adopted or closed.
+- The initial startup task holds one finite child task; repeated cancellation drains the same actual callback before propagating cancellation or releasing startup custody. Normal exception stays visible, and cancellation does not publish a screen. Runtime disposal closes admission first and serializes with the original initializer lock; no disposed Runtime publishes storage.
+- After actual callback retirement, the initial route rechecks exact App/Runtime, startup task/loop/thread, profile/source, screen stack, current tab, and shutdown/initial-push state before the original screen construction and push. A newer destination is never overwritten by a stale initial push.
+- Live first Send retains every original bridge, storage, permission, provider, capture and readiness guard. Receipt preparation makes no claim of permission readiness. All original startup, Send, heartbeat, helper and native-open limits remain unchanged.
+
+Native qualification plan: retain the original cold held-query causal RED first; then real queued reader replacement and same-function code/default drift, in-body App/DB/marks/generation drift, repeated cancellation while actual native SQL is held, disposal during the same held callback, warm borrowed original connection, preinstalled custom/instance/subclass/memory fallbacks, and normal first composition/key/Send/disposal controls. Controls observe original code/native handles; no native calls, guards, waits or budgets are replaced.
+
+Evidence-only candidate is not installed or Native-qualified. Root owns task/plan/ADR registration and serialized actual runs.
+
+Actual original-effect qualification: original-cold-receipts-native-red-6 completes31.375s with current production/test sources. The original Inspector/bridge/receipt/schema chain runs on the main Thread and actual shared loop. Holding its positively identified admitted native SQLite connection prevents the original loop callback; after release, normal Runtime disposal physically closes the exact handle and retires its original StorageLease/participant registration. Source/currentness, original five-cell close closure, global monitoring zero, no invalid observation and monitoring retirement all qualify before the responsiveness assertion. Attempts1-5 fail observer prerequisites and are excluded. Artificial hold and inclusive native spans establish this synchronous blocking site, not normal latency or whole-budget savings.
+
+Rejected alternatives: precreating a persistent store outside startup; a detached readiness service/task; moving UI bridge construction to a worker; weakening admission or changing synchronous custom/public ABI; increasing original budgets; or accepting a captured result after navigation/owner/source drift. Final acceptance requires actual native normal, drift, borrowed, custom, cancellation and disposal controls, then unchanged original whole/platform and live first-Send evidence.

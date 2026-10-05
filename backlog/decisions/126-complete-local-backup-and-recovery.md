@@ -1965,3 +1965,101 @@ Drive-root empty-component refusal and every original POSIX loop statement
 remain. Native permission/custom/body-drift and protected-HANDLE close controls
 are required alongside the count GREEN. This leaf does not qualify whole
 Send/startup improvements or change any native/helper/responsiveness budget.
+
+
+## Finite Workspace composite ownership refinement (2026-10-05)
+
+ADR required: yes
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: the optional private composite boundary crosses Workspace services and DB connection ownership. It retains the existing admission and retirement policy.
+
+Four source-qualified native cold controls demonstrated two physical Workspace SQLite handles for one `ChangeReviewConsentService.admit_turn`, `status`, `WorkspaceFileInspector._current_scope` capture, or `LocalWorkspaceRegistryService.save_runtime_binding` call. Every expected result, actual close, ordinary lease retirement, monitoring retirement and source check passed before the work-count assertion failed. The three active borrowed-transaction controls passed. This is a handle-lifetime regression introduced by making the public readers own their new connection: an outer lazy `operation_owned_connection` cannot retain a handle that the first public reader opens and closes itself. The native driver took 30.25 seconds; this receipt establishes work count, not a performance improvement.
+
+For these four exact stock composites, one private context may enter the original `operation_owned_connection(database)` and original counted `database.connection()` before the first Workspace query, while preserving the original service lock, query order and write transaction. The default Change Review capability read remains before this context because it reads configuration, not Workspace SQL. FileInspector retires the context after its two registry reads and before its existing filesystem identity checks. Save-binding retains its existing explicit transaction and checks captured owner/source immediately after `conn.execute`, inside that transaction before commit, as well as before helpers and later reads.
+
+Qualification is restricted to the original concrete registry/WorkspaceDB classes and defining-module callbacks, static descriptors, original lookup, real bound receiver, module/file/spec origin, and function code/globals/defaults/keyword defaults/closure cells. This covers the actual connection and transaction decorator hierarchy, held/getter/close methods, the original owned-cleanup helper, registry query methods, clock, metadata serializer and mutation-generation callback. A preinstalled custom receiver, lookup, clock, serializer, reader, subclass, memory DB or nonstandard binding input retains the preceding route. A qualified owner or source change during admission/body/retirement refuses before a later query or successful result. Custom pure Consent/Inspector paths do not import the DB subsystem solely to attempt this optimization.
+
+The context captures the exact DB, original thread-local cache/path and process/thread/task actor. Existing borrowers, including uncommitted transactions, remain caller-owned. Only a connection newly created by this finite context is retired by the original owned-cleanup helper. A failed physical close is not treated as retirement; retained native custody remains installed. Body exceptions keep precedence over a cleanup error, with that cleanup error chained. Original guard/source/uncertain-close failures never fall back.
+
+A distinct private entry exception lets only the additional optional connection's ordinary SQLite entry failure retain each callsite's existing unavailable/storage-error conversion after successful cleanup and final fences. It does not retry a failed read, swallow custom reader exceptions, or convert a guard/uncertain-close failure into an unavailable result. Existing public reader query-error conversions remain intact.
+
+Rejected alternatives: reverting owned public reader cleanup (reintroduces leaked cold workers); raising work-count limits; a resolved/permission cache; a generic global helper-depth change; a proxy DB or replaced reader/guard; grouping configuration reads into the Workspace interval; and grouping unqualified whole UI/provider visits. Retry/set-active/runtime-turn/WorkspaceFiles-visit variants remain separate follow-up candidates until their own actual boundaries and native controls qualify.
+
+Acceptance requires the unchanged seven original native work-count/borrower controls, the additional source/custom/SQL-error/write-rollback controls, and appropriate existing Workspace service tests. Pure compilation, metadata/closure and cleanup-order controls do not establish native acceptance. No whole-probe budget or freshness/custody policy changes.
+
+Review qualification: candidate4958 is a temporary native-control checkpoint, not an accepted implementation. Exact-cache retarget and custom Consent/Inspector lookup findings must reproduce with physically retired test-owned resources before a repair is accepted. Final production must retire only its positively identified newly created captured handle through the original core-closing boundary, preserve borrowed and foreign handles, and decline custom service lookup/descriptors before optional selection.
+
+
+## Finite initial Console receipt preparation (2026-10-05)
+
+Reason: explicitly define the original receipt initializer's asynchronous startup and same-App/database publication contract. No persistent preparation service, readiness capability, storage/schema change, permission cache or new authority is introduced.
+
+Proposal before any managed production edit:
+- The original resolved initial Chat route prepares only its durable receipt store before constructing its Console screen. Other destinations and original synchronous/custom/headless Runtime APIs keep their preceding routes.
+- Only exact stock Runtime/helper/reader defining metadata qualifies the optional worker route. Preinstalled custom functions/instance shadows, subclasses and memory/custom database receivers retain their original route. After selection, queued/body/default/class drift refuses before replacement invocation; there is no custom fallback inside the selected interval.
+- Source qualification for publication is scoped only to the selected finite worker through a thread-local proof restored in its original finally; preinstalled class/instance/subclass wrappers may continue delegating to the original synchronous reader. The proof contains the exact Runtime and its captured source-current check, and is not a service, cache, authority or reusable task.
+- The original initializer captures the actual App, ChaChaNotes owner/path and marks-service owner before construction. Publication must still belong to that same owner after native construction, and every newly created refused initialization connection retires on its original source thread. Existing service/native borrowers are not adopted or closed.
+- The initial startup task holds one finite child task; repeated cancellation drains the same actual callback before propagating cancellation or releasing startup custody. Normal exception stays visible, and cancellation does not publish a screen. Runtime disposal closes admission first and serializes with the original initializer lock; no disposed Runtime publishes storage.
+- After actual callback retirement, the initial route rechecks exact App/Runtime, startup task/loop/thread, profile/source, screen stack, current tab, and shutdown/initial-push state before the original screen construction and push. A newer destination is never overwritten by a stale initial push.
+- Live first Send retains every original bridge, storage, permission, provider, capture and readiness guard. Receipt preparation makes no claim of permission readiness. All original startup, Send, heartbeat, helper and native-open limits remain unchanged.
+
+Native qualification plan: retain the original cold held-query causal RED first; then real queued reader replacement and same-function code/default drift, in-body App/DB/marks/generation drift, repeated cancellation while actual native SQL is held, disposal during the same held callback, warm borrowed original connection, preinstalled custom/instance/subclass/memory fallbacks, and normal first composition/key/Send/disposal controls. Controls observe original code/native handles; no native calls, guards, waits or budgets are replaced.
+
+Evidence-only candidate is not installed or Native-qualified. Root owns task/plan/ADR registration and serialized actual runs.
+
+Actual original-effect qualification: original-cold-receipts-native-red-6 completes31.375s with current production/test sources. The original Inspector/bridge/receipt/schema chain runs on the main Thread and actual shared loop. Holding its positively identified admitted native SQLite connection prevents the original loop callback; after release, normal Runtime disposal physically closes the exact handle and retires its original StorageLease/participant registration. Source/currentness, original five-cell close closure, global monitoring zero, no invalid observation and monitoring retirement all qualify before the responsiveness assertion. Attempts1-5 fail observer prerequisites and are excluded. Artificial hold and inclusive native spans establish this synchronous blocking site, not normal latency or whole-budget savings.
+
+Rejected alternatives: precreating a persistent store outside startup; a detached readiness service/task; moving UI bridge construction to a worker; weakening admission or changing synchronous custom/public ABI; increasing original budgets; or accepting a captured result after navigation/owner/source drift. Final acceptance requires actual native normal, drift, borrowed, custom, cancellation and disposal controls, then unchanged original whole/platform and live first-Send evidence.
+
+
+## Captured Workspace composite retirement correction
+
+ADR required: yes; refine the existing ADR126 amendment before applying this fix.
+
+Actual captured-gap native controls produced six genuine failures and one
+borrower pass under the unchanged original guard/source/physical-close checks.
+Retargeting the stock DB cache after its original held getter returned leaked
+the composite's new A handle; a replacement holding foreign B also caused the
+lazy owned-helper exit to close B. Four custom service lookup/registry descriptor
+routes took the optional A scope while their original B/B reads remained intact.
+
+For only these four optional composites, replace their newly added lazy
+operation_owned_connection scope with retirement of the exact newly created
+handle. The original counted connection interval still spans the entire finite
+callback and exits before retirement. The original public-reader ownership
+scopes remain. Record and qualify the original core_closing wrapper/body,
+defining namespace/file/spec/origin/alias, code/defaults/closures, and captured
+process/Thread/Task. Its original actor/lease/active-work checks govern close.
+
+An original borrower is never closed. An identified new handle is closed once
+through that original custody boundary, then positive native closed evidence is
+required. Only its still-matching slot in the captured old cache is cleared after
+positive retirement. Replacement caches and foreign handles are neither changed
+nor adopted; no DB field is restored. Failed/denied/uncertain close retains the
+handle's custody and error, without retry. Body exceptions keep precedence, with
+retirement failure chained. Owner/source checks still refuse publication.
+
+The earlier amendment's promise to use the original lazy owned helper for this
+optional outer scope is superseded here. An ExitStack callback ahead of that
+helper would avoid foreign close only on success: on denied/uncertain A close,
+the helper would still re-read B or retry A. Clearing/restoring caches, changing
+the generic helper or weakening custody was rejected.
+
+Definition-time Consent and Inspector lookup and _registry descriptor records
+decline custom selection before the optional scope. Mid-scope checks test those
+records before invoking a changed lookup. Existing custom dispatch is preserved.
+
+Acceptance remains the actual 21 native controls and adjacent original service
+tests. Pure metadata/error/cleanup controls do not establish native acceptance.
+No budgets, guard policy, generic helper or public service interface change.
+
+
+## Stock run-turn finite admission refinement (before production)
+
+ADR required: no new ADR; existing ADR126 finite same-callback source custody applies.
+
+The corrected passive original-code native observer records nine execution-scope starts for five distinct actual owner/path keys inside one stock guarded run_turn. It observes the original contextmanager generator without replacing production callbacks. The same source-qualified run_turn finishes, its native worker SQLite handle physically closes, storage/monitoring retire, and unchanged source checks pass before the work-count assertion fails. All five custom-selector/root/method/source/pause controls pass. Native red-1 is excluded for the callback adapter's one-frame observer mistake; red-2 is the genuine causal result,44.015seconds. This establishes duplicate work, not exclusive time savings.
+
+For only an already captured qualified stock scoped log source, append its agents.history root to the first original execution source set. Keep the original scoped_log_source qualification and body within that single original execution context. Remove only the second whole-source-set execution entry from this stock path. No authority is reused beyond this synchronous callback. The unqualified scoped=None selector still executes inside its preceding first admission and retains its second fresh log-root admission; independent worker/model guards, generic guard code, native owners and permission/pause policies remain.
+
+Acceptance: the same six native controls must pass with one scope start per actual stock owner/path; the custom selector must retain its original arg-free call and duplicate set route, all retarget/pause controls must refuse provider/log effects and retire resources. Then run the appropriate original scoped log/agent activation compatibility nodes and unchanged whole/platform limits. No tests, bounds, source qualifiers or coordinator checks are relaxed.

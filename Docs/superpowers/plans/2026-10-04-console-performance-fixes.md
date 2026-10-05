@@ -1573,3 +1573,31 @@ store, broadened generic worker admission or increased budget is outside scope.
 
 The three drafts have not run Native. Root must review and obtain actual RED
 before deciding the exact amendment and production edit. No completion claim.
+
+## 2026-10-05 accepted Workspace callback checkpoint
+
+The four finite cold Workspace compositions and captured cache-retarget correction follow the amended [ADR126](../../../backlog/decisions/126-complete-local-backup-and-recovery.md). The task's earlier cold-composite/refinement plans preceded production changes; the correction replaces only the added outer lazy owner context with exact original-core retirement after the original counted interval. Actual21 native controls pass, including replacement-cache and borrowed-handle custody. Public owned-reader cleanup, generic helper and permission policy stay unchanged. Whole-app and final-source platform acceptance remain pending; the existing service-module Windows run retains18 Inspector failures and79 passes. The startup and stock agent-turn plans remain investigations, not accepted production changes.
+
+
+## Stock run-turn finite admission refinement (before production)
+
+ADR required: no new ADR; existing ADR126 finite same-callback source custody applies.
+
+The corrected passive original-code native observer records nine execution-scope starts for five distinct actual owner/path keys inside one stock guarded run_turn. It observes the original contextmanager generator without replacing production callbacks. The same source-qualified run_turn finishes, its native worker SQLite handle physically closes, storage/monitoring retire, and unchanged source checks pass before the work-count assertion fails. All five custom-selector/root/method/source/pause controls pass. Native red-1 is excluded for the callback adapter's one-frame observer mistake; red-2 is the genuine causal result,44.015seconds. This establishes duplicate work, not exclusive time savings.
+
+For only an already captured qualified stock scoped log source, append its agents.history root to the first original execution source set. Keep the original scoped_log_source qualification and body within that single original execution context. Remove only the second whole-source-set execution entry from this stock path. No authority is reused beyond this synchronous callback. The unqualified scoped=None selector still executes inside its preceding first admission and retains its second fresh log-root admission; independent worker/model guards, generic guard code, native owners and permission/pause policies remain.
+
+Acceptance: the same six native controls must pass with one scope start per actual stock owner/path; the custom selector must retain its original arg-free call and duplicate set route, all retarget/pause controls must refuse provider/log effects and retire resources. Then run the appropriate original scoped log/agent activation compatibility nodes and unchanged whole/platform limits. No tests, bounds, source qualifiers or coordinator checks are relaxed.
+
+
+### Original cold startup completion prerequisite (before test edit)
+
+ADR required: no new ADR; test-only synchronization implements the registered asynchronous initial-screen contract in ADR085/126.
+
+The first v3 original cold receipt qualifies the startup-issued native worker, exact original handle/lease retirement and actual loop progress, but its body takes app.screen before the async initial push completes. Observe only the original `_initial_screen_pushed` latch before taking the screen, within the existing enclosing asyncio.wait_for240 and unchanged child240 deadlines. App sets that latch after its original push_screen and current-tab update. Keep the subsequent exact ChatScreen, composer/key and all source/native/lease/cleanup assertions unchanged, so a wrong completed destination still fails. The only added while/sleep prerequisite is separately recorded; removing it yields the exact prior script AST. Native6 remains the original causal RED and v3 original cold1 remains a prerequisite failure until a fresh run. No product change or performance-limit increase.
+
+
+Observer checkpoint: eight unchanged original credential ticks pass with complete source-preserving local observation; the full Windows census retains the unchanged original POSIX-helper prerequisite failure. Integrate current dev f922b3591e (overlap only derived diagnostic inventory and two lessons), preserve both lesson bodies, review/regenerate the source-derived inventory, then repeat final source whole/native/live/platform gates.
+ADR required: no
+ADR path: N/A (existing ADR126 finite ownership applies)
+Reason: test-only passive observation and routine dev merge preserve existing application/service/security contracts.
