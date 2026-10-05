@@ -44,13 +44,30 @@ def _shape(code):
     )
 
 
-def _compiled_code(module, qualname, filename):
-    code = compile(
-        Path(module.__file__).read_text(encoding="utf-8"),
-        filename,
-        "exec",
-        dont_inherit=True,
-    )
+def _compiled_code(
+    module, qualname, filename, *, assertion_config=None, assertion_loader=None
+):
+    if assertion_config is None:
+        assert assertion_loader is None
+        code = compile(
+            Path(module.__file__).read_text(encoding="utf-8"),
+            filename,
+            "exec",
+            dont_inherit=True,
+        )
+    else:
+        from _pytest.assertion import rewrite
+
+        spec = module.__spec__
+        assert type(assertion_loader) is rewrite.AssertionRewritingHook
+        assert module.__loader__ is spec.loader is assertion_loader
+        assert assertion_loader.config is assertion_config
+        source = Path(module.__file__).resolve()
+        assert Path(spec.origin).resolve() == source == Path(filename).resolve()
+        assert assertion_loader._rewritten_names[module.__name__].resolve() == source
+        # Recompile the exact installed source through the loader's own pytest
+        # rewrite pipeline. Full code structure is compared, including asserts.
+        _, code = rewrite._rewrite_test(Path(filename), assertion_config)
     for name in qualname.split("."):
         code = next(
             item
@@ -63,7 +80,11 @@ def _compiled_code(module, qualname, filename):
 class TraceSettlementWitness:
     tool_name = "tldw-finite-trace-settlement-witness"
 
-    def __init__(self, probe, test_body, observation):
+    def __init__(self, probe, test_body, observation, *, assertion_config=None):
+        self.assertion_config = assertion_config
+        self.assertion_loader = (
+            probe.__spec__.loader if assertion_config is not None else None
+        )
         self.probe = probe
         self.test_body = test_body
         self.test_code = test_body.__code__
@@ -458,7 +479,13 @@ class TraceSettlementWitness:
         assert type(self.test_body) is FunctionType
         assert self.test_body.__globals__ is self.probe.__dict__
         assert _shape(self.test_body.__code__) == _shape(
-            _compiled_code(self.probe, TARGET_NAME, self.test_body.__code__.co_filename)
+            _compiled_code(
+                self.probe,
+                TARGET_NAME,
+                self.test_body.__code__.co_filename,
+                assertion_config=self.assertion_config,
+                assertion_loader=self.assertion_loader,
+            )
         )
         self.module_hashes[self.probe.__name__] = hashlib.sha256(
             Path(self.probe.__file__).read_bytes()
@@ -512,6 +539,15 @@ class TraceSettlementWitness:
             and self.test_body.__globals__ is self.probe.__dict__
         )
         assert sys.modules.get(PROBE_NAME) is self.probe
+        assert _shape(self.test_code) == _shape(
+            _compiled_code(
+                self.probe,
+                TARGET_NAME,
+                self.test_code.co_filename,
+                assertion_config=self.assertion_config,
+                assertion_loader=self.assertion_loader,
+            )
+        )
         assert (
             hashlib.sha256(Path(self.probe.__file__).read_bytes()).hexdigest()
             == self.module_hashes[PROBE_NAME]
@@ -586,7 +622,9 @@ def original_trace_probe_witness(request, monkeypatch):
 
     def install(observation, patcher):
         original_install(observation, patcher)
-        observer = TraceSettlementWitness(probe, body, observation)
+        observer = TraceSettlementWitness(
+            probe, body, observation, assertion_config=request.config
+        )
         observers.append(observer)
         observation.trace_settlement_witness = observer
         try:

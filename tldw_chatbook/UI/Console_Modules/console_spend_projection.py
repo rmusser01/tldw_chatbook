@@ -289,9 +289,19 @@ class ConsoleReadinessConfigProjection:
         ) and not self.pending:
             self.pending = True
             self._settled.clear()
-            screen.run_worker(
-                self._refresh(key), exclusive=False, group="console-readiness-config"
-            )
+            refresh = self._refresh(key)
+            try:
+                screen.run_worker(
+                    refresh, exclusive=False, group="console-readiness-config"
+                )
+            except BaseException as error:
+                # Scheduling did not take ownership of this coroutine. A cold
+                # presentation read remains retryable; cancellation propagates.
+                refresh.close()
+                self.pending = False
+                self._settled.set()
+                if not isinstance(error, Exception):
+                    raise
         if not current:
             return False
         previous = getattr(screen, "_console_readiness_projection_active", None)
@@ -394,11 +404,17 @@ class ConsoleReadinessConfigProjection:
             self.pending = False
             self._settled.set()
         if changed:
-            self.screen.run_worker(
-                self.screen._sync_native_console_chat_ui(),
-                exclusive=False,
-                group="console-readiness-publication",
-            )
+            publication = self.screen._sync_native_console_chat_ui()
+            try:
+                self.screen.run_worker(
+                    publication,
+                    exclusive=False,
+                    group="console-readiness-publication",
+                )
+            except BaseException as error:
+                publication.close()
+                if not isinstance(error, Exception):
+                    raise
 
 
 def _same_readiness_key(

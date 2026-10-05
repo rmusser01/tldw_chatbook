@@ -134,6 +134,71 @@ def source_snapshot(repo, helper_paths):
     }
 
 
+def _namespace_source_receipt(name, module, repo):
+    """Accept only a real managed PEP 420 namespace's exact metadata origins."""
+    from importlib._bootstrap_external import _NamespacePath
+    from importlib.machinery import ModuleSpec, NamespaceLoader
+    from types import ModuleType
+
+    assert type(module) is ModuleType, ("non-module namespace", name)
+    fields = vars(module)
+    spec = fields.get("__spec__")
+    assert type(spec) is ModuleSpec, ("missing namespace spec", name)
+    loader = fields.get("__loader__")
+    assert type(loader) is NamespaceLoader, ("non-namespace loader", name)
+    locations = fields.get("__path__")
+    assert type(locations) is _NamespacePath, ("non-namespace paths", name)
+    assert spec.loader is loader and loader._path is locations
+    assert spec.submodule_search_locations is locations
+    assert spec.name == name and spec.origin is None and not spec.has_location
+    assert spec.cached is None
+    assert fields.get("__name__") == name and fields.get("__package__") == name
+    assert fields.get("__file__") is None and fields.get("__cached__") is None
+    assert fields.get("__doc__") is None
+    canonical = {
+        "__name__",
+        "__doc__",
+        "__package__",
+        "__loader__",
+        "__spec__",
+        "__file__",
+        "__cached__",
+        "__path__",
+    }
+    for attribute, value in fields.items():
+        if attribute in canonical:
+            continue
+        child_name = name + "." + attribute
+        assert (
+            type(value) is ModuleType
+            and sys.modules.get(child_name) is value
+            and vars(value).get("__name__") == child_name
+        ), ("unexpected namespace body", name, attribute)
+    actual_root = repo.resolve(strict=True)
+    base = (
+        actual_root / "packages/tldw_profile_core/src"
+        if name == "tldw_profile_core" or name.startswith("tldw_profile_core.")
+        else actual_root
+    )
+    expected = (base / Path(*name.split("."))).resolve(strict=True)
+    assert expected.is_relative_to(actual_root) and expected.is_dir()
+    # Read the stock path record without triggering a lazy search-path callback.
+    recorded = vars(locations).get("_path")
+    # Namespace provenance requires concrete stock containers and path strings.
+    assert type(recorded) is list and all(type(path) is str for path in recorded)  # noqa: E721
+    actual_locations = tuple(Path(path).resolve(strict=True) for path in recorded)
+    assert actual_locations == (expected,), ("foreign namespace source", name)
+    assert not (expected / "__init__.py").exists(), ("namespace has file body", name)
+    return {
+        "source_kind": "namespace_package",
+        "namespace_search_locations": [expected.relative_to(actual_root).as_posix()],
+        "module_actor_id": id(module),
+        "spec_actor_id": id(spec),
+        "loader_actor_id": id(loader),
+        "actual_imported_module": True,
+    }
+
+
 def loaded_source_receipt(repo):
     """Record actual imported managed namespaces and refuse foreign origins."""
     loaded, origins = {}, {}
@@ -145,7 +210,9 @@ def loaded_source_receipt(repo):
         ):
             continue
         filename = getattr(module, "__file__", None)
-        assert filename is not None, ("managed module has no file origin", name)
+        if filename is None:
+            origins[name] = _namespace_source_receipt(name, module, actual_root)
+            continue
         path = Path(filename).resolve(strict=True)
         assert path.is_relative_to(actual_root), ("foreign loaded source", name)
         key = path.relative_to(actual_root).as_posix()

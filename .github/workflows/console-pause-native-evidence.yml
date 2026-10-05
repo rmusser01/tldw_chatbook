@@ -230,7 +230,7 @@ jobs:
       - name: Verify source, codec, display and finite worker regressions
         env:
           TLDW_HIDDEN_READINESS_RESULT: ${{ runner.temp }}/hidden-readiness.json
-        run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_sensitive_input_config_bundle.py Tests/Backup_Recovery/test_sensitive_input_body_bindings.py Tests/Backup_Recovery/test_sensitive_input_tuple_bindings.py Tests/Backup_Recovery/test_sensitive_input_guarded_body_bindings.py Tests/Agents/test_console_scoped_run_log_admission.py Tests/Agents/test_scoped_run_log_body_bindings.py Tests/Config/test_windows_argv_roundtrip.py Tests/Utils/test_toml_serialization.py Tests/UI/test_provider_context_display.py Tests/UI/test_provider_context_display_controls.py Tests/UI/test_console_session_sync_lifetime.py Tests/UI/test_console_session_pruning_replacement.py Tests/UI/test_console_session_tab_strip.py Tests/UI/test_console_session_tab_close.py Tests/UI/test_manual_unread_worker_lifetime.py Tests/UI/test_manual_unread_source_provenance.py Tests/UI/test_console_hidden_readiness_native.py Tests/Performance/test_trace_settlement_diagnostic.py -q --timeout=180 --junitxml=${{ runner.temp }}/supplemental-controls.xml
+        run: python -m Tests.windows_private_fixture_runner Tests/Backup_Recovery/test_sensitive_input_config_bundle.py Tests/Backup_Recovery/test_sensitive_input_body_bindings.py Tests/Backup_Recovery/test_sensitive_input_tuple_bindings.py Tests/Backup_Recovery/test_sensitive_input_guarded_body_bindings.py Tests/Agents/test_console_scoped_run_log_admission.py Tests/Agents/test_scoped_run_log_body_bindings.py Tests/Config/test_windows_argv_roundtrip.py Tests/Utils/test_toml_serialization.py Tests/UI/test_provider_context_display.py Tests/UI/test_provider_context_display_controls.py Tests/UI/test_console_session_sync_lifetime.py Tests/UI/test_console_session_pruning_replacement.py Tests/UI/test_console_session_tab_strip.py Tests/UI/test_console_session_tab_close.py Tests/UI/test_manual_unread_worker_lifetime.py Tests/UI/test_manual_unread_source_provenance.py Tests/UI/test_console_hidden_readiness_native.py Tests/UI/test_console_readiness_scheduling.py Tests/Performance/test_trace_settlement_diagnostic.py -q --timeout=180 --junitxml=${{ runner.temp }}/supplemental-controls.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -303,7 +303,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14, windows-2022]
+        os: [ubuntu-24.04, macos-15, windows-2022]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
@@ -343,7 +343,9 @@ jobs:
           PYTHONUTF8: '1'
         run: |
           $startupPython = (Get-Command python).Source
-          $startupPair = Join-Path $env:RUNNER_TEMP 'console-startup-private-pair'
+          $startupPairBase = $env:RUNNER_TEMP
+          if ($env:RUNNER_OS -eq 'Windows') { $startupPairBase = $env:TEMP }
+          $startupPair = Join-Path $startupPairBase 'console-startup-private-pair'
           $startupReceipts = Join-Path $env:RUNNER_TEMP 'console-startup-liveness'
           $startupHead = git rev-parse HEAD
           & $startupPython -I -X utf8 Tests/Performance/run_console_startup_liveness.py --repo $env:GITHUB_WORKSPACE --python $startupPython --pair-root $startupPair --receipt-root $startupReceipts --mode liveness --expected-commit $startupHead

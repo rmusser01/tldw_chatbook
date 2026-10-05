@@ -66,8 +66,11 @@ def snapshot(root: Path) -> dict:
         "tldw_chatbook": importlib.util.find_spec("tldw_chatbook"),
         "tldw_profile_core": importlib.util.find_spec("tldw_profile_core"),
         **{
-            name: importlib.machinery.PathFinder.find_spec(name, search)
-            if search is not None
+            name: importlib.machinery.PathFinder.find_spec(
+                name,
+                performance.submodule_search_locations if name == BASE else search,
+            )
+            if (performance is not None if name == BASE else search is not None)
             else None
             for name in HELPERS
         },
