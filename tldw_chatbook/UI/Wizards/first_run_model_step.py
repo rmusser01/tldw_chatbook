@@ -61,7 +61,7 @@ def _status_line(text: str, line_id: str) -> Static:
     like a choice. disabled=True still matters -- an enabled non-radio child
     becomes the RadioSet's highlighted node, and Space then asserts inside
     Textual and exits the app. A status is never mounted beside model rows.
-    markup=False: the copy can carry a typed endpoint such as http://[::1].
+    markup=False: the copy embeds typed text; a bracketed word would be eaten as a tag.
     """
     return Static(text, id=line_id, disabled=True, markup=False)
 
@@ -689,7 +689,7 @@ class ModelStep(SetupStep):
 
         Args:
             button: The pressed radio row. Only its clean ``_model_id``
-                attribute can supply a model id; status labels are ignored.
+                attribute can supply a model id; a row without one picks nothing.
         """
         model_id = getattr(button, "_model_id", None)
         if not isinstance(model_id, str) or not model_id:

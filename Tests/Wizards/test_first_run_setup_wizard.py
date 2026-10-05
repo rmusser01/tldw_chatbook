@@ -8352,13 +8352,19 @@ def _model_status_line(step, line_id: str) -> str:
     not ``isinstance``: RadioButton is itself a Static subclass. ``disabled``
     is load-bearing inside the RadioSet -- an enabled non-radio child becomes
     the set's highlighted node and Space then asserts inside Textual.
+
+    Returns the text ``render()`` produces, not ``renderable``: in this repo
+    that is a shim for the constructor's source string, which reads the same
+    whether or not markup consumed part of the copy.
     """
-    [line] = list(step.query_one("#setup-model-choice", RadioSet).children)
+    children = list(step.query_one("#setup-model-choice", RadioSet).children)
+    assert len(children) == 1, children
+    [line] = children
     assert type(line) is Static, type(line)
     assert line.id == line_id, line.id
     assert line.disabled and not line.can_focus
     assert getattr(line, "_model_id", None) is None
-    return str(line.renderable)
+    return str(line.render())
 
 
 @pytest.mark.asyncio
@@ -8718,6 +8724,14 @@ async def test_model_step_no_provider_shows_pick_a_provider_copy():
             {"discovery_state": "connection_failed", "failure_category": "timeout"},
             "setup-model-connection-failed",
             "Couldn't reach the server (timeout). Check it's running, then Retry — or enter a model ID below.",
+        ),
+        (
+            # The copy embeds text the step did not write. With markup on,
+            # Textual consumes a bracketed word as a tag: "([bold]x)" would
+            # render as "(x)".
+            {"discovery_state": "connection_failed", "failure_category": "[bold]x"},
+            "setup-model-connection-failed",
+            "Couldn't reach the server ([bold]x). Check it's running, then Retry — or enter a model ID below.",
         ),
     ],
 )
@@ -9200,11 +9214,13 @@ async def test_mounted_provider_handoff_preserves_typed_discovery_outcome(
                 break
             await pilot.pause(0.05)
         assert status_matches, {
+            # Every child, not only radio rows: when a different status
+            # rendered, this is what says which one is on screen.
             "rows": [
-                str(button.label)
-                for button in model_step.query_one(
+                (child.id, str(child.render()))
+                for child in model_step.query_one(
                     "#setup-model-choice", RadioSet
-                ).query(RadioButton)
+                ).children
             ],
             "owner_state": provider_step._selected_discovery_state,
             "owner_outcomes": provider_step._selected_provider_outcomes,

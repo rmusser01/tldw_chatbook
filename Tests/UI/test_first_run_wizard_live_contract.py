@@ -3818,7 +3818,9 @@ async def test_model_step_renders_auth_copy_on_both_handoff_branches(
                 ),
             )
             lines = list(choice.children)
-            rendered = " ".join(str(line.renderable) for line in lines)
+            # render(), not renderable: the latter is a shim for the source
+            # string, so it cannot see markup consuming part of the copy.
+            rendered = " ".join(str(line.render()) for line in lines)
 
     # type(...) is, not isinstance: RadioButton is itself a Static subclass.
     assert [type(line) for line in lines] == [Static], (
@@ -3846,8 +3848,11 @@ async def test_model_step_renders_auth_copy_on_both_handoff_branches(
 
 @pytest.mark.loopback_network
 @pytest.mark.asyncio
+@private_profile_test
 async def test_production_sized_catalog_reaches_the_model_picker(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """A 128-model catalog must survive discovery and reach the picker.
 
@@ -3870,7 +3875,12 @@ async def test_production_sized_catalog_reaches_the_model_picker(
     covered by
     ``test_provider_test_button_requests_identity_encoding_from_a_real_peer``.
 
+    TASK-33008.5: a failure is a text line in the picker now, not a radio
+    row, so the wait and the failure check read the picker's children. A
+    wait on radio labels alone would sit out its full budget on any status.
+
     Args:
+        request: Pytest fixture the private-profile wrapper reads.
         monkeypatch: Pytest fixture used to isolate config/HOME state.
         tmp_path: Pytest fixture providing the throwaway profile directory.
     """
@@ -3890,8 +3900,10 @@ async def test_production_sized_catalog_reaches_the_model_picker(
         app.providers_models = get_cli_providers_and_models()
         with patch_app_global("get_cli_setting", side_effect=_test_cli_setting):
             async with app.run_test(size=(140, 45)) as pilot:
+                # The private-profile child starts cold, so the wizard screen
+                # can be current before it has composed: wait for the container.
                 await _wait_until(
-                    pilot, lambda: type(app.screen).__name__ == "FirstRunSetupWizard"
+                    pilot, lambda: bool(app.screen.query(SetupWizardContainer))
                 )
                 container = app.screen.query_one(SetupWizardContainer)
                 await _wait_until(pilot, lambda: container.can_proceed)
@@ -3916,14 +3928,16 @@ async def test_production_sized_catalog_reaches_the_model_picker(
                     lambda: _current_step_id(container) == STEP_MODEL,
                 )
                 model_step = container.steps[container.current_step]
+                choice = model_step.query_one("#setup-model-choice", RadioSet)
+                # Ends on model rows or on any status but loading. It never
+                # raises, so a failure state reaches the assertions below,
+                # which say what went wrong.
                 for _ in range(60):
                     await pilot.pause(0.5)
-                    labels = [
-                        str(b.label)
-                        for b in model_step.query("#setup-model-choice RadioButton")
-                    ]
-                    if labels and all("loading models" not in x for x in labels):
+                    if choice.children and not model_step.query("#setup-model-loading"):
                         break
+                picker = [(child.id, str(child.render())) for child in choice.children]
+                labels = [str(button.label) for button in choice.query(RadioButton)]
                 outcomes = dict(provider._selected_provider_outcomes)
                 handed_off_ids = model_step._discovered_model_ids
 
@@ -3954,11 +3968,11 @@ async def test_production_sized_catalog_reaches_the_model_picker(
         "the newest model is missing from the handoff; a trim drops it first"
     )
 
-    # ...and the step renders a real choice list rather than a failure row.
-    assert labels, "the picker rendered nothing"
-    assert not any("Couldn't reach" in label for label in labels), (
-        f"a reachable peer with a full catalog rendered as a failure: {labels}"
+    # ...and the step renders a real choice list rather than a failure line.
+    assert "setup-model-connection-failed" not in [line_id for line_id, _ in picker], (
+        f"a reachable peer with a full catalog rendered as a failure: {picker}"
     )
+    assert labels, f"the picker rendered no model rows: {picker}"
     assert labels[0].startswith("model-0"), labels[:3]
     assert len(labels) == _PICKER_MODEL_LIMIT, (
         f"the picker's bounded slice changed: {len(labels)} rows"

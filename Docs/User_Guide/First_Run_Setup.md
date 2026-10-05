@@ -60,7 +60,7 @@ plain text instead:
 - "(no models found — enter one below)" when the server lists none.
 - "Model listing unavailable; enter the model ID used by this endpoint." when the server has no model list.
 - "Authentication failed — this API key was rejected. Go Back to fix it, or enter a model ID below." when the key is rejected. This one shows no **Retry**, because retrying cannot fix a key.
-- The server that could not be reached, with **Retry**, when the check failed for another reason.
+- "Couldn't reach the server (*reason*). Check it's running, then Retry — or enter a model ID below." when the check failed for another reason, such as a timeout. Ollama and llama.cpp name the server and its address instead: "Ollama isn't running at *address*. Start it (ollama serve), then Retry — or enter a model ID below." and "The llama.cpp server isn't reachable at *address*. Start it, then Retry — or enter a model ID below." These three show **Retry**.
 
 The line is a message, not an option: it has no radio marker, and the arrow
 keys, Space and Enter cannot select it. The **Or enter a model name** field

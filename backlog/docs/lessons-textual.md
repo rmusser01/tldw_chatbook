@@ -137,10 +137,35 @@ only surfaced because a test asserted the substring was in the rendered label:
 
 Escape with a raw string and a leading backslash (`r'\[Imported]'`) anywhere a
 literal bracket must reach the user, and **assert on the rendered label**
-(`str(widget.label)` / `str(static.renderable)`), never on the source constant —
+(`str(widget.label)` / `str(static.render())`), never on the source constant —
 a test that checks the constant passes while the UI shows nothing. This bites
 hardest on exactly the copy that most needs to be literal: names, prefixes,
 placeholders, file globs, `[Imported]`-style markers.
+
+**Correction, TASK-33008.5, 2026-10-04: `str(static.renderable)` is the source
+constant here, not the rendered text.** This entry used to recommend it. The
+repo's compatibility shim (`tldw_chatbook/__init__.py`) defines
+`Static.renderable` as `self.content`, which is what the constructor was handed.
+Measured on Textual 8.2.8:
+
+```python
+>>> w = Static('with "[Imported]" and ([bold]x)')
+>>> str(w.renderable)
+'with "[Imported]" and ([bold]x)'
+>>> str(w.render())
+'with "" and (x)'
+```
+
+The incident: the first-run wizard's model-step status line was mounted with
+`markup=False` because its copy embeds a typed endpoint, and its copy pins
+(twelve calls through one test helper, one more in the live-contract file) read
+it through `str(line.renderable)`. Those pins compare the same string with
+markup on or off, so none of them could see `markup=False` being removed; a
+reviewer found it by reading the shim. With the helper switched to
+`str(line.render())` and one case that passes `[bold]x` through the copy,
+removing `markup=False` fails that case and only that case. For a `Static`,
+read `render()`. `str(widget.label)` on a button or checkbox is rendered text,
+as the example above shows.
 
 ---
 
