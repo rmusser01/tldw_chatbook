@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-05 01:41'
+updated_date: '2026-10-05 03:39'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -517,6 +517,18 @@ Reason: preserve landed TASK33622.16 and previously approved orchestration witho
 3. Authenticate full tree/index/disk and exact function/import composition. Run only the new command-draft, mounted origin/freeze and affected generation-action tests on this distinct source, with private outer profile/cwd/PYTHONPATH and untouched fixtures/markers. Check affected diagnostic reproduction, fatal/new static and task/whitespace guards proportionately. Preserve every NON-GREEN result; no full sweep, old test/budget replay, retry, provider, installation, pin/ceiling/warmup/work/time change.
 4. Obtain immutable independent preservation/functional review and explicit original-budget carry assessment against authenticated fb14 raw/XML, measured source/guard/MAX/profile identities. Prior measured FIVE112.657s remains historical, never a new measurement. If changed guarded execution genuinely needs a new-source measurement, run original cases ONCE only after all activity settles, preserving limits. No completed-run replay.
 5. Only after Ready, close AC3 through CLI/AC4 checked and append the four owned canonical Markdown records while preserving all approved source/history/separate incoming statuses/limitations. Publish once with EXACT observedb47 lease, factual body and actual local/remote/GH/body verification. Re-arm normal protected head-matched auto-merge. Require fresh exact-head Qodo/all FOUR/all THREE UI and strict protection; verify actual MERGED parents/tree/concurrency before stopping the heartbeat. Never update an armed PR or rebase queued/running CI.
+
+## Required protected-base Buddy and Resume preservation — October 5, 2026
+
+ADR required: no
+ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/139-console-and-buddy-management.md; backlog/decisions/147-reversible-conversation-archive-and-exact-resume.md; existing ADR097/103/150/199/211.
+Reason: preserve landed PR3011 within its accepted Buddy preference, saved-conversation, view-worker and shutdown owners. No new storage, authority, dependency, visual value, budget, gate or merge policy.
+
+1. Published adb15e7 has ALL FOUR conceptual gates and ALL THREE UI components SUCCESS, exact-head Qodo/four zero counters/four resolved threads/full pagination clear. Live strict/admin/conversation protection reports CONFLICTING/DIRTY with exact dev3146bbd8da2f30eaa97d72bd0ab860de4c40de75. Auto-merge is explicitly disabled and verified null before task/source changes. Reopen CLI33664 AC3/In Progress/unchecked, keep AC4 checked, and commit this prospective append while retaining all plans/notes/evidence.
+2. Preserve all3870 prior records/full28026 tree and70 incoming paths. Rebase ONCE onto exact3146. Three shared files have independently clean whole-byte three-way results: identical third-shard workflow, live-verification lessons and chat_screen. Resolve only actual testing-lesson conflict by retaining both complete additions and all prior text. Retain all66 nonfeature incoming files exactly, including Buddy settings projection, metadata-only cold saved ownership, ordered Resume worker retirement, rollback cancellation, final presentation and shutdown mount fence; keep incoming screenshots/UAT/task statuses as shipped and separate.
+3. Authenticate full tree/index/disk, prior nonoverlap bytes/modes/deletions and incoming exact bytes. Compare complete affected function ASTs/imports and all original guards/eightMAX/CSS/workflow cap/census. No root application/test repair is planned. Run only new-source Home Resume, shutdown rebuild, timer registration, affected ordered Roleplay Resume, Buddy config projection and cold saved-owner controls once in the existing private outer-profile launcher with exact cwd/PYTHONPATH/default temp depth. No providers/audio/native/physical or broad UI sweep. Preserve positive and NON-GREEN results independently; never sum selections.
+4. Check changed-source fatal/new static and affected diagnostic/worker/task/whitespace reproduction proportionately. Obtain focused immutable independent composition/functional review and explicit historical-budget carry assessment using authenticated fb14 raw/XML, original guards/MAX/work/import/CSS/private-profile identities. The original FIVE112.657s remains a prior measurement; do not replay it or any completed checks, original budget, retry or baseline. Retain all earlier warning/FD/style/size/optional/wider limits and incoming TASK31585 In Progress/AC9 unchecked, TASK32108 family Done and TASK34353 In Progress/AC3 unchecked.
+5. Close CLI33664 AC3/Done only after independent Ready and necessary qualification settles, preserving AC4. Append only the four owned canonical records; prove every approved source and historical prefix unchanged by closure. Publish ONCE with EXACT observed adb15e7 lease and factual body, authenticate actual local/remote/GH/GraphQL/body, then enable normal protected head-matched auto-merge once. Require fresh-head Qodo/ALL FOUR/ALL THREE UI; verify actual MERGED parents/tree/concurrency before stopping the heartbeat. Never update armed PR or rebase queued/running checks.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
