@@ -281,3 +281,17 @@ child and parent gates; each mounted child census was empty. Activate resource
 observers in the process that executes the app (`PYTEST_PLUGINS` survives the
 private helper's disabled autoload), inspect child receipts, and do not promote
 a clean parent census into child or terminal application-lifetime evidence.
+
+## Pilot's whole-screen barrier can distort a measured activation
+
+**TASK-31966, 2026-10-04, clean ac3a4f1.** A bounded native trigger trace found
+a 73.944541ms gen-2 pause inside `Pilot._wait_for_screen` after Enter delivery;
+the barrier queued up to 751 descendant callbacks. A real mounted regression
+received the correct Input submission but failed on four barrier registrations.
+Measured Enter now uses the same installed `App._press_keys` dispatch (including
+its native idle/animation waits), then the existing real activation/readiness
+and modal-removal gates, without that artificial fan-out. The 48 affected tests
+pass; fresh source-bound latency qualification is still required. Trace the
+driver as well as the app before choosing a production remedy. Never subtract
+observer cost from failed timings, weaken real settlement, or confuse an
+allocating trigger with ownership of the heap a collection scans.

@@ -888,3 +888,76 @@ measurement-overhead architecture discussion before attempting another
 production correction. No speculative GC/cache policy or fourth fix is approved
 or applied. Native, Windows, participant and terminal-resource qualification
 remain unwaived; no final combined PR or dependent semantics work is ready.
+
+## Current-dev integration and measured Enter barrier correction
+
+The architecture checkpoint rebased all 15 follow-up patches onto dev
+`3146bbd8da2f30eaa97d72bd0ab860de4c40de75`, producing clean measured head
+`ac3a4f131561972189f6c2df47df70316907d88a`; the patch range-diff is unchanged.
+The 16 affected integration files passed **288 tests in 484.67s**, with the
+required read-only private-file retirement gate enabled and no warnings.
+All 288 census rows retain only admission/lease files, not private databases.
+Log: `/tmp/switcher-rebase-ac3-targeted.log`. This is test-fixture evidence,
+not terminal application-owner retirement.
+
+Fresh exact-head container: `/tmp/task31966-ac3-qualification-ZJXybB`.
+Its corpus has 10,000 conversations, 250,000 eligible messages plus four
+exclusions and 10,000 index documents; digest
+`939cf2732ae8f6fc8e57f2743a03de824b2503cfbe663ed2b3e52bc040f3c80e`.
+Keyword passes all 300 timed queries (P95 117.960333ms; loop maximum
+17.335625ms), with zero owned database descriptors/registered handles after
+cleanup. Normal UI completes all 60 searches and eight exact OPENED
+activations without an app exception, but seven activation intervals and one
+wide body search still fail 50ms; all preparation/busy limits pass. Raw roots
+are `scale`, `keyword` and `ui` beneath that container. These failures remain
+failures, not a post-correction latency receipt.
+
+The bounded diagnostic roots `ui-tail-capture`, `ui-native-refresh`,
+`ui-config-acquisition` and `ui-gc-caller` retain their raw records and failed
+UI matrices at the same exact source/corpus. Final-frame capture spans are
+1.640500–8.246458ms and do not overlap the worst failed intervals in that run.
+All 249 observed native lock acquisitions succeed, with zero retry branches;
+this does not prove zero contention or explain high wall/low CPU entry spans.
+Other failed intervals contain native rendering and/or gen-2 work, sometimes
+neither tracked config nor native refresh. Inclusive overlaps are not additive,
+and instrumentation changes scheduling/allocation; no time is subtracted.
+
+The Enter-specific native diagnostic identifies a **73.944541ms** gen-2
+collection triggered inside `Pilot._wait_for_screen`, after dispatching Enter.
+That barrier walks all descendants and queues up to **751** callbacks; direct
+walk/registration inclusive cost peaks at 76.979216ms. There are 24 observed
+waits, 26 paired gen-2 events and zero drops, with unchanged 700/10/10 GC
+thresholds. Trigger stack tags identify the allocating call, not ownership of
+the scanned or collected objects. Other stalls remain unexplained.
+Diagnostic entrypoint: `/tmp/task31966-gc-caller-probe.py` (SHA256
+`ece43d63d6a4ee383cca27195355695bd892bb6352ac30c18a5bd0711390835b`);
+forwarding/result/error self-check passes. Raw diagnostic SHA256
+`25988ed619471b90be367f6a4a5265be6ec2a2a3400aacf2e53d9c5f53310342`.
+Log: `/tmp/task31966-ac3-gc-caller.log`.
+
+The bounded test-only correction uses Textual's same native
+`App._press_keys(("enter",))` dispatch, preserving its idle/animation waits and
+removing only Pilot's extra descendant barrier from measured activation.
+Typed OPENED, modal unregister, exact exposure, transcript ownership/readiness,
+composer focus, source/corpus guards and 50ms/100ms limits remain unchanged.
+Untimed setup and other Pilot operations are untouched; no production or GC
+policy change is made. Existing ADR120/198 apply; no new ADR is required.
+
+A real mounted Input regression first receives the exact native submission but
+fails on four barrier callbacks (`DispatchApp`, `Screen`, `Input`, `Static`),
+then passes after the correction. RED: `/tmp/task31966-pilot-barrier-red.log`.
+The complete two-file affected run passes **48 tests in 10.84s**, no warnings,
+strict private-file gate enabled; every census row contains only admission and
+lease descriptors. GREEN: `/tmp/task31966-pilot-barrier-green.log`.
+Independent read-only review finds no actionable issue and confirms the actual
+activation settlement gates remain intact. This is harness evidence only.
+
+Before freezing this correction, all eleven artifact guards pass
+(`/tmp/task31966-pilot-preflight.log`); both changed Python files are Ruff/format
+clean and whitespace is clean. No full test sweep was requested or run.
+
+Next: freeze the corrected clean source, build fresh source-bound scale and
+Keyword receipts, and rerun the unchanged real-owner UI matrix. The ac3a4f1
+receipts cannot be retagged as evidence for this changed source. Native,
+Windows, participant and terminal resource qualification remain unwaived;
+TASK31966/TASK31245 remain In Progress and their open criteria are unchanged.

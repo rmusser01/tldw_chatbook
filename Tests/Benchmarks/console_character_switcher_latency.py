@@ -115,6 +115,17 @@ def _accepted_modal_closed(app: Any, modal: Any, chat: Any) -> bool:
     )
 
 
+async def _press_activation_enter(pilot: Any) -> None:
+    """Dispatch measured Enter through the installed native driver.
+
+    Args:
+        pilot: The real running app's Pilot; readiness is checked by the probe.
+    """
+    # Pilot.press adds callbacks to every descendant; this window instead waits
+    # for the actual activation result, exact exposure and modal unregister.
+    await pilot.app._press_keys(("enter",))
+
+
 def _observe_commit_waiter(original: Any, current_window: Any) -> Any:
     """Observe the real acknowledgement without substituting its owner."""
 
@@ -614,7 +625,7 @@ async def run(
                     assert target.conversation_id == item["expected"][0]
                     window = begin("activation", item["query"], modal)
                     try:
-                        await pilot.press("enter")
+                        await _press_activation_enter(pilot)
                         await _wait(
                             lambda window=window: any(
                                 call.get("returned_ns")

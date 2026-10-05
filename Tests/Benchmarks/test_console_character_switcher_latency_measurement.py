@@ -10,7 +10,49 @@ from Tests.Benchmarks.console_character_switcher_latency import (
     _inspect_copy,
     _keyword_evidence,
     _observe_commit_waiter,
+    _press_activation_enter,
 )
+
+
+@pytest.mark.asyncio
+async def test_activation_key_dispatch_delivers_enter_without_per_widget_barrier(
+    monkeypatch,
+):
+    """Catch measured input adding artificial callbacks to every widget queue."""
+    import sys
+
+    from textual.app import App
+    from textual.message_pump import MessagePump
+    from textual.pilot import Pilot
+    from textual.widgets import Input, Static
+
+    class DispatchApp(App):
+        def compose(self):
+            yield Input(value="native dispatch fixture")
+            yield Static("Unrelated descendant")
+
+        def on_input_submitted(self, event):
+            self.submissions.append(event.value)
+            self.submitted.set()
+
+    app = DispatchApp()
+    app.submissions = []
+    app.submitted = asyncio.Event()
+    native_later = MessagePump.call_later
+    registrations = []
+
+    def observed_later(self, *args, **kwargs):
+        if sys._getframe(1).f_code is Pilot._wait_for_screen.__code__:
+            registrations.append(type(self).__name__)
+        return native_later(self, *args, **kwargs)
+
+    async with asyncio.timeout(5), app.run_test() as pilot:
+        await pilot.pause()
+        monkeypatch.setattr(MessagePump, "call_later", observed_later)
+        await _press_activation_enter(pilot)
+        await asyncio.wait_for(app.submitted.wait(), 1)
+        assert app.submissions == ["native dispatch fixture"]
+        assert registrations == [], registrations
 
 
 @pytest.mark.parametrize(

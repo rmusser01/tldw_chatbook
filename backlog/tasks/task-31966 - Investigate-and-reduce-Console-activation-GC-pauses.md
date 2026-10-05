@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 03:10'
+updated_date: '2026-10-05 05:09'
 labels:
   - console
   - performance
@@ -100,6 +100,16 @@ Reason: a local rendering-idempotence correction preserves every authority, sizi
 ADR required: no new ADR.
 ADR path: N/A; existing ADR120, ADR150, ADR161 and ADR198 apply.
 Reason: the approved change only narrows a DOM lookup to its current mounted owner, using native caches and preserving all freshness, authority, visual and lifetime contracts.
+
+### Bounded measurement-input correction — current-source architecture checkpoint
+
+1. Retain ac3a4f1 normal and diagnostic failures. Native GC-trigger evidence identifies a 73.944541 ms collection inside Pilot’s per-widget Enter barrier; the measured setup queues up to 751 callbacks. This identifies test-driver contribution, not every production stall.
+2. Add a real mounted regression proving measured Enter delivers the native Input.Submitted event without a per-widget Pilot barrier. Observe legacy RED before replacing only that extra barrier with the installed native driver key-dispatch path; retain all exact-ready, modal registry removal, focus, transcript, source, corpus and busy/loop checks.
+3. Run targeted measurement regressions, forwarding/exception checks as applicable, static analysis and independent review. Freeze new source and prepare fresh source-bound corpus/Keyword receipts before remeasuring the unchanged 52x20/120x50 matrix. Preserve residual failures.
+4. Do not infer native qualification, allocation ownership, terminal resource retirement or a production latency pass from this harness correction; native/Windows/participant and global GC/cache gates remain unwaived.
+ADR required: no new ADR.
+ADR path: N/A; existing ADR120 and ADR198 apply.
+Reason: this test-only correction removes artificial descendant callback fan-out while preserving the same installed native key dispatch and every real-owner acceptance boundary. It changes no application authority, lifecycle, UI or GC/cache policy. The user’s standing approval to fix scale verification covers this bounded correction, not any new architectural policy.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -120,4 +130,8 @@ Approved throwaway native config entry/render/exit and rendering-substep probes 
 Implemented the approved three Model-value scoped native lookups; recovery query, config/ownership boundaries, visual geometry and GC/cache policy unchanged. Mounted RED at both widths observes four whole-screen query evaluations rather than one; missing/remounted coverage already passes. Initial GREEN four pass. Final complete Model-section plus design-token check: 15 passed in 55.98s, no pytest warnings, required read-only descriptor gates pass in BOTH parent and private test children after reusing existing opt-in Console constructor ownership. Every mounted child census is empty; parent admission/lease remain. Earlier parent-only retirement claims are explicitly limited, not terminal lifetime proof. Eleven artifact guards green; changed test Ruff/format and production-range format clean; same 200 inherited full-file Ruff diagnostics, whitespace clean. No new ADR (existing ADR120/150/161/198); fresh clean-head scale/query attribution remains pending, all qualification AC open. See Docs/QA/task-31245/fixture-rebuild-2026-10-04.md for retained RED/failed strict run/child receipts and limits.
 
 Frozen correction a0772b7c2a75cb1127f6138e9360402c6765f5b7 independently reviewed with no findings. Fresh full 10k/250k corpus and all 300 exact Keyword queries pass; P95 128.731708ms, loop 15.789042ms, zero owned DB descriptors/registered handles after cleanup. Normal 52x20/120x50 UI completes all 60 exact searches/eight exact OPENED activations, all busy/preparation limits pass, but seven activation intervals and one search exceed 50ms (activation max 111.111ms). Ordinary observer max 52.958875ms is explicitly retained as an overhead limit, not pure production cost. Unchanged native-query observer proves exactly one remaining root scan in all 15 rooted summary applications versus four baseline; query 1.958292–3.975500ms and apply 3.442042–9.092125ms, no drops/threshold changes. Diagnostic still has six failed activations (max 124.529209ms) with small paint observer 1.382459ms. Gen-2 explains part of wide stalls; narrow failed intervals also occur without GC. Actual post-unmount app owners remain live (16/18 handles), not terminal retirement. Every measured source/corpus guard is clean/exact and unchanged. After three bounded corrections, stop before a fourth production fix for architecture discussion of Console refresh/GC and measurement overhead; no global policy/cache change approved. Native/Windows/participant/resource and semantic gates remain open, all task AC unchecked; final combined PR not ready. Full receipt paths, raw intervals and limitations in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
+
+Current-dev integration at ac3a4f1: 288 affected tests pass, strict parent/private-file gates contain no database files. Fresh 10k/250k Keyword passes all 300 queries (P95 117.960333ms); normal UI retains seven activation and one search failures. Native trigger attribution proves a 73.944541ms gen-2 pause inside Pilot whole-screen Enter barrier with up to 751 callbacks, not scanned-object ownership or every production stall. Implemented bounded test-only same-native App._press_keys dispatch, retaining exact OPENED, modal unregister, exposure, focus, transcript, corpus/source and unchanged limits. Mounted RED receives native submission but detects four barrier callbacks; GREEN 48 affected tests in 10.84s, no warnings, strict private-file gate clean. Independent review finds no actionable issue. Existing ADR120/198; no new production, GC/cache policy or waiver. Fresh corrected-source scale/UI measurements and native/Windows/participant/terminal retirement remain pending; all AC open. Raw failures, hashes and causal limits retained in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
+
+Pre-commit correction gate: all eleven derived-artifact guards pass (/tmp/task31966-pilot-preflight.log); both changed benchmark Python files Ruff/format clean and git diff whitespace clean. No full sweep run. The reviewed helper and settlement checks are unchanged since the 48-test strict GREEN.
 <!-- SECTION:NOTES:END -->
