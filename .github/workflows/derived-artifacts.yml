@@ -138,6 +138,7 @@ jobs:
         if: always()
         run: |
           pytest \
+            Tests/DB/test_operation_owned_connection_retirement.py \
             Tests/UI/test_console_runtime_ownership.py \
             Tests/Chat/test_console_viewless_hooks.py \
             Tests/Agents/test_install_skill_runtime_tool.py \

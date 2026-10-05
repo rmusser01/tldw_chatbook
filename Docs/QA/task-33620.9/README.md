@@ -481,6 +481,30 @@ passes in 387.96s with its original count, assertions and timeout. The
 failure-conditioned retention probe reports `null`: this passing run does not
 capture or attribute the old intermittent failure.
 
+The new regression is included in the existing admission-sensitive PR Fast Lane
+invocation, separate from the sandboxed cohort as required by its
+`bootstrap_profile` marker. No job, dependency or timeout is changed.
+The local combined invocation records **280 passed, 2 existing xfails, 6
+warnings in 379.97s**, but the extra strict parent resource observer returns
+**exit 1**. Its first database retention appears at the existing manually
+mounted startup-app test, after the new 14 native-retirement cases recorded no
+database files. Later observations retain Library, Workspace, Evals and
+Subscriptions handles; the session descriptor warning reports growth of 598.
+The other five warnings are four source-parser escape warnings and a synchronous
+Notes test with an asyncio marker. Pytest also warns during cleanup of older
+default-root garbage directories. No unrelated directory was removed and no
+warning, threshold or ownership assertion was suppressed.
+
+This invocation had no explicit `--basetemp`: the observer covers named private
+profile roots, not every pytest temporary path. It does not prove full cohort
+retirement, application-lifetime qualification or a new cause for the earlier
+intermittent failure. The failed receipt is retained at
+`/tmp/pr3024-replacement-ci-cohort.log`, SHA256
+`cd6dd40fd8e6d421edee7b7223b5128ba1b47c5e5e3e393132aec6ed99f6fa9e`.
+All eleven artifact guards pass with this CI selection; incremental independent
+review found no actionable source or workflow finding. Resource qualification
+remains HOLD.
+
 Local receipts: `/tmp/pr3024-replacement-red-corrected.log` (SHA256
 `02116e1e9b7916828390adc2780aabc8ca7c203b465ae6c4f0f110e3ad0eea20`)
 and `/tmp/pr3024-replacement-green.log` (SHA256
@@ -490,12 +514,12 @@ The complete affected receipt `/tmp/pr3024-replacement-affected.log` has SHA256
 Temporary receipts are retained locally, not portable archived evidence.
 Native, Windows, participant, latency and external-review gates remain HOLD.
 
-The subsequent exact published head `7e7fb51ee0cbfe2eb01a162b20f38ec574fd0e34`
+The earlier exact published head `7e7fb51ee0cbfe2eb01a162b20f38ec574fd0e34`
 has a successful [Perf Guard run 37377248523](https://github.com/rmusser01/tldw_chatbook/actions/runs/37377248523),
 with both tested and untested credential-poll variants at **6.75 os.open/tick**
-under the unchanged ceiling. That is current-head CI evidence, not a demonstrated
-cause or repair of the older 10.125 result, nor qualification for this new
-unpublished helper patch. Derived Artifacts is still running at this checkpoint.
+under the unchanged ceiling. That is evidence only for the named older head,
+not a demonstrated cause or repair of the older 10.125 result, nor qualification
+for subsequent helper or CI-selection patches.
 Qodo is credit-blocked; CodeRabbit's explicit full-review request terminates with
 no files to review because organization path filters exclude all 72 changed
 files. Neither skipped review is a clean external review. Review-configuration
