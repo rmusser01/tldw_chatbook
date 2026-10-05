@@ -3,8 +3,9 @@
 Mounted with the real application stylesheet at 211x44, the size the spec's
 mockup (c) is drawn at, and driven by real keypresses.
 
-TASK-33007.9 adds what the Provider control shows after a choice or a
-Revert, and that its open list is drawn whole inside the card.
+TASK-33007.9 adds what the Provider control shows -- and paints -- after a
+choice or a Revert, and that its open list is drawn whole inside the card,
+which is also checked at 235x52.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from Tests.UI.test_settings_category_sweep import (
     _click_settings_category,
     _settle_settings,
 )
-from Tests.UI.test_settings_narrow_layout import _SettingsCssHarness, _region_rows
+from Tests.UI.test_settings_narrow_layout import _region_rows, _SettingsCssHarness
 
 _SIZE = (211, 44)
 _FAKE_KEY = "sk-proj-abcdefghijklmnop1234"
@@ -389,6 +390,52 @@ async def _until(pilot, condition) -> None:
         await pilot.pause(0.05)
 
 
+def _held(screen) -> str:
+    return screen._provider_setting_values_mapping()["provider"]
+
+
+async def _type_filter(pilot, screen, typed: str) -> None:
+    """Type ``typed`` into the Provider control and wait for its list to
+    open on it, so a following Enter cannot run ahead of the filter."""
+    control = screen.query_one("#settings-provider-search", Input)
+    picker = screen.query_one("#settings-provider-picker", OptionList)
+    control.focus()
+    await pilot.pause()
+    await pilot.press(*typed)
+    await _until(pilot, lambda: picker.display and control.value == typed)
+    assert picker.display and control.value == typed
+    await pilot.pause()
+
+
+#: 33 cells, the control's whole text width at 211x44 and 235x52: no cell is
+#: left for the caret Textual's Input keeps after the last character.
+_OOBABOOGA = "Text Generation WebUI (Oobabooga)"
+_WIDER_ENDPOINT_NAME = "GPU box in the back office, behind the VPN"
+
+
+def _painted(screen, control) -> str:
+    return _region_rows(screen, control)[0]
+
+
+def _paints_from_its_head(screen, control, name: str) -> bool:
+    """Whether the control paints ``name`` from its first cell, as much of
+    it as fits. Only a name at least as wide as the text area can tell."""
+    cells = control.content_region.width
+    assert len(name) >= cells, (name, cells)
+    return name[:cells] in _painted(screen, control)
+
+
+async def _expect_the_head(pilot, screen, control, name: str) -> None:
+    await _until(pilot, lambda: _paints_from_its_head(screen, control, name))
+    assert _paints_from_its_head(screen, control, name), _painted(screen, control)
+
+
+async def _tab_away(pilot, control) -> None:
+    await pilot.press("tab")
+    await _until(pilot, lambda: not control.has_focus)
+    await pilot.pause(0.2)  # the control's blur timer
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_provider_control_names_the_choice_never_the_typed_filter(request):
@@ -403,40 +450,41 @@ async def test_provider_control_names_the_choice_never_the_typed_filter(request)
         control = screen.query_one("#settings-provider-search", Input)
         picker = screen.query_one("#settings-provider-picker", OptionList)
         legacy_name = "llama.cpp (legacy alias)"
+        help_id = "#settings-provider-search-status"
+        resting_help = _text(screen, help_id)
+        assert resting_help.startswith("configured: Anthropic ·")
 
-        def held() -> str:
-            return screen._provider_setting_values_mapping()["provider"]
-
-        async def type_filter(typed: str) -> None:
-            control.focus()
-            await pilot.pause()
-            await pilot.press(*typed)
-            await _until(pilot, lambda: picker.display and control.value == typed)
-            assert picker.display and control.value == typed
-
-        await type_filter("legacy")
+        await _type_filter(pilot, screen, "legacy")
+        assert _text(screen, help_id) != resting_help
         await pilot.press("enter")
-        await _until(pilot, lambda: held() == "local_llamacpp")
-        assert held() == "local_llamacpp"
+        await _until(
+            pilot, lambda: _held(screen) == "local_llamacpp" and not picker.display
+        )
+        assert _held(screen) == "local_llamacpp"
         assert control.value == legacy_name
         assert not picker.display
+        assert _text(screen, help_id) == resting_help
 
-        await type_filter("llama")
+        await _type_filter(pilot, screen, "llama")
         highlighted = picker.get_option_at_index(picker.highlighted)
         assert getattr(highlighted, "provider_id", None) == "local_llamacpp"
         await pilot.press("enter")
         await _until(pilot, lambda: not picker.display)
-        assert held() == "local_llamacpp"
+        assert _held(screen) == "local_llamacpp"
         assert control.value == legacy_name
         assert not picker.display
+        assert _text(screen, help_id) == resting_help
 
-        await type_filter("zzzz")  # only "Enter provider ID" is left to choose
+        # Only "Enter provider ID" is left to choose.
+        await _type_filter(pilot, screen, "zzzz")
+        assert "zzzz" in _text(screen, help_id)
         await pilot.press("enter")
         manual = screen.query_one("#settings-provider-manual-value", Input)
-        await _until(pilot, lambda: host.focused is manual)
+        await _until(pilot, lambda: host.focused is manual and not picker.display)
         assert host.focused is manual
         assert control.value == legacy_name
         assert not picker.display
+        assert _text(screen, help_id) == resting_help
 
 
 @pytest.mark.asyncio
@@ -458,18 +506,13 @@ async def test_discard_changes_shows_the_saved_provider_and_no_filtered_list(
         picker = screen.query_one("#settings-provider-picker", OptionList)
         whole_list = picker.option_count
 
-        def held() -> str:
-            return screen._provider_setting_values_mapping()["provider"]
-
-        control.focus()
-        await pilot.pause()
-        await pilot.press(*"llamaf", "enter")
-        await _until(pilot, lambda: held() == "local_llamafile")
+        await _type_filter(pilot, screen, "llamaf")
+        await pilot.press("enter")
+        await _until(pilot, lambda: _held(screen) == "local_llamafile")
         assert control.value == "Llamafile"
         # A second, unfinished filter over the staged choice.
-        await pilot.press(*"oll")
-        await _until(pilot, lambda: picker.display and control.value == "oll")
-        assert picker.display and picker.option_count < whole_list
+        await _type_filter(pilot, screen, "oll")
+        assert picker.option_count < whole_list
 
         if revert_with == "r":
             await pilot.press("escape", "r")
@@ -481,9 +524,19 @@ async def test_discard_changes_shows_the_saved_provider_and_no_filtered_list(
             await pilot.press("tab", "enter")  # Keep editing holds focus first
         else:
             await pilot.click("#confirm-button")
-        await _until(pilot, lambda: host.screen is screen and held() == "anthropic")
+        # [button]: the list is closed by the control's blur timer, which can
+        # land after the revert, so wait for the name as well.
+        await _until(
+            pilot,
+            lambda: (
+                host.screen is screen
+                and _held(screen) == "anthropic"
+                and not picker.display
+                and control.value == "Anthropic"
+            ),
+        )
 
-        assert held() == "anthropic"
+        assert _held(screen) == "anthropic"
         assert control.value == "Anthropic"
         assert not picker.display
         assert _text(screen, "#settings-provider-source") == "new-chat default"
@@ -503,7 +556,7 @@ async def test_discard_changes_shows_the_saved_provider_and_no_filtered_list(
 
 @pytest.mark.asyncio
 @private_profile_test
-@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.parametrize("size", [_SIZE, (235, 52)], ids=["211x44", "235x52"])
 async def test_open_provider_list_is_drawn_whole_inside_the_card(request, size):
     """TASK-33007.9 AC#3: the open list's whole box, its scrollbar at the
     right edge included, lies inside the card and nothing clips it. The list
@@ -540,3 +593,94 @@ async def test_open_provider_list_is_drawn_whole_inside_the_card(request, size):
         assert picker.display and control.value == "anthro"
         assert picker.max_scroll_y == 0
         drawn_whole(picker)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_chosen_name_as_wide_as_the_control_is_painted_from_its_head(request):
+    """TASK-33007.9 AC#1 (review I1): Input keeps a cell for the caret after
+    the last character and scrolls to it, so a select-all that ends there
+    pushed the head of a name as wide as the control out of view ("ext
+    Generation WebUI (Oobabooga)"). Chosen, left and Tabbed back into, the
+    control paints the name from its first cell."""
+    host = _anthropic_host()
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        control = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+
+        await _type_filter(pilot, screen, "oobab")
+        await pilot.press("enter")
+        await _until(pilot, lambda: _held(screen) == "oobabooga" and not picker.display)
+        assert control.value == _OOBABOOGA and control.has_focus
+        await pilot.pause()
+        await _expect_the_head(pilot, screen, control, _OOBABOOGA)
+
+        await _tab_away(pilot, control)
+        await _expect_the_head(pilot, screen, control, _OOBABOOGA)
+        await pilot.press("shift+tab")
+        await _until(pilot, lambda: control.has_focus)
+        await pilot.pause()
+        await _expect_the_head(pilot, screen, control, _OOBABOOGA)
+
+        # The caret is the user's to move while the field is theirs: at the
+        # end it takes its cell and the row scrolls by one. Left there, the
+        # name still comes to rest on its head.
+        await pilot.press("end")
+        await pilot.pause()
+        assert not _paints_from_its_head(screen, control, _OOBABOOGA)
+        await _tab_away(pilot, control)
+        await _expect_the_head(pilot, screen, control, _OOBABOOGA)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    ("saved", "name"),
+    [
+        pytest.param("oobabooga", _OOBABOOGA, id="as-wide-as-the-control"),
+        pytest.param(
+            "custom-ep:gpu-box", _WIDER_ENDPOINT_NAME, id="wider-registry-name"
+        ),
+    ],
+)
+async def test_a_saved_wide_provider_name_is_painted_from_its_head(
+    request, saved, name
+):
+    """TASK-33007.9 AC#1, AC#2 (review I1): a saved name as wide as the
+    control, or a registry name wider than it, is painted from its first
+    cell at rest and once the control is Tabbed or clicked into."""
+    app = _build_test_app()
+    app.app_config["custom_endpoints"] = {
+        "gpu-box": {
+            "display_name": _WIDER_ENDPOINT_NAME,
+            "family": "llama_cpp",
+            "base_url": "http://192.168.1.5:8080",
+            "models": ["model-a"],
+        }
+    }
+    app.app_config["chat_defaults"] = {"provider": saved, "model": "model-a"}
+    host = _SettingsCssHarness(app, "settings")
+
+    async with host.run_test(size=_SIZE) as pilot:
+        screen = await _open_providers(host, pilot)
+        control = screen.query_one("#settings-provider-search", Input)
+        assert control.value == name
+
+        await _expect_the_head(pilot, screen, control, name)  # as mounted
+
+        control.focus()
+        await pilot.pause()
+        await _tab_away(pilot, control)
+        await _expect_the_head(pilot, screen, control, name)
+        await pilot.press("shift+tab")
+        await _until(pilot, lambda: control.has_focus)
+        await pilot.pause()
+        await _expect_the_head(pilot, screen, control, name)
+
+        await _tab_away(pilot, control)
+        await pilot.click("#settings-provider-search")
+        await _until(pilot, lambda: control.has_focus)
+        await pilot.pause()
+        await _expect_the_head(pilot, screen, control, name)
