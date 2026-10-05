@@ -1872,3 +1872,40 @@ General rendering/heap work and constructor-lifetime policy are separate
 architectural questions; this evidence does not authorize blanket GC/cache
 changes. All TASK-31966 criteria remain open, along with native, Windows,
 unfamiliar-participant and final app-owner retirement qualification. No final PR.
+### Native authoritative-label fallback reads — 2026-10-05
+
+The allocation/refresh diagnostic identified guarded card reads in native row
+rebuilds. The native row already prefers the session's trimmed character name;
+fetching that card's label cannot affect the displayed result. The shared native
+builder now submits only missing/whitespace-name candidates to the existing
+distinct-ID, checked fallback resolver. Persisted/workspace rows, exact native
+identities, target revalidation, config/registry freshness and storage lifetime
+remain unchanged. No cache, dependency, async boundary or GC policy was added.
+Existing ADR120/ADR198 apply; no new ADR is needed for this redundant read removal.
+
+Real file-backed SQLite plus the real ConsoleChatStore records actual card
+SELECTs and asserts unchanged labels/identities. Valid isolated RED has three
+count failures and one passing blank-name control; label/identity assertions
+already pass. After correction, named sessions issue zero card SELECTs, mixed
+named/fallback and deleted-fallback cases issue one, and two blank names issue
+two. GREEN plus existing native/page/shared-resolver controls: seven pass in
+3.41s. Both RED and GREEN use the strict read-only resource gate and retain no
+database files after their test-owned owner retires.
+
+Affected installed Character activation, measurement contracts and native/
+workspace projection cases pass **53 tests in 79.52s**, process exit0, no pytest
+warnings. All53 strict teardown observations contain no database files;
+FILE-RETIREMENT-REQUIRED is True. The changed test range and production file are
+format clean. All seven inherited test and 69 production Ruff diagnostics have
+the same normalized identity/multiplicity; no diagnostic was added. All eleven
+artifact guards and whitespace checks pass. Raw root:
+`/tmp/task31966-native-label-8xIitV` (`red.log`, `green.log`, `affected.log`,
+`preflight.log`). Independent read-only review finds no actionable issue. Its
+seven-node test run also passes but encounters unrelated shared pytest
+garbage-cleanup warnings; it does not substitute for the isolated warning-free
+receipt above or establish broader merge readiness.
+
+Fresh clean-head scale/UI measurements follow this commit. Eliminating unused
+queries is not evidence that the unchanged 50ms activation/100ms busy limits
+now pass, nor native/Windows/participant or application-cache retirement proof.
+All TASK-31966 acceptance criteria remain open.

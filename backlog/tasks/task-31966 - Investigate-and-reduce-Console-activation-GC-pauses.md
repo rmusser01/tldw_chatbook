@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-07 18:45'
-updated_date: '2026-10-05 17:47'
+updated_date: '2026-10-05 18:10'
 labels:
   - console
   - performance
@@ -190,6 +190,15 @@ Reason: test-only finite measurement-reader ownership correction under the appro
 ADR required: no new ADR for this diagnostic.
 ADR path: N/A; existing ADR120 and ADR198 apply.
 Reason: approved throwaway/read-only attribution through existing real-owner tools; no production contract or architectural policy changes.
+### Bounded native-row fallback read correction — 2026-10-05
+
+1. Preserve clean 5c8c69 allocation/refresh evidence. Trace every native-row caller and both shared character-label callers; native session character_name already wins over database labels, so named sessions require no fallback lookup.
+2. Add real file-backed SQLite and real ConsoleChatStore RED coverage for unnecessary card SELECTs, plus unnamed/blank/deleted-card controls; prove labels and exact native identities stay unchanged.
+3. Restrict only native-row fallback candidate IDs to sessions with a missing or whitespace-only name. Retain distinct-ID resolution, fresh checked reads for actual fallbacks, workspace/persisted row behavior, activation authority/revalidation and immediate registry/config freshness. No new memo, async/public interface, GC/cache/lifetime policy or dependency.
+4. Run targeted controller/Character presentation and measurement contracts with strict read-only resource observations, static and artifact guards. Freeze clean source and repeat fresh source-bound scale/Keyword/UI checks under unchanged limits; preserve residual failures and required native/Windows/participant evidence.
+ADR required: no new ADR.
+ADR path: N/A; existing ADR120 and ADR198 apply.
+Reason: remove a demonstrably unused fallback read without changing labels, activation, authority, storage ownership or global policy; user continued the merge goal with all scoped approvals granted.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -242,4 +251,8 @@ Clean de7479ccad scale/Keyword source guards pass:10k/250k corpus,300 exact quer
 Frozen b5e0f37bb0 fresh 10k/250k Keyword passes 300 exact queries, P95 103.089667ms, loop 5.883167ms, zero owned handles/files after cleanup. Normal UI completes 60 exact searches/eight OPENED activations but five activation windows exceed 50ms, maximum 78.352583ms; preparation and every busy paint meet unchanged limits. Two independent full-activity pre-import origin traces each retain 636 unique registrations, zero drops/untraced handles, and zero worker connections/active operations/pending acquisitions after physical executor join. Five main constructor caches remain; database descriptor counts 22/24 are retained, not claimed as identical or application retirement. Both instrumented timing runs remain diagnostic-only failures. Fresh raw receipts and causal limits in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md; README stale launch-packet HOLD corrected. All AC remain unchecked; native/Windows/participants, constructor-lifetime architecture and residual latency remain open. No fourth production performance remedy/global policy or final PR.
 
 Approved Console-only diagnostic completed at clean 5c8c69babbc58024076dcc69148bb1c8acebc26d; production/tests/scripts/package inputs byte-identical to b5e0f37bb0. Fresh 10k/250k Keyword passes 300 exact queries, P95 108.649ms, loop 6.963625ms, zero owned cleanup resources. Sequential config/native/GC and bounded code-location runs each preserve 60 exact searches/eight OPENED activations and source/corpus guards but retain failed latency matrices. Each pairs 28 gen-2 collections with no dropped records; thresholds stay 700/10/10. Narrow no-GC intervals include checked storage/config/card reads and mandatory fixture-guard contribution; wide stalls overlap native rendering/GC. Samples locate code, not exclusive CPU share. Untimed small real-app census confirms cold/warm exact reuse and predominantly mounted Console Strip/cache roots, but late freeze, partial traversal and retained app prohibit leak/lifetime claims. Additional code-only sampler was a bounded follow-on for gaps missed by existing wrappers, stopped/joined explicitly. New scripts Ruff clean and source/head/pairing/worst-gap asserts pass. Full provenance, failures, script/receipt hashes and limitations appended to Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. Next candidate is redundant Console label/config derivation using existing checked-operation/per-pass helpers, pending cost proof and bounded design approval; no fourth production correction, global GC/cache policy, qualification waiver or final PR. All AC remain unchecked; no full sweep.
+
+Implemented bounded native authoritative-label fallback correction: existing trimmed session names no longer trigger unused card SELECTs; missing/blank/deleted fallback, identities, persisted/page projection and checked activation authority remain unchanged. Real file-backed SQLite and ConsoleChatStore isolated RED3fail/1control; GREEN7pass3.41s. Affected installed activation/measurement/projection verification53pass79.52s, exit0/no warnings, all53 strict DB-file censuses empty. New test range/production formatting clean; seven test and69 production inherited Ruff diagnostic multisets unchanged. All11 artifact guards/whitespace pass. Existing ADR120/198; no cache/GC/lifetime/interface policy or new ADR. Raw root /tmp/task31966-native-label-8xIitV and durable receipt in Docs/QA/task-31245/fixture-rebuild-2026-10-04.md. Fresh frozen-source scale/UI and native/Windows/participant qualification remain next; all AC open.
+
+Independent scoped read-only review found no critical, important or minor findings; local patch ready for planned qualification, not global merge-ready. Its separate seven-node run passed4.59s with unrelated shared-temp cleanup warnings; isolated strict53-test receipt above remains the warning-free evidence.
 <!-- SECTION:NOTES:END -->

@@ -3117,10 +3117,14 @@ class ConsoleWorkspaceController:
         # Review finding 7: resolve labels only for the character sessions
         # that actually exist -- never a full-library read, and no database
         # access at all for the common no-character-sessions build.
+        # A session's authoritative name already wins below, so only an
+        # unnamed session needs a checked card fallback.
         session_character_ids = [
             character_id
             for character_id in (
-                _session_character_id(session) for session in store.sessions()
+                _session_character_id(session)
+                for session in store.sessions()
+                if not str(getattr(session, "character_name", "") or "").strip()
             )
             if character_id is not None
         ]
