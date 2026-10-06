@@ -22249,3 +22249,28 @@ Every base comparison made from that tree had to be redone.
 trusting any base run, check the modules your claim depends on:
 `git show <base>:<path> | cmp - <snapshot>/<path>`. Keep scratch helpers in a
 subdirectory with a name no other agent will pick; a shared scratchpad is shared.
+
+## A stand-in resolution can hide a planner failure that only the real one triggers (TASK-34100.5.3 review round 1, 2026-10-06)
+
+**Incident.** The context meter's new re-plan (`ToolSurfacePlanInputs.tool_rows`)
+re-runs `build_first_request_schema_plan` with no conversation messages. Its tests
+built resolutions with `SimpleNamespace(provider=..., model=..., context_window=...,
+reasoning_replay=None)` and passed: the light set on a verified 8,192 window, none on
+an unverified one. Live on llama.cpp (own server and the shared 8181) the Context view
+read "Request overhead unknown" while the request, captured with `--log-prompts-dir`,
+carried `calculator`, `get_current_datetime` and `ask_user`. The gateway pins a
+`reasoning_replay` policy on every local resolution; with one, the planner's token
+count projects history around an active user request, so with no messages it raised
+"A Console provider request requires an active request". The planner catches every
+exception and falls back to a tool-less plan, so nothing failed: the meter just
+counted no tools. A probe with a real `ConsoleProviderResolution` plus
+`resolve_reasoning_policy("auto")` reproduced it in one line (fixed in 2f2f76d29d).
+
+**What to do.** When code reuses a seam that swallows errors into a fallback (the
+schema planner, the preflight's optional preview, the provider gateway), test it with
+the resolution type the gateway really produces, carrying the fields it pins for that
+provider family (`reasoning_replay` for llama.cpp and other local servers,
+`context_window` from the window cache), and assert the positive outcome, never only
+"did not raise". If a live readout disagrees with a captured request, reproduce with
+the real object before blaming an adjacent known issue: this one was first written up
+as the window-cache problem.
