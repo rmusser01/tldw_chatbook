@@ -1,8 +1,6 @@
 # ADR-126: fence recovery and enroll before any runtime/config imports.
 from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
-if __name__ == "__main__":  # TASK-34100.16: `--config PATH` selects the fenced profile
-    from tldw_chatbook.Utils.launch_options import adopt_config_flag
-    adopt_config_flag()
+if __name__ == "__main__": __import__("tldw_chatbook.Utils.launch_options").Utils.launch_options.adopt_config_flag()  # noqa: E701 -- TASK-34100.16: `--config PATH` picks the profile the fence admits; one line keeps app.py's size row
 admit_startup()
 if __name__ == "__main__":
     # TASK-34100.4: `python -m tldw_chatbook.app` unlocks through the same

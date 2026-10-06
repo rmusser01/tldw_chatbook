@@ -70,6 +70,44 @@ def test_help_ends_with_an_epilog_naming_the_env_var_and_the_guide_section():
     assert "plain text" in epilog
 
 
+def test_help_points_an_installed_user_at_the_published_guide_section():
+    """Review round 1: the wheel ships no Docs/, so a repo path alone dangles.
+
+    The epilog ends with the guide's public URL, anchored at the section, and
+    that section really exists in the guide (a renamed heading fails here).
+    """
+    from tldw_chatbook.Utils.launch_options import (
+        SECOND_MACHINE_GUIDE,
+        SECOND_MACHINE_SECTION,
+        SECOND_MACHINE_URL,
+        build_launch_parser,
+    )
+
+    anchor = SECOND_MACHINE_SECTION.lower().replace(" ", "-")
+    assert SECOND_MACHINE_URL.startswith("https://")
+    assert SECOND_MACHINE_URL.endswith(f"/{SECOND_MACHINE_GUIDE}#{anchor}")
+    guide = (_REPO / SECOND_MACHINE_GUIDE).read_text(encoding="utf-8")
+    assert f"\n## {SECOND_MACHINE_SECTION}\n" in guide
+    text = build_launch_parser().format_help()
+    assert [line for line in text.splitlines() if line.strip()][-1].strip() == (
+        SECOND_MACHINE_URL
+    )
+
+
+def test_help_says_where_the_per_launch_flags_do_not_reach():
+    """Review round 1: the --serve browser session is started without them.
+
+    ``--config`` still reaches it through the exported TLDW_CONFIG_PATH, but
+    ``--no-splash`` does not, and a missing folder is refused, so --help says
+    both instead of promising more.
+    """
+    from tldw_chatbook.Utils.launch_options import build_launch_parser
+
+    text = " ".join(build_launch_parser().format_help().split())
+    assert "not a --serve browser session" in text
+    assert "its folder must already exist" in text
+
+
 # --- --config -> TLDW_CONFIG_PATH -------------------------------------------
 
 
@@ -118,6 +156,66 @@ def test_config_flag_refuses_an_empty_path(capsys):
         adopt_config_flag(["--config", "  "], {})
     assert stop.value.code == 2
     assert "--config" in capsys.readouterr().err
+
+
+def test_config_flag_refuses_a_file_whose_folder_does_not_exist(tmp_path, capsys):
+    """Review round 1: a typo in the folder used to land on a recovery screen.
+
+    Nothing can create a config there (the launch ended on "Recovery
+    required: configuration_unavailable"), so it is a usage error naming the
+    missing folder, before anything is read or written.
+    """
+    from tldw_chatbook.Utils.launch_options import adopt_config_flag
+
+    missing = tmp_path / "not-yet" / "sub"
+    environ: dict[str, str] = {}
+    with pytest.raises(SystemExit) as stop:
+        adopt_config_flag(["--config", str(missing / "config.toml")], environ)
+    assert stop.value.code == 2
+    err = capsys.readouterr().err
+    assert f"{missing} does not exist" in err, err
+    assert environ == {}
+    assert not missing.exists()
+
+
+def test_config_flag_accepts_a_missing_file_in_an_existing_folder(tmp_path):
+    """The paired control: a new file in an existing folder is a first launch."""
+    from tldw_chatbook.Utils.launch_options import adopt_config_flag
+
+    environ: dict[str, str] = {}
+    target = tmp_path / "new-config.toml"
+    assert adopt_config_flag(["--config", str(target)], environ) == str(target)
+    assert environ == {"TLDW_CONFIG_PATH": str(target)}
+    assert not target.exists()
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="needs POSIX permissions that apply to this user",
+)
+def test_config_flag_under_an_unreadable_folder_is_a_usage_error(tmp_path, capsys):
+    """Review round 1: ``Path.is_dir()`` raises PermissionError on Python 3.12.
+
+    argparse turns only ArgumentTypeError/TypeError/ValueError from a
+    ``type=`` function into a usage error, so the PermissionError escaped as
+    a raw traceback before the startup fence.
+    """
+    from tldw_chatbook.Utils.launch_options import adopt_config_flag
+
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    environ: dict[str, str] = {}
+    try:
+        with pytest.raises(SystemExit) as stop:
+            adopt_config_flag(["--config", str(locked / "config.toml")], environ)
+    finally:
+        locked.chmod(0o700)
+    assert stop.value.code == 2
+    err = capsys.readouterr().err
+    assert f"cannot read {locked / 'config.toml'}" in err, err
+    assert "Traceback" not in err
+    assert environ == {}
 
 
 def test_launch_options_import_neither_config_nor_textual():
@@ -209,6 +307,46 @@ def test_launch_options_reach_the_app_instance():
     assert app._cli_no_splash is False
 
 
+_CONFIG_WRITERS = (
+    "save_setting_to_cli_config",
+    "save_settings_to_cli_config",
+    "replace_cli_config_serialized",
+)
+
+
+def _forbid_config_writes(monkeypatch) -> list[str]:
+    """Make every config writer a recorded failure, wherever it is bound.
+
+    Review round 1 (AC#3, "neither flag writes to config"): the flagged
+    launches below must not reach a writer. Returns the calls seen, so a
+    writer whose exception is swallowed by the code under test still fails.
+    """
+    from Tests.app_module_patches import set_app_global
+    from tldw_chatbook import config
+
+    calls: list[str] = []
+
+    def writer(name):
+        def refuse(*args, **kwargs):
+            calls.append(name)
+            raise AssertionError(f"a launch flag reached {name}{args!r}")
+
+        return refuse
+
+    for name in _CONFIG_WRITERS:
+        monkeypatch.setattr(config, name, writer(name))
+        if name == "save_setting_to_cli_config":
+            set_app_global(monkeypatch, name, writer(name))
+    return calls
+
+
+def _config_bytes() -> bytes | None:
+    from tldw_chatbook.config import get_cli_config_path
+
+    path = Path(get_cli_config_path())
+    return path.read_bytes() if path.exists() else None
+
+
 def _compose_first(monkeypatch, **attrs):
     from Tests.app_module_patches import set_app_global
     from tldw_chatbook.app import TldwCli
@@ -236,18 +374,189 @@ def _compose_first(monkeypatch, **attrs):
 def test_no_splash_composes_the_main_ui_even_when_config_enables_the_splash(
     monkeypatch,
 ):
+    writes = _forbid_config_writes(monkeypatch)
+    before = _config_bytes()
     first, sentinel, stub = _compose_first(monkeypatch, _cli_no_splash=True)
     assert first is sentinel
     assert stub.splash_screen_active is False
+    # Skipping the splash is per launch: nothing is persisted.
+    assert writes == []
+    assert _config_bytes() == before
 
 
 @pytest.mark.bootstrap_profile
 def test_without_the_flag_the_configured_splash_still_plays(monkeypatch):
+    """The paired control for the test above (it passes on pre-fix code too).
+
+    With no flag the configured splash still composes, so the test above
+    fails for the flag's reason, not because the splash never composes.
+    """
     from tldw_chatbook.Widgets.splash_screen import SplashScreen
 
     first, _sentinel, stub = _compose_first(monkeypatch)
     assert isinstance(first, SplashScreen)
     assert stub.splash_screen_active is True
+
+
+# --- the flags reach the app through both real runners ----------------------
+
+
+class _RecordingApp:
+    """Stands in for TldwCli in a runner: records what reached it, never runs."""
+
+    instances: list[_RecordingApp] = []
+
+    def __init__(self) -> None:
+        _RecordingApp.instances.append(self)
+        self.seen: tuple[object, object] | None = None
+
+    def run(self) -> None:
+        self.seen = (
+            getattr(self, "_cli_no_splash", None),
+            getattr(self, "_cli_focus_override", None),
+        )
+
+
+def _quiet_runner(monkeypatch, app_entry) -> None:
+    """Stub every process-global side effect a runner has before ``run()``.
+
+    Signal handlers, the exit watchdog, logging sinks, the CSS build, the
+    terminal image probe, metrics servers and the config ensure/migrate all
+    touch the test process or the profile; none of them is under test here.
+    """
+    from tldw_chatbook import config
+    from tldw_chatbook.Tools import workspace_file_roots
+    from tldw_chatbook.Utils import db_upgrade_notice, terminal_utils
+
+    noop = lambda *args, **kwargs: None  # noqa: E731 -- a stub
+    for name in (
+        "install_termination_handlers",
+        "arm_exit_watchdog",
+        "initialize_early_logging",
+        "load_cli_config_and_ensure_existence",
+        "init_metrics_server",
+        "init_otel_metrics",
+    ):
+        monkeypatch.setattr(app_entry, name, noop)
+    monkeypatch.setattr(app_entry, "_is_source_tree", lambda root: False)
+    monkeypatch.setattr(app_entry, "supports_emoji", lambda: False)
+    monkeypatch.setattr(app_entry, "TldwCli", _RecordingApp)
+    monkeypatch.setattr(config, "migrate_config_file_if_needed", noop)
+    monkeypatch.setattr(workspace_file_roots, "set_launch_cwd", noop)
+    monkeypatch.setattr(terminal_utils, "warm_up_image_protocol", noop)
+    monkeypatch.setattr(db_upgrade_notice, "print_db_upgrade_notice_if_pending", noop)
+    monkeypatch.setenv("TORCHAUDIO_LOG_LEVEL", "ERROR")
+
+
+@pytest.fixture
+def _restore_logger_levels():
+    """main_cli_runner quiets some third-party loggers; put them back after."""
+    import logging
+
+    manager = logging.root.manager
+    before = {
+        name: logger.level
+        for name, logger in manager.loggerDict.items()
+        if isinstance(logger, logging.Logger)
+    }
+    yield
+    for name, logger in list(manager.loggerDict.items()):
+        if isinstance(logger, logging.Logger):
+            logger.setLevel(before.get(name, logging.NOTSET))
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("runner", ["main_cli_runner", "_run_module_main"])
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["--no-splash"], (True, False)),
+        (["--no-splash", "--focus"], (True, True)),
+        ([], (False, False)),  # the control: no flag, no skip
+    ],
+)
+@pytest.mark.usefixtures("_restore_logger_levels")
+def test_launch_flags_reach_the_app_through_both_real_runners(
+    monkeypatch, runner, argv, expected
+):
+    """Review round 1: the wiring itself, not the helper in isolation.
+
+    ``tldw-cli`` ends in ``app_entry.main_cli_runner`` and ``python -m
+    tldw_chatbook.app`` in ``app_entry._run_module_main``. If either stopped
+    handing the parsed flags to the instance, ``--no-splash`` would silently
+    stop working while the helper's own test stayed green.
+    """
+    from tldw_chatbook import app_entry
+
+    _quiet_runner(monkeypatch, app_entry)
+    writes = _forbid_config_writes(monkeypatch)
+    before = _config_bytes()
+    _RecordingApp.instances = []
+    monkeypatch.setattr(sys, "argv", ["tldw-cli", *argv])
+    getattr(app_entry, runner)()
+    assert [app.seen for app in _RecordingApp.instances] == [expected]
+    assert writes == []
+    assert _config_bytes() == before
+
+
+_ADMISSION_PROBE = r"""
+import os, runpy, sys
+from tldw_chatbook.Backup_Recovery import storage_admission
+from tldw_chatbook.Backup_Recovery.profile_paths import effective_config_path
+
+class Admitted(BaseException):
+    pass
+
+def admit_startup():
+    print('ADMITTED=' + str(effective_config_path()), flush=True)
+    raise Admitted
+
+storage_admission.admit_startup = admit_startup
+sys.argv = ['tldw_chatbook.app', *sys.argv[1:]]
+try:
+    runpy.run_module('tldw_chatbook.app', run_name='__main__', alter_sys=True)
+except Admitted:
+    pass
+"""
+
+
+@pytest.mark.timeout(120)
+def test_module_entry_admits_the_config_flag_file_not_the_inherited_one(tmp_path):
+    """Review round 1: ``--config`` must be adopted BEFORE the ADR-126 fence.
+
+    The unlock and config-load checks cannot see admission (it writes no
+    config file), so this observes the profile ``admit_startup()`` is asked
+    to admit when ``python -m tldw_chatbook.app --config X`` runs while
+    TLDW_CONFIG_PATH names another file.
+    """
+    root = tmp_path.resolve()
+    env = _isolated_env(root)
+    target = root / "elsewhere" / "copied-config.toml"
+    target.parent.mkdir(mode=0o700)
+    result = subprocess.run(
+        [sys.executable, "-c", _ADMISSION_PROBE, "--config", str(target)],
+        cwd=_REPO,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=100,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-4000:]
+    assert f"ADMITTED={target}\n" in result.stdout, result.stdout
+    # The control: without the flag, the inherited selector is admitted.
+    control = subprocess.run(
+        [sys.executable, "-c", _ADMISSION_PROBE],
+        cwd=_REPO,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=100,
+        check=False,
+    )
+    assert f"ADMITTED={root / 'config' / 'decoy.toml'}\n" in control.stdout, (
+        control.stdout + control.stderr[-2000:]
+    )
 
 
 # --- the real tldw-cli entry -------------------------------------------------

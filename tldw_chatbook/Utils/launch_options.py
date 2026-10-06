@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import stat
 import sys
 from collections.abc import MutableMapping, Sequence
 from typing import Any
@@ -31,9 +32,15 @@ from tldw_chatbook.Backup_Recovery.profile_paths import lexical_path
 CONFIG_PATH_ENV_VAR = "TLDW_CONFIG_PATH"
 
 #: Where the second-machine route is documented (the guide section's title is
-#: also what the Restore view's settings-file message points at).
+#: also what the Restore view's settings-file message points at). The wheel
+#: ships no Docs/, so --help gives the published copy's URL, anchored at the
+#: section.
 SECOND_MACHINE_SECTION = "Setting up another machine"
 SECOND_MACHINE_GUIDE = "Docs/User_Guide/First_Run_Setup.md"
+SECOND_MACHINE_URL = (
+    "https://github.com/rmusser01/tldw_chatbook/blob/main/"
+    f"{SECOND_MACHINE_GUIDE}#{SECOND_MACHINE_SECTION.lower().replace(' ', '-')}"
+)
 
 _EPILOG = f"""\
 environment:
@@ -45,7 +52,8 @@ environment:
 --config PATH (or set {CONFIG_PATH_ENV_VAR}). The copy carries any API keys
 saved in it, in plain text unless password encryption is on, so handle it as
 a secret. Keys in environment variables are never written to it. See
-"{SECOND_MACHINE_SECTION}" in {SECOND_MACHINE_GUIDE}."""
+"{SECOND_MACHINE_SECTION}" in the User Guide:
+{SECOND_MACHINE_URL}"""
 
 
 def _config_file(value: str) -> str:
@@ -59,12 +67,29 @@ def _config_file(value: str) -> str:
         spelling ``TLDW_CONFIG_PATH`` is read with.
 
     Raises:
-        argparse.ArgumentTypeError: For an empty value or a folder.
+        argparse.ArgumentTypeError: For an empty value, a folder, a file in a
+            folder that does not exist (nothing could create it there), or a
+            path that cannot be checked. Every refusal is a usage error (exit
+            2): argparse reports nothing else from a ``type=`` function as
+            one, so an OSError would escape as a traceback.
     """
     if not value.strip():
         raise argparse.ArgumentTypeError("needs the path of a config.toml file")
     path = lexical_path(value)
-    if path.is_dir():
+    try:
+        status = os.stat(path)
+    except FileNotFoundError:
+        # A new file is a first launch -- but only where it can be created.
+        if not os.path.isdir(path.parent):
+            raise argparse.ArgumentTypeError(
+                f"{path.parent} does not exist; create that folder or check the path"
+            ) from None
+        return str(path)
+    except OSError as error:
+        raise argparse.ArgumentTypeError(
+            f"cannot read {path}: {error.strerror or error}"
+        ) from None
+    if stat.S_ISDIR(status.st_mode):
         raise argparse.ArgumentTypeError(
             f"{path} is a folder; give the config.toml file inside it"
         )
@@ -111,15 +136,15 @@ def build_launch_parser(*, add_help: bool = True) -> argparse.ArgumentParser:
         help=(
             f"Use this config.toml for this launch (same as {CONFIG_PATH_ENV_VAR}; "
             "this flag wins when both are set). A missing file is created with "
-            "defaults, as on a first launch."
+            "defaults, as on a first launch; its folder must already exist."
         ),
     )
     parser.add_argument(
         "--no-splash",
         action="store_true",
         help=(
-            "Skip the splash screen for this launch only; [splash_screen] in "
-            "config is not changed"
+            "Skip the splash screen for this launch only (not a --serve browser "
+            "session); [splash_screen] in config is not changed"
         ),
     )
     return parser
