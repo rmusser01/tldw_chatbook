@@ -20,7 +20,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     ROW_CONFIGURED,
     ROW_DEFAULT,
     build_summary_rows,
-    quick_track_defaults_note,
 )
 
 pytestmark = pytest.mark.bootstrap_profile
@@ -80,6 +79,10 @@ def test_the_light_set_follows_the_ask_user_gate_and_the_local_master():
 
 def test_the_quick_track_note_describes_the_light_surface():
     """TASK-34100.5 owner question 2: the note said "tools off"."""
+    from tldw_chatbook.UI.Wizards.first_run_setup_state import (
+        quick_track_defaults_note,
+    )
+
     note = quick_track_defaults_note({})
 
     assert note.startswith(
