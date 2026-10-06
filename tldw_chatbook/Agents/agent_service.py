@@ -776,6 +776,7 @@ def build_first_request_schema_plan(
     plain_system_prompt: str | None = None,
     catalog_entries: tuple[ToolCatalogEntry, ...] | None = None,
     schema_loader: Callable[[str], ToolSchema] | None = None,
+    allow_discovery: bool = True,
 ) -> FirstRequestSchemaPlan:
     """Choose direct disclosure only when schema share and request both fit.
 
@@ -815,6 +816,9 @@ def build_first_request_schema_plan(
         catalog_entries: Optional disposable catalog metadata for inspection.
         schema_loader: Read-only loader for that metadata; grants no execution
             or registration authority.
+        allow_discovery: ``False`` for plain chat's light surface
+            (TASK-34100.5.3): when its few tools do not fit directly the
+            request carries none, rather than ``find_tools``/``load_tools``.
 
     Returns:
         A frozen schema plan whose ``request_fits`` flag proves whether any
@@ -866,7 +870,13 @@ def build_first_request_schema_plan(
         deferred_names=_deferred_names,
     )
 
-    discovery = make_plan((), True, discovery_prompt)
+    # TASK-34100.5.3: the light surface never falls back to find/load
+    # discovery; its fallback is the tool-less request on the plain prompt.
+    discovery = (
+        make_plan((), True, discovery_prompt)
+        if allow_discovery
+        else make_plan((), False, plain_system_prompt or direct_prompt)
+    )
 
     def validated_fallback(context_limit: int) -> FirstRequestSchemaPlan:
         if _first_request_plan_fits(

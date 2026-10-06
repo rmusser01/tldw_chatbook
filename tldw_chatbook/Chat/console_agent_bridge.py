@@ -4953,6 +4953,7 @@ def build_console_first_request_plan(
     canvas_authority: Any | None = None,
     preview_canvas_profile_snapshot: Any | None = None,
     progress_inbox_exists: bool = False,
+    light_surface: bool = False,
 ) -> ConsoleFirstRequestPlan:
     """Build live/preview-identical first-request inputs without live effects.
 
@@ -4994,6 +4995,10 @@ def build_console_first_request_plan(
         personal_context_snapshot: Optional prebuilt snapshot used verbatim.
         preview_canvas_profile_snapshot: Immutable Canvas profile data for budgeting;
             no Canvas provider is registered and no authority is issued.
+        light_surface: TASK-34100.5.3 -- plan plain chat's light tool surface
+            (``Agents/plain_chat_tool_surface.py``): the safe set plus the
+            tools the user switched on, no runtime tools (sub-agents, skills,
+            chat forks, run log, discovery), and the minimal prompt.
 
     Returns:
         A frozen catalog, config, message, schema, and run-log plan shared by
@@ -5066,6 +5071,28 @@ def build_console_first_request_plan(
         if skills_present and not ephemeral
         else frozenset()
     )
+    if light_surface:
+        # TASK-34100.5.3 (owner ruling 2026-10-04, "Light surface by
+        # default"): the one place plain chat's offered surface is narrowed.
+        # Live dispatch and both previews pass through here, so what the
+        # previews count is what the send carries.
+        from tldw_chatbook.Agents import plain_chat_tool_surface as surface
+
+        allowed_tools = surface.light_surface_allowed_tools(
+            allowed_tools,
+            builtin_names=builtin_names,
+            local_names=surface.provider_names(local_provider),
+            user_source_names=(
+                surface.provider_names(library_provider)
+                + surface.provider_names(raw_shell_provider)
+                + tuple(surface.user_mcp_tool_names(mcp_provider))
+            ),
+        )
+        install_skill_enabled = run_skill_script_enabled = False
+        fork_chat_enabled = new_chat_enabled = worktree_merge_enabled = False
+        spawn_override_enabled, spawn_override_targets = False, ()
+        agent_definitions, fleet_max_live, progress_inbox_exists = (), 1, False
+        run_budget = surface.light_surface_budget(run_budget or console_run_budget())
     resolved_model = str(getattr(resolution, "model", "") or fallback_model)
     api_endpoint = str(
         getattr(resolution, "execution_key", "")
@@ -5080,13 +5107,19 @@ def build_console_first_request_plan(
         str(getattr(resolution, "selected_provider", "") or "") or api_endpoint
     )
     run_log = build_run_log_request_plan()
-    direct_prompt = compose_agent_system_prompt(
-        session_system_prompt,
-        offer_find_load=False,
+    # Lazy (ADR-097 UI-ready census): only a send plans its first request.
+    from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
+
+    plain_prompt = (session_system_prompt or "").strip() or PLAIN_CHAT_SYSTEM_PROMPT
+    direct_prompt = (
+        plain_prompt
+        if light_surface
+        else compose_agent_system_prompt(session_system_prompt, offer_find_load=False)
     )
-    discovery_prompt = compose_agent_system_prompt(
-        session_system_prompt,
-        offer_find_load=True,
+    discovery_prompt = (
+        plain_prompt
+        if light_surface
+        else compose_agent_system_prompt(session_system_prompt, offer_find_load=True)
     )
     discovery_prompt = _append_canvas_discovery_hint(discovery_prompt, allowed_tools)
     from tldw_chatbook.Tools.remote_binding_status import (
@@ -5176,9 +5209,6 @@ def build_console_first_request_plan(
     messages = agent_messages
     if turn_bundle_block:
         messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
-    # Lazy (ADR-097 UI-ready census): only a send plans its first request.
-    from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
-
     schemas = build_first_request_schema_plan(
         registry,
         allowed_tools,
@@ -5187,13 +5217,17 @@ def build_console_first_request_plan(
         messages,
         skill_file_enabled=bool(skills_present and turn_skill_bindings),
         install_skill_enabled=install_skill_enabled,
-        managed_skill_promotion_enabled=library_provider is not None,
+        managed_skill_promotion_enabled=(
+            library_provider is not None and not light_surface
+        ),
         run_skill_script_enabled=run_skill_script_enabled,
         fork_chat_enabled=fork_chat_enabled,
         new_chat_enabled=new_chat_enabled,
         spawn_override_enabled=spawn_override_enabled,
         spawn_override_targets=spawn_override_targets,
-        run_log_active=run_log.requested,
+        # The run log itself still records a light run; its tools are not
+        # part of the light surface.
+        run_log_active=run_log.requested and not light_surface,
         agent_definitions=agent_definitions,
         fleet_active=fleet_max_live > 1,
         # Live fleet construction opens an inbox before the first request.
@@ -5207,10 +5241,10 @@ def build_console_first_request_plan(
         # tool-less request carries only the session's own prompt (or a
         # neutral one-liner, never the tool-protocol prompt: V2-F2).
         context_window=getattr(resolution, "context_window", None),
-        plain_system_prompt=(session_system_prompt or "").strip()
-        or PLAIN_CHAT_SYSTEM_PROMPT,
+        plain_system_prompt=plain_prompt,
         catalog_entries=catalog_entries,
         schema_loader=schema_loader,
+        allow_discovery=not light_surface,
     )
     config = dataclass_replace(config, system_prompt=schemas.system_prompt)
     profile_workspace_id = (
@@ -5494,8 +5528,17 @@ class ConsoleAgentBridge:
         ensure_run_hooks: Callable[[], Any] | None = None,
         app_config: Mapping[str, Any] | None = None,
         get_hooks_v2: Callable[[str], Any] | None = None,
+        light_tool_surface: Callable[[], bool] | None = None,
     ) -> None:
         self._message_store = message_store
+        # TASK-34100.5.3: asked once per send whether plain chat gets the
+        # light tool surface (``plain_chat_tool_surface``). ``ConsoleRuntime``
+        # passes the config reader; ``None`` (test harnesses built before the
+        # light surface existed) keeps the full agent surface.
+        self._light_tool_surface = light_tool_surface
+        #: The provider tool rows the last full-surface send disclosed, which
+        #: ``preview_tool_schemas`` counts until the next send replaces them.
+        self._last_full_surface_tool_rows: tuple[dict[str, Any], ...] | None = None
         self._progress_closed = False
         self._progress_shutdown_task: asyncio.Task[None] | None = None
         self._progress_close_drains: dict[
@@ -5778,6 +5821,69 @@ class ConsoleAgentBridge:
         # so a lock per dict could not express it.
         self._change_window_lock = threading.Lock()
 
+    def light_surface_for(self, turn_skill_bindings: Sequence[str] = ()) -> bool:
+        """Whether THIS send gets plain chat's light tool surface.
+
+        TASK-34100.5.3. A turn the user explicitly binds a skill to
+        (``$skill``) keeps the agent surface: the user asked for that skill.
+        A reader that raises keeps the light surface (fail closed).
+        """
+        if self._light_tool_surface is None or turn_skill_bindings:
+            return False
+        try:
+            return bool(self._light_tool_surface())
+        except Exception:  # noqa: BLE001 -- never widen on a failed read
+            return True
+
+    def preview_tool_schemas(self, resolution: Any = None) -> list[dict[str, Any]]:
+        """Provider tool rows the next plain send discloses (the context meter).
+
+        TASK-34100.5.3 AC#5: the Console send preflight, its capacity check
+        and the voice preflight ask for this so the request accounting -- the
+        context breakdown's "Tool schemas" row -- counts the tools the send
+        actually carries. It had never been implemented, so the meter counted
+        none.
+
+        * Light surface: computed fresh from config (the safe set plus the
+          built-ins and ``web_deep_search`` the user switched on), and empty
+          when ``resolution``'s window is too small for them -- the planner's
+          own direct-disclosure test, so the meter agrees with the send.
+          Library and user-added MCP tools are per-session and are not
+          counted here.
+        * Full surface: the rows the last full-surface send disclosed, or the
+          shared registry's rows before any send.
+
+        Args:
+            resolution: The send's provider resolution, when the caller has it.
+
+        Returns:
+            One OpenAI-shaped ``{"type": "function", ...}`` row per tool.
+        """
+        if self.light_surface_for(()):
+            from tldw_chatbook.Agents.plain_chat_tool_surface import (
+                light_surface_tool_schemas,
+                light_surface_schemas_fit,
+            )
+
+            schemas = light_surface_tool_schemas()
+            native = (
+                True
+                if self._native_tools_enabled is None
+                else bool(self._native_tools_enabled())
+            )
+            if not light_surface_schemas_fit(schemas, resolution, native_tools=native):
+                return []
+            return schemas_to_openai_tools(list(schemas))
+        if self._last_full_surface_tool_rows is not None:
+            return [dict(row) for row in self._last_full_surface_tool_rows]
+        schemas = []
+        for entry in self._registry.list_catalog():
+            try:
+                schemas.append(self._registry.load_schema(entry.id))
+            except Exception:  # noqa: BLE001 -- a preview skips what it cannot load
+                continue
+        return schemas_to_openai_tools(schemas)
+
     def native_tool_schemas(self) -> list[dict[str, Any]]:
         """Return the native tool schemas available to this bridge.
 
@@ -5905,6 +6011,7 @@ class ConsoleAgentBridge:
             profile_context_service=profile_context_service,
             personal_context_snapshot=personal_context_snapshot,
             progress_inbox_exists=self._session_progress_inbox(session_id) is not None,
+            light_surface=self.light_surface_for(turn_skill_bindings),
         )
         if plan.run_log.requested:
             # A disposable preview cannot bind a real run-log writer, so it
@@ -6054,6 +6161,7 @@ class ConsoleAgentBridge:
                 session_id is not None
                 and self._session_progress_inbox(session_id) is not None
             ),
+            light_surface=self.light_surface_for(turn_skill_bindings),
         )
         return plan.profile_context_snapshot
 
@@ -6352,6 +6460,14 @@ class ConsoleAgentBridge:
                 run_is_ephemeral = self._store.session_is_ephemeral(session_id)
             except KeyError:
                 pass
+        # TASK-34100.5.3: plain chat's light surface. Beyond what the plan
+        # discloses, the runtime tools' closures are not even built, so a
+        # model naming one anyway has nothing to dispatch.
+        light_surface = self.light_surface_for(turn_skill_bindings)
+        if light_surface:
+            request_skill_install_confirm = request_skill_script_confirm = None
+            request_chat_create_confirm = request_worktree_merge_confirm = None
+            managed_skill_promotion_gate = None
         from tldw_chatbook.Skills_Interop.skill_script_runner import (
             sandbox_supported,
         )
@@ -6375,6 +6491,12 @@ class ConsoleAgentBridge:
             if run_budget is not None
             else console_run_budget()
         )
+        if light_surface:
+            from tldw_chatbook.Agents.plain_chat_tool_surface import (
+                light_surface_budget,
+            )
+
+            run_budget = light_surface_budget(run_budget)
         runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
             self._db, run_budget
         )
@@ -6541,7 +6663,17 @@ class ConsoleAgentBridge:
             profile_context_service=profile_context_service,
             personal_context_snapshot=personal_context_snapshot,
             progress_inbox_exists=self._session_progress_inbox(session_id) is not None,
+            light_surface=light_surface,
         )
+        if not light_surface:
+            self._last_full_surface_tool_rows = tuple(
+                schemas_to_openai_tools(
+                    [
+                        *first_request_plan.schemas.runtime_schemas,
+                        *first_request_plan.schemas.active_schemas,
+                    ]
+                )
+            )
         registry = first_request_plan.registry
         allowed_tools = first_request_plan.allowed_tools
         config = first_request_plan.config
@@ -7769,9 +7901,14 @@ class ConsoleAgentBridge:
             if on_redirect_ready is not None:
                 on_redirect_ready(redirect_fn)
 
+        # TASK-34100.5.3: a light-surface run creates no fleet (it offers no
+        # sub-agent tools), so it never asks for a temporary progress inbox.
         create_fleet = bool(
-            first_request_plan.schemas.runtime_schemas
-            or first_request_plan.schemas.active_schemas
+            not light_surface
+            and (
+                first_request_plan.schemas.runtime_schemas
+                or first_request_plan.schemas.active_schemas
+            )
         )
         progress_store = self.message_store
         self._store.prepare_progress_inbox(
@@ -7795,6 +7932,10 @@ class ConsoleAgentBridge:
                 progress_owner_id=progress_owner_id,
                 message_inbox=message_inbox,
             )
+        if light_surface:
+            # No fleet and no progress inbox: either would add fleet or
+            # read_agent_messages tools the light surface does not offer.
+            fleet_coordinator = message_inbox = None
         plugin_root_id = ""
         plugin_producer_pin = None
 
