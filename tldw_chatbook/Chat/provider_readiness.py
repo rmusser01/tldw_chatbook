@@ -785,6 +785,16 @@ def _custom_endpoint_readiness(
         environ=environ,
         background_credentials=background_credentials,
     )
+    if (
+        not family.ready
+        and family.reason == STILL_ENCRYPTED_REASON
+        and not family.requires_api_key
+    ):
+        # TASK-34100.4 review (F3): the family slot's stranded key is never
+        # the entry's credential, yet it read the entry "Not ready" with
+        # recovery naming Providers & Models. A keyless family is otherwise
+        # ready; the entry's own key decides below.
+        family = replace(family, ready=True, reason="Ready", recovery=None)
     if family.ready:
         missing_key = _custom_endpoint_missing_key_readiness(entry, family_key, environ)
         if missing_key is not None:
