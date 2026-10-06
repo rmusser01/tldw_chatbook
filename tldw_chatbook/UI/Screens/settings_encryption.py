@@ -34,6 +34,9 @@ from tldw_chatbook.Widgets.password_dialog import (
 )
 
 ENCRYPTION_CARD_ID = "settings-encryption-card"
+#: Where every "change it later" line points (TASK-34100.4 AC #5): the setup
+#: wizard's Protect step and Summary name this card, never a bare category.
+ENCRYPTION_CARD_PATH = "Settings ▸ Privacy & Security ▸ Encryption"
 ENCRYPT_BUTTON_ID = "settings-encryption-enable"
 CHANGE_BUTTON_ID = "settings-encryption-change"
 DISABLE_BUTTON_ID = "settings-encryption-disable"

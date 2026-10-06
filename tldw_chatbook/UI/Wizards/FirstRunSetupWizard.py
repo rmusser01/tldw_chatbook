@@ -60,6 +60,7 @@ from tldw_chatbook.UI.Wizards.first_run_busy_status import (
     SetupBusyStatus,
     busy_label_for,
 )
+from tldw_chatbook.UI.Wizards.first_run_finish_later import finish_later
 from tldw_chatbook.UI.Wizards.first_run_model_step import ModelStep
 from tldw_chatbook.UI.Wizards.first_run_notes_step import NotesSyncStep
 from tldw_chatbook.UI.Wizards.first_run_protect_step import ProtectKeysStep
@@ -206,14 +207,10 @@ class SetupWizardProgress(WizardProgress):
                 # "10" down to "1".
                 with Vertical(classes="step-indicator-stack"):
                     number_classes = f"step-number {item.state}"
-                    # TASK-21143 (UAT N-7): "attention" = visited, but its
-                    # probe failed — "!" instead of the ✓ users read as "OK".
+                    # TASK-21143 (UAT N-7) "!" and TASK-34100.4 "–" replace
+                    # the ✓ users read as "OK" (see progress_glyph).
                     yield Static(
-                        "✓"
-                        if item.state == "complete"
-                        else "!"
-                        if item.state == "attention"
-                        else str(index + 1),
+                        wizard_state.progress_glyph(item.state, index),
                         classes=number_classes,
                     )
                     title = Label(
@@ -224,7 +221,7 @@ class SetupWizardProgress(WizardProgress):
                     yield title
                 if index < len(self.items) - 1:
                     connector_classes = "step-connector"
-                    if item.state in ("complete", "attention"):
+                    if item.state in wizard_state.VISITED_PROGRESS_STATES:
                         connector_classes += " complete"
                     connector = Static("", classes=connector_classes)
                     connector.display = not compact
@@ -1586,15 +1583,13 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             # probe failed shows "!" instead of the ✓ users read as "OK".
             # TASK-25818 widens that to the step the user simply walked
             # through without configuring: the summary already reports it as
-            # unconfigured, and the tracker must not disagree.
-            attention = wizard_state.setup_attention_ids(
-                self.wizard_data,
-                probe_failed=bool(self.provider_probe_failure()),
-            )
-            items = wizard_state.build_setup_progress(
+            # unconfigured, and the tracker must not disagree. TASK-34100.4:
+            # a step with nothing to do (Protect, no key) shows '–'.
+            items = wizard_state.setup_progress_items(
                 self.active_ids,
                 self._active_position(self.current_step or 0),
-                attention_ids=attention,
+                self.wizard_data,
+                probe_failed=bool(self.provider_probe_failure()),
             )
             self.query_one(".wizard-progress", SetupWizardProgress).set_items(items)
         except Exception:
@@ -3046,21 +3041,13 @@ class FirstRunSetupWizard(WizardScreen):
             )
 
     async def _finish_later(self) -> None:
+        # TASK-34100.4: a save that keeps failing offers "Exit without saving
+        # progress" instead of trapping the user (first_run_finish_later).
         try:
             container = self.query_one(SetupWizardContainer)
-            if container.hold_provider_save_settlement():
-                return
-            saved = await container.persist_current_checkpoint()
-        except Exception:
-            logger.warning("Setup finish-later checkpoint failed (category=runtime)")
-            saved = False
-        if not saved:
-            self.notify(
-                "Setup progress could not be saved. Retry Exit setup.",
-                severity="error",
-            )
+        except NoMatches:
             return
-        container._dismiss_screen(None)
+        await finish_later(container)
 
     def _clear_resume_attempt_after_target_mount(
         self,
