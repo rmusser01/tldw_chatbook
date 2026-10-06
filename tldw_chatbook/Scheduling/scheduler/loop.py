@@ -6,6 +6,7 @@ import asyncio
 from contextlib import ExitStack, contextmanager
 from functools import wraps
 import threading
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -498,12 +499,26 @@ class SchedulerLoop:
                 except asyncio.TimeoutError:
                     pass
         finally:
+            primary = sys.exception()
+            cancellation = None
+            while self._maintenance_db_tasks:
+                owned = asyncio.gather(
+                    *tuple(self._maintenance_db_tasks), return_exceptions=True
+                )
+                while not owned.done():
+                    try:
+                        await asyncio.shield(owned)
+                    except asyncio.CancelledError as error:
+                        cancellation = cancellation or error
+                owned.result()
             self._running_since = None
             with self._reload_condition:
                 self.running = False
                 self._owner_loop = None
                 self._reload_event = None
                 self._reload_condition.notify_all()
+            if cancellation is not None and primary is None:
+                raise cancellation
 
     @_admitted_dispatch
     async def tick(self) -> None:

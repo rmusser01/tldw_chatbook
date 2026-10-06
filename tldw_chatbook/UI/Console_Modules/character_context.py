@@ -680,6 +680,33 @@ class ConsoleCharacterContextController:
             )
         )
 
+    async def _await_database_work(self, database: Any, work: Awaitable[Any]) -> Any:
+        """Keep native Character callbacks owned until their physical return."""
+        from ...DB.ChaChaNotes_DB import CharactersRAGDB
+
+        if type(database) is not CharactersRAGDB or database.is_memory_db:
+            return await work
+
+        async def invoke() -> Any:
+            return await work
+
+        # This callback already existed without a configured Task-factory call.
+        # A private standard Task retains it even if the caller is cancelled.
+        owned = asyncio.Task(invoke(), loop=asyncio.get_running_loop())
+        try:
+            return await asyncio.shield(owned)
+        except asyncio.CancelledError:
+            while not owned.done():
+                try:
+                    await asyncio.shield(owned)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not owned.cancelled():
+                owned.exception()
+            raise
+
     async def _capture_scope(self) -> _ConsoleCharacterScopeSnapshot:
         """Capture DB/current identity atomically across off-thread metadata reads."""
 
@@ -710,13 +737,16 @@ class ConsoleCharacterContextController:
                     )
                 continue
             try:
-                metadata_pair = await run_owned_db_call(
+                metadata_pair = await self._await_database_work(
                     database,
-                    self._read_database_scope_metadata_pair,
-                    database,
-                    current,
-                    open_conversation_id,
-                    asyncio.get_running_loop(),
+                    run_owned_db_call(
+                        database,
+                        self._read_database_scope_metadata_pair,
+                        database,
+                        current,
+                        open_conversation_id,
+                        asyncio.get_running_loop(),
+                    ),
                 )
             except Exception:  # noqa: BLE001 - DB adapters have no shared error base.
                 if not self._ambient_scope_matches(
@@ -1125,7 +1155,9 @@ class ConsoleCharacterContextController:
             except _ConsoleCharacterReaderChanged:
                 return
             try:
-                result = await readers.owned_call(readers.database, read_current)
+                result = await self._await_database_work(
+                    readers.database, readers.owned_call(readers.database, read_current)
+                )
             except _ConsoleCharacterReaderChanged:
                 return
             except _ConsoleCharacterScopeChanged:
@@ -1276,8 +1308,11 @@ class ConsoleCharacterContextController:
                     )
                 return
             try:
-                groups, details = await run_owned_db_call(
-                    database, self._load_recent_sync, database, fingerprint
+                groups, details = await self._await_database_work(
+                    database,
+                    run_owned_db_call(
+                        database, self._load_recent_sync, database, fingerprint
+                    ),
                 )
             except Exception:  # noqa: BLE001 - DB boundary becomes visible recovery
                 if generation != self._generation or not presentation_is_current():
@@ -1330,11 +1365,14 @@ class ConsoleCharacterContextController:
                 service = self._service_factory(
                     snapshot.database, current_character=None
                 )
-                details = await run_owned_db_call(
+                details = await self._await_database_work(
                     snapshot.database,
-                    self._load_unavailable_details_sync,
-                    service,
-                    bounded_groups,
+                    run_owned_db_call(
+                        snapshot.database,
+                        self._load_unavailable_details_sync,
+                        service,
+                        bounded_groups,
+                    ),
                 )
             except Exception:  # noqa: BLE001 - stale DB failures fail closed
                 if generation != self._generation:
@@ -1458,14 +1496,17 @@ class ConsoleCharacterContextController:
                 return CharacterConversationPage(
                     (), 0, None, 0, CharacterKeywordIndexStatus.ABSENT
                 )
-            page = await run_owned_db_call(
+            page = await self._await_database_work(
                 snapshot.database,
-                self._keyword_page_sync,
-                snapshot.database,
-                snapshot.fingerprint,
-                query,
-                offset,
-                limit,
+                run_owned_db_call(
+                    snapshot.database,
+                    self._keyword_page_sync,
+                    snapshot.database,
+                    snapshot.fingerprint,
+                    query,
+                    offset,
+                    limit,
+                ),
             )
             if await self._scope_is_current(snapshot):
                 return page
@@ -1557,12 +1598,15 @@ class ConsoleCharacterContextController:
                     )
                 return
             try:
-                rows, status = await run_owned_db_call(
+                rows, status = await self._await_database_work(
                     snapshot.database,
-                    self._search_sync,
-                    snapshot.database,
-                    snapshot.fingerprint,
-                    normalized,
+                    run_owned_db_call(
+                        snapshot.database,
+                        self._search_sync,
+                        snapshot.database,
+                        snapshot.fingerprint,
+                        normalized,
+                    ),
                 )
             except Exception:  # noqa: BLE001 - DB boundary becomes visible recovery
                 if generation != self._generation:
@@ -1748,12 +1792,15 @@ class ConsoleCharacterContextController:
                 service = self._service_factory(
                     snapshot.database, current_character=None
                 )
-                evidence, page = await run_owned_db_call(
+                evidence, page = await self._await_database_work(
                     snapshot.database,
-                    lambda service=service: (
-                        service.refresh_unresolved_evidence(key),
-                        service.repair_candidates(
-                            key, limit=CONSOLE_CHARACTER_REPAIR_CANDIDATE_LIMIT
+                    run_owned_db_call(
+                        snapshot.database,
+                        lambda service=service: (
+                            service.refresh_unresolved_evidence(key),
+                            service.repair_candidates(
+                                key, limit=CONSOLE_CHARACTER_REPAIR_CANDIDATE_LIMIT
+                            ),
                         ),
                     ),
                 )
@@ -2069,6 +2116,7 @@ _CHARACTER_REFRESH_READERS = tuple(
         "_ambient_scope_matches",
         "_read_database_scope_metadata",
         "_read_database_scope_metadata_pair",
+        "_await_database_work",
         "_capture_scope",
         "_scope_is_current",
         "_operation_scope_is_current",

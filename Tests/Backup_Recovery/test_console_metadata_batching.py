@@ -238,10 +238,24 @@ async def test_cancelled_character_capture_keeps_running_handle_owned_until_reti
     try:
         assert await asyncio.to_thread(entered.wait, 10)
         pending.cancel()
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert (
+            not pending.done()
+        ), "native Character cancellation must await its held callback"
+        assert worker_leases(database)
+        pending.cancel()
+        for _ in range(20):
+            await asyncio.sleep(0)
+        assert (
+            not pending.done()
+        ), "repeated cancellation abandoned native Character custody"
+        release.set()
         with pytest.raises(asyncio.CancelledError):
             await pending
-        assert worker_leases(database)
-        release.set()
+        assert (
+            exited.is_set()
+        ), "cancellation returned before the original native reader"
         assert await asyncio.to_thread(exited.wait, 10)
         for _ in range(200):
             if not worker_leases(database):
@@ -360,11 +374,17 @@ async def test_character_midpoint_rendezvous_retires_after_cancellation_or_expir
         assert await asyncio.to_thread(entered.wait, 10)
         if cancel:
             pending.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await pending
+            for _ in range(20):
+                await asyncio.sleep(0)
+            assert not pending.done(), "native cancellation outran the queued midpoint"
             assert worker_leases(database), "a queued midpoint still owns its handle"
             queued[0]()
             delivered = True
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+            assert not worker_leases(
+                database
+            ), "cancellation returned before native retirement"
         else:
             with pytest.raises(character_context._ConsoleCharacterScopeReadError):
                 await pending

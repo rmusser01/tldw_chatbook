@@ -18710,3 +18710,7 @@ all five exited-worker handles to exact Character-target revalidation. Check
 coverage of retained identities, not just observer drop counts; preserve the
 incomplete attempt and do not use instrumented timings as latency evidence.
 Evidence: [both probes and corrected origins](../../Docs/QA/task-31245/fixture-rebuild-2026-10-04.md).
+
+### Character shutdown needs the actual issued callback, not only an empty process tree
+
+On 2026-10-06, after synchronizing the Console performance branch with dev, three held-original-reader tests showed direct Character cancellation returning while SQLite work remained live, widget reads bypassing the host WorkerManager, and Scheduler Worker completion preceding its retained ledger callback. Earlier facade-only and empty-process-tree checks did not cover these producers. Scoped callback joining and managed widget Workers fixed the three regressions; separate original widget removal, host drain and normal App-exit tests then verified issued Tasks, core operations and native leases retired before return. Keep physical resource assertions at the actual producer and terminal boundary; a normal empty process-tree receipt alone does not prove App cleanup.

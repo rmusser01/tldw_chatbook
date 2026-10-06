@@ -46,17 +46,24 @@ async def test_removed_browser_rejects_late_presentation():
 @pytest.mark.bootstrap_profile
 async def test_removed_browser_does_not_wait_for_held_controller_refresh():
     """Textual removal owns its pump, independently of an unrelated read."""
+    from textual.worker import WorkerState
+
     controller = _controller()
     state = ConsoleCharacterContextState(groups=_groups())
     entered = asyncio.Event()
     release = asyncio.Event()
+    cancelled = asyncio.Event()
     read_tasks = []
     original = controller.refresh_if_scope_changed
 
     async def held_refresh():
         read_tasks.append(asyncio.current_task())
         entered.set()
-        await release.wait()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
         return await original()
 
     controller.refresh_if_scope_changed = held_refresh
@@ -64,17 +71,30 @@ async def test_removed_browser_does_not_wait_for_held_controller_refresh():
     async with app.run_test() as pilot:
         await asyncio.wait_for(entered.wait(), 1)
         widget = app.screen.query_one(ConsoleCharacterContext)
+        issued = [worker for worker in app.workers if worker._task in read_tasks]
+        assert len(issued) == 1 and issued[0].node is widget
         removal = asyncio.ensure_future(widget.remove())
         try:
             await asyncio.wait_for(asyncio.shield(removal), 1)
             assert not release.is_set()
+            assert (
+                cancelled.is_set()
+            ), "the widget did not cancel its issued custom refresh"
+            assert read_tasks and all(task.done() for task in read_tasks)
+            assert issued[0].state is WorkerState.CANCELLED
             assert not widget.is_attached
             widget.sync_state(replace(state, data_revision=999))
             await pilot.pause()
             assert widget.state is state
         finally:
             release.set()
-            await asyncio.gather(*read_tasks)
+            outcomes = await asyncio.gather(*read_tasks, return_exceptions=True)
+            for outcome in outcomes:
+                if isinstance(outcome, BaseException) and not isinstance(
+                    outcome, asyncio.CancelledError
+                ):
+                    raise outcome
+            assert all(task.done() for task in read_tasks)
             await removal
 
 
