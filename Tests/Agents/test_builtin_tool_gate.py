@@ -507,9 +507,10 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     gates = all_tool_gates()
     # Derived, not a literal (TASK-16174): the arity is "every builtin row
     # plus the local group's four" (master, web_deep_search, ask_user,
-    # character_tools -- TASK-32954), so adding a gateable built-in must not
-    # make this test the thing that fails.
-    assert len(gates) == len(_GATEABLE_BUILTINS) + 4
+    # character_tools -- TASK-32954) plus the agent group's one (Full agent
+    # tools -- TASK-34100.5.3), so adding a gateable built-in must not make
+    # this test the thing that fails.
+    assert len(gates) == len(_GATEABLE_BUILTINS) + 4 + 1
     assert all(isinstance(gate, ToolGate) for gate in gates)
 
     # The _GATEABLE_BUILTINS rows come first, in registration order,
@@ -528,7 +529,7 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
 
     # The local group: master switch FIRST, then web_deep_search, then
     # ask_user, then character_tools (PRD A12 / TASK-32954: both default ON).
-    local_gates = gates[len(_GATEABLE_BUILTINS) :]
+    local_gates = gates[len(_GATEABLE_BUILTINS) : len(_GATEABLE_BUILTINS) + 4]
     assert len(local_gates) == 4
     assert local_gates[0].section == "console"
     assert local_gates[0].key == "local_tools_enabled"
@@ -550,6 +551,14 @@ def test_all_tool_gates_enumerates_every_gate_with_sections_and_groups(monkeypat
     assert local_gates[3].group == "local"
     assert local_gates[3].enabled is True  # missing key -> ON by default
     assert all(g.description for g in local_gates)
+
+    # TASK-34100.5.3: the agent group's one gate comes last and is off by
+    # default -- plain chat keeps the light surface until it is turned on.
+    agent_gate = gates[-1]
+    assert (agent_gate.section, agent_gate.key) == ("tools", "full_agent_tools_enabled")
+    assert agent_gate.group == "agent"
+    assert agent_gate.enabled is False
+    assert agent_gate.title == "Full agent tools"
 
 
 def test_all_tool_gates_carry_display_titles_from_the_shared_table(monkeypatch):
@@ -799,7 +808,8 @@ def test_tool_gate_breadcrumb_names_the_off_count(monkeypatch):
 
     _patch_gate_config(monkeypatch)
     gates = all_tool_gates()  # master defaults on; every other gate defaults off
-    off_count = len(_GATEABLE_BUILTINS) + 1  # + web_deep_search, - the master
+    # + web_deep_search + Full agent tools (TASK-34100.5.3), - the master
+    off_count = len(_GATEABLE_BUILTINS) + 2
     text = tool_gate_breadcrumb(gates)
     assert text is not None
     assert str(off_count) in text
@@ -849,7 +859,8 @@ def test_count_off_tool_gates_constructs_no_tools(monkeypatch):
 
     monkeypatch.setattr(tool_catalog, "build_gateable_tool", explode)
     _patch_gate_config(monkeypatch)
-    off_count = len(_GATEABLE_BUILTINS) + 1  # + web_deep_search, - the master
+    # + web_deep_search + Full agent tools (TASK-34100.5.3), - the master
+    off_count = len(_GATEABLE_BUILTINS) + 2
     assert builtin_tool_gate.count_off_tool_gates() == off_count
     breadcrumb = builtin_tool_gate.tool_gate_breadcrumb()
     assert breadcrumb is not None

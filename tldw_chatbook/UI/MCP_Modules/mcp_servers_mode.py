@@ -1451,6 +1451,9 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
         }
         builtin_gates = [gate for gate in gates if gate.group == "builtin"]
         local_gates = [gate for gate in gates if gate.group == "local"]
+        # TASK-34100.5.3: plain chat's light surface vs the full agent
+        # surface -- the switch that matters most, so it leads the pane.
+        agent_gates = [gate for gate in gates if gate.group == "agent"]
 
         widgets: list[Widget] = [
             Static(
@@ -1460,6 +1463,20 @@ class MCPServersMode(DataTableClickSelectMixin, Vertical):
                 markup=False,
             ),
         ]
+        if agent_gates:
+            from tldw_chatbook.Agents.plain_chat_tool_surface import (
+                light_surface_note,
+            )
+
+            widgets.append(
+                Static(
+                    light_surface_note(),
+                    id="mcp-gate-heading-agent",
+                    classes="ds-field-row",
+                    markup=False,
+                )
+            )
+            widgets.extend(self._gate_button(gate) for gate in agent_gates)
         if builtin_gates:
             widgets.append(
                 Static(
