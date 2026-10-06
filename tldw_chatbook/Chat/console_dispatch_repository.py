@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     parse_console_resolved_destination_json,
     parse_console_turn_library_authority_json,
 )
+from tldw_chatbook.Chat.console_library_destination import console_endpoint_identity
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleDispatchRecoveryKind,
     ConsoleDispatchRecoveryState,
@@ -1651,10 +1652,17 @@ class ConsoleDispatchRepository:
             destination = parse_console_resolved_destination_json(
                 row["resolved_destination_json"]
             )
+            # TASK-34100.3: the row records the gateway's credential-free
+            # ORIGIN identity (https://api.moonshot.ai), the continuation its
+            # full base URL (https://api.moonshot.ai/v1); equality of the two
+            # never held, so every saved-chat continuation conflicted. Compare
+            # identities; an identity recorded as the exact URL still matches.
+            base_url = continuation.api_base_url
             return bool(
                 continuation.provider == destination.provider
                 and continuation.model == destination.model
-                and continuation.api_base_url == destination.endpoint_identity
+                and destination.endpoint_identity
+                in {base_url, console_endpoint_identity(base_url)}
             )
         except (AttributeError, ConsoleDispatchCheckpointValidationError):
             return False

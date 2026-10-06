@@ -104,11 +104,10 @@ def resolve_console_destination(
         )
 
     scheme, hostname, port, ip = parsed
+    endpoint_identity = _parsed_endpoint_identity(parsed)
     if scheme in _LOCAL_TRANSPORT_SCHEMES:
-        endpoint_identity = f"{scheme}://local"
         egress_class = ConsoleEgressClass.ON_DEVICE
     else:
-        endpoint_identity = _origin_identity(scheme, hostname, port, ip)
         egress_class = _classify_origin(scheme, hostname, port, ip)
     return ConsoleResolvedDestination(
         provider=provider,
@@ -121,6 +120,35 @@ def resolve_console_destination(
             ConsoleEndpointProvenance.DURABLE_CONFIGURATION,
         ),
     )
+
+
+def console_endpoint_identity(base_url: object) -> str | None:
+    """Return the endpoint identity a destination records for ``base_url``.
+
+    A resolved destination never keeps a URL path or credentials, only the
+    normalized origin (``https://api.moonshot.ai`` for
+    ``https://api.moonshot.ai/v1``), so anything that compares a full base
+    URL against a recorded destination must compare this identity instead.
+
+    Args:
+        base_url: An endpoint URL, as a resolution or continuation carries it.
+
+    Returns:
+        The identity ``resolve_console_destination`` would record, or ``None``
+        when the URL cannot be classified (never the unknown placeholder, so
+        an unparseable URL cannot match an unknown destination).
+    """
+    parsed = _parse_endpoint_origin(base_url)
+    return None if parsed is None else _parsed_endpoint_identity(parsed)
+
+
+def _parsed_endpoint_identity(
+    parsed: tuple[str, str, int | None, IPv4Address | IPv6Address | None],
+) -> str:
+    scheme, hostname, port, ip = parsed
+    if scheme in _LOCAL_TRANSPORT_SCHEMES:
+        return f"{scheme}://local"
+    return _origin_identity(scheme, hostname, port, ip)
 
 
 def update_console_library_destination_runtime(
