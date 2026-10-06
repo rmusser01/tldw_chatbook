@@ -127,7 +127,8 @@ OpenAI-compatible**.
   optionally try a voice and protect your keys, done. Everything else stays at
   recommended defaults (tools off, RAG off, default theme, notes sync off).
   The step count never changes mid-run — the key-protection step is always
-  shown, and simply says so when there is nothing to protect yet.
+  shown, and simply says so when there is nothing to protect (the progress
+  tracker then marks it – instead of ✓).
 - **Full setup** — also walks through RAG/embeddings, built-in tools, notes
   sync, appearance, and key encryption.
 
@@ -240,6 +241,33 @@ later step's buttons. On terminals smaller than about 100×30 the wizard shows
 a one-line nudge — everything still works, steps just scroll. Where one row is
 too narrow for every service name (80 columns, for example), the Voice
 service choice wraps to two rows so no name is cut off.
+
+The **Protect keys** step reads your config file each time it opens and
+says what it holds:
+
+- **A key saved as plain text** — it names each provider whose key is saved
+  ("Your OpenAI key is saved as plain text in config.toml…") and the file's
+  path, then offers two buttons: **Encrypt with a password…** and **Keep as
+  plain text** (which simply continues). After encrypting, the step says
+  "✓ Encryption enabled.", the button becomes **Change password…**, and the
+  keyboard moves to **Next →**, so Enter continues to the summary.
+- **Keys already encrypted** (for example when you run setup again) — "Your
+  saved API keys are encrypted", with **Change password…**, which asks for the
+  current and the new password. Setup never sets a second password over
+  encrypted keys.
+- **A key you typed but that isn't saved yet** (you skipped the Model step;
+  the key is saved together with the model) — it says so and offers **Back
+  to Model**.
+- **Keys only from environment variables** — it names them (for example
+  `OPENAI_API_KEY`) and says config.toml holds no key to encrypt.
+- **No key at all** — "Nothing to protect".
+
+Every state says where to change this later: Settings ▸ Privacy & Security ▸
+**Encryption**.
+
+If **Exit setup** cannot save where you are in setup, it offers **Exit
+without saving progress**: settings you already saved stay saved, and setup
+just won't resume from that step.
 
 Choosing **OmniVoice** shows a local panel instead of the endpoint fields: it
 tells you if the `omnivoice_tts` engine is missing, installs the 1.1 GB model
@@ -358,7 +386,12 @@ provider that needs a key reads as missing its key ("API key missing", and
 the API key row's source word **missing** in Providers & Models). A local
 provider that needs no key still says why: "Saved API key is still
 encrypted". Either way, re-enter or clear the key in Settings ▸ Providers &
-Models.
+Models. A custom endpoint (a local server saved under **Custom endpoints**)
+whose key is still encrypted reads "Not ready · no key" the same way;
+re-enter or clear its key there. OpenAI and ElevenLabs text-to-speech, remote Whisper transcription,
+image generation (SwarmUI included) and the tldw server connection never send
+a still-encrypted value either: they use the next place a key can come from
+(an environment variable, the keychain, another saved field) or send none.
 
 ## Setting up another machine
 
