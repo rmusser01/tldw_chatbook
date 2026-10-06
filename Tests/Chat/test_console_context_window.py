@@ -847,3 +847,57 @@ async def test_overlapping_sends_share_one_reasoning_metadata_refresh():
         release.set()
         await asyncio.gather(*list(gateway._reasoning_metadata_refreshes.values()))
         assert calls == 1
+
+
+def _stranded_ciphertext() -> str:
+    from tldw_chatbook.Utils.config_encryption import ConfigEncryption
+
+    return ConfigEncryption().encrypt_value("server-key", "stranded-master-pw")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["api_settings", "custom_endpoint"])
+async def test_a_still_encrypted_key_is_never_probed_keyless(shape):
+    # TASK-34100.4 review (F4): with the server's key still `enc:`, readiness
+    # already blocks the send, yet opening Chat settings probed the
+    # key-protected server with no key and it logged a 401.
+    from tldw_chatbook.Chat.console_provider_gateway import ConsoleProviderGateway
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(401, json={"error": "unauthorized"})
+
+    if shape == "api_settings":
+        config = {
+            "api_settings": {
+                "llama_cpp": {
+                    "api_url": "http://127.0.0.1:8181",
+                    "api_key": _stranded_ciphertext(),
+                }
+            }
+        }
+        provider = "llama_cpp"
+    else:
+        config = {
+            "custom_endpoints": {
+                "home": {
+                    "display_name": "Home llama",
+                    "family": "llama_cpp",
+                    "base_url": "http://127.0.0.1:8181",
+                    "models": ["selected"],
+                    "api_key": _stranded_ciphertext(),
+                }
+            }
+        }
+        provider = "custom-ep:home"
+    settings = ConsoleSessionSettings(provider=provider, model="selected")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client, config_provider=lambda: config, environ={}
+        )
+        await gateway.resolve_context_window(settings)
+
+    assert calls == []

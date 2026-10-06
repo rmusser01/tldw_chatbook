@@ -4264,13 +4264,25 @@ class ConsoleProviderGateway:
                 or endpoint
                 or DEFAULT_LLAMACPP_BASE_URL
             )
+        from tldw_chatbook.Chat.provider_readiness import STILL_ENCRYPTED_REASON
+        from tldw_chatbook.config import is_encrypted_config_value
+
         api_key = None
+        stranded = False
         if entry:
             api_key, _ = _custom_entry_credential(entry, self._environ)
+            stranded = api_key is None and is_encrypted_config_value(entry.api_key)
         elif family in URL_BASED_PROVIDER_KEYS or family == "openrouter":
-            api_key = get_provider_readiness(
+            readiness = get_provider_readiness(
                 identity.readiness_key, config, environ=self._environ
-            ).api_key
+            )
+            api_key = readiness.api_key
+            stranded = readiness.reason == STILL_ENCRYPTED_REASON
+        if stranded:
+            # TASK-34100.4 review (F4): the server wants the key that is still
+            # `enc:`; a keyless metadata probe only earns a 401 for a target
+            # readiness already blocks. No endpoint, no probe.
+            endpoint = ""
         return ContextWindowTarget(
             settings.provider, family, endpoint or "", settings.model or "", api_key
         )
