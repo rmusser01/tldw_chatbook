@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-06 16:25'
+updated_date: '2026-10-06 16:58'
 labels:
   - agents
   - console
@@ -27,7 +27,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -1058,4 +1058,6 @@ Evidence: /private/tmp/pr2918-after-adb-{pre-plan,planned-source,composition-pro
 October6 human-authorized repair on exact dev76d: root storage census owns wall-clock native polling, drains its serial in-flight call and bills the retained real probe at production cadence. New current storage2PASS59.193XML; added real-I/O negative1FAIL30.499 expected (config2>1/storage4>2), caps/counts/slack unchanged. Original FIVE never replayed. Compose landed native Chat77 before fleet78 and native AgentRuns22 before composed23; preserve exact historical catalogs, strict stamps/authorizer/rollback, shared automatic exclusion and original live native/wake provider authority. Native UI restore defers progress loading to its existing finite worker; completion restores only forks. Separate migration44PASS28.706, native4PASS11.281 and159PASS111.357, backup1PASS3.406, provider/mounted corrected6PASS21.339 retain initial non-green receipts. Production diagnostic removals22 match incoming dev exactly (controller71→71); no new sink. Same-filename static23files zeroNEW/fatal0 retains1196prior/1257incoming/1250current inherited diagnostics. ADR199 October6 amendment links219/211; testing incident appended. Raw/XML/hash index: /private/tmp/pr2918-oct06-repair-evidence.json. AC3 and child acceptance remain pending immutable independent review; no fresh publication/arm/merge or heartbeat action. Linux failure stacks, inherited FD/warnings and all earlier qualification limits stay unqualified and separate.
 
 October6 immutable source236608ca73 Ready/no actionable findings/all activity settled; review JSON SHA256 22f5df01b6fe82a00bc113eae539400cf8b2c934939f3f18c48c1dc7fbb2caad. Source/local evidence approval is separate from hosted qualification. Original FIVE remains historical only; incoming import/UI/CSS changes deny full current carry. Fresh published-head hosted budgets/allFOUR/allTHREE UI/Qodo/protection remain required. ParentAC3 and childAC4 stay In Progress/unchecked until actual current qualification. Only five owned Markdown records may change after source approval; no application/test edit or heartbeat action.
+
+October6 current-source hosted qualification: exact head c467b383fc00ea0988ba410a39b7170c75e401c3, PR Fast Lane/all THREE UI shards/latency/Derived SUCCESS; full pagination/all conversations resolved/older nested feedback unchanged. Actual dev equals qualified 76d5d157aa6a628584ead573976c9adee72f5412; live strict/admin/conversation protection intact. Source236608ca73 independent Ready and local targeted evidence remain authenticated. Hosted qualification: /private/tmp/pr2918-oct06-source-hosted-qualification.json; reader /private/tmp/pr2918-oct06-source-ci-20261006-1700. Original FIVE remains historical only, never replayed; no current-budget carry asserted. Pins/counts/slack/work and source outside five documentation files remain unchanged. Initial failures, expected extra-I/O negative and all inherited limitations remain retained; selections NEVER SUM. No app/test edit or heartbeat action. Subsequent documentation head must itself pass current protected checks before merge. Qodo has not reviewed this source head; its last old-head summary 2026-10-05T04:07:02Z remains historical only. Fresh independent source review approves task acceptance; current Qodo remains a separate pending merge prerequisite.
 <!-- SECTION:NOTES:END -->
