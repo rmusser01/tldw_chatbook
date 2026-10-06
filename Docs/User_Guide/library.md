@@ -508,12 +508,17 @@ lines:
 - **Quizzes** — "Generate or resume quizzes from Library sources."
 
 Each canvas shows the same five elements: the purpose line, a "Carries
-forward: …" line naming up to three source titles (then "and N more."),
-the ownership note "Generation and review run in Study.", a readiness
-line ("Source snapshot is ready.", or a prompt to import sources or
-create notes first), and a **Continue in Study** button ("Open \<X\> with
-the current Library source snapshot, or globally when none is
-available.").
+forward: …" line naming up to three source titles (then "and N more.",
+where N counts the rest of the titles Study keeps — the Study screen's
+own scope banner names and counts the same ones), the ownership note
+"Generation and review run in Study.", a readiness line, and a **Continue
+in Study** button ("Open \<X\> with the current Library source snapshot,
+or globally when none is available."). The readiness line depends on your
+runtime: in server mode it reads "Source snapshot is ready."; in local
+mode it reads "Generating a pack from sources needs a tldw server; you can
+still make cards by hand in Study.", because only a tldw server can build
+a study pack from the snapshot (Study's dashboard says the same). With no
+sources at all it prompts you to import sources or create notes first.
 
 Once you're on the Study screen, its header reads "Library ▸ Study" with
 an "Esc: back to Library" hint — the nav bar shows no highlighted tab

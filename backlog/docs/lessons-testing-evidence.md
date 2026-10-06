@@ -706,6 +706,23 @@ tests. Construct the actual validated payload in presentation fixtures and
 retain at least one real capture → review → publication journey. Fixing only
 the fixture's field spelling would still leave its contract unvalidated.
 
+**TASK-34000.6, 2026-10-05 -- the same shape, five and a half months wide.**
+`flashcards_handler.py` spread `**self._scope_arguments()` (`scope_type`,
+`workspace_id`) into `StudyScopeService.list_flashcards` and
+`create_flashcard`, which take neither. Every fake in
+`test_study_flashcards_screen.py` (three classes) and `test_study_dashboard.py`
+declared those keywords on its own `list_flashcards`, so 40+ Flashcards Pilot
+tests stayed green from the parity merge (54b9ca6a17, 2026-04-20) to the
+2026-10-02 UX review, while selecting or creating a deck in the real app raised
+an unhandled `TypeError` and exited it. What caught it: a Pilot test that wires
+the PRODUCTION `StudyScopeService` over a real in-memory DB
+(`test_study_flashcards_real_service_contract.py`), and a guard that derives
+every handler keyword by AST and checks it against `inspect.signature` of the
+real class (`Tests/Architecture/test_study_handler_service_keywords.py`). A
+fake's signature is a claim about the real one; when you write a fake for a
+seam, copy the real signature (or assert it with `inspect.signature`) rather
+than the consumer's call.
+
 ## A reused widget ID cannot identify the action that was pressed
 
 **TASK-32778, 2026-09-18.** Holding a real Tool Profiles button event across

@@ -14,6 +14,7 @@ ingest-options functions in ``library_screen.py`` instead.
 from __future__ import annotations
 
 from ...Library.library_conversation_reader_state import LIBRARY_CONVERSATION_PAGE_SIZE
+from ..Screens.study_scope_models import STUDY_MATERIAL_TITLES_NAMED_LIMIT
 from ...Library.library_shell_state import (
     LIBRARY_CANVAS_KIND_NOTES_CREATE,
     LIBRARY_ROW_BROWSE_COLLECTIONS,
@@ -366,8 +367,18 @@ LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY = (
 )
 
 # How many carried-forward source titles the handoff canvas names before
-# collapsing the rest into an "and N more" count.
-LIBRARY_STUDY_HANDOFF_TITLES_CAP = 3
+# collapsing the rest into an "and N more" count. TASK-34000.6: the same
+# constant Study's banner uses, so the two descriptions cannot drift.
+LIBRARY_STUDY_HANDOFF_TITLES_CAP = STUDY_MATERIAL_TITLES_NAMED_LIMIT
+
+# Readiness line under the carries-forward line. Local mode cannot generate a
+# study pack from the snapshot (Study's own dashboard says "Source generation
+# requires server mode."), so the canvas must not promise it (S-05).
+LIBRARY_STUDY_HANDOFF_READY_COPY = "Source snapshot is ready."
+LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY = (
+    "Generating a pack from sources needs a tldw server; "
+    "you can still make cards by hand in Study."
+)
 
 
 # Maps a Library navigation-context ``mode`` value to the shell rail row

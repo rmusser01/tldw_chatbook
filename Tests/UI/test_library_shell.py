@@ -975,6 +975,28 @@ def test_library_carries_forward_line_escapes_markup_in_titles():
     assert line == r"Carries forward: \[bold]Unsafe\[/bold] title"
 
 
+def test_library_carries_forward_line_counts_what_study_keeps_not_the_whole_sample():
+    """TASK-34000.6 (S-05) AC#4: the hand-off said "and 134 more" for a
+    137-title sample while Study, which keeps STUDY_MATERIAL_TITLES_LIMIT
+    titles, said "+7 more". Both now derive names and count from
+    ``summarize_carried_titles``."""
+    from tldw_chatbook.UI.Screens.study_scope_models import (
+        STUDY_MATERIAL_TITLES_LIMIT,
+        STUDY_MATERIAL_TITLES_NAMED_LIMIT,
+        summarize_carried_titles,
+    )
+
+    titles = [f"Title {index}" for index in range(137)]
+    line = library_screen_module._library_carries_forward_line(titles)
+    summary = summarize_carried_titles(titles)
+
+    assert summary.named == ("Title 0", "Title 1", "Title 2")
+    assert summary.remaining == STUDY_MATERIAL_TITLES_LIMIT - STUDY_MATERIAL_TITLES_NAMED_LIMIT
+    assert line == f"Carries forward: {summary.text}."
+    assert line == "Carries forward: Title 0, Title 1, Title 2 and 7 more."
+    assert "134" not in line
+
+
 # --- task-2856: Library keyboard story --------------------------------------
 
 
@@ -7436,8 +7458,13 @@ async def test_library_shell_flashcards_row_renders_handoff_canvas():
         )
 
         # D2: ready state is a plain line, no warning-callout classes.
+        # TASK-34000.6 (S-05): in local mode (the factory app's runtime) the
+        # line no longer promises a generation only a server can run.
         recovery = screen.query_one("#library-study-handoff-recovery", Static)
-        assert str(recovery.renderable) == "Source snapshot is ready."
+        assert str(recovery.renderable) == (
+            "Generating a pack from sources needs a tldw server; "
+            "you can still make cards by hand in Study."
+        )
         assert not recovery.has_class("ds-recovery-callout")
         assert not recovery.has_class("is-blocked")
 
@@ -28895,6 +28922,33 @@ async def test_library_shell_export_destination_existing_file_shows_overwrite_li
             screen.query_one("#library-export-overwrite-line").renderable
         )
         assert overwrite_line == "Overwrites already-there.zip"
+
+
+@pytest.mark.asyncio
+async def test_library_shell_handoff_canvas_keeps_ready_line_in_server_mode():
+    """TASK-34000.6 (S-05): server mode CAN generate a study pack from the
+    snapshot, so the readiness line keeps "Source snapshot is ready."; only
+    local mode gets the needs-a-server wording (see the flashcards-row test)."""
+    app = _build_test_app()
+    _seed_conversations(app, _two_conversations())
+    app.runtime_policy = SimpleNamespace(
+        state=RuntimeSourceState(
+            active_source="server", server_configured=True, active_server_id="srv-1"
+        ),
+        persist=lambda: None,
+    )
+    host = LibraryHarness(app)
+
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen = _active_library_screen(host)
+        await _wait_for_library_shell(screen, pilot)
+
+        screen.query_one("#library-row-create-flashcards").press()
+        await _wait_for_selector(screen, pilot, "#library-study-handoff-canvas")
+
+        recovery = screen.query_one("#library-study-handoff-recovery", Static)
+        assert str(recovery.renderable) == "Source snapshot is ready."
+        assert not recovery.has_class("is-blocked")
 
 
 @pytest.mark.asyncio

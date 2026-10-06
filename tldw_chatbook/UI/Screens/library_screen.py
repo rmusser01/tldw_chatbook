@@ -813,8 +813,10 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_NOTES_RAIL_ROWS,
     LIBRARY_NOTES_SOURCE_STRIP_CANVAS_KINDS,
     LIBRARY_RAG_ANSWERABLE_RETRIEVAL_STATUSES,
+    LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY,
     LIBRARY_STUDY_HANDOFF_MODES,
     LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
+    LIBRARY_STUDY_HANDOFF_READY_COPY,
     LIBRARY_STUDY_HANDOFF_TITLES_CAP,
     LIBRARY_NAV_MODE_TO_ROW_ID,
     LIBRARY_STUDY_HANDOFF_ROW_IDS,
@@ -14687,7 +14689,7 @@ class LibraryScreen(BaseAppScreen):
             "context": context_copy,
             "owner": LIBRARY_STUDY_HANDOFF_OWNERSHIP_COPY,
             "recovery": (
-                "Source snapshot is ready."
+                self._study_handoff_ready_copy()
                 if has_context
                 else (
                     "Import sources or create notes first, or open "
@@ -14695,6 +14697,25 @@ class LibraryScreen(BaseAppScreen):
                 )
             ),
         }
+
+    def _study_handoff_ready_copy(self) -> str:
+        """The readiness line for a hand-off that HAS a source snapshot.
+
+        TASK-34000.6 (S-05): "Source snapshot is ready." promised a
+        generation local mode cannot run (Study refuses with "Source
+        generation requires server mode."). In local mode the line says what
+        needs a server and what still works by hand; server mode keeps the
+        ready line.
+        """
+        if self._runtime_active_source() == "server":
+            return LIBRARY_STUDY_HANDOFF_READY_COPY
+        return LIBRARY_STUDY_HANDOFF_LOCAL_MODE_COPY
+
+    def _runtime_active_source(self) -> str:
+        """``"local"`` or ``"server"`` from the app's runtime policy state."""
+        runtime_policy = getattr(self.app_instance, "runtime_policy", None)
+        runtime_state = runtime_policy.state if runtime_policy is not None else None
+        return str(getattr(runtime_state, "active_source", "local") or "local").lower()
 
     def _library_rag_panel_state(self) -> LibraryRagPanelState:
         # B2: explicit selection is every real source type NOT toggled off;
@@ -16083,9 +16104,7 @@ class LibraryScreen(BaseAppScreen):
         """
         runtime_policy = getattr(self.app_instance, "runtime_policy", None)
         runtime_state = runtime_policy.state if runtime_policy is not None else None
-        active_source = str(
-            getattr(runtime_state, "active_source", "local") or "local"
-        ).lower()
+        active_source = self._runtime_active_source()
         server_label = None
         if active_source == "server":
             server_label = getattr(

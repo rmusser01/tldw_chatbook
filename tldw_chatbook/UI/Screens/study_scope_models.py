@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional
@@ -9,7 +10,11 @@ from typing import Any, Optional
 
 MATERIAL_SOURCE_LIBRARY = "library"
 MATERIAL_TITLE_LIBRARY_SOURCES = "Local Library Sources"
+#: How many carried source titles Study KEEPS (``StudyScreen._clean_material_
+#: titles`` truncates the hand-off to this many).
 STUDY_MATERIAL_TITLES_LIMIT = 10
+#: How many of those titles a summary NAMES before counting the rest.
+STUDY_MATERIAL_TITLES_NAMED_LIMIT = 3
 STUDY_SOURCE_ITEMS_LIMIT = 25
 STUDY_MATERIAL_TITLE_LENGTH_LIMIT = 160
 STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT = 1000
@@ -40,6 +45,50 @@ STUDY_ORIGINS = frozenset({STUDY_ORIGIN_HOME, STUDY_ORIGIN_LIBRARY})
 class StudyScopeType(str, Enum):
     GLOBAL = "global"
     WORKSPACE = "workspace"
+
+
+@dataclass(frozen=True)
+class CarriedTitlesSummary:
+    """The carried-scope description both Library and Study render.
+
+    Attributes:
+        named: The titles the line names, in order.
+        remaining: How many MORE titles Study keeps beyond the named ones.
+    """
+
+    named: tuple[str, ...]
+    remaining: int
+
+    @property
+    def text(self) -> str:
+        """``"a, b, c"`` or ``"a, b, c and N more"``."""
+        joined = ", ".join(self.named)
+        if self.remaining > 0:
+            return f"{joined} and {self.remaining} more"
+        return joined
+
+
+def summarize_carried_titles(titles: Iterable[str]) -> CarriedTitlesSummary:
+    """Describe the carried titles under the ONE rule Library and Study share.
+
+    TASK-34000.6 (S-05): the Library hand-off counted every sampled title
+    ("… and 134 more") while Study, which truncates the hand-off to
+    ``STUDY_MATERIAL_TITLES_LIMIT`` on receipt, counted what it kept ("+7
+    more"). Both now name the first ``STUDY_MATERIAL_TITLES_NAMED_LIMIT``
+    titles and count the rest of what Study keeps, so the two cannot disagree.
+    Callers pass titles already cleaned and markup-escaped for their surface.
+
+    Args:
+        titles: The carried titles in order; blank entries are ignored.
+
+    Returns:
+        The named titles and the remaining count under Study's cap.
+    """
+    kept = [str(title) for title in titles if str(title or "").strip()][
+        :STUDY_MATERIAL_TITLES_LIMIT
+    ]
+    named = tuple(kept[:STUDY_MATERIAL_TITLES_NAMED_LIMIT])
+    return CarriedTitlesSummary(named=named, remaining=len(kept) - len(named))
 
 
 @dataclass(frozen=True)

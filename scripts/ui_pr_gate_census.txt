@@ -173,3 +173,9 @@ Tests/UI/test_backup_restore_setup_entry.py
 # (test_library_surface_swap_refused_on_real_screen.py): with them this file
 # measured 58 s, at the lane's 60 s budget.
 Tests/UI/test_library_media_export_no_freeze.py
+
+# TASK-34000.6: Study ▸ Flashcards against the REAL StudyScopeService (local
+# over an in-memory DB, workspace over the real ServerStudyService) plus the
+# dashboard/editor geometry under the shipping CSS at 160x45, 160x70 and
+# 120x36 (8 tests; the file measured 41 s locally).
+Tests/UI/test_study_flashcards_real_service_contract.py
