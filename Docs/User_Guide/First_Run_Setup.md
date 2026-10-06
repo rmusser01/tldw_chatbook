@@ -285,6 +285,107 @@ provider that needs a key reads as missing its key ("API key missing", and
 needs no key still says why: "Saved API key is still encrypted". Either
 way, re-enter or clear the key in Settings ▸ Providers & Models.
 
+## Setting up another machine
+
+A second computer does not need setup again. There are three routes:
+carry your config.toml, export the same environment keys, or restore a
+backup. The first two carry settings only; a backup also carries your data.
+
+### Carry your config.toml
+
+Setup saves what it configures in one file, `config.toml`, by default
+`~/.config/tldw_cli/config.toml`. Copy it to the new machine, then either
+put it at the same path and start `tldw-cli` as usual, or keep it anywhere
+and point chatbook at it:
+
+```
+tldw-cli --config /path/to/config.toml
+python -m tldw_chatbook.app --config /path/to/config.toml
+TLDW_CONFIG_PATH=/path/to/config.toml tldw-cli
+```
+
+`--config` and the `TLDW_CONFIG_PATH` environment variable do the same
+thing: `--config` for one launch, the variable for every launch that sees
+it. When both are set, `--config` wins. If the file does not exist yet,
+chatbook creates a new config there and offers setup as on a first launch.
+A folder is refused ("give the config.toml file inside it"). With either,
+Settings names the file an override config.
+
+The `[first_run]` table decides whether setup is offered:
+
+| In the copied file | On the new machine |
+|---|---|
+| `setup_completed = true` | Setup is not offered; chatbook opens as it did on the old machine. |
+| `setup_started = true`, without `setup_completed` | The setup was left unfinished: chatbook asks "Continue setup?" when the file still holds that run's progress, and otherwise says setup isn't finished. It never restarts setup by itself. |
+| No `[first_run]` table | Setup is offered once, unless a provider is already configured (a key saved in the file, or a provider key in the environment). |
+
+So copy the config of a finished setup. You can run setup again any time
+from Settings ▸ Diagnostics ▸ Run Setup Wizard.
+
+**Your keys travel with the file.** A copied config.toml carries every
+provider API key saved in it, in plain text unless password encryption is on
+(Protect keys, or Settings ▸ Privacy & Security ▸ Encryption). Handle the
+copy like a password: don't commit it to a dotfiles repository, put it in a
+shared or synced folder, or send it unencrypted. If encryption is on, the new
+machine asks for the same master password before the app opens, through
+both `tldw-cli` and `python -m tldw_chatbook.app`, including with
+`--config` (see "Starting chatbook when your keys are encrypted" above).
+
+What config.toml does not carry: your chats, notes, characters and documents
+live in database files under `~/.local/share/tldw_cli/`, not in the config.
+Use a backup for those (below). Paths written in the file are used as
+written: `~/...` paths follow the new machine's home folder, while an
+absolute path (a notes sync folder, a custom database location) must exist
+there. `--config` and `TLDW_CONFIG_PATH` choose the config file only; they
+do not move the data folder.
+
+### Environment keys
+
+chatbook never writes a key it read from an environment variable
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` and so on) into config.toml. A setup
+that used an exported key therefore carries no key in the file: export the
+same variables on the new machine. When the file also holds a saved key for
+the same provider, the saved key is used. On a machine with no config at
+all, an exported provider key is enough for chatbook to skip the setup
+offer; it says once which variable it found ("Found OPENAI_API_KEY — you're
+ready to chat. Run setup any time: Settings ▸ Diagnostics ▸ Run setup
+wizard.").
+
+### Launch flags
+
+| Flag | What it does |
+|---|---|
+| `--config PATH` | Uses this config.toml for this launch (the same as `TLDW_CONFIG_PATH`; the flag wins when both are set). |
+| `--no-splash` | Skips the splash screen for this launch only. `[splash_screen] enabled` in config is not changed. |
+
+Neither flag writes to config.toml, and no launch flag marks setup as
+completed. `tldw-cli --help` lists both and ends with a note that names
+`TLDW_CONFIG_PATH` and this section. A recovery profile opened from Backup &
+Restore selects its own config, so `--config` cannot be combined with it.
+
+### Restore a backup
+
+To bring your data as well as your settings, create a backup on the old
+machine (Settings ▸ Overview ▸ **Backup & Restore** ▸ **Create backup**). It
+writes a `.tldw-backup.zip` file, or `.tldw-backup.zip.age` when encrypted.
+In the Create backup form, the line just above the buttons says why
+**Create backup** is disabled: "Create backup unlocks after a successful
+Review." until **Review** succeeds (and again after any change to the form),
+or the review's own reason, such as a Partial backup that needs "Acknowledge
+Partial archive…" ticked, or not enough free space at the destination.
+
+On the new machine, setup's Welcome step (and the "Continue setup?" dialog)
+has **Restore a backup**. It opens "Restore from a backup" straight on the
+Inspect / restore pane, with the cursor in the archive field and the format
+named under it. Choose the archive and press **Inspect**; the restore
+controls appear once the archive is verified. **Esc** returns to setup with
+your choices intact.
+
+- A config.toml there gets "That's a settings file, not a backup archive."
+  with a pointer to this section and the `--config` command for that file.
+  Carry it as described above instead.
+- A folder gets "Choose the archive file, not a folder."
+
 ## Running it again
 
 - **Settings ▸ Diagnostics ▸ Run Setup Wizard**, or
