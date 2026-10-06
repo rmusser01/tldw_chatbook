@@ -23,7 +23,7 @@ import time
 from typing import Any
 
 import pytest
-from textual.widgets import Button, Input, ListView, Select, Static, TextArea
+from textual.widgets import Input, ListView, Select, Static, TextArea
 
 from Tests.app_module_patches import set_app_global
 from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
