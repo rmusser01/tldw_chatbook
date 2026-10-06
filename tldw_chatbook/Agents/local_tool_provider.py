@@ -5655,13 +5655,24 @@ def _ask_user_spec(ask_user: AskUserCallback) -> LocalToolSpec:
     )
 
 
-def light_surface_local_schemas() -> tuple[ToolSchema, ...]:
-    """The local tools plain chat's light surface carries, as schemas.
+def light_surface_local_schemas(names: Sequence[str]) -> tuple[ToolSchema, ...]:
+    """The light-surface local tools among ``names``, as schemas.
 
-    TASK-34100.5.3 AC#5: ``ask_user`` (its gate defaults on) and an opted-in
-    ``web_deep_search``, read from config the way a composed provider reads
-    them, for the context meter. Both need the ``[console]
-    local_tools_enabled`` master that composes the local provider at all.
+    TASK-34100.5.3 AC#5: plain chat's context meter counts these without
+    composing a provider. Only the local tools that can be described without
+    one are answered for -- ``ask_user`` (its gate defaults on) and
+    ``web_deep_search`` (opt-in) -- each read from its own ``[tools]`` gate
+    the way ``_default_specs`` reads it, and all of them behind the
+    ``[console] local_tools_enabled`` master that composes the local
+    provider at all. The caller names which ones it wants
+    (``plain_chat_tool_surface.light_surface_local_names``), so this module
+    holds no second copy of the light set.
+
+    Args:
+        names: The local tool names the light surface can carry.
+
+    Returns:
+        One schema per named tool that is on, in ``names`` order.
     """
     from tldw_chatbook.Agents.builtin_tool_gate import (
         LOCAL_TOOLS_DEFAULT_ENABLED,
@@ -5673,16 +5684,22 @@ def light_surface_local_schemas() -> tuple[ToolSchema, ...]:
         LOCAL_TOOLS_DEFAULT_ENABLED,
     ):
         return ()
+    providerless: dict[str, tuple[str, bool, Callable[[], LocalToolSpec]]] = {
+        "ask_user": (
+            ASK_USER_GATE_KEY,
+            ASK_USER_DEFAULT_ENABLED,
+            lambda: _ask_user_spec(lambda _questions: None),
+        ),
+        "web_deep_search": (WEB_DEEP_SEARCH_GATE_KEY, False, _web_deep_search_spec),
+    }
     specs: list[LocalToolSpec] = []
-    if coerce_bool_setting(
-        get_cli_setting("tools", ASK_USER_GATE_KEY, ASK_USER_DEFAULT_ENABLED),
-        ASK_USER_DEFAULT_ENABLED,
-    ):
-        specs.append(_ask_user_spec(lambda _questions: None))
-    if coerce_bool_setting(
-        get_cli_setting("tools", WEB_DEEP_SEARCH_GATE_KEY, False), False
-    ):
-        specs.append(_web_deep_search_spec())
+    for name in names:
+        known = providerless.get(name)
+        if known is None:
+            continue
+        gate_key, default, build = known
+        if coerce_bool_setting(get_cli_setting("tools", gate_key, default), default):
+            specs.append(build())
     return tuple(
         ToolSchema(
             id=f"local:{spec.name}",

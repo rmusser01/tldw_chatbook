@@ -4313,6 +4313,13 @@ class ConsoleFirstRequestPlan:
     # ``api_endpoint``). Spawn resolution uses it as ``parent_provider`` so
     # an inheriting child snapshots the endpoint, not the execution family.
     selected_provider: str = ""
+    # TASK-34100.5.3 (review round 1): the planner inputs the context meter
+    # re-runs against another resolution (``console_tool_surface_preview``).
+    # A factory, so only a live send pays for copying the catalog.
+    tool_surface_inputs: Callable[[], Any] | None = None
+    # Light surface only: the names from the user's own sources (Library,
+    # MCP servers they added, an armed shell) that the plan kept.
+    user_source_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -4616,6 +4623,7 @@ def build_console_first_request_plan(
         if skills_present and not ephemeral
         else frozenset()
     )
+    user_source_names: tuple[str, ...] = ()
     if light_surface:
         # TASK-34100.5.3 (owner ruling 2026-10-04, "Light surface by
         # default"): the one place plain chat's offered surface is narrowed.
@@ -4623,15 +4631,19 @@ def build_console_first_request_plan(
         # previews count is what the send carries.
         from tldw_chatbook.Agents import plain_chat_tool_surface as surface
 
+        user_source_names = (
+            surface.provider_names(library_provider)
+            + surface.provider_names(raw_shell_provider)
+            + tuple(sorted(surface.user_mcp_tool_names(mcp_provider)))
+        )
         allowed_tools = surface.light_surface_allowed_tools(
             allowed_tools,
             builtin_names=builtin_names,
             local_names=surface.provider_names(local_provider),
-            user_source_names=(
-                surface.provider_names(library_provider)
-                + surface.provider_names(raw_shell_provider)
-                + tuple(surface.user_mcp_tool_names(mcp_provider))
-            ),
+            user_source_names=user_source_names,
+        )
+        user_source_names = tuple(
+            name for name in user_source_names if name in allowed_tools
         )
         install_skill_enabled = run_skill_script_enabled = False
         fork_chat_enabled = new_chat_enabled = worktree_merge_enabled = False
@@ -4761,12 +4773,7 @@ def build_console_first_request_plan(
     messages = agent_messages
     if turn_bundle_block:
         messages, _ = _append_to_last_user_message(agent_messages, turn_bundle_block)
-    schemas = build_first_request_schema_plan(
-        registry,
-        allowed_tools,
-        config,
-        api_endpoint,
-        messages,
+    schema_flags: dict[str, Any] = dict(
         skill_file_enabled=bool(skills_present and turn_skill_bindings),
         install_skill_enabled=install_skill_enabled,
         managed_skill_promotion_enabled=(
@@ -4789,14 +4796,22 @@ def build_console_first_request_plan(
         fleet_max_live=fleet_max_live,
         direct_system_prompt=direct_prompt,
         discovery_system_prompt=discovery_prompt,
-        # TASK-34100.5 AC#6: the same window the send preflight used, and a
-        # tool-less request carries only the session's own prompt (or a
+        # A tool-less request carries only the session's own prompt (or a
         # neutral one-liner, never the tool-protocol prompt: V2-F2).
-        context_window=getattr(resolution, "context_window", None),
         plain_system_prompt=plain_prompt,
         catalog_entries=catalog_entries,
         schema_loader=schema_loader,
         allow_discovery=not light_surface,
+    )
+    schemas = build_first_request_schema_plan(
+        registry,
+        allowed_tools,
+        config,
+        api_endpoint,
+        messages,
+        # TASK-34100.5 AC#6: the same window the send preflight used.
+        context_window=getattr(resolution, "context_window", None),
+        **schema_flags,
     )
     review_service = getattr(code_review_provider, "service", None)
     resume = getattr(review_service, "native_resume", None)
@@ -4927,6 +4942,36 @@ def build_console_first_request_plan(
         api_endpoint=api_endpoint,
         profile_context_snapshot=profile_snapshot,
         selected_provider=selected_provider,
+        # TASK-34100.5.3 review round 1: what the context meter re-plans.
+        tool_surface_inputs=functools.partial(
+            _capture_tool_surface_inputs, registry, allowed_tools, config, schema_flags
+        ),
+        user_source_names=user_source_names,
+    )
+
+
+def _capture_tool_surface_inputs(
+    registry: Any,
+    allowed_tools: tuple[str, ...],
+    config: AgentConfig,
+    schema_flags: Mapping[str, Any],
+) -> Any:
+    """Freeze one plan's schema-planner inputs for the context meter.
+
+    TASK-34100.5.3 review round 1: ``ConsoleAgentBridge.preview_tool_schemas``
+    re-runs the planner on these inputs against whatever resolution it is
+    asked about. The catalog is copied as schemas, so no provider is kept.
+    """
+    from tldw_chatbook.Chat.console_tool_surface_preview import (
+        SchemaCatalog,
+        ToolSurfacePlanInputs,
+    )
+
+    return ToolSurfacePlanInputs(
+        catalog=SchemaCatalog.from_registry(registry, allowed_tools),
+        allowed_tools=allowed_tools,
+        config=config,
+        schema_flags=dict(schema_flags),
     )
 
 
@@ -5146,9 +5191,10 @@ class ConsoleAgentBridge:
         # passes the config reader; ``None`` (test harnesses built before the
         # light surface existed) keeps the full agent surface.
         self._light_tool_surface = light_tool_surface
-        #: The provider tool rows the last full-surface send disclosed, which
-        #: ``preview_tool_schemas`` counts until the next send replaces them.
-        self._last_full_surface_tool_rows: tuple[dict[str, Any], ...] | None = None
+        #: Per-session memory of each send's tool surface, which
+        #: ``preview_tool_schemas`` re-plans for the resolution it is asked
+        #: about (``console_tool_surface_preview``); built on first use.
+        self._tool_surface_memory: Any | None = None
         self._progress_closed = False
         self._progress_shutdown_task: asyncio.Task[None] | None = None
         self._progress_close_drains: dict[
@@ -5431,68 +5477,135 @@ class ConsoleAgentBridge:
         # so a lock per dict could not express it.
         self._change_window_lock = threading.Lock()
 
-    def light_surface_for(self, turn_skill_bindings: Sequence[str] = ()) -> bool:
+    def light_surface_for(
+        self,
+        turn_skill_bindings: Sequence[str] = (),
+        *,
+        session_id: str | None = None,
+        conversation_id: str | None = None,
+    ) -> bool:
         """Whether THIS send gets plain chat's light tool surface.
 
         TASK-34100.5.3. A turn the user explicitly binds a skill to
         (``$skill``) keeps the agent surface: the user asked for that skill.
-        A reader that raises keeps the light surface (fail closed).
+        So does a conversation with agent work still in flight -- live
+        sub-agents, or progress reports nobody has read (review round 1,
+        F8): turning Full agent tools off mid-run must not leave the wake
+        turn unable to read its children or reach their fleet. A reader that
+        raises keeps the light surface (fail closed).
         """
         if self._light_tool_surface is None or turn_skill_bindings:
             return False
         try:
-            return bool(self._light_tool_surface())
+            light = bool(self._light_tool_surface())
         except Exception:  # noqa: BLE001 -- never widen on a failed read
             return True
+        return light and not self._agent_work_in_flight(session_id, conversation_id)
 
-    def preview_tool_schemas(self, resolution: Any = None) -> list[dict[str, Any]]:
+    def _agent_work_in_flight(
+        self, session_id: str | None, conversation_id: str | None
+    ) -> bool:
+        """Live sub-agents in this conversation, or unread progress reports."""
+        try:
+            if session_id is not None:
+                inbox = self._session_progress_inbox(session_id)
+                if inbox is not None and inbox.snapshot():
+                    return True
+            if conversation_id is not None:
+                with self._fleet_admission_lock:
+                    coordinator = self._fleet_coordinators.get(conversation_id)
+                if coordinator is not None and coordinator.live_count() > 0:
+                    return True
+        except Exception:  # noqa: BLE001 -- an unreadable fleet stays light
+            return False
+        return False
+
+    def _surface_memory(self) -> Any:
+        if self._tool_surface_memory is None:
+            # Lazy (ADR-097 UI-ready census): only a send or a preview needs it.
+            from tldw_chatbook.Chat.console_tool_surface_preview import (
+                ToolSurfaceMemory,
+            )
+
+            self._tool_surface_memory = ToolSurfaceMemory()
+        return self._tool_surface_memory
+
+    def _remember_tool_surface(
+        self, session_id: str, plan: ConsoleFirstRequestPlan, *, light_surface: bool
+    ) -> None:
+        """Record what this send's tool surface was, for the context meter."""
+        if plan.tool_surface_inputs is None:
+            return
+        try:
+            memory = self._surface_memory()
+            if light_surface:
+                from tldw_chatbook.Chat.console_tool_surface_preview import (
+                    SchemaCatalog,
+                )
+
+                memory.remember_light_sources(
+                    session_id,
+                    SchemaCatalog.from_registry(
+                        plan.registry, plan.user_source_names
+                    ).schemas,
+                )
+            else:
+                memory.remember_full(session_id, plan.tool_surface_inputs())
+        except Exception:  # noqa: BLE001 -- the meter never breaks a send
+            logger.opt(exception=True).warning(
+                "ConsoleAgentBridge: could not record the tool surface for the meter"
+            )
+
+    def preview_tool_schemas(
+        self, resolution: Any = None, *, session_id: str | None = None
+    ) -> list[dict[str, Any]]:
         """Provider tool rows the next plain send discloses (the context meter).
 
-        TASK-34100.5.3 AC#5: the Console send preflight, its capacity check
-        and the voice preflight ask for this so the request accounting -- the
-        context breakdown's "Tool schemas" row -- counts the tools the send
-        actually carries. It had never been implemented, so the meter counted
-        none.
+        TASK-34100.5.3 AC#5: the Console send preflight and its capacity
+        check ask for this so the request accounting -- the context
+        breakdown's "Tool schemas" row and the meter -- counts the tools the
+        send actually carries. It had never been implemented, so the meter
+        counted none.
 
-        * Light surface: computed fresh from config (the safe set plus the
-          built-ins and ``web_deep_search`` the user switched on), and empty
-          when ``resolution``'s window is too small for them -- the planner's
-          own direct-disclosure test, so the meter agrees with the send.
-          Library and user-added MCP tools are per-session and are not
-          counted here.
-        * Full surface: the rows the last full-surface send disclosed, or the
-          shared registry's rows before any send.
+        The rows are the send's own schema planner re-run against
+        ``resolution`` (``console_tool_surface_preview``), never a list
+        remembered from an earlier send: the same tools can be disclosed
+        directly on a 1M-token window and not at all on an 8,192-token one
+        (review round 1, F2).
+
+        * Light surface: the light set read fresh from config, plus the tools
+          from the user's own sources that ``session_id``'s last send
+          carried.
+        * Full surface: ``session_id``'s last full-surface send's catalog,
+          else the most recent one, else the shared registry's. Until a
+          full-surface send has gone out, the tools it composes per send
+          (local, MCP, skills) are not visible here.
 
         Args:
             resolution: The send's provider resolution, when the caller has it.
+            session_id: The Console session the send belongs to.
 
         Returns:
             One OpenAI-shaped ``{"type": "function", ...}`` row per tool.
         """
-        if self.light_surface_for(()):
-            from tldw_chatbook.Agents.plain_chat_tool_surface import (
-                light_surface_tool_schemas,
-                light_surface_schemas_fit,
-            )
+        from tldw_chatbook.Chat.console_tool_surface_preview import (
+            light_surface_plan_inputs,
+            shared_registry_plan_inputs,
+        )
 
-            schemas = light_surface_tool_schemas()
-            native = (
-                True
-                if self._native_tools_enabled is None
-                else bool(self._native_tools_enabled())
+        native = (
+            True
+            if self._native_tools_enabled is None
+            else bool(self._native_tools_enabled())
+        )
+        memory = self._surface_memory()
+        if self.light_surface_for((), session_id=session_id):
+            inputs = light_surface_plan_inputs(memory.light_sources(session_id))
+        else:
+            inputs = memory.full_inputs(session_id) or shared_registry_plan_inputs(
+                self._registry, self._allowed_tools, console_run_budget()
             )
-            if not light_surface_schemas_fit(schemas, resolution, native_tools=native):
-                return []
-            return schemas_to_openai_tools(list(schemas))
-        if self._last_full_surface_tool_rows is not None:
-            return [dict(row) for row in self._last_full_surface_tool_rows]
-        schemas = []
-        for entry in self._registry.list_catalog():
-            try:
-                schemas.append(self._registry.load_schema(entry.id))
-            except Exception:  # noqa: BLE001 -- a preview skips what it cannot load
-                continue
-        return schemas_to_openai_tools(schemas)
+        return inputs.tool_rows(resolution, native_tools=native)
 
     def native_tool_schemas(self) -> list[dict[str, Any]]:
         """Return the native tool schemas available to this bridge.
@@ -5621,7 +5734,9 @@ class ConsoleAgentBridge:
             profile_context_service=profile_context_service,
             personal_context_snapshot=personal_context_snapshot,
             progress_inbox_exists=self._session_progress_inbox(session_id) is not None,
-            light_surface=self.light_surface_for(turn_skill_bindings),
+            light_surface=self.light_surface_for(
+                turn_skill_bindings, session_id=session_id
+            ),
         )
         if plan.run_log.requested:
             # A disposable preview cannot bind a real run-log writer, so it
@@ -5771,7 +5886,9 @@ class ConsoleAgentBridge:
                 session_id is not None
                 and self._session_progress_inbox(session_id) is not None
             ),
-            light_surface=self.light_surface_for(turn_skill_bindings),
+            light_surface=self.light_surface_for(
+                turn_skill_bindings, session_id=session_id
+            ),
         )
         return plan.profile_context_snapshot
 
@@ -6078,7 +6195,9 @@ class ConsoleAgentBridge:
         # TASK-34100.5.3: plain chat's light surface. Beyond what the plan
         # discloses, the runtime tools' closures are not even built, so a
         # model naming one anyway has nothing to dispatch.
-        light_surface = self.light_surface_for(turn_skill_bindings)
+        light_surface = self.light_surface_for(
+            turn_skill_bindings, session_id=session_id, conversation_id=conversation_id
+        )
         if light_surface:
             request_skill_install_confirm = request_skill_script_confirm = None
             request_chat_create_confirm = request_worktree_merge_confirm = None
@@ -6106,12 +6225,8 @@ class ConsoleAgentBridge:
             if run_budget is not None
             else console_run_budget()
         )
-        if light_surface:
-            from tldw_chatbook.Agents.plain_chat_tool_surface import (
-                light_surface_budget,
-            )
-
-            run_budget = light_surface_budget(run_budget)
+        # A light run's sub-agent budget is zeroed in the plan itself
+        # (``build_console_first_request_plan``), the config this run uses.
         runtime_definitions, fleet_max_live = _console_first_request_runtime_context(
             self._db, run_budget
         )
@@ -6284,15 +6399,9 @@ class ConsoleAgentBridge:
             progress_inbox_exists=self._session_progress_inbox(session_id) is not None,
             light_surface=light_surface,
         )
-        if not light_surface:
-            self._last_full_surface_tool_rows = tuple(
-                schemas_to_openai_tools(
-                    [
-                        *first_request_plan.schemas.runtime_schemas,
-                        *first_request_plan.schemas.active_schemas,
-                    ]
-                )
-            )
+        self._remember_tool_surface(
+            session_id, first_request_plan, light_surface=light_surface
+        )
         registry = first_request_plan.registry
         allowed_tools = first_request_plan.allowed_tools
         config = first_request_plan.config

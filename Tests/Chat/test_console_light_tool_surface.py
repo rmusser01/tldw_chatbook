@@ -59,18 +59,47 @@ AGENT_ONLY = {
 }
 
 
-_GATES_TOUCHED = ("full_agent_tools_enabled", "read_file_enabled")
+def fresh_profile_gates() -> dict[str, dict[str, bool]]:
+    """Every gate ``all_tool_gates()`` enumerates, at a fresh profile's value.
+
+    Review round 1 (F8): the exact-set assertions here depend on EVERY gate
+    (ask_user, the local master, web_deep_search, the built-ins), not only
+    the two a test flips, so all of them are reset.
+    """
+    from tldw_chatbook.Agents.builtin_tool_gate import (
+        LOCAL_TOOLS_DEFAULT_ENABLED,
+        LOCAL_TOOLS_MASTER_KEY,
+        _gate_key_pairs,
+    )
+    from tldw_chatbook.Agents.local_tool_provider import (
+        ASK_USER_DEFAULT_ENABLED,
+        ASK_USER_GATE_KEY,
+        CHARACTER_TOOLS_DEFAULT_ENABLED,
+        CHARACTER_TOOLS_GATE_KEY,
+    )
+
+    on_by_default = {
+        ("console", LOCAL_TOOLS_MASTER_KEY): LOCAL_TOOLS_DEFAULT_ENABLED,
+        ("tools", ASK_USER_GATE_KEY): ASK_USER_DEFAULT_ENABLED,
+        ("tools", CHARACTER_TOOLS_GATE_KEY): CHARACTER_TOOLS_DEFAULT_ENABLED,
+    }
+    sections: dict[str, dict[str, bool]] = {}
+    for section, key in _gate_key_pairs():
+        sections.setdefault(section, {})[key] = on_by_default.get(
+            (section, key), False
+        )
+    return sections
 
 
 @pytest.fixture(autouse=True)
 def _fresh_tool_gates():
     """Every test starts on a fresh profile's gates and leaves them that way
     (the isolated config file outlives one test)."""
-    for key in _GATES_TOUCHED:
-        save_setting_to_cli_config("tools", key, False)
+    from tldw_chatbook.config import save_settings_to_cli_config
+
+    assert save_settings_to_cli_config(fresh_profile_gates())
     yield
-    for key in _GATES_TOUCHED:
-        save_setting_to_cli_config("tools", key, False)
+    assert save_settings_to_cli_config(fresh_profile_gates())
 
 
 class _LocalLikeProvider:
@@ -266,19 +295,28 @@ def test_a_tool_the_user_switched_on_is_offered_without_the_full_surface(tmp_pat
     """Setup's Tools step / the MCP Tool gates pane switch one tool on: plain
     chat offers it on the next send, still without the agent surface. A tool
     from an MCP server the user added is offered too; chatbook's own MCP
-    source is not."""
-    assert save_setting_to_cli_config("tools", "read_file_enabled", True)
-    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
-
-    _send(
-        bridge,
-        session,
-        assistant_id,
-        _native_resolution(),
-        mcp_provider=_SourcedMCPProvider(user_server=True),
+    source is not. The switch is flipped between two sends on ONE bridge
+    (review round 1, F8): the next send sees it without a new bridge."""
+    bridge, gateway, session, assistant_id = _production_bridge(
+        tmp_path, [["hi"], ["hi"]]
     )
 
-    names = _native_names(gateway)
+    def send():
+        _send(
+            bridge,
+            session,
+            assistant_id,
+            _native_resolution(),
+            mcp_provider=_SourcedMCPProvider(user_server=True),
+        )
+
+    send()
+    assert _native_names(gateway, 0) == LIGHT | {"mcp__weather__forecast"}
+
+    assert save_setting_to_cli_config("tools", "read_file_enabled", True)
+    send()
+
+    names = _native_names(gateway, 1)
     assert names == LIGHT | {"read_file", "mcp__weather__forecast"}, sorted(names)
 
 
@@ -360,3 +398,159 @@ def test_a_plugin_group_keeps_user_servers_but_not_plugin_or_builtin_tools():
     assert group.server_key_for("mcp__plugin_demo__lookup") == "local:plugin-demo"
     assert group.server_key_for("missing") is None
     assert user_mcp_tool_names(group) == frozenset({"mcp__weather__forecast"})
+
+
+@pytest.mark.parametrize(
+    ("tool", "args", "confirm_kw"),
+    [
+        ("fork_chat", {"title": "Side chat"}, "request_chat_create_confirm"),
+        ("new_chat", {"title": "Fresh chat"}, "request_chat_create_confirm"),
+        ("install_skill", {"source": "https://example.invalid/s"}, "request_skill_install_confirm"),
+        ("run_skill_script", {"skill": "x", "script": "run.py"}, "request_skill_script_confirm"),
+    ],
+)
+def test_a_hallucinated_runtime_tool_never_reaches_its_confirm_card(
+    tmp_path, tool, args, confirm_kw
+):
+    """Review round 1 (C-F1): a light run does not even build the chat-create,
+    skill-install or script closures. For ``fork_chat`` that is the only
+    barrier: with the closures built, a model naming it anyway raised a real
+    fork approval card for a tool plain chat never offered."""
+    asked: list[object] = []
+
+    def confirm(*args_, **kwargs_):
+        asked.append((args_, kwargs_))
+        return {"approved": True} if confirm_kw != "request_skill_install_confirm" else True
+
+    bridge, gateway, session, assistant_id = _production_bridge(
+        tmp_path, [[_fence(tool, args)], ["hi"]]
+    )
+
+    outcome = _send(
+        bridge, session, assistant_id, _test_resolution(), **{confirm_kw: confirm}
+    )
+
+    assert asked == [], asked
+    results = [step for step in outcome.steps if step.tool_name == tool and step.result]
+    assert results, [(s.kind, s.tool_name, s.result[:80]) for s in outcome.steps]
+    assert all("not permitted" in step.result for step in results), [
+        step.result for step in results
+    ]
+
+
+def test_a_skill_turn_keeps_the_agent_surface(tmp_path):
+    """Review round 1 (C-F2): a message that names a skill (``$skill``) gets
+    the agent surface for that turn -- skills run as sub-agents."""
+    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
+
+    _send(
+        bridge,
+        session,
+        assistant_id,
+        _native_resolution(),
+        turn_skill_bindings=("summarize",),
+    )
+
+    assert "spawn_subagent" in _native_names(gateway)
+
+
+def test_a_light_run_starts_no_fleet_and_spawns_nothing(tmp_path):
+    """Review round 1 (C-F7): the light plan's own budget allows no
+    sub-agent, and a light run creates no fleet coordinator."""
+    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
+
+    _send(bridge, session, assistant_id, _native_resolution())
+
+    assert "conv-light" not in bridge._fleet_coordinators
+
+
+class _LiveFleet:
+    def live_count(self):
+        return 1
+
+
+class _Inbox:
+    def __init__(self, reports):
+        self._reports = reports
+
+    def snapshot(self):
+        return self._reports
+
+
+def test_live_agent_work_keeps_the_agent_surface(tmp_path, monkeypatch):
+    """Review round 1 (F8): turning Full agent tools off while sub-agents run
+    must not leave the next turn -- the wake turn included -- unable to read
+    their reports or reach their fleet. Live children, or progress reports
+    nobody has read, keep the agent surface; an idle inbox does not."""
+    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
+
+    assert bridge.light_surface_for((), session_id=session.id, conversation_id="c")
+    bridge._fleet_coordinators["c"] = _LiveFleet()
+    assert not bridge.light_surface_for((), session_id=session.id, conversation_id="c")
+    del bridge._fleet_coordinators["c"]
+
+    monkeypatch.setattr(bridge, "_session_progress_inbox", lambda _sid: _Inbox(()))
+    assert bridge.light_surface_for((), session_id=session.id)
+    monkeypatch.setattr(
+        bridge, "_session_progress_inbox", lambda _sid: _Inbox(("report",))
+    )
+    assert not bridge.light_surface_for((), session_id=session.id)
+
+
+def test_a_send_asks_about_its_own_conversations_agent_work(tmp_path, monkeypatch):
+    """The send passes its session and conversation, so live work in THIS
+    conversation keeps the agent surface on the very next send."""
+    bridge, gateway, session, assistant_id = _production_bridge(tmp_path, [["hi"]])
+    asked: list[tuple[object, object]] = []
+
+    def in_flight(session_id, conversation_id):
+        asked.append((session_id, conversation_id))
+        return conversation_id == "conv-light"
+
+    monkeypatch.setattr(bridge, "_agent_work_in_flight", in_flight)
+
+    _send(bridge, session, assistant_id, _native_resolution())
+
+    assert (session.id, "conv-light") in asked
+    assert "spawn_subagent" in _native_names(gateway)
+
+
+def test_the_tools_chip_counts_what_plain_chat_is_offered(tmp_path):
+    """Review round 1 (B-F4): on a light-surface profile the status strip
+    read "Tools: 5 ready" and the Inspector "tools 5" -- chatbook's own MCP
+    tools, which the light surface does not offer -- while the request
+    carried three others. The published counts are now the light surface's:
+    its own tools, and only the MCP tools from servers the user added."""
+    from types import SimpleNamespace
+
+    from Tests.Chat.test_console_voice_preflight import controller_for
+    from tldw_chatbook.Chat.console_display_state import ConsoleControlState
+
+    bridge, _gateway, session, _assistant = _production_bridge(tmp_path, [])
+    controller = controller_for(SimpleNamespace())
+    controller._agent_bridge = bridge
+    controller.app = SimpleNamespace()
+    mcp = _SourcedMCPProvider(user_server=True)
+
+    from tldw_chatbook.Agents.plain_chat_tool_surface import offered_mcp_tool_count
+
+    controller._publish_mcp_inspector_counts(
+        offered_mcp_tool_count(bridge, mcp, session.id), 0
+    )
+
+    assert controller.app.console_mcp_tool_count == 1  # the user's weather server
+    assert controller.app.console_tool_count == len(LIGHT)
+    chip = ConsoleControlState.from_values(
+        tool_count=controller.app.console_tool_count,
+        mcp_tool_count=controller.app.console_mcp_tool_count,
+    )
+    assert chip.tools_label == "Tools: 4 ready"
+
+    # Full agent tools on: the whole composed MCP catalog is offered again,
+    # and the built-ins go uncounted as before this task.
+    assert save_setting_to_cli_config("tools", "full_agent_tools_enabled", True)
+    controller._publish_mcp_inspector_counts(
+        offered_mcp_tool_count(bridge, mcp, session.id), 0
+    )
+    assert controller.app.console_mcp_tool_count == 3
+    assert controller.app.console_tool_count == 0

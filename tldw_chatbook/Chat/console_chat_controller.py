@@ -15170,6 +15170,9 @@ class ConsoleChatController:
         """
         if self.app is None:
             return
+        from tldw_chatbook.Agents.plain_chat_tool_surface import offered_builtin_tool_count
+
+        self.app.console_tool_count = offered_builtin_tool_count(self._agent_bridge)
         self.app.console_mcp_tool_count = tool_count
         self.app.console_mcp_not_connected_count = not_connected_count
 
@@ -15443,7 +15446,12 @@ class ConsoleChatController:
             if _retain_empty_plugin_providers and plugin_maximum is not None:
                 return provider
             return None
-        publish(len(catalog), provider.not_connected_count)
+        from tldw_chatbook.Agents.plain_chat_tool_surface import offered_mcp_tool_count
+
+        publish(
+            offered_mcp_tool_count(self._agent_bridge, provider, session_id),
+            provider.not_connected_count,
+        )
         return provider
 
     async def _compose_agent_request_providers(
