@@ -1537,6 +1537,18 @@ rather than jumping to Settings. The one exception is `ctrl+q`: it quits
 straight away, splash or not. Turn the setting off and the splash always
 runs its full **Duration (s)**, with keys routed exactly as before. Before the
 fix the setting was inert: the splash was never focused, so it never saw a key.
+While the skip is on, the splash says so: a dim **Press any key to skip** line
+sits at its bottom edge.
+
+A profile's very first launch plays no splash at all, so setup opens straight
+away; the splash starts with the next launch. Random picks never include the
+joke and persona cards (the "JULES" intro and character select, the arcade
+high-score table, the old-film "Starring YOU" card); choose one by name as the
+**Default card** if you want it. With **Reduce motion** on (Appearance), or the
+`TLDW_REDUCE_MOTION` or `NO_MOTION` environment variable set when chatbook
+starts, the card is drawn as a still frame. The environment variable is read at
+launch only and is never written to config.toml. Setup's Appearance step offers
+the same choice as **Startup animation: Off / Short (2 s) / Full**.
 
 ### Interface — Console Behavior
 

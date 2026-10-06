@@ -240,17 +240,36 @@ soon as you edit that field.
 - **Tab** moves from a step's content to **Next** first; the footer runs
   progress · Back · Next · Skip/Exit, left to right.
 
+## Welcome
+
+Welcome says what chatbook is ("With a model running on this computer, your
+messages are answered on it" — the promise is about where the model runs, not
+that nothing ever leaves your machine) and how long Quick takes: "Quick takes
+about 2 minutes if you have an API key or a local AI server running. You can
+change any of this later by running setup again."
+
+Below the navigation buttons, one quiet row holds **Reduce motion** and
+"Moving from another computer? **Restore a backup**". They sit after the
+buttons on purpose: Tab goes from the track list to **Next** first. Reduce
+motion takes effect at once (the Console's setup backdrop, the next splash) and
+is saved when you press Next, only if you changed it.
+
+A profile's first launch plays no splash screen, so Welcome appears as soon as
+the app has loaded; warnings from optional dependencies go to the log file, not
+the terminal before the app opens.
+
 ## The two tracks
 
 - **Quick setup (recommended)** — connect one provider, pick a default model,
   optionally try a voice and protect your keys, done. Everything else stays at
-  recommended defaults (light tools only — date and time, calculator and
-  ask-you-a-question — RAG off, default theme, notes sync off).
-  The step count never changes mid-run — the key-protection step is always
-  shown, and simply says so when there is nothing to protect (the progress
-  tracker then marks it – instead of ✓).
-- **Full setup** — also walks through RAG/embeddings, built-in tools, notes
-  sync, appearance, and key encryption.
+  its default; the Summary lists what that means (light tools only — date and
+  time, calculator and ask-you-a-question — your Library searched only when
+  you ask, and the default theme). The step count never changes mid-run — the
+  key-protection step is always shown, and simply says so when there is
+  nothing to protect (the progress tracker then marks it – instead of ✓).
+- **Full setup** — adds search, dictation, tools and appearance (ten steps).
+  Every added step starts on "leave as is": pressing Next without changing
+  anything writes nothing.
 
 ## What each step does
 
@@ -258,11 +277,10 @@ soon as you edit that field.
 |---|---|---|
 | Provider | API key or local server endpoint | Settings ▸ Providers & Models |
 | Model | Default chat model | Settings ▸ Providers & Models |
-| RAG | Embedding model (needs the `embeddings_rag` extras) | Settings ▸ RAG |
-| Speech (full track) | Voice-input transcription language and precision | `[transcription]` in config.toml — no Settings category owns it yet |
-| Tools | Tools beyond chat's light set: **Full agent tools** and the built-in tool gates (all off by default) | Settings ▸ Tools & MCP (Ctrl+9) ▸ Servers ▸ built-in row ▸ **Tool gates**, or `[tools]` in config.toml |
-| Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |
-| Appearance | Theme and splash screen card | Settings ▸ Appearance |
+| Search (full track) | When you chat: search your Library only when you ask (default) or automatically. Shows the embedding model RAG uses, read-only | Settings ▸ Domain Defaults ▸ RAG |
+| Speech (full track) | Dictation engine: none for now, one already installed, Parakeet on this computer, or OpenAI Whisper in the cloud | `[transcription]` in config.toml — no Settings category owns it yet; Parakeet models in Lab ▸ Models |
+| Tools (full track) | Tools beyond chat's light set: **Full agent tools** and the eight file, note and document tool switches (all off by default) | Settings ▸ Tools & MCP (Ctrl+9) ▸ Servers ▸ built-in row ▸ **Tool gates**, or `[tools]` in config.toml |
+| Appearance (full track) | Theme, startup animation (Off / Short / Full), Reduce motion, plain ASCII status marks | Settings ▸ Theme (themes), Settings ▸ Splash Screen (splash card and startup animation), Settings ▸ Appearance (motion, glyphs) |
 | Voice | Spoken replies — "No voice for now" (the default), PocketTTS (its own local server), OpenAI (your OpenAI key), a Custom endpoint, or OmniVoice (local, installs its model here); sample + "Test and Hear" (endpoint, model, voice and format under Advanced) | Settings ▸ Speech & TTS |
 | Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security ▸ **Encryption**: Encrypt keys, Change password, Turn off encryption (each asks for the master password) |
 
@@ -272,22 +290,26 @@ calculator, and ask-you-a-question (the last one follows its own
 search, Watchlists, workspace, character or other autonomous or costly
 tools until you turn them on. The Tools step says so up front — "Chat starts
 with date and time, calculator and ask you a question; a model with a small
-or not-yet-known context window gets no tools. Everything below is off until
-you switch it on; tools that read or change your files ask before they run."
-— and is the place in setup to turn more on:
+or not-yet-known context window gets no tools. The switches below show your
+saved choices and control additional tools; tools that read or change your
+files ask before they run." — and is the place in setup to turn more on:
 
 - **Full agent tools** (`[tools] full_agent_tools_enabled`, off by default)
   gives chat the whole agent surface: sub-agents, skills, web search and
   fetch, Watchlists, workspace tools, character cards, Canvas, chat forks
   and chatbook's own MCP tools. The local workspace, web and Watchlists
-  master and the character switch still decide those groups within it.
+  master and the character switch still decide those groups within it; that
+  master switch is not offered in setup.
 - Each **built-in** row (Read file, List directory, Write file, Create note,
   Update note, Find files, Search in files, Expand document) turns on just
   that tool, and plain chat offers it on the next send without the full
-  agent surface. Each row carries the tool's plain-language name and one
-  line about what it does — the read-class ones add that they ask before
-  running unless you approve a longer scope, and the ones that write are
-  marked with ⚠.
+  agent surface. Each row's line says where it reaches and how often it asks,
+  in the approval card's own words — file tools reach only your Workspace
+  folders and the chat's scratch area, and every tool "Asks before each use
+  unless you pick This session" — and one hint under the file rows says where
+  to add a Workspace folder (Settings ▸ Workspaces). The ones that write are
+  marked with ⚠, and each name ends with when a change takes effect
+  ("(next chat)"), the same label the Tool gates pane shows.
 
 The Summary's **Tools** row then names exactly what chat is offered. With
 nothing switched on it reads "on: date and time, calculator and ask you a
@@ -308,7 +330,44 @@ for that turn, since you asked for the skill. The app's internal
 `chat_with_llm` tool, which the in-process server cannot run, is never
 offered. A small local model whose context window cannot hold the light set
 (a server whose window the app has not read yet is planned as 4,096 tokens)
-gets a plain request with no tools and a one-line system prompt.
+gets a plain request with no tools and a one-line system prompt. With
+**Create note** off, the assistant has no other note-creating tool, even with
+Full agent tools on: the app's own MCP server's `create_note` is left out of
+the agent's tools, and likewise its character create and update tools while
+character tools are off.
+
+The Search step has one control, "When you chat": **Search my Library only when
+I ask** (the default) or **Search my Library automatically**, the same setting
+as Settings ▸ Domain Defaults ▸ RAG ▸ New Console conversations. New Console
+conversations follow it. It also shows, read-only, the embedding model RAG
+uses ("all-MiniLM-L6-v2 · on this computer"), with Settings' privacy sentence
+when the model is a cloud one; change the model in Settings. If that model
+isn't on this computer yet, the first automatic search downloads it, and that
+first message may wait for it. Without the optional search extras the control
+is still there, but automatic search is unavailable (it needs them); the step
+names the extras package, `tldw_chatbook[embeddings_rag]`, with a copy button —
+install it with whatever tool you installed chatbook with.
+
+The Speech step opens with the dictation engine: **No dictation for now**
+(chosen on a first run, writes nothing), **Already available — <engine>** when
+an engine such as Parakeet MLX or faster-whisper is installed (nothing to
+download now; it fetches its speech model the first time you dictate),
+**On this computer — Parakeet (633 MiB download)**, and, when an OpenAI key is
+set up, **Cloud — OpenAI Whisper (audio is sent to OpenAI)**. Cloud Whisper is
+used when you transcribe audio and video files and reuses your OpenAI provider
+key; live dictation in the Console stays on this computer. Under Parakeet the
+step reads choice first, then action: a "Recommended:" card with the download
+size, a Language list, **Review and install…**, and an **Advanced** section
+with precision, "Use model from disk…" and the transcribe.cpp GGUF option.
+Nothing is written to `[transcription]` unless you chose something in this run.
+
+The Appearance step lists themes by name with their tone ("Default dark",
+"Nord · dark"), offers **Startup animation: Off / Short (2 s) / Full**,
+**Reduce motion** and **Plain ASCII status marks** (ticked for you when
+`NO_COLOR` is set or on the Linux console), and names the current splash card
+with a pointer to Settings ▸ Splash Screen for choosing one. The Full track has
+no Notes step: notes folder sync is set up from Library ▸ Notes ▸ Add from
+files…, as the Summary says.
 
 The Voice step's first choice is **No voice for now**, and it is selected
 unless a voice is already saved: Next then writes nothing, and the step says
