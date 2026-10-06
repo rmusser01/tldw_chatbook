@@ -280,3 +280,31 @@ def test_a_tool_the_user_switched_on_is_offered_without_the_full_surface(tmp_pat
 
     names = _native_names(gateway)
     assert names == LIGHT | {"read_file", "mcp__weather__forecast"}, sorted(names)
+
+
+def test_a_real_mcp_provider_attributes_user_servers_but_not_the_builtin_source():
+    """The narrowing asks the composed MCP provider which server each tool
+    comes from: a server the user added is "turned on"; chatbook's own
+    built-in source is part of the full agent surface."""
+    import asyncio
+
+    from Tests.Agents.test_mcp_tool_provider import (
+        FakeMCPService,
+        _catalog_record,
+        _compose,
+        _tool_dict,
+    )
+    from tldw_chatbook.Agents.mcp_tool_provider import MCPToolProvider
+    from tldw_chatbook.Agents.plain_chat_tool_surface import user_mcp_tool_names
+
+    service = FakeMCPService(
+        inventory={"tools": [_tool_dict("create_note", "Create a note.")]},
+        catalog_records=[_catalog_record("weather", [_tool_dict("forecast")])],
+    )
+    provider = MCPToolProvider(service=service, main_loop=asyncio.new_event_loop())
+    _compose(provider)
+
+    assert provider.server_key_for("mcp__tldw_chatbook__create_note") == (
+        BUILTIN_MCP_SERVER_KEY
+    )
+    assert user_mcp_tool_names(provider) == frozenset({"mcp__weather__forecast"})
