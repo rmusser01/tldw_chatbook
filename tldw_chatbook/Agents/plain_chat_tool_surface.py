@@ -199,6 +199,35 @@ def user_mcp_tool_names(mcp_provider: Any | None) -> frozenset[str]:
     return frozenset(names)
 
 
+def tool_kill_switch_engaged(app: Any) -> bool:
+    """Whether the MCP hub's tool kill switch is on, read now.
+
+    With it on, the controller composes no local tools provider (nor MCP or
+    shell), so ``ask_user`` and ``web_deep_search`` are not sent. An app
+    without the MCP service has nothing to honor (the Console's own
+    kill-switch reader returns ``None`` then); a read that raises counts as
+    on, because the controller then composes no local tools either.
+    """
+    service = getattr(app, "unified_mcp_service", None)
+    getter = getattr(service, "get_kill_switch", None)
+    if not callable(getter):
+        return False
+    try:
+        return bool(getter())
+    except Exception:  # noqa: BLE001 -- the compose path fails closed too
+        return True
+
+
+def _bridge_local_tools_available(bridge: Any | None) -> bool:
+    check = getattr(bridge, "light_surface_local_tools_available", None)
+    if not callable(check):
+        return True
+    try:
+        return bool(check())
+    except Exception:  # noqa: BLE001 -- count as composed, as before
+        return True
+
+
 def _bridge_is_light(bridge: Any | None, session_id: str | None) -> bool:
     check = getattr(bridge, "light_surface_for", None)
     if not callable(check):
@@ -232,7 +261,11 @@ def offered_builtin_tool_count(bridge: Any | None, session_id: str | None = None
     if not _bridge_is_light(bridge, session_id):
         return 0
     try:
-        return len(light_surface_tool_schemas())
+        return len(
+            light_surface_tool_schemas(
+                local_tools_available=_bridge_local_tools_available(bridge)
+            )
+        )
     except Exception:  # noqa: BLE001 -- a chip never breaks a send
         return 0
 
@@ -262,6 +295,8 @@ def light_surface_local_names() -> tuple[str, ...]:
 
 def light_surface_tool_schemas(
     user_source_schemas: Sequence[Any] = (),
+    *,
+    local_tools_available: bool = True,
 ) -> tuple[Any, ...]:
     """The light surface's tool schemas, read fresh from config.
 
@@ -277,13 +312,20 @@ def light_surface_tool_schemas(
         user_source_schemas: Tools from the user's own sources (MCP servers
             they added, Library tools, an armed shell) that the session's
             last send carried; they are per-session, so config cannot say.
+        local_tools_available: ``False`` when the send composes no local
+            tools provider whatever the config says -- the MCP hub's kill
+            switch (``tool_kill_switch_engaged``) -- so no local tool counts.
     """
     from tldw_chatbook.Agents.local_tool_provider import light_surface_local_schemas
     from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider
 
     provider = BuiltinToolProvider()
     builtin = [provider.load_schema(entry.id) for entry in provider.list_catalog()]
-    local = list(light_surface_local_schemas(light_surface_local_names()))
+    local = (
+        list(light_surface_local_schemas(light_surface_local_names()))
+        if local_tools_available
+        else []
+    )
     user = list(user_source_schemas)
     candidates = [*builtin, *local, *user]
     keep = frozenset(

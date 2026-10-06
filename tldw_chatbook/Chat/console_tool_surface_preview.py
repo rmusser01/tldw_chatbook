@@ -202,6 +202,8 @@ class ToolSurfacePlanInputs:
 
 def light_surface_plan_inputs(
     user_source_schemas: Sequence[ToolSchema] = (),
+    *,
+    local_tools_available: bool = True,
 ) -> ToolSurfacePlanInputs:
     """Planner inputs for plain chat's light surface, read fresh from config.
 
@@ -212,6 +214,8 @@ def light_surface_plan_inputs(
     Args:
         user_source_schemas: Tools from the user's own sources that this
             session's last send carried.
+        local_tools_available: ``False`` while the MCP hub's kill switch
+            keeps the send from composing local tools.
     """
     from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
     from tldw_chatbook.Agents.plain_chat_tool_surface import (
@@ -219,7 +223,9 @@ def light_surface_plan_inputs(
         light_surface_tool_schemas,
     )
 
-    schemas = light_surface_tool_schemas(user_source_schemas)
+    schemas = light_surface_tool_schemas(
+        user_source_schemas, local_tools_available=local_tools_available
+    )
     catalog = SchemaCatalog.from_schemas(schemas, source="light_surface")
     names = catalog.names
     return ToolSurfacePlanInputs(

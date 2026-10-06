@@ -5184,6 +5184,7 @@ class ConsoleAgentBridge:
         app_config: Mapping[str, Any] | None = None,
         get_hooks_v2: Callable[[str], Any] | None = None,
         light_tool_surface: Callable[[], bool] | None = None,
+        tool_kill_switch: Callable[[], bool] | None = None,
     ) -> None:
         self._message_store = message_store
         # TASK-34100.5.3: asked once per send whether plain chat gets the
@@ -5191,6 +5192,10 @@ class ConsoleAgentBridge:
         # passes the config reader; ``None`` (test harnesses built before the
         # light surface existed) keeps the full agent surface.
         self._light_tool_surface = light_tool_surface
+        # TASK-34100.5.3 review: the MCP hub's kill switch, read per preview.
+        # With it on the controller composes no local tools, so the meter
+        # must not count ``ask_user``. ``None``: nothing to honor.
+        self._tool_kill_switch = tool_kill_switch
         #: Per-session memory of each send's tool surface, which
         #: ``preview_tool_schemas`` re-plans for the resolution it is asked
         #: about (``console_tool_surface_preview``); built on first use.
@@ -5502,6 +5507,19 @@ class ConsoleAgentBridge:
             return True
         return light and not self._agent_work_in_flight(session_id, conversation_id)
 
+    def light_surface_local_tools_available(self) -> bool:
+        """Whether a send now composes local tools (the kill switch is off).
+
+        The meter and the Tools chip ask this; a read that raises counts as
+        engaged, as the controller's compose path does.
+        """
+        if self._tool_kill_switch is None:
+            return True
+        try:
+            return not self._tool_kill_switch()
+        except Exception:  # noqa: BLE001 -- the compose path fails closed too
+            return False
+
     def _agent_work_in_flight(
         self, session_id: str | None, conversation_id: str | None
     ) -> bool:
@@ -5600,7 +5618,10 @@ class ConsoleAgentBridge:
         )
         memory = self._surface_memory()
         if self.light_surface_for((), session_id=session_id):
-            inputs = light_surface_plan_inputs(memory.light_sources(session_id))
+            inputs = light_surface_plan_inputs(
+                memory.light_sources(session_id),
+                local_tools_available=self.light_surface_local_tools_available(),
+            )
         else:
             inputs = memory.full_inputs(session_id) or shared_registry_plan_inputs(
                 self._registry, self._allowed_tools, console_run_budget()
