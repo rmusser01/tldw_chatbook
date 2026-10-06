@@ -458,7 +458,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     TRACK_FULL,
     TRACK_QUICK,
     active_step_ids,
-    build_appearance_commit,
     build_model_commit,
     build_provider_commit,
     build_tools_commit,
@@ -560,42 +559,21 @@ class TestCommitBuilders:
             "tools": {"read_file_enabled": True, "write_file_enabled": False}
         }
 
-    def test_appearance_commit_with_splash(self):
-        commit = build_appearance_commit(
-            default_theme="textual-dark", splash_card="matrix"
-        )
-        assert commit == {
-            "general": {"default_theme": "textual-dark"},
-            "splash_screen": {"card_selection": "matrix"},
+    def test_appearance_commits_are_deltas(self):
+        """TASK-34100.13: the splash-card gallery left setup; startup and
+        comfort controls write only what changed (first_run_appearance_state)."""
+        from tldw_chatbook.UI.Wizards import first_run_appearance_state as look
+
+        assert look.build_startup_commit(choice="full", current="full") == {}
+        assert look.build_startup_commit(choice="off", current="full") == {
+            "splash_screen": {"enabled": False}
         }
-
-    def test_appearance_commit_without_splash(self):
-        commit = build_appearance_commit(default_theme="textual-dark", splash_card=None)
-        assert commit == {"general": {"default_theme": "textual-dark"}}
-
-    def test_appearance_commit_omits_theme_when_falsy(self):
-        """Bug-2b: a falsy default_theme (delta-aware "unchanged") must omit
-        the general section entirely, not write an empty/None theme."""
-        commit = build_appearance_commit(default_theme=None, splash_card="matrix")
-        assert commit == {"splash_screen": {"card_selection": "matrix"}}
-
-    def test_appearance_commit_reset_splash_to_random(self):
-        """Bug-2c: explicit reset-to-random writes card_selection="random"
-        even though splash_card itself has no truthy value to signal it."""
-        commit = build_appearance_commit(
-            default_theme=None, splash_card=None, reset_splash_to_random=True
-        )
-        assert commit == {"splash_screen": {"card_selection": "random"}}
-
-    def test_appearance_commit_specific_card_wins_over_reset_flag(self):
-        commit = build_appearance_commit(
-            default_theme=None, splash_card="matrix", reset_splash_to_random=True
-        )
-        assert commit == {"splash_screen": {"card_selection": "matrix"}}
-
-    def test_appearance_commit_nothing_changed_is_empty(self):
-        commit = build_appearance_commit(default_theme=None, splash_card=None)
-        assert commit == {}
+        assert look.build_comfort_commit(
+            reduce_motion=False,
+            ascii_glyphs=True,
+            current_reduce_motion=False,
+            current_ascii_glyphs=False,
+        ) == {"appearance": {"ascii_glyphs": True}}
 
     def test_state_commit(self):
         assert build_wizard_state_commit(started=True) == {
@@ -1509,6 +1487,7 @@ class TestDependencyInvalidation:
 
 class TestSectionAllowlist:
     def test_all_builders_stay_in_allowlist(self):
+        from tldw_chatbook.UI.Wizards import first_run_appearance_state as look
         from tldw_chatbook.UI.Wizards.first_run_rag_state import build_search_commit
         from tldw_chatbook.UI.Wizards.first_run_speech_step_state import (
             build_speech_transcription_commit,
@@ -1519,7 +1498,13 @@ class TestSectionAllowlist:
             build_model_commit(provider_value="OpenAI", model_id="m"),
             build_search_commit(auto_retrieve=True, current=False),
             build_tools_commit(gate_values={"read_file_enabled": True}),
-            build_appearance_commit(default_theme="t", splash_card="c"),
+            look.build_startup_commit(choice="short", current="full"),
+            look.build_comfort_commit(
+                reduce_motion=True,
+                ascii_glyphs=True,
+                current_reduce_motion=False,
+                current_ascii_glyphs=False,
+            ),
             build_wizard_state_commit(started=True),
             build_speech_transcription_commit(
                 provider_id="parakeet-onnx",

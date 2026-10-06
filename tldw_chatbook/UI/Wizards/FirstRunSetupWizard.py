@@ -1211,27 +1211,9 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                 self._step_index_for_id(wizard_state.STEP_APPEARANCE)
             ]
             if isinstance(appearance_step, AppearanceStep):
-                if "theme" in appearance_values:
-                    theme = str(appearance_values["theme"])
-                    appearance_step.selected_theme = theme
-                    self._restore_radio_selection(
-                        appearance_step.query_one("#setup-theme-choice", RadioSet),
-                        lambda button: getattr(button, "_theme_name", "") == theme,
-                    )
-                if "splash_card" in appearance_values:
-                    splash_card = str(appearance_values["splash_card"])
-                    appearance_step.selected_splash_card = splash_card
-                    appearance_step._picked_surprise_me = False
-                    self._restore_radio_selection(
-                        appearance_step.query_one("#setup-splash-choice", RadioSet),
-                        # Qodo review fix: labels are humanized (TASK-21149);
-                        # match on the raw-id rider, mirroring _theme_name.
-                        lambda button: (
-                            getattr(button, "_card_name", "") == splash_card
-                            if splash_card
-                            else str(button.label).startswith("Surprise me")
-                        ),
-                    )
+                appearance_step.restore_draft(
+                    appearance_values, self._restore_radio_selection
+                )
             # Protect is not restored here: it re-reads config.toml itself
             # (TASK-34100.4 review v5r1, F1), never a saved "Encryption enabled."
         except Exception:
