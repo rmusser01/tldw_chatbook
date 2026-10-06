@@ -43,10 +43,6 @@ from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_compatible_endpoint,
     openai_destination_fingerprint,
 )
-from tldw_chatbook.TTS.pocket_tts_native import (
-    POCKET_TTS_WAV_ONLY_COPY,
-    is_pocket_tts_native_url,
-)
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.sample_audio_validation import (
     CONTENT_TYPES_BY_FORMAT,
@@ -2312,6 +2308,13 @@ def _require_wav_for_pocket_tts(
         )
     except ValueError:
         return  # the OpenAI pane's own validation names a bad Base URL
+    # Deferred: this screen is resident at the UI-ready mark, and the pocket-tts
+    # dialect is needed only on Save (UI-ready module census, TASK-34100.8).
+    from tldw_chatbook.TTS.pocket_tts_native import (
+        POCKET_TTS_WAV_ONLY_COPY,
+        is_pocket_tts_native_url,
+    )
+
     if is_pocket_tts_native_url(endpoint.speech_url):
         _validation_error("defaults", "response_format", POCKET_TTS_WAV_ONLY_COPY)
 
