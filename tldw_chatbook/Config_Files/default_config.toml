@@ -1831,14 +1831,16 @@ cache_size_limit_gb = 10.0
     trust_remote_code = false
     max_length = 384
 
-    [embedding_config.models.bge-small-en-v1.5]
+    # Keys containing a dot must be quoted: an unquoted
+    # bge-small-en-v1.5 parses as models."bge-small-en-v1"."5" (TASK-34100.13).
+    [embedding_config.models."bge-small-en-v1.5"]
     provider = "huggingface"
     model_name_or_path = "BAAI/bge-small-en-v1.5"
     dimension = 384
     trust_remote_code = false
     max_length = 512
 
-    [embedding_config.models.bge-base-en-v1.5]
+    [embedding_config.models."bge-base-en-v1.5"]
     provider = "huggingface"
     model_name_or_path = "BAAI/bge-base-en-v1.5"
     dimension = 768
@@ -1853,42 +1855,38 @@ cache_size_limit_gb = 10.0
     max_length = 512
 
     # --- Official OpenAI Models ---
+    # The key comes from OPENAI_API_KEY or [api_settings.openai]; to pin one
+    # here instead, add: api_key = "<your key>"
     [embedding_config.models.openai-ada-002]
     provider = "openai"
     model_name_or_path = "text-embedding-ada-002"
     dimension = 1536
-    api_key = "YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET" # User fills this or sets ENV
 
     [embedding_config.models.openai-text-embedding-3-small]
     provider = "openai"
-    model_name_or_path = "text-embedding-3-small" # Common model name
-    dimension = 3072 # Or 256,, 1536, 2048 3072 depending on how you use it
-    api_key = "YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET"
+    model_name_or_path = "text-embedding-3-small"
+    dimension = 1536
 
     [embedding_config.models.openai-text-embedding-3-large]
     provider = "openai"
-    model_name_or_path = "text-embedding-3-large" # Common model name
-    dimension = 1536 # Or 512, 1536 depending on how you use it
-    api_key = "YOUR_OPENAI_API_KEY_OR_LEAVE_BLANK_IF_ENV_VAR_SET"
+    model_name_or_path = "text-embedding-3-large"
+    dimension = 3072
 
-    # --- Placeholder for a Local OpenAI-Compatible Server ---
-    # The user needs to edit this section for their specific local setup.
-    # The 'key' (e.g., "my-local-nomic-model") is what will appear in the UI's model dropdown
-    # when "Local OpenAI-Compliant Server" provider is selected.
-    [embedding_config.models.my-local-nomic-model]
-    provider = "openai" # CRITICAL: This tells EmbeddingFactory to use OpenAICfg
-    model_name_or_path = "nomic-ai/nomic-embed-text-v1" # The actual model name the LOCAL SERVER uses/expects
-    base_url = "http://localhost:8080/v1" # The base URL of THE LOCAL SERVER's OpenAI-compatible API
-    dimension = 768 # CRITICAL: User MUST provide the correct dimension for this model
-    # api_key can be omitted if the local server doesn't require one, or set to a dummy value.
-    # api_key = "not-needed-for-local"
-
-    # --- Another Local Example (e.g., for a Llama.cpp server with embeddings) ---
-    [embedding_config.models.local-llama-cpp-embeddings]
-    provider = "openai"
-    model_name_or_path = "llama-2-7b-chat.Q4_K_M.gguf" # Or whatever model name the server endpoint expects
-    base_url = "http://localhost:8000/v1" # Common port for Llama.cpp server's OpenAI API
-    dimension = 4096 # Example dimension for Llama-2 base models
+    # --- Samples for a local OpenAI-compatible server (uncomment and edit) ---
+    # The table key (e.g. "my-local-nomic-model") is the id you choose.
+    # [embedding_config.models.my-local-nomic-model]
+    # provider = "openai" # tells EmbeddingFactory to use OpenAICfg
+    # model_name_or_path = "nomic-ai/nomic-embed-text-v1" # the name the server expects
+    # base_url = "http://localhost:8080/v1" # the server's OpenAI-compatible API
+    # dimension = 768 # must match the model
+    # api_key = "not-needed-for-local" # only if the server asks for one
+    #
+    # A llama.cpp server with embeddings enabled:
+    # [embedding_config.models.local-llama-cpp-embeddings]
+    # provider = "openai"
+    # model_name_or_path = "llama-2-7b-chat.Q4_K_M.gguf"
+    # base_url = "http://localhost:8000/v1"
+    # dimension = 4096
     # api_key = "sk-xxxxxxxxxxxxxxxxx" # If your Llama.cpp server is configured with an API key
 
 # You can add more local model configurations following the pattern above.

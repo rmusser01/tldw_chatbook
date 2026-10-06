@@ -1225,7 +1225,7 @@ _SETUP_DRAFT_FIELD_TYPES: Mapping[str, Mapping[str, type]] = {
         "use_as_default": bool,
         "preset": str,
     },
-    STEP_RAG: {"embedding_model": str},
+    STEP_RAG: {"auto_retrieve": bool},
     STEP_SPEECH: {},
     STEP_TOOLS: {},
     STEP_NOTES: {},
@@ -1472,8 +1472,10 @@ def setup_recovery_action(
 
 WIZARD_OWNED_SECTIONS = frozenset(
     {
+        # TASK-34100.13: no "embedding_config" -- the Search step writes
+        # [chat_defaults] rag_auto_retrieve_on_send, the key RAG and Console
+        # actually read, and nothing writes the legacy embedding table.
         "chat_defaults",
-        "embedding_config",
         "tools",
         "notes",
         "general",
@@ -1800,18 +1802,6 @@ def _real_model_ids(models: Any) -> list[str]:
     ]
 
 
-def build_rag_commit(*, default_model_id: str) -> dict[str, dict[str, Any]]:
-    """Mutation for the RAG step.
-
-    Args:
-        default_model_id: The chosen default embedding model id.
-
-    Returns:
-        The section/value mapping to persist under ``embedding_config``.
-    """
-    return {"embedding_config": {"default_model_id": default_model_id}}
-
-
 def build_tools_commit(*, gate_values: Mapping[str, bool]) -> dict[str, dict[str, Any]]:
     """Mutation for the tools step.
 
@@ -2006,8 +1996,7 @@ _TEMPLATE_DEFAULT_THEME = "textual-dark"
 #: Shipped template defaults that get merged into app_config at load time.
 #: Like `_TEMPLATE_DEFAULT_THEME`, their mere presence is not a user choice
 #: (task-2724: a Ctrl+N-only walk rendered "✓ Default model — gpt-5.6-terra"
-#: and "✓ RAG — embedding model: e5-small-v2" beneath "✗ Provider").
-_TEMPLATE_DEFAULT_RAG_MODEL = "e5-small-v2"
+#: beneath "✗ Provider").
 _TEMPLATE_DEFAULT_MODEL = "gpt-5.6-terra"
 
 
@@ -2154,6 +2143,7 @@ def build_summary_rows(
     rag_deps_installed: bool,
     speech_installed: bool = False,
     speech_runtime_installed: bool = False,
+    rag_model: Any = None,
 ) -> tuple[SummaryRow, ...]:
     """Build the summary matrix strictly from persisted config.
 
@@ -2181,6 +2171,10 @@ def build_summary_rows(
             itself now says "runtime not installed" -- the two must agree.
             Defaults to False (conservative: unknown runtime state reads as
             not-ready, matching ``speech_installed``'s own default bias).
+        rag_model: TASK-34100.13 -- the ``EmbeddingModelFacts`` RAG resolves
+            from its active profile (``first_run_rag_state``), resolved off
+            the loop by the caller like ``speech_installed``; ``None`` when
+            unknown, and the Search row then names only the flag.
 
     Returns:
         Ordered tuple of SummaryRow for the Summary step to render.
@@ -2194,24 +2188,21 @@ def build_summary_rows(
     encryption_on = coerce_wizard_flag(
         _section(app_config, "encryption").get("enabled")
     )
-    rag_model = str(
-        _section(app_config, "embedding_config").get("default_model_id") or ""
-    )
+    # TASK-34100.13 (fulltrack-01): built from what RAG and Console read --
+    # the auto-retrieve flag and the active profile's embedding model --
+    # never from the legacy [embedding_config] default_model_id.
+    from tldw_chatbook.UI.Wizards import first_run_rag_state as rag_state
 
+    auto_retrieve = rag_state.read_auto_retrieve(app_config)
+    search_detail = rag_state.search_summary_detail(
+        auto_retrieve=auto_retrieve,
+        facts=rag_model if rag_deps_installed else None,
+    )
     if not rag_deps_installed:
-        rag_row = SummaryRow(
-            "RAG", ROW_DEFAULT, "optional — embeddings deps not installed"
-        )
-    elif rag_model and rag_model != _TEMPLATE_DEFAULT_RAG_MODEL:
-        rag_row = SummaryRow("RAG", ROW_CONFIGURED, f"embedding model: {rag_model}")
-    elif rag_model:
-        # The untouched template value — matches the header's "RAG off"
-        # sentence instead of contradicting it (task-2724).
-        rag_row = SummaryRow(
-            "RAG", ROW_DEFAULT, f"off by default — embedding model {rag_model}"
-        )
-    else:
-        rag_row = SummaryRow("RAG", ROW_DEFAULT, "no embedding model selected")
+        search_detail += " · the optional search extras aren't installed"
+    rag_row = SummaryRow(
+        "Search", ROW_CONFIGURED if auto_retrieve else ROW_DEFAULT, search_detail
+    )
 
     if prefill.model_id and provider_ok:
         model_row = SummaryRow("Default model", ROW_CONFIGURED, prefill.model_id)

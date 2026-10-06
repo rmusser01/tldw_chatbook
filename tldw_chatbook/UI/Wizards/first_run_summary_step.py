@@ -70,11 +70,15 @@ class SummaryStep(SetupStep):
         rag_deps_installed=None,
         speech_installed=None,
         speech_runtime_installed=None,
+        rag_model=None,
         **kwargs,
     ):
         super().__init__(wizard=wizard, config=config, **kwargs)
         self._load_config = load_config
         self._rag_deps_installed = rag_deps_installed
+        # TASK-34100.13: the Search row names the embedding model RAG
+        # resolves (blocking I/O, so it runs in the executor below).
+        self._rag_model = rag_model
         # TASK-1301 AC#6: same injectable-callable shape as rag_deps_installed
         # -- defaults to a real, off-loop-safe check of the configured exact
         # managed Parakeet artifact's installed/active state.
@@ -241,6 +245,14 @@ class SummaryStep(SetupStep):
         speech_installed = await asyncio.get_running_loop().run_in_executor(
             None, speech_installed_check
         )
+        rag_model_check = self._rag_model
+        if rag_model_check is None:
+            from tldw_chatbook.UI.Wizards.first_run_rag_state import (
+                resolve_active_embedding_model as rag_model_check,
+            )
+        rag_model = await asyncio.get_running_loop().run_in_executor(
+            None, rag_model_check
+        )
         speech_runtime_installed = await asyncio.get_running_loop().run_in_executor(
             None, speech_runtime_check
         )
@@ -291,6 +303,7 @@ class SummaryStep(SetupStep):
             rag_deps_installed=deps(),
             speech_installed=speech_installed,
             speech_runtime_installed=speech_runtime_installed,
+            rag_model=rag_model,
         )
         row_states = {row.label: row.state for row in rows}
         from tldw_chatbook.UI.Wizards.first_run_setup_state import (

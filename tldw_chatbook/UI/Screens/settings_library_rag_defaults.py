@@ -202,6 +202,15 @@ def load_assistant_library_access_default(
     )
 
 
+#: The privacy sentence Settings shows for Library data sent to a cloud model.
+#: TASK-34100.13: one constant, so the first-run Search step quotes Settings
+#: verbatim instead of paraphrasing it.
+LIBRARY_CLOUD_MODEL_PRIVACY_COPY = (
+    "If you use a cloud model, this Library data leaves your device and is "
+    "handled by that provider. Use a local model if the data must remain "
+    "on-device."
+)
+
 #: Visible copy for the provider-mode selector. Rendered below the control as
 #: plain text so Direct/RAG cannot be mistaken for either policy axis.
 CONSOLE_DIRECT_LIBRARY_TOOLS_COPY = (
@@ -212,9 +221,7 @@ CONSOLE_DIRECT_LIBRARY_TOOLS_COPY = (
     "populated index.\n"
     "Neither mode grants access or changes Automatic retrieval.\n"
     "Privacy: Retrieved titles, metadata, content, and RAG excerpts are "
-    "included in model requests. If you use a cloud model, this Library data "
-    "leaves your device and is handled by that provider. Use a local model if "
-    "the data must remain on-device.\n"
+    f"included in model requests. {LIBRARY_CLOUD_MODEL_PRIVACY_COPY}\n"
     "Scope: This setting affects Console agents only. MCP Library access is "
     "controlled separately."
 )

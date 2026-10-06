@@ -330,6 +330,40 @@ def _default_stt_provider_for_platform() -> str:
     return "faster-whisper"
 
 
+#: The two editable sample rows older templates shipped as live
+#: ``[embedding_config.models]`` entries (TASK-34100.13, coverage-13).
+_EMBEDDING_MODEL_SAMPLE_IDS = frozenset(
+    {"my-local-nomic-model", "local-llama-cpp-embeddings"}
+)
+
+
+def listable_embedding_models(models: Any) -> Dict[str, Dict[str, Any]]:
+    """The ``[embedding_config.models]`` rows a UI may offer as choices.
+
+    Configs written by older templates carry malformed rows: an unquoted
+    ``bge-small-en-v1.5`` key parsed as ``models."bge-small-en-v1"."5"``,
+    which has no provider or model at that level, and two sample rows that
+    were never real models. Re-keying a user's table at load time is risky,
+    so the rows are filtered where they are listed instead.
+
+    Args:
+        models: The parsed ``[embedding_config.models]`` table.
+
+    Returns:
+        The complete, non-sample rows, in their original order.
+    """
+    if not isinstance(models, dict):
+        return {}
+    return {
+        str(model_id): entry
+        for model_id, entry in models.items()
+        if model_id not in _EMBEDDING_MODEL_SAMPLE_IDS
+        and isinstance(entry, dict)
+        and str(entry.get("provider") or "").strip()
+        and str(entry.get("model_name_or_path") or "").strip()
+    }
+
+
 def application_owned_config_directory(config_path: Path) -> Path | None:
     """Return the app-owned default config parent, never a custom parent."""
 
