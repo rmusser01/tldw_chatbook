@@ -47,6 +47,15 @@ from tldw_chatbook.Agents.agent_models import (
 #: Sessions whose last send the meter remembers (oldest dropped first).
 MAX_REMEMBERED_SESSIONS = 32
 
+#: The one-row request the planner is re-run with. It needs an active user
+#: request to count a request at all: with a local reasoning-replay policy
+#: (every llama.cpp resolution carries one) the count projects history around
+#: it, and with no messages it raised "A Console provider request requires an
+#: active request" -- which the planner swallows into a tool-less plan, so the
+#: meter counted no tools for requests that carried the light set (live,
+#: review round 1).
+_PREVIEW_REQUEST: tuple[dict[str, str], ...] = ({"role": "user", "content": "."},)
+
 
 class SchemaCatalog:
     """A frozen copy of the tool schemas one send could disclose.
@@ -138,9 +147,10 @@ class ToolSurfacePlanInputs:
     def tool_rows(self, resolution: Any, *, native_tools: bool) -> list[dict[str, Any]]:
         """The provider tool rows the planner discloses for ``resolution``.
 
-        The planner is given no conversation messages: the meter asks what
-        the tool surface is for this model and window; whether the
-        conversation then fits beside it is the preflight's own question.
+        The planner is given a one-row stand-in request, not the
+        conversation: the meter asks what the tool surface is for this model
+        and window; whether the conversation then fits beside it is the
+        preflight's own question.
 
         Args:
             resolution: The provider resolution to size against, or ``None``
@@ -183,7 +193,7 @@ class ToolSurfacePlanInputs:
             self.allowed_tools,
             config,
             endpoint,
-            [],
+            [dict(row) for row in _PREVIEW_REQUEST],
             context_window=context_window,
             **self.schema_flags,
         )
