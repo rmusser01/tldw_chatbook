@@ -32,7 +32,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from tldw_chatbook.Utils.input_validation import escape_markup
 
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
 from ...STT.transcribe_cpp_config import is_gguf_file
@@ -120,7 +119,7 @@ def _library_carries_forward_line(titles: Sequence[str]) -> str:
         keeps -- the same ``summarize_carried_titles`` rule Study's banner
         renders (TASK-34000.6), so the two descriptions cannot disagree.
     """
-    summary = summarize_carried_titles(escape_markup(title) for title in titles)
+    summary = summarize_carried_titles(titles)  # cleans + escapes (one rule)
     if summary.remaining > 0:
         return f"Carries forward: {summary.text}."
     return f"Carries forward: {summary.text}"

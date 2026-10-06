@@ -18,6 +18,8 @@ harness screen without it measures nothing -- see
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import time
 from typing import Any
 
 import pytest
@@ -36,7 +38,9 @@ from tldw_chatbook.UI.Screens.study_scope_models import (
     MATERIAL_SOURCE_LIBRARY,
     MATERIAL_TITLE_LIBRARY_SOURCES,
     StudyScopeContext,
+    StudyScopeType,
 )
+from tldw_chatbook.UI.Screens.study_screen import StudyScreen
 from tldw_chatbook.UI.Study_Window import StudyWindow
 
 # Every test here mounts the full app and rebuilds app config in its body, so
@@ -151,6 +155,56 @@ def _text(widget) -> str:
     return str(widget.render())
 
 
+#: Bound on every poll below; pytest-timeout still bounds the test as a whole.
+_WAIT_SECONDS = 15.0
+
+
+async def _wait_until(pilot, predicate: Callable[[], bool], *, what: str) -> None:
+    """Poll ``predicate`` with a deadline instead of sleeping a fixed time.
+
+    Review 1 (Minor 3): this file is in the PR UI lane, where a loaded runner
+    turns a fixed ``pilot.pause(0.3)`` into a flake. A predicate that raises
+    (widget not mounted yet) counts as "not yet".
+    """
+    deadline = time.monotonic() + _WAIT_SECONDS
+    while time.monotonic() < deadline:
+        try:
+            if predicate():
+                return
+        except Exception:
+            pass
+        await pilot.pause(0.02)
+    raise AssertionError(f"timed out after {_WAIT_SECONDS:.0f}s waiting for {what}")
+
+
+def _study_screen_up(app) -> bool:
+    return isinstance(app.screen, StudyScreen) and bool(
+        app.screen.query("#view-flashcards-btn")
+    )
+
+
+def _flashcards_view_up(app) -> bool:
+    window = app.screen.query_one(StudyWindow)
+    return (
+        app.screen.current_section == "flashcards"
+        and window.display
+        and window.current_view == "flashcards"
+        and bool(app.screen.query("#deck-select"))
+    )
+
+
+def _deck_options(app) -> list[str]:
+    return [
+        option[1]
+        for option in app.screen.query_one("#deck-select", Select)._options
+        if not str(option[1]).startswith("Select.")
+    ]
+
+
+def _is_blank(value: Any) -> bool:
+    return value in {None, "", False} or str(value).startswith("Select.")
+
+
 def _card_list_labels(list_view: ListView) -> list[str]:
     labels: list[str] = []
     for item in list_view.children:
@@ -172,16 +226,30 @@ async def test_real_service_create_deck_select_deck_and_add_card_in_local_mode()
     app, db = _build_real_study_app()
 
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause(0.2)
+        await _wait_until(pilot, lambda: _study_screen_up(app), what="the Study screen")
         await pilot.click("#view-flashcards-btn")
-        await pilot.pause(0.3)
+        await _wait_until(
+            pilot, lambda: _flashcards_view_up(app), what="the Flashcards view"
+        )
         controller = app.screen.query_one(StudyWindow).flashcards_controller
+        # The empty-DB deck load has settled once the status names the empty scope.
+        await _wait_until(
+            pilot,
+            lambda: (
+                "No study decks yet"
+                in _text(app.screen.query_one("#review-status", Static))
+            ),
+            what="the initial deck load",
+        )
 
         app.screen.query_one("#new-deck-name-input", Input).value = "Cell biology"
         await controller.create_deck()  # creates, selects, then refresh_cards()
-        await pilot.pause(0.1)
-
         deck_select = app.screen.query_one("#deck-select", Select)
+        await _wait_until(
+            pilot,
+            lambda: not _is_blank(deck_select.value),
+            what="the new deck to be selected",
+        )
         deck_id = str(deck_select.value)
         assert db.get_deck(deck_id) is not None, "deck row missing from the DB"
         assert db.get_deck(deck_id)["name"] == "Cell biology"
@@ -193,7 +261,13 @@ async def test_real_service_create_deck_select_deck_and_add_card_in_local_mode()
         app.screen.query_one("#card-back", TextArea).text = "The protein factory."
         app.screen.query_one("#card-tags", Input).value = "cells organelles"
         await controller.create_card()
-        await pilot.pause(0.1)
+        await _wait_until(
+            pilot,
+            lambda: any(
+                "What is a ribosome?" in label for label in _card_list_labels(card_list)
+            ),
+            what="the created card in the list",
+        )
 
         rows = db.list_flashcards(deck_id=deck_id, q=None, limit=100, offset=0)
         assert [(row["front"], row["back"]) for row in rows] == [
@@ -207,14 +281,15 @@ async def test_real_service_create_deck_select_deck_and_add_card_in_local_mode()
         # rule collapsed this list to its two border rows (live capture
         # 07-card-list-160x45 before the re-key), so the row had no paint.
         card_list.scroll_visible(animate=False)
-        await pilot.pause(0.2)
-        assert card_list.region.height >= 4, f"card list collapsed: {card_list.region}"
         row = next(
             item
             for item in card_list.children
             if getattr(item, "study_card_record", None) is not None
         )
-        assert row.region.height > 0, f"card row has no paint: {row.region}"
+        await _wait_until(
+            pilot, lambda: row.region.height > 0, what="the card row to be painted"
+        )
+        assert card_list.region.height >= 4, f"card list collapsed: {card_list.region}"
         assert card_list.region.contains_region(row.region), (
             card_list.region,
             row.region,
@@ -223,9 +298,12 @@ async def test_real_service_create_deck_select_deck_and_add_card_in_local_mode()
         # Re-selecting the deck is the second crash path (refresh_cards on
         # Select.Changed): it must list the same card, not raise.
         await controller.refresh_cards()
-        await pilot.pause(0.1)
-        assert any(
-            "What is a ribosome?" in label for label in _card_list_labels(card_list)
+        await _wait_until(
+            pilot,
+            lambda: any(
+                "What is a ribosome?" in label for label in _card_list_labels(card_list)
+            ),
+            what="the card list after a re-list",
         )
 
 
@@ -238,35 +316,55 @@ async def test_real_service_workspace_scope_lists_and_creates_through_real_signa
     app, _db = _build_real_study_app(runtime="server", server_client=client)
 
     async with app.run_test(size=(160, 45)) as pilot:
-        await pilot.pause(0.2)
+        await _wait_until(pilot, lambda: _study_screen_up(app), what="the Study screen")
         app.screen.enter_workspace_scope("workspace-1", "Workspace One")
-        await pilot.pause(0.5)
+        await _wait_until(
+            pilot,
+            lambda: (
+                app.screen.scope_state.scope_type == StudyScopeType.WORKSPACE
+                and app.screen.scope_state.workspace_id == "workspace-1"
+            ),
+            what="the workspace scope to apply",
+        )
         await pilot.click("#view-flashcards-btn")
-        await pilot.pause(0.3)
+        await _wait_until(
+            pilot, lambda: _flashcards_view_up(app), what="the Flashcards view"
+        )
         controller = app.screen.query_one(StudyWindow).flashcards_controller
 
+        # the workspace deck only (scope-filtered by the real list_decks)
+        await _wait_until(
+            pilot, lambda: _deck_options(app) == ["8"], what="the workspace deck list"
+        )
         deck_select = app.screen.query_one("#deck-select", Select)
-        option_values = [
-            option[1]
-            for option in deck_select._options
-            if not str(option[1]).startswith("Select.")
-        ]
-        assert option_values == ["8"], option_values  # the workspace deck only
 
+        # Selecting the deck IS the crash path: the Select.Changed handler
+        # runs refresh_cards (the TypeError site) on its own; wait for ITS
+        # result rather than calling refresh_cards a second time alongside it.
         deck_select.value = "8"
-        await pilot.pause(0.1)
-        await controller.refresh_cards()
         card_list = app.screen.query_one("#card-list", ListView)
-        assert _card_list_labels(card_list) == ["No cards in this deck."]
+        await _wait_until(
+            pilot,
+            lambda: (
+                str(deck_select.value) == "8"
+                and _card_list_labels(card_list) == ["No cards in this deck."]
+            ),
+            what="the selected deck's (empty) card list",
+        )
 
         app.screen.query_one("#card-front", TextArea).text = "Workspace front"
         app.screen.query_one("#card-back", TextArea).text = "Workspace back"
         await controller.create_card()
-        await pilot.pause(0.1)
+        await _wait_until(
+            pilot,
+            lambda: any(
+                "Workspace front" in label for label in _card_list_labels(card_list)
+            ),
+            what="the created workspace card in the list",
+        )
 
         created = [call for call in client.calls if call[0] == "create_flashcard"]
         assert len(created) == 1 and created[0][1]["deck_id"] == 8
-        assert any("Workspace front" in label for label in _card_list_labels(card_list))
 
 
 # --- AC#2: the Dashboard's actions and the Flashcards controls render --------
@@ -284,7 +382,9 @@ def _library_scope_context() -> StudyScopeContext:
         material_source=MATERIAL_SOURCE_LIBRARY,
         material_title=MATERIAL_TITLE_LIBRARY_SOURCES,
         material_summary="Notes: 3",
-        material_titles=tuple(f"Title {index}" for index in range(12)),
+        # Fix round 1 (Minor 2): one title that cleans to empty, so the test
+        # proves Study and the Library hand-off drop it the same way.
+        material_titles=("<draft>", *(f"Title {index}" for index in range(12))),
         return_hint=MATERIAL_SOURCE_LIBRARY,
     )
 
@@ -313,7 +413,15 @@ async def test_dashboard_action_buttons_render_inside_the_screen(size):
     app, _db = _build_real_study_app(scope_context=_library_scope_context())
 
     async with app.run_test(size=size) as pilot:
-        await pilot.pause(0.3)
+        await _wait_until(
+            pilot,
+            lambda: (
+                _study_screen_up(app)
+                and "Local Library Sources"
+                in _text(app.screen.query_one("#study-scope-summary", Static))
+            ),
+            what="the Study dashboard with the staged Library scope",
+        )
         for selector in _DASHBOARD_ACTION_IDS:
             _assert_inside_screen(app.screen.query_one(selector, Button), size)
         status = app.screen.query_one("#study-source-generation-status", Static)
@@ -335,6 +443,18 @@ async def test_dashboard_action_buttons_render_inside_the_screen(size):
         assert (
             "Local Library Sources: Title 0, Title 1, Title 2 and 7 more" in banner
         ), banner
+        # ... and the Library line for the SAME staged titles says the same
+        # names and count (the `<draft>` title drops out on both sides).
+        from tldw_chatbook.UI.Library_Modules.screen_helpers import (
+            _library_carries_forward_line,
+        )
+
+        assert (
+            _library_carries_forward_line(
+                list(_library_scope_context().material_titles)
+            )
+            == "Carries forward: Title 0, Title 1, Title 2 and 7 more."
+        )
 
 
 @pytest.mark.asyncio
@@ -345,9 +465,16 @@ async def test_flashcards_tab_shows_deck_picker_and_card_editor_controls(size):
     app, _db = _build_real_study_app()
 
     async with app.run_test(size=size) as pilot:
-        await pilot.pause(0.2)
+        await _wait_until(pilot, lambda: _study_screen_up(app), what="the Study screen")
         await pilot.click("#view-flashcards-btn")
-        await pilot.pause(0.3)
+        await _wait_until(
+            pilot, lambda: _flashcards_view_up(app), what="the Flashcards view"
+        )
+        await _wait_until(
+            pilot,
+            lambda: app.screen.query_one("#create-deck-button").region.height > 0,
+            what="the Flashcards editor to be laid out",
+        )
 
         for selector in ("#deck-select", "#new-deck-name-input", "#create-deck-button"):
             _assert_inside_screen(app.screen.query_one(selector), size)
@@ -385,5 +512,11 @@ async def test_flashcards_tab_shows_deck_picker_and_card_editor_controls(size):
         # The editor lives in a scroll container; Create Card is reachable.
         create_button = app.screen.query_one("#create-card-btn", Button)
         create_button.scroll_visible(animate=False)
-        await pilot.pause(0.2)
+        await _wait_until(
+            pilot,
+            lambda: (
+                0 <= create_button.region.y and create_button.region.bottom <= size[1]
+            ),
+            what="Create Card to scroll into view",
+        )
         _assert_inside_screen(create_button, size)

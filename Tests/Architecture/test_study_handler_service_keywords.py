@@ -15,10 +15,29 @@ the handler's own helper methods (``_scope_arguments``,
 ``_workspace_create_arguments``, ``_review_session_teardown_request``) -- and
 checks each against ``inspect.signature`` of the real ``StudyScopeService`` /
 ``QuizScopeService`` method. A spread whose keys cannot be resolved fails the
-guard too (fail closed), so a new helper cannot slip an unknown keyword past
-it. ``test_guard_fails_on_a_reintroduced_scope_spread`` is the negative
-control: the original bad call, re-inserted into a scratch copy, is reported
-by method, keyword and line.
+guard too (fail closed).
+
+What the guard enforces, exactly (fix round 1): every call whose receiver is
+the local name ``service`` or any local name bound, directly or through a
+simple ``a = b`` chain inside the same function, from the handler's service
+accessor ``self._scope_service()``; a ``getattr(<receiver>, "<literal>")(...)``
+target is checked as that method, and ``getattr(<receiver>, <non-literal>)``
+is itself a violation. It does NOT see a service reached any other way (an
+instance attribute, a parameter, a module-level name), and it covers only the
+two Study handlers listed in ``HANDLER_SERVICE_PAIRS``. ``study_screen.py``'s
+dashboard-snapshot block (``study_service = getattr(self.app_instance,
+"study_scope_service", None)`` plus getattr-dispatched loaders) is excluded on
+purpose: those loaders run inside ``try/except`` and degrade to a DB fallback
+instead of crashing, and the block already carries one live mismatch
+(``get_due_flashcards`` does not exist on ``StudyScopeService``) that the
+controller is filing as its own follow-up rather than folding into this
+guard.
+
+Negative controls: ``test_guard_fails_on_a_reintroduced_scope_spread`` (the
+original bad call, re-inserted into a scratch copy, reported by method,
+keyword and line), ``test_guard_fails_on_an_aliased_receiver`` (``svc =
+service``), ``test_guard_fails_on_a_getattr_dispatched_call`` (literal and
+non-literal ``getattr``), and ``test_guard_fails_on_an_unresolvable_spread``.
 """
 
 from __future__ import annotations
@@ -32,6 +51,10 @@ from pathlib import Path
 import pytest
 
 _PACKAGE = Path(__file__).resolve().parents[2] / "tldw_chatbook"
+
+#: The handler method that returns the scope service; local names bound from
+#: ``self.<accessor>()`` (and from each other) are receivers too.
+SERVICE_ACCESSOR = "_scope_service"
 
 #: (handler module path, service module, service class, local receiver name)
 HANDLER_SERVICE_PAIRS: tuple[tuple[Path, str, str, str], ...] = (
@@ -55,7 +78,9 @@ class ServiceCall:
     """One ``service.<method>(...)`` call site and everything it passes."""
 
     line: int
-    method: str
+    #: ``None`` when the method name cannot be known statically
+    #: (``getattr(service, <non-literal>)``).
+    method: str | None
     keywords: set[str] = field(default_factory=set)
     positional: int = 0
     spreads: list[str] = field(default_factory=list)
@@ -205,21 +230,85 @@ class _SpreadResolver:
         return keys, unresolved
 
 
-def collect_service_calls(source: str, receiver: str = "service") -> list[ServiceCall]:
-    """Every ``<receiver>.<method>(...)`` call in ``source`` with its arguments."""
+def _service_receivers(function: ast.AST, receiver: str, accessor: str) -> set[str]:
+    """Local names that hold the service inside ``function``.
+
+    ``receiver`` always counts; so does every name assigned from
+    ``self.<accessor>()`` and, to a fixpoint, every name assigned from another
+    receiver (``svc = service``).
+    """
+    receivers = {receiver}
+    assignments: list[tuple[str, ast.AST]] = []
+    for node in ast.walk(function):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    assignments.append((target.id, node.value))
+    changed = True
+    while changed:
+        changed = False
+        for name, value in assignments:
+            if name in receivers:
+                continue
+            if _is_self_call(value) == accessor or (
+                isinstance(value, ast.Name) and value.id in receivers
+            ):
+                receivers.add(name)
+                changed = True
+    return receivers
+
+
+def _service_call_target(
+    node: ast.Call, receivers: set[str]
+) -> tuple[str | None, bool] | None:
+    """``(method name or None, is_service_call)`` for ``node``, else ``None``.
+
+    Recognises ``<receiver>.<method>(...)`` and
+    ``getattr(<receiver>, <attr>)(...)``; for the latter the method is the
+    string literal, or ``None`` when the attribute is not a literal.
+    """
+    func = node.func
+    if (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Name)
+        and func.value.id in receivers
+    ):
+        return func.attr, True
+    if (
+        isinstance(func, ast.Call)
+        and isinstance(func.func, ast.Name)
+        and func.func.id == "getattr"
+        and len(func.args) >= 2
+        and isinstance(func.args[0], ast.Name)
+        and func.args[0].id in receivers
+    ):
+        attribute = func.args[1]
+        if isinstance(attribute, ast.Constant) and isinstance(attribute.value, str):
+            return attribute.value, True
+        return None, True
+    return None
+
+
+def collect_service_calls(
+    source: str, receiver: str = "service", accessor: str = SERVICE_ACCESSOR
+) -> list[ServiceCall]:
+    """Every service call in ``source`` with its arguments.
+
+    A service call is ``<r>.<method>(...)`` or ``getattr(<r>, ...)(...)`` where
+    ``<r>`` is a receiver per ``_service_receivers``.
+    """
     tree = ast.parse(source)
     resolver = _SpreadResolver(tree)
     calls: list[ServiceCall] = []
     for function in _class_methods(tree).values():
+        receivers = _service_receivers(function, receiver, accessor)
         for node in ast.walk(function):
-            if not (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and isinstance(node.func.value, ast.Name)
-                and node.func.value.id == receiver
-            ):
+            if not isinstance(node, ast.Call):
                 continue
-            call = ServiceCall(line=node.lineno, method=node.func.attr)
+            target = _service_call_target(node, receivers)
+            if target is None:
+                continue
+            call = ServiceCall(line=node.lineno, method=target[0])
             call.positional = len(node.args)
             for keyword in node.keywords:
                 if keyword.arg is not None:
@@ -243,6 +332,12 @@ def check_handler_against_service(
     if not calls:
         violations.append(f"{handler_path.name}: found no {receiver}.<method>() calls")
     for call in calls:
+        if call.method is None:
+            violations.append(
+                f"{handler_path.name}:{call.line} getattr({receiver}, <non-literal>)(...): "
+                "unresolvable service method -- the guard cannot check its keywords"
+            )
+            continue
         where = f"{handler_path.name}:{call.line} {receiver}.{call.method}("
         target = getattr(service_class, call.method, None)
         if target is None:
@@ -373,6 +468,90 @@ def test_guard_fails_on_a_reintroduced_scope_spread(tmp_path: Path) -> None:
     )
     # And nothing else in the handler is reported: the control isolates the one bad call.
     assert all(f":{bad_line} " in line for line in violations), violations
+
+
+def _scratch_with_list_decks_replaced(
+    tmp_path: Path, name: str, replacement: str
+) -> Path:
+    """Scratch copy of the flashcards handler with its ``list_decks`` line replaced."""
+    source = HANDLER_SERVICE_PAIRS[0][0].read_text(encoding="utf-8")
+    anchor = "            decks = await service.list_decks(mode=mode, **self._scope_arguments())\n"
+    assert source.count(anchor) == 1, (
+        "the refresh_decks call site moved; update the control"
+    )
+    scratch = tmp_path / name
+    scratch.write_text(source.replace(anchor, replacement, 1), encoding="utf-8")
+    return scratch
+
+
+def test_guard_fails_on_an_aliased_receiver(tmp_path: Path) -> None:
+    """Negative control (review 1, Important #1): ``svc = service`` followed by
+    a bad call through the alias is reported, not silently unseen."""
+    scratch = _scratch_with_list_decks_replaced(
+        tmp_path,
+        "flashcards_handler_alias.py",
+        "            svc = service\n"
+        "            decks = await svc.list_decks(mode=mode, bogus_keyword=1, **self._scope_arguments())\n",
+    )
+    violations = check_handler_against_service(
+        scratch, _service_class(*HANDLER_SERVICE_PAIRS[0][1:3])
+    )
+    assert any(
+        "service.list_decks(bogus_keyword=...)" in line
+        and "does not accept 'bogus_keyword'" in line
+        for line in violations
+    ), violations
+
+
+def test_guard_sees_a_receiver_bound_from_the_accessor_under_another_name(
+    tmp_path: Path,
+) -> None:
+    """``scope = self._scope_service()`` is a receiver too (not only ``service``)."""
+    scratch = _scratch_with_list_decks_replaced(
+        tmp_path,
+        "flashcards_handler_rebound.py",
+        "            scope = self._scope_service()\n"
+        "            decks = await scope.list_decks(mode=mode, bogus_keyword=1, **self._scope_arguments())\n",
+    )
+    violations = check_handler_against_service(
+        scratch, _service_class(*HANDLER_SERVICE_PAIRS[0][1:3])
+    )
+    assert any("does not accept 'bogus_keyword'" in line for line in violations), (
+        violations
+    )
+
+
+def test_guard_fails_on_a_getattr_dispatched_call(tmp_path: Path) -> None:
+    """Negative control (review 1, Important #1): a literal ``getattr`` target is
+    checked as that method; a non-literal one is a violation in itself."""
+    literal = _scratch_with_list_decks_replaced(
+        tmp_path,
+        "flashcards_handler_getattr_literal.py",
+        '            decks = await getattr(service, "list_decks")(mode=mode, bogus_keyword=1, **self._scope_arguments())\n',
+    )
+    violations = check_handler_against_service(
+        literal, _service_class(*HANDLER_SERVICE_PAIRS[0][1:3])
+    )
+    assert any(
+        "service.list_decks(bogus_keyword=...)" in line
+        and "does not accept 'bogus_keyword'" in line
+        for line in violations
+    ), violations
+
+    dynamic = _scratch_with_list_decks_replaced(
+        tmp_path,
+        "flashcards_handler_getattr_dynamic.py",
+        "            loader_name = 'list_decks'\n"
+        "            decks = await getattr(service, loader_name)(mode=mode, **self._scope_arguments())\n",
+    )
+    violations = check_handler_against_service(
+        dynamic, _service_class(*HANDLER_SERVICE_PAIRS[0][1:3])
+    )
+    assert any(
+        "getattr(service, <non-literal>)" in line
+        and "unresolvable service method" in line
+        for line in violations
+    ), violations
 
 
 def test_guard_fails_on_an_unresolvable_spread(tmp_path: Path) -> None:
