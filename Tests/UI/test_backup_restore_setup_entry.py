@@ -21,6 +21,7 @@ saying why. These tests pin:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -47,18 +48,46 @@ def test_archive_source_problem_names_a_settings_file_and_a_folder(tmp_path):
     message = archive_source_problem(settings)
     assert message.startswith("That's a settings file, not a backup archive.")
     assert "Setting up another machine" in message
-    assert "Docs/User_Guide/First_Run_Setup.md" in message
-    assert "--config" in message and str(settings) in message
+    assert "tldw-cli --config" in message
+    # Review round 1: no repo path (an installed user has no Docs/), and no
+    # path of any length -- the copy must fit the message line at 54 columns.
+    assert "Docs/" not in message and str(tmp_path) not in message
+    assert archive_source_problem(tmp_path / "a" / ("long" * 20) / "config.toml") == message
     assert archive_source_problem(tmp_path / "Other.TOML") is not None
     assert archive_source_problem(tmp_path) == "Choose the archive file, not a folder."
     assert archive_source_problem(tmp_path / "home.tldw-backup.zip") is None
     assert archive_source_problem(tmp_path / "home.tldw-backup.zip.age") is None
 
 
-def _capacity(sufficient=True):
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="needs POSIX permissions that apply to this user",
+)
+def test_archive_source_problem_never_raises_for_an_unreadable_folder(tmp_path):
+    """Review round 1: ``Path.is_dir()`` raises PermissionError on Python 3.12.
+
+    An archive under a folder the terminal cannot traverse (a macOS
+    privacy-protected Downloads, a chmod-000 folder) must fall through to the
+    inspection, which reports its own failure, instead of raising.
+    """
+    from tldw_chatbook.UI.Screens.backup_restore_state import archive_source_problem
+
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        assert archive_source_problem(locked / "home.tldw-backup.zip") is None
+        assert archive_source_problem(locked / "config.toml").startswith(
+            "That's a settings file"
+        )
+    finally:
+        locked.chmod(0o700)
+
+
+def _capacity(sufficient=True, path="/Volumes/Backups"):
     return (
         {
-            "path": "/Volumes/Backups",
+            "path": path,
             "required_bytes": 2_000_000,
             "available_bytes": 1_000_000 if not sufficient else 9_000_000,
             "sufficient": sufficient,
@@ -76,6 +105,7 @@ def test_create_unavailable_reason_names_each_blocking_condition():
             capacity=_capacity(),
             available=True,
             unavailable_message="",
+            destination=Path("/Volumes/Backups/home.tldw-backup.zip"),
         )
         values.update(overrides)
         return create_unavailable_reason(**values)
@@ -86,7 +116,14 @@ def test_create_unavailable_reason_names_each_blocking_condition():
     assert "Partial" in partial and "Acknowledge Partial archive" in partial
     assert "Review" in partial
     space = reason(capacity=_capacity(sufficient=False))
-    assert "not enough free space" in space and "/Volumes/Backups" in space
+    assert space.startswith("Not enough free space") and "/Volumes/Backups" in space
+    assert "choose another location" in space
+    # Review round 1: the staging volume (the system temporary folder) has no
+    # control in the form, so its row never advises moving the destination.
+    staging = reason(capacity=_capacity(sufficient=False, path="/private/var/tmp"))
+    assert staging.startswith("Not enough free space")
+    assert "temporary folder" in staging
+    assert "choose another location" not in staging
     unavailable = reason(available=False, unavailable_message="Pause writers first.")
     assert unavailable == "Create backup is unavailable: Pause writers first."
     # The service's own refusal outranks the form's conditions.
@@ -239,7 +276,10 @@ async def test_a_disabled_create_always_says_why_on_the_line_above_it(tmp_path):
     from textual.widgets import Button, Checkbox
 
     from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
-    from tldw_chatbook.UI.Screens.backup_restore_state import CREATE_NEEDS_REVIEW
+    from tldw_chatbook.UI.Screens.backup_restore_state import (
+        CREATE_NEEDS_REVIEW,
+        CREATE_STARTED,
+    )
 
     service = RecoveryService(tmp_path / "control")
     app = _harness(service, config_paths=(tmp_path / "config.toml",))
@@ -258,7 +298,11 @@ async def test_a_disabled_create_always_says_why_on_the_line_above_it(tmp_path):
                 screen._show_preview(
                     screen._revision,
                     details,
-                    ((), destination, {"allow_partial": allow_partial}),
+                    (
+                        (),
+                        destination,
+                        {"allow_partial": allow_partial, "encrypted": False},
+                    ),
                 )
 
             show(_review_details(complete=False))
@@ -267,7 +311,7 @@ async def test_a_disabled_create_always_says_why_on_the_line_above_it(tmp_path):
 
             show(_review_details(sufficient=False))
             assert create.disabled
-            assert "not enough free space" in _text(screen, "#backup-message")
+            assert _text(screen, "#backup-message").startswith("Not enough free space")
 
             show(_review_details(available=(False, "admission_timeout")))
             assert create.disabled
@@ -286,8 +330,233 @@ async def test_a_disabled_create_always_says_why_on_the_line_above_it(tmp_path):
             assert create.disabled
             assert _text(screen, "#backup-message") == CREATE_NEEDS_REVIEW
 
+            # Review round 1: pressing Create voids the review too; through the
+            # run and after it ends, the line says how Create comes back.
+            show(_review_details())
+            assert not create.disabled
+            started = []
+            service.start_backup = lambda *args, **kwargs: started.append(args) or "op-1"
+            await pilot.click("#backup-create")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert len(started) == 1
+            assert create.disabled
+            assert _text(screen, "#backup-message") == CREATE_STARTED
+
             # Other modes never carry it.
             await pilot.click("#backup-open-inspect")
             assert _text(screen, "#backup-message") == ""
+    finally:
+        service.close()
+
+
+
+# --- review round 1 -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="needs POSIX permissions that apply to this user",
+)
+async def test_an_archive_under_an_unreadable_folder_never_takes_the_app_down(
+    tmp_path,
+):
+    """The pre-check raised PermissionError out of the button handler.
+
+    That exited the whole app -- and the setup wizard under it. The archive
+    goes on to the inspection, which owns that failure and reports it.
+    """
+    from textual.widgets import Input
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    service = RecoveryService(tmp_path / "control")
+    app = _harness(service, config_paths=(), initial_mode="inspect")
+    locked.chmod(0)
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            screen.query_one("#backup-source", Input).value = str(
+                locked / "home.tldw-backup.zip"
+            )
+            await pilot.click("#backup-inspect")
+            await pilot.pause()
+            assert app.is_running
+            assert app.screen is screen
+            assert (
+                service.current() is not None
+                or _text(screen, "#backup-message") != ""
+            )
+    finally:
+        locked.chmod(0o700)
+        service.close()
+
+
+def _shown_and_needed(screen, selector):
+    """Rows the line shows, and rows its text needs at the current width."""
+    from textual.widgets import Static
+
+    line = screen.query_one(selector, Static)
+    width = line.content_region.width
+    needed = line.get_content_height(screen.size, screen.size, width)
+    return line.content_region.height, needed
+
+
+@pytest.mark.asyncio
+async def test_the_new_messages_fit_their_line_at_the_narrowest_width(tmp_path):
+    """Review round 1: at 54x22 the line shows 4 rows, and both clipped.
+
+    The settings-file message lost its ``tldw-cli --config`` command and the
+    Partial reason lost "press Review again". The line's max-height is what
+    keeps the form usable at that size, so the copy has to fit it.
+    """
+    from textual.widgets import Input
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    settings = tmp_path / "Downloads" / "a-rather-long-folder-name" / "config.toml"
+    settings.parent.mkdir(parents=True)
+    settings.write_text("[general]\n")
+    service = RecoveryService(tmp_path / "control")
+    app = _harness(service, config_paths=(tmp_path / "config.toml",))
+    try:
+        async with app.run_test(size=(54, 22)) as pilot:
+            screen = app.screen
+            await pilot.click("#backup-open-inspect")
+            screen.query_one("#backup-source", Input).value = str(settings)
+            await pilot.pause()
+            screen._inspect()
+            await pilot.pause()
+            assert _text(screen, "#backup-message").startswith("That's a settings")
+            shown, needed = _shown_and_needed(screen, "#backup-message")
+            assert needed <= shown, (shown, needed)
+
+            await pilot.click("#backup-open-create")
+            screen._show_preview(
+                screen._revision,
+                _review_details(complete=False),
+                ((), tmp_path / "b.tldw-backup.zip", {"allow_partial": False}),
+            )
+            await pilot.pause()
+            assert "Review again" in _text(screen, "#backup-message")
+            shown, needed = _shown_and_needed(screen, "#backup-message")
+            assert needed <= shown, (shown, needed)
+
+            # A short staging volume: macOS's temporary folder alone is wider
+            # than the line, so the reason must not need its path.
+            details = _review_details()
+            details["capacity"] = _capacity(
+                sufficient=False,
+                path="/private/var/folders/p_/x47tgtn57cv43r7yxxn40tyh0000gn/T",
+            )
+            screen._show_preview(
+                screen._revision,
+                details,
+                ((), tmp_path / "b.tldw-backup.zip", {"allow_partial": False}),
+            )
+            await pilot.pause()
+            assert "temporary folder" in _text(screen, "#backup-message")
+            shown, needed = _shown_and_needed(screen, "#backup-message")
+            assert needed <= shown, (shown, needed)
+    finally:
+        service.close()
+
+
+@pytest.mark.asyncio
+async def test_changing_the_archive_path_clears_the_previous_problem(tmp_path):
+    """Review round 1: "not a folder" stayed above a field now holding a file."""
+    from textual.widgets import Input
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    service = RecoveryService(tmp_path / "control")
+    app = _harness(service, config_paths=(), initial_mode="inspect")
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            field = screen.query_one("#backup-source", Input)
+            field.value = str(tmp_path)
+            await pilot.click("#backup-inspect")
+            await pilot.pause()
+            assert _text(screen, "#backup-message").startswith("Choose the archive file")
+            field.value = str(tmp_path / "config.toml")
+            await pilot.pause()
+            assert _text(screen, "#backup-message") == ""
+    finally:
+        service.close()
+
+
+@pytest.mark.asyncio
+async def test_enter_in_the_archive_field_inspects_it(tmp_path):
+    """Review round 1: setup focuses the field, so Enter is the next keystroke."""
+    from textual.widgets import Input
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    settings = tmp_path / "config.toml"
+    settings.write_text("[general]\n")
+    service = RecoveryService(tmp_path / "control")
+    app = _harness(service, config_paths=(), initial_mode="inspect")
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            field = screen.query_one("#backup-source", Input)
+            assert screen.focused is field
+            field.value = str(settings)
+            await pilot.press("enter")
+            await pilot.pause()
+            assert _text(screen, "#backup-message").startswith(
+                "That's a settings file, not a backup archive."
+            )
+            assert service.current() is None
+    finally:
+        service.close()
+
+
+@pytest.mark.asyncio
+async def test_setup_entry_leads_with_inspect_and_its_title_follows_the_pane(tmp_path):
+    """Review round 1: Create backup was still the first action from setup.
+
+    And after switching to Create, the title still said "Restore from a
+    backup" above the Create form.
+    """
+    from textual.widgets import Button
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    service = RecoveryService(tmp_path / "control")
+    app = _harness(service, config_paths=(), initial_mode="inspect")
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            first = screen.query_one("#backup-actions").query(Button).first()
+            assert first.id == "backup-open-inspect"
+            await pilot.click("#backup-open-create")
+            assert _text(screen, "#backup-title") == "Backup & Restore"
+            await pilot.click("#backup-open-inspect")
+            assert _text(screen, "#backup-title") == "Restore from a backup"
+    finally:
+        service.close()
+
+
+@pytest.mark.asyncio
+async def test_the_ordinary_entry_keeps_create_first_and_its_title(tmp_path):
+    """The paired control: Settings' entry is unchanged by the setup entry."""
+    from textual.widgets import Button
+
+    from tldw_chatbook.Backup_Recovery.recovery_service import RecoveryService
+
+    service = RecoveryService(tmp_path / "control")
+    app = _harness(service, config_paths=())
+    try:
+        async with app.run_test(size=(100, 36)) as pilot:
+            screen = app.screen
+            first = screen.query_one("#backup-actions").query(Button).first()
+            assert first.id == "backup-open-create"
+            await pilot.click("#backup-open-inspect")
+            assert _text(screen, "#backup-title") == "Backup & Restore"
     finally:
         service.close()

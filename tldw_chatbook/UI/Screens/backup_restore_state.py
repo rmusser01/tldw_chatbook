@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import shlex
+import os
 from collections.abc import Mapping, Sequence
-from pathlib import Path
+from pathlib import Path, PurePath
 
-from tldw_chatbook.Utils.launch_options import (
-    SECOND_MACHINE_GUIDE,
-    SECOND_MACHINE_SECTION,
-)
+from tldw_chatbook.Utils.launch_options import SECOND_MACHINE_SECTION
 
 #: Titles per entry mode (TASK-34100.16): setup's "Restore a backup" opens the
 #: view on Inspect, named for what the user came to do.
@@ -23,9 +20,25 @@ ARCHIVE_FORMAT_HINT = (
 
 FOLDER_NOT_ARCHIVE = "Choose the archive file, not a folder."
 
+#: A config.toml chosen as an archive. No path in it: at the narrowest width
+#: (54 columns) the message line shows four rows, and a path of any length
+#: would push the command and the guide pointer out of view. The path is in
+#: the field right above, and ``tldw-cli --help`` links the published guide.
+SETTINGS_FILE_NOT_ARCHIVE = (
+    "That's a settings file, not a backup archive. To use it, start chatbook "
+    "with: tldw-cli --config <this file>. Guide: "
+    f"“{SECOND_MACHINE_SECTION}” (link in tldw-cli --help)."
+)
+
 #: The line above a disabled Create backup until a review succeeds. One row at
 #: the narrowest supported width: a wrap costs the scrolling form a row.
 CREATE_NEEDS_REVIEW = "Create backup unlocks after a successful Review."
+
+#: The line above Create once a backup is accepted: pressing Create voids the
+#: review, and this stays true through the run and after it succeeds or fails.
+CREATE_STARTED = (
+    "Backup started; progress is shown at the top. Press Review to create another."
+)
 
 
 def result_label(
@@ -51,21 +64,20 @@ def archive_source_problem(source: Path) -> str | None:
     A config.toml and a folder used to reach the archive reader and fail as
     the generic ``backup_operation_failed`` (TASK-34100.16).
 
+    Never raises: ``os.path.isdir`` reports an unreadable path as "not a
+    folder" (``Path.is_dir()`` raises PermissionError on Python 3.12), so
+    such an archive goes on to the inspection, which reports its own failure.
+
     Args:
         source: The absolute path the user chose.
 
     Returns:
         The message to show instead of inspecting, or None to inspect.
     """
-    if source.is_dir():
+    if os.path.isdir(source):
         return FOLDER_NOT_ARCHIVE
     if source.suffix.lower() == ".toml":
-        return (
-            "That's a settings file, not a backup archive. To set up this "
-            f"computer from it, see “{SECOND_MACHINE_SECTION}” in "
-            f"{SECOND_MACHINE_GUIDE}, or start chatbook with: "
-            f"tldw-cli --config {shlex.quote(str(source))}"
-        )
+        return SETTINGS_FILE_NOT_ARCHIVE
     return None
 
 
@@ -76,6 +88,7 @@ def create_unavailable_reason(
     capacity: Sequence[Mapping[str, object]],
     available: bool,
     unavailable_message: str,
+    destination: PurePath | None = None,
 ) -> str | None:
     """Why a reviewed backup cannot be created, or None when it can.
 
@@ -91,25 +104,43 @@ def create_unavailable_reason(
         available: The service's backup availability verdict.
         unavailable_message: The service's plain explanation when it is not
             available.
+        destination: The reviewed backup file. A short volume that does not
+            hold it is the staging volume (the system temporary folder),
+            which the form cannot change, so its advice differs.
 
     Returns:
-        A sentence starting "Create backup is unavailable", or None.
+        The reason, leading with what to do, or None.
     """
     if not available:
         return f"Create backup is unavailable: {unavailable_message}"
     short = next((row for row in capacity if not row["sufficient"]), None)
     if short is not None:
+        volume = PurePath(str(short["path"]))
+        # The service names each volume by the file's nearest existing
+        # ancestor, spelled as abspath spells it (no links resolved).
+        target = None if destination is None else PurePath(os.path.abspath(destination))
+        holds_destination = (
+            target is None or target == volume or volume in target.parents
+        )
+        # Action first, figures last: at 54 columns the line shows four rows,
+        # and the coverage list above repeats every volume's figures.
+        needed = (
+            f"{short['required_bytes']:,} bytes needed, "
+            f"{short['available_bytes']:,} free"
+        )
+        if holds_destination:
+            return (
+                "Not enough free space for this backup: choose another location "
+                f"and review again ({needed} at {volume})."
+            )
         return (
-            "Create backup is unavailable: not enough free space at "
-            f"{short['path']} ({short['required_bytes']:,} bytes needed, "
-            f"{short['available_bytes']:,} free). Choose another location "
-            "and review again."
+            "Not enough free space in the system temporary folder, where the "
+            f"backup is staged: free some space there and review again ({needed})."
         )
     if not (complete or allow_partial):
+        # Action first: the line shows four rows at 54 columns.
         return (
-            "Create backup is unavailable: this would be a Partial backup "
-            "(the coverage above lists what can't be captured). Tick "
-            "“Acknowledge Partial archive…” and press Review again, or "
-            "change the selection."
+            "To create a Partial backup, tick “Acknowledge Partial archive…” "
+            "and press Review again, or change the selection."
         )
     return None

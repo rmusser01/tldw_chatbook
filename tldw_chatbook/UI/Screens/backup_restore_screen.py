@@ -22,6 +22,7 @@ from tldw_chatbook.Widgets.backup_group_selector import BackupDataGroupSelector
 from .backup_restore_state import (
     ARCHIVE_FORMAT_HINT,
     CREATE_NEEDS_REVIEW,
+    CREATE_STARTED,
     ENTRY_TITLES,
     archive_source_problem,
     create_unavailable_reason,
@@ -110,16 +111,20 @@ class BackupRestoreScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Static(ENTRY_TITLES[self._initial_mode], id="backup-title")
         with Container(id="backup-actions"):
-            yield Button(
-                "Create backup",
-                id="backup-open-create",
-                classes="backup-restore-screen-button",
+            opening = (
+                Button(
+                    "Create backup",
+                    id="backup-open-create",
+                    classes="backup-restore-screen-button",
+                ),
+                Button(
+                    "Inspect / restore",
+                    id="backup-open-inspect",
+                    classes="backup-restore-screen-button",
+                ),
             )
-            yield Button(
-                "Inspect / restore",
-                id="backup-open-inspect",
-                classes="backup-restore-screen-button",
-            )
+            # Setup's Restore entry leads with what the user came to do.
+            yield from opening[:: -1 if self._initial_mode == "inspect" else 1]
             yield Button(
                 "Recovery copies",
                 id="backup-open-copies",
@@ -583,6 +588,10 @@ class BackupRestoreScreen(Screen):
     def _show_mode(self, mode):
         self._mode = mode
         self._revision += 1
+        # Setup's entry is titled for Inspect only while Inspect is showing.
+        self.query_one("#backup-title", Static).update(
+            ENTRY_TITLES[mode if mode == self._initial_mode else "home"]
+        )
         self._preview = self._reviewed = None
         self._backup_availability = None
         self._restore_availability = None
@@ -1350,6 +1359,8 @@ class BackupRestoreScreen(Screen):
             self._sync_replacement_host()
             if event.control.id == "backup-source":
                 self._clear_inspection(dismiss_current=True)
+                # TASK-34100.16 review: a pre-check message named the old path.
+                self.query_one("#backup-message", Static).update("")
             if event.control.id == "backup-later-target":
                 self._forget_later_credential_review()
             control = event.control
@@ -1536,6 +1547,7 @@ class BackupRestoreScreen(Screen):
                 if available
                 else self.service.issue_message(reason) + f" ({reason})"
             ),
+            destination=reviewed[1],
         )
         self.query_one("#backup-create", Button).disabled = blocked is not None
         # TASK-34100.16: a disabled Create says why on the line above it.
@@ -1576,6 +1588,9 @@ class BackupRestoreScreen(Screen):
             return
         approved_scope = self._preview.scope_digest
         self._invalidate()
+        # TASK-34100.16 review: pressing Create voids the review, so say how
+        # Create comes back (true through the run and after it ends).
+        self.query_one("#backup-message", Static).update(CREATE_STARTED)
         self._clear_passwords()
         self._start_backup_operation(
             self.app,
@@ -1625,6 +1640,12 @@ class BackupRestoreScreen(Screen):
                 operation,
                 None,
             )
+
+    @on(Input.Submitted, "#backup-source")
+    def _submit_source(self):
+        """Enter in the archive field inspects it, like the Inspect button."""
+        if self._mode == "inspect":
+            self._inspect()
 
     @on(Button.Pressed, "#backup-inspect")
     def _inspect(self):
