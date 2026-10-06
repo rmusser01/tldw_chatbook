@@ -997,6 +997,32 @@ def test_library_carries_forward_line_counts_what_study_keeps_not_the_whole_samp
     assert "134" not in line
 
 
+def test_library_carries_forward_line_cleans_titles_with_the_same_rule_as_study():
+    """TASK-34000.6 fix round 1 (review Minor 2): Library used to feed the
+    describer raw titles while Study fed `_clean_material_text`-filtered ones,
+    so a title that cleans to empty (``<draft>``) shifted Study's third name
+    and its count by one. The describer now cleans itself: both surfaces name
+    the same titles and count the same remainder."""
+    from tldw_chatbook.UI.Screens.study_screen import StudyScreen
+    from tldw_chatbook.UI.Screens.study_scope_models import summarize_carried_titles
+
+    titles = ["<draft>", *(f"Title {index}" for index in range(11))]  # 12 raw
+    line = library_screen_module._library_carries_forward_line(titles)
+    # What Study keeps on receipt, through its own (delegating) cleaner...
+    study_kept = [
+        StudyScreen._clean_material_text(title, max_length=160) for title in titles
+    ]
+    study_kept = [title for title in study_kept if title][:10]
+    # ...described by the same describer Study's banner calls.
+    study_summary = summarize_carried_titles(study_kept)
+
+    assert "<draft>" not in line and "draft" not in line
+    assert line == "Carries forward: Title 0, Title 1, Title 2 and 7 more."
+    assert study_summary.named == ("Title 0", "Title 1", "Title 2")
+    assert study_summary.remaining == 7
+    assert line == f"Carries forward: {study_summary.text}."
+
+
 # --- task-2856: Library keyboard story --------------------------------------
 
 

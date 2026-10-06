@@ -6,7 +6,6 @@ import asyncio
 from collections.abc import Mapping
 import hashlib
 from inspect import isawaitable
-import re
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -20,7 +19,6 @@ from textual.widgets import Button
 
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Constants import LIBRARY_NAV_CONTEXT_MODE, TAB_HOME, TAB_LIBRARY
-from ...Utils.input_validation import sanitize_string, validate_text_input
 from ..Navigation.base_app_screen import BaseAppScreen
 from ..Navigation.main_navigation import NavigateToScreen
 from ..Navigation.pending_handoff_store import HandoffChannel
@@ -44,6 +42,7 @@ from .study_scope_models import (
     STUDY_MATERIAL_SUMMARY_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
     STUDY_MATERIAL_TITLES_LIMIT,
+    clean_material_text,
     summarize_carried_titles,
     STUDY_ORIGIN_HOME,
     STUDY_ORIGIN_LIBRARY,
@@ -58,10 +57,6 @@ from .study_scope_models import (
 
 
 ScopeKey = tuple[str, Optional[str], str, bool, Optional[str]]
-_HTML_TAG_RE = re.compile(r"<[^>]*>")
-_DANGEROUS_TEXT_RE = re.compile(
-    r"javascript\s*:|\bon(?:click|error)\s*=", re.IGNORECASE
-)
 SOURCE_STUDY_PACK_STATUS_CHECKS = 8
 SOURCE_STUDY_PACK_STATUS_DELAY_SECONDS = 0.25
 SOURCE_STUDY_PACK_ERROR_LENGTH_LIMIT = 240
@@ -324,14 +319,9 @@ class StudyScreen(BaseAppScreen):
 
     @staticmethod
     def _clean_material_text(value: Any, *, max_length: int) -> str:
-        text = sanitize_string(str(value or ""), max_length=max_length).strip()
-        if not text:
-            return ""
-        text = _HTML_TAG_RE.sub("", text)
-        text = _DANGEROUS_TEXT_RE.sub("", text).strip()
-        if not validate_text_input(text, max_length=max_length, allow_html=False):
-            return ""
-        return text
+        # The rule lives in study_scope_models so the Library hand-off's
+        # describer applies the identical cleaning (TASK-34000.6 fix round 1).
+        return clean_material_text(value, max_length=max_length)
 
     def _clean_material_titles(
         self, material_titles: tuple[str, ...]
@@ -506,15 +496,9 @@ class StudyScreen(BaseAppScreen):
             )
             or "Study material"
         )
-        sample_titles: list[str] = []
-        for raw_title in self.scope_state.material_titles:
-            clean_title = self._clean_material_text(
-                raw_title,
-                max_length=STUDY_MATERIAL_TITLE_LENGTH_LIMIT,
-            )
-            if clean_title:
-                sample_titles.append(escape_markup(clean_title))
-        summary = summarize_carried_titles(sample_titles)
+        # The describer cleans and escapes the titles itself -- the same
+        # input the Library hand-off line was built from.
+        summary = summarize_carried_titles(self.scope_state.material_titles)
         if summary.named:
             # TASK-34000.6: the same names and count the Library hand-off
             # canvas showed ("Carries forward: a, b, c and N more.").
