@@ -23,7 +23,7 @@
 - Startup GC must not delete the exact admitted revision before provider reservation.
 - Repeated recovery state must avoid CSS work while external geometry mutations are corrected.
 
-## TASK-34403: Control layout and complete native performance verification
+## TASK-34561: Control layout and complete native performance verification
 Files: Widgets/Console/console_control_bar.py; Tests/UI/test_console_recovery_height_idempotence.py; Tests/Performance/test_console_native_pause_probe.py; .github/workflows/console-pause-native-evidence.yml; qa/console-pause-investigation-2026-10-04/.
 - [x] Count stylesheet work for unchanged real control state; run to confirm failure.
 - [x] Add class/inline-constraint equality guard; test recovery visible/hidden geometry and externally changed constraints.
@@ -104,7 +104,7 @@ process death while avoiding unrelated Windows ancestor barriers.
 
 
 ## Additional measured root: finite paired-witness control observation
-An actual installed native Windows MCP permission source made 3,003 file opens for one get_kill_switch: 18 selected-path queries and 19 witness reads. Each witness repeated three validated control-record reads and two registry reads; direct raw directory loops contributed only 56 opens. TASK-34403 AC7 requires one fresh validated record/registry observation per witness call, shared only by that call's source-scope, startup and paired-generation decisions.
+An actual installed native Windows MCP permission source made 3,003 file opens for one get_kill_switch: 18 selected-path queries and 19 witness reads. Each witness repeated three validated control-record reads and two registry reads; direct raw directory loops contributed only 56 opens. TASK-34561 AC7 requires one fresh validated record/registry observation per witness call, shared only by that call's source-scope, startup and paired-generation decisions.
 - [x] Add a real native read-count RED and differential refusal fixtures using actual records and native leases.
 - [x] Add a fault barrier that writes pending evidence during the actual observation and prove refusal.
 - [x] Extract existing decision helpers, preserve public fresh readers, and retire the finite observation before returning. Recheck native source identities/change stamps before publication; no cross-call cache or empty-witness shortcut.
@@ -119,7 +119,7 @@ ADR required: no new ADR
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
 Reason: restore the existing no-disk-I/O-under-coordinator invariant and retain current source and native ownership gates, without adding authority or observation reuse.
 
-## Continuous installed MCP custody follow-up (TASK-34403 AC8)
+## Continuous installed MCP custody follow-up (TASK-34561 AC8)
 
 The corrected real permission RMW pause fixture fails on literal HEAD and the coordinator repair: repeated selected-generation proof requests a new acquisition after pause. Seed actual bytes and qualify the original failure, then retain only the exact installed raw operation's canonical observation lease before acceptance. Check issued source/participant/process/thread/task/native custody before and after each fresh observation; retain existing exact execution-context path checks and all child, foreign, retarget, native-demotion and pause refusals. Move remaining native participant proofs outside coordinator sections with exact metadata/closed/pause rechecks. Verify accepted RMW completion and negative ownership/cancellation cases alongside the four coordinator race controls; freeze source for native integration.
 ADR required: yes
@@ -151,10 +151,10 @@ The corrected real installed permission RMW fixture seeds True then False to ens
 
 The final formatted targeted bundle passes 21 cases in 43.45 seconds, normal exit zero: four original coordinator lock/revocation controls; actual participant/scope native-reader entry checks; maintenance closure/drain/resume during accepted pause; exact wrong-path native lease refusal; final source/canonical mutation fences; seeded accepted RMW and same-path foreign refusal; installed/custom and profile/native demotion; foreign thread/task/sibling; and actual canceled native worker custody. Actual accepted continuation makes no new acquisition after pause. No selected-generation lease is broadened to another canonical path; each generation observation remains fresh, uncached and owned by the same issued operation. An actual distinct restored-generation integration and native cross-platform matrix remain final qualification obligations.
 
-Scoped production and the new coordinator regression module pass Ruff; new module formatting and diff whitespace checks pass. Source-lifetimes Ruff diagnostic multiset is identical to HEAD (13 existing diagnostics after normalizing only embedded shifted definition line numbers). Production/test source is frozen for coordinated mounted and full native measurement. SHA256: raw_participants.py 451bde0e5a47aa7371612f8b349c45aed65c7e8067ef1263f9c9cc80e8d883e5; mcp_source_participants.py 809212856647086100231fb962d57983c05ae5d2b36c6ac5fdf690af95a9f770; MCP/recovery_activation.py f120eb3747210791ca513ab2c59fd75bf0f30cd7ed3c36d9ff3a41aca82d1b23; test_mcp_source_lifetimes.py 78a0f3e735d858a0fa80968e5a048eb3ef9a96f3d3acb4828c479930150ce8ee; test_raw_source_coordinator_io.py 119040923116b0aae7433651c781b7d680e794a8c6cefbf8f99c5f4f26f51ce2. ADR-126 and TASK-34403 AC8/plan/notes record the custody boundary; task stays In Progress pending native matrix, whole-Console budgets, review and combined PR.
+Scoped production and the new coordinator regression module pass Ruff; new module formatting and diff whitespace checks pass. Source-lifetimes Ruff diagnostic multiset is identical to HEAD (13 existing diagnostics after normalizing only embedded shifted definition line numbers). Production/test source is frozen for coordinated mounted and full native measurement. SHA256: raw_participants.py 451bde0e5a47aa7371612f8b349c45aed65c7e8067ef1263f9c9cc80e8d883e5; mcp_source_participants.py 809212856647086100231fb962d57983c05ae5d2b36c6ac5fdf690af95a9f770; MCP/recovery_activation.py f120eb3747210791ca513ab2c59fd75bf0f30cd7ed3c36d9ff3a41aca82d1b23; test_mcp_source_lifetimes.py 78a0f3e735d858a0fa80968e5a048eb3ef9a96f3d3acb4828c479930150ce8ee; test_raw_source_coordinator_io.py 119040923116b0aae7433651c781b7d680e794a8c6cefbf8f99c5f4f26f51ce2. ADR-126 and TASK-34561 AC8/plan/notes record the custody boundary; task stays In Progress pending native matrix, whole-Console budgets, review and combined PR.
 
 
-## Additional measured root: duplicate checked display policy reads (TASK-34403 AC9)
+## Additional measured root: duplicate checked display policy reads (TASK-34561 AC9)
 
 The exact-source seventh receipt counts fourteen context-control presentation config
 lifetimes on send one and three (4.526 and 3.326 cumulative entry seconds), alongside
@@ -180,13 +180,13 @@ interface; it must remain disposable presentation data and never admission autho
 ADR-097 ratchets and registered whole-send budgets remain unchanged.
 
 
-### TASK-34403 AC8 finite MCP source metadata repetition
+### TASK-34561 AC8 finite MCP source metadata repetition
 
 The exact 0ecd8327 native seventh capture remains RED. An actual installed seeded permission read performs eighteen bound selections and nineteen fresh witnesses, seven full raw checks, twelve acquisitions and 1,930 native opens on an isolated shorter private path. Remove only five redundant selections: immutable actual-kind owner classification in members, preflight and the history-directory branch; and each same-source nested scope's duplicate path selection immediately after its full fresh raw check. Retain every full raw source/native check, exact selected_read refusal and final acceptance binding proof; no witness/permission cache, altered lease selection, skipped native checks, helper authority or timer changes. First reproduce the real native count RED, then qualify the prior 21 custody/retarget/refusal controls plus actual restored-generation integration. Parent owns storage evidence and DB changes; config combined acquisition is deferred.
 ADR required: yes (existing amendment), ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: document pure owner metadata classification and use of the exact just-validated scope selection without introducing an authority/cache boundary.
 
 
-### TASK-34403 AC10 consecutive same-path repository proof
+### TASK-34561 AC10 consecutive same-path repository proof
 
 The actual installed EventStateRepository nested operation performs two full native checks of the same previous.path under one coordinator interval. Qualified RED: one failure/two control passes in 1.64 seconds, with real Windows native open/security call-through counts recorded. Keep the first fresh previous.path proof always; omit only the immediately consecutive second proof when the participant and exact target path match. A differing target path retains both previous and target checks, independent owners receive independent admission, and restoration/retirement/cancellation fences remain unchanged. Verify the actual path-count regression plus cross-owner pause, retarget/provenance/thread/task and established independent nested failure controls. Scope is only storage_admission._repository_operation; parent independently owns lower-file creation-intent evidence.
 ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: remove one identical consecutive check without moving, caching or weakening the existing native proof or authority boundary.
@@ -251,7 +251,7 @@ Source/tests are frozen: raw428e8977067b1c2f289659dd79c579ae7b3bc80163ac8df916d5
 Qualification: isolated installed warm config read_current uses201opens/3raw checks and global policy189/1. Its one pinned parent raw check uses6opens; a fresh stat-many union uses12, so parent union batching was rejected for this case. Actual finite AgentRuns query/newworkerclose uses221opens/2acquisitions/12corechecks; first diagnostic lacking required conversation argument is excluded. Config combined acquisition is deferred because exact-file bound companion ownership must remain valid. The broader whole-Console40k-open/15s-send/1s-UI and cross-platform budgets remain RED/pending; these receipts are bounded syscall reductions, not a claim that global performance is fixed. AC10 and its plan preceded repository implementation; MCP plan/ADR126 preceded implementation, while AC9 was subsequently formalized within already authorized AC8/AC2 scope.
 
 
-## Bounded ordinary Character and count presentation cadence (TASK-34403)
+## Bounded ordinary Character and count presentation cadence (TASK-34561)
 
 ADR required: yes
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
@@ -278,7 +278,7 @@ Reason: distinguish synchronized issued ownership from each fresh native path ob
 4. Preserve the one real same-path nested proof and independent proof for a differing target. Verify blocked-native revocation, existing finite callback/retirement, rollback/cancellation and provenance cases. No cross-call path/permission cache or private RLock release manipulation.
 
 
-## Exact process-owned live fleet precedence (TASK-34403)
+## Exact process-owned live fleet precedence (TASK-34561)
 ADR required: yes
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
 Reason: make the display fallback honor its existing live-over-history service contract at the actual bridge ownership boundary.
@@ -303,7 +303,7 @@ macOS relative tracer diagnosis is source-based pending native stack evidence: t
 
 ### Display cadence/live-owner frozen receipts
 
-TASK-34403 AC13/AC15 remain under the combined native matrix/whole-send acceptance. Actual native legacy cadence RED3/7.63s precedes production; initial GREEN3/6.15s. Six warm unchanged Character ticks:6 real paired callbacks/1878opens/0.594sÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢1/313/0.094s. Active successful count ages0.3s:6callbacks/4164opens/1.109sÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢1/1124/0.265s, with no 2s TTL change. These are isolated diagnostic timings, not whole-send budget proof. Final new cadence29pass57.89s includes actual owner changes, queued waiter recapture, real SQLite metadata failure/recovery, both pairs+midpoint, actual opened native handle repeated cancellation and fresh action positive controls. Exact standard count callbacks bind the captured AgentRunsDB; custom/file-backed bridge callbacks keep their declared semantics and are captured independently, with the exact receiver/publication fence.
+TASK-34561 AC13/AC15 remain under the combined native matrix/whole-send acceptance. Actual native legacy cadence RED3/7.63s precedes production; initial GREEN3/6.15s. Six warm unchanged Character ticks:6 real paired callbacks/1878opens/0.594sÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢1/313/0.094s. Active successful count ages0.3s:6callbacks/4164opens/1.109sÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢1/1124/0.265s, with no 2s TTL change. These are isolated diagnostic timings, not whole-send budget proof. Final new cadence29pass57.89s includes actual owner changes, queued waiter recapture, real SQLite metadata failure/recovery, both pairs+midpoint, actual opened native handle repeated cancellation and fresh action positive controls. Exact standard count callbacks bind the captured AgentRunsDB; custom/file-backed bridge callbacks keep their declared semantics and are captured independently, with the exact receiver/publication fence.
 
 Live-empty actual setup and bound running controls reproduce native historical reads (each1145opens) and setup's previous-child leak; actual inline child projection is also RED. The initial real-handle fixture was corrected to use the actual fleet service seam, handle ID and secondary task field; its unchanged positive control separately passes1/4.05s, and its failed draft is excluded from functional RED. Exact standard disk bridge chooses process-owned setup or bound running snapshot after nonempty handles, allowing meaningful empty; terminal/restored/unknown/custom fallback remains native. Final live suite is separately recorded below.
 
@@ -317,7 +317,7 @@ Final live-empty native receipt:8pass10.01s normalexit0, including actual setup/
 Native macOS observer follow-up (TASK-34404 AC7): run 37244879946 captures exact real-profile audit hook -> _protected -> CPython realpath relative lstat probes, separate from actual descriptor-relative admission reads. Classify only exact installed code identity and the actual raw relative write-open input; retain unknown relative reads (including identical control-like names) in dependency completeness. Add actual macOS descriptor-write and same-name raw-read controls. ADR required: no. ADR path: N/A. Reason: test-only attribution correction, no admission or profile guard behavior changes. Original three native dependency cases are qualified RED; native positive/negative classification and original oracles must pass in the next full three-OS checkpoint.
 
 
-## Character browser message-pump lifetime follow-up (TASK-34403 AC17)
+## Character browser message-pump lifetime follow-up (TASK-34561 AC17)
 
 ADR required: no
 ADR path: backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md
@@ -387,10 +387,10 @@ Production widget SHA256 is
 3499dd1f22831f2afd853db308e1709a687c950390748fa449b5a53d52e9e52b.
 Scoped Ruff, edited-method formatting and diff checks pass. Textual teardown
 warnings remain in the mounted receipt; this is not a warning-free whole-suite,
-native-matrix or captured-send budget claim. TASK-34403 remains In Progress.
+native-matrix or captured-send budget claim. TASK-34561 remains In Progress.
 
 
-## Exact checked warm configuration display (TASK-34403 AC18)
+## Exact checked warm configuration display (TASK-34561 AC18)
 
 ADR required: yes.
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
@@ -442,7 +442,7 @@ The heartbeat probe measures loop stalls, but Textual separately awaits a corout
 
 If that original path is RED, the standard screen wiring may provide an optional actual-pump task predicate. Only exact app/screen pump callers hand the existing captured snapshot/review/normal Send continuation to a Textual worker before any native await. Direct callers and the spoken worker continue to await their actual outcome. Keep the synchronous busy/dedup gate, original exact chat and draft checks, fresh independent native permission reads, repeated cancellation drain and shutdown ownership. Reuse existing interaction states and worker ownership; no visual, keybinding or permission authority changes. Test default/custom paths and native source lifetime as well as mounted input delivery. Whole-app registered budgets and final native matrix remain pending.
 
-### Badge fixture consumer qualification (TASK-34403, 2026-10-04)
+### Badge fixture consumer qualification (TASK-34561, 2026-10-04)
 
 The original badge node passed uninstrumented at exact original `0ecd8327`
 and also passed a current standalone run. The earlier mounted bundle failure
@@ -468,7 +468,7 @@ introduced. The full three-host original module verification remains a final
 matrix requirement; the prior mounted bundle was 84 GREEN plus this race.
 
 
-### Warm display native RED before production (TASK-34403 AC18)
+### Warm display native RED before production (TASK-34561 AC18)
 
 Actual installed-source control `checked-display-scope-red.xml` settled two
 expected failures and two positive controls in 21.36 s on native Windows.
@@ -521,7 +521,7 @@ independent review remain pending; these RED receipts do not establish final
 performance budgets or cross-platform completion.
 
 
-### Native observer import-order qualification (TASK-34403 AC18)
+### Native observer import-order qualification (TASK-34561 AC18)
 
 ADR required: no new ADR.
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md.
@@ -554,7 +554,7 @@ expectation correction is excluded from production regression evidence.
 Receipt: checked-display-observer-red.xml/log in the private evidence TEMP.
 
 
-### Checked display completion evidence (TASK-34403 AC18)
+### Checked display completion evidence (TASK-34561 AC18)
 
 Native Windows targeted receipt checked-display-final.xml/log settled normally
 with 104 PASS, 0 failures/errors/skips in 440.12 s. The bundle contains 35 new display
@@ -607,7 +607,7 @@ performance or cross-platform completion. ADR required: existing ADR-126
 amendment applies; no additional ADR is needed for the observer alias repair.
 
 
-### Hook indicator physical-read ownership (TASK-34403 AC20)
+### Hook indicator physical-read ownership (TASK-34561 AC20)
 
 ADR required: no new ADR.
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md and
@@ -638,7 +638,7 @@ Windows host. Individual test deadlines and all Console performance caps stay
 unchanged; this job ceiling only allows the entire targeted bundle to finish.
 
 
-### Hook snapshot and error completion (TASK-34403 AC21)
+### Hook snapshot and error completion (TASK-34561 AC21)
 
 ADR required: no new ADR; existing ADR-126 and ADR-148 apply.
 Original-native direct Send/manual review cancellation controls both fail on
@@ -936,7 +936,7 @@ Final integration: freeze all owned source and tests; commit, rebase onto latest
 
 Preimplementation scope: the exact integrated children for cold and reused Home both stop at test_home_console_resume.py:98 with WorkerCancelled before pressing Resume. The unchanged Buddy baseline contains the same fixture/helper/Home bytes; that proves source provenance, not a baseline runtime outcome. Textual pop_screen updates the active stack before queued ScreenResume dispatch, and Home's resume hook starts the same exclusive snapshot group. After qualified cancellation-owner evidence, use the actual Pilot queue barrier before the explicit worker, bounded to the fixture's existing eight-second condition limit. Retain the original post-worker pause for HomeCanvas recomposition, all saved-history/identity/draft/reuse assertions and every original test/child deadline. No cancellation suppression, repeated workers or product changes.
 
-The isolated Windows parent's locale decoder masks this native child failure with CP1252 UnicodeDecodeError. First add a focused reporting RED control that runs the real wrapper failure branch with a small UTF-8 child and locale-bound parent log read, without app/native imports. Then explicitly pin child PYTHONIOENCODING=utf-8 and log open/read encoding=utf-8, preserving exact child selection, XML/return-code refusal, profile guards, coverage and log-tail length. Keep the helper and Home source unchanged during root's next isolated diagnostic; implement only after its source release. Existing TASK-34403 AC2 covers this fixture/evidence qualification; no new task or acceptance scope is introduced. ADR required: no. ADR path: N/A. Reason: routine test synchronization and diagnostic encoding preserve application/security boundaries. Root serializes the pure reporting RED/GREEN and exact Home cold/reused verification. Earlier integrated RED remains retained.
+The isolated Windows parent's locale decoder masks this native child failure with CP1252 UnicodeDecodeError. First add a focused reporting RED control that runs the real wrapper failure branch with a small UTF-8 child and locale-bound parent log read, without app/native imports. Then explicitly pin child PYTHONIOENCODING=utf-8 and log open/read encoding=utf-8, preserving exact child selection, XML/return-code refusal, profile guards, coverage and log-tail length. Keep the helper and Home source unchanged during root's next isolated diagnostic; implement only after its source release. Existing TASK-34561 AC2 covers this fixture/evidence qualification; no new task or acceptance scope is introduced. ADR required: no. ADR path: N/A. Reason: routine test synchronization and diagnostic encoding preserve application/security boundaries. Root serializes the pure reporting RED/GREEN and exact Home cold/reused verification. Earlier integrated RED remains retained.
 ### AC16 visible draft mirror before finite native preparation
 
 The tenth exact-source diagnostic qualifies a real pre-custody refusal at wiring._prepare_console_turn_to_runtime: the retained session object and settings revision stayed unchanged, while its stored draft changed from empty to the same 28-character live composer draft during the native await. Regular Console sync mirrors the visible composer into the store. Enter already mirrors its captured text synchronously; button/direct capture can enter preparation before that mirror. This is a draft synchronization defect, not changed native authority, and the three original whole-probe failures remain recorded.
@@ -1305,7 +1305,7 @@ Merged maintenance fixture minimal rename GREEN: all6originalscenarios pass31.14
 
 Evidence-only draft. Register this amendment before installing production or test changes. Native RED/GREEN and complete merged-source acceptance remain root-owned and pending.
 
-## Acceptance criteria addition (TASK-34403 / TASK-34406)
+## Acceptance criteria addition (TASK-34561 / TASK-34406)
 
 - An approved automatic created-chat start reads original stock MCP configuration sources off the Console owner loop, composes the detached snapshot on that loop, and preserves the original approved destination and source fields.
 - Replacing the exact target, store or start coordinator during preparation refuses before coordinator admission. Stock snapshot owner/source/settings changes retain their existing refusal; all actual native readers retire normally.
@@ -1383,7 +1383,7 @@ TASK34406 AC11 added before any fixture repair. ADR required: no new ADR. ADR pa
 Tab refinement before production: the original settings ensure can synchronously converge pristine defaults, and an inner Surface lock can suspend after membership capture. Reuse only already established active settings for tab painting; keep the original ensure for blank/missing settings and preserve checked worker convergence and live explicit actions. Recheck exact store, active ID, ordered strong session identities/IDs and current Surface after actual publication, replaying changes within the same counted caller/outer lock. No permission/source/cache/age change. Source-only controls distinguish both refinements (23 passes versus prior14/9); original Native Surface custody is independently RED. Actual reader/DOM and original journeys remain required. ADR required: no new ADR; existing ADR126/095 apply to presentation reuse and verified convergence.
 
 
-## TASK-34403 AC23: actual standard MCP duplicate precheck
+## TASK-34561 AC23: actual standard MCP duplicate precheck
 
 ADR required: yes
 ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md
@@ -1449,7 +1449,7 @@ permission cache or an excuse to move shared table reads outside their lock.
 **Tech Stack:** Actual CPython 3.12, real Windows native admission/RLock/SQLite,
 local sys.monitoring START/RETURN/LINE controls; existing private-child runner.
 
-**Spec:** TASK-34403 current accepted native custody and performance criteria;
+**Spec:** TASK-34561 current accepted native custody and performance criteria;
 existing Docs/superpowers/plans/2026-10-04-console-performance-fixes.md.
 
 ADR required: yes, existing ADR126 amendment before production.

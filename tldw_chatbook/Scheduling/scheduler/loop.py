@@ -602,7 +602,7 @@ class SchedulerLoop:
         """Whether the global emergency stop holds new dispatches (26004).
 
         Both configured path resolution and the stop-state read can block, so
-        they run in one owned offload (TASK-34403). Fail-safe is preserved: a failure reads
+        they run in one owned offload (TASK-34561). Fail-safe is preserved: a failure reads
         as stopped, holding work rather than proceeding on doubt.
         """
         # ADR-097 boot ratchet: deferred off the boot path (loads on first use).

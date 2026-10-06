@@ -364,7 +364,7 @@ permission cache or an excuse to move shared table reads outside their lock.
 **Tech Stack:** Actual CPython 3.12, real Windows native admission/RLock/SQLite,
 local sys.monitoring START/RETURN/LINE controls; existing private-child runner.
 
-**Spec:** TASK-34403 current accepted native custody and performance criteria;
+**Spec:** TASK-34561 current accepted native custody and performance criteria;
 existing Docs/superpowers/plans/2026-10-04-console-performance-fixes.md.
 
 ADR required: yes, existing ADR126 amendment before production.

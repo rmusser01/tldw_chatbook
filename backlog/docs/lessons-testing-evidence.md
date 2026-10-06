@@ -18500,7 +18500,7 @@ attributes around calls, relax the guard, or treat a failed capture as performan
 evidence.
 
 
-### TASK-34403: qualify the intended post-restore edit on Windows
+### TASK-34561: qualify the intended post-restore edit on Windows
 The current-generation unknown-state test expected an edited selector, but its shared `_completed` fixture replaced only the LF byte sequence `[general]\n`. Actual restored Windows bytes contained CRLF: no `post_restore=true` marker was present and the current fingerprint still matched the enrolled profile. The metadata result was correctly checked; the claimed negative fixture never existed. Normalizing that controlled fixture newline boundary before inserting its existing edit retained every assertion and made the representative pass (8.70 seconds). Qualify real changed bytes or fingerprints before attributing a negative-state result to a production gate; a setter/replacement call alone is not evidence that the edit occurred. The pristine whole-HEAD comparison was blocked earlier by Windows directory-flush rights, so it could not establish the later metadata result as a baseline failure.
 
 In the 2026-10-04 Console pause repair, the installed MCP pause RMW fixture used `set_kill_switch(False)` on an absent store: False is the default, so no bytes were written and the supposed accepted read/pause barrier never ran. Seeding True then False and asserting both file existence and a reached pause exposed the real post-pause reacquisition bug. Controls that depend on a mutation must prove the real side effect/barrier happened before their negative assertion; a successful default no-op is not that evidence.
@@ -18515,7 +18515,7 @@ The same review found Python mapping equality admitting boolean/number changes i
 
 ### A same-owner memo can still be too old for an explicit modal wait
 
-TASK-34403's shared checked display-policy fix initially let a modal warm wait return
+TASK-34561's shared checked display-policy fix initially let a modal warm wait return
 success when the fresh worker failed but an expired mapping still had the same owner.
 The actual controller/config expiry control reproduced one failure in 4.47 seconds:
 the display's permissible stale labels were incorrectly treated as a completed modal
@@ -18528,12 +18528,12 @@ checked data; identity equality alone cannot satisfy the latter.
 
 ### A second cancellation can escape a single shielded cleanup await
 
-TASK-34403's checked readiness warm regression held the original checked_config_identity return while its real raw operation and two native leases remained active. The first cancellation entered its shielded cleanup await; a second cancellation escaped it, set pendingFalse/settledTrue and allowed a warmer to finish before native retirement. A loop that preserves cancellation precedence until the worker actually completes repairs this. The same control must hold an actual opened handle or live raw operation: a callback-entry barrier can precede physical connection allocation and cannot prove premature native close.
+TASK-34561's checked readiness warm regression held the original checked_config_identity return while its real raw operation and two native leases remained active. The first cancellation entered its shielded cleanup await; a second cancellation escaped it, set pendingFalse/settledTrue and allowed a warmer to finish before native retirement. A loop that preserves cancellation precedence until the worker actually completes repairs this. The same control must hold an actual opened handle or live raw operation: a callback-entry barrier can precede physical connection allocation and cannot prove premature native close.
 
 
 ### Isolated worker launches must prove their worktree source origin
 
-In TASK-34403 AC22, pytest loaded the managed worktree but the actual filesystem executor launched sys.executable with -I. That isolated worker resolved the editable primary checkout, so adding a managed root-pin fix alone could not qualify the actual helper. An original -I origin/hash probe proved the primary root-pin and filesystem identity bytes still matched the immutable baseline; this supported the genuine Windows stat/HANDLE mismatch without claiming a changed worker was tested.
+In TASK-34561 AC22, pytest loaded the managed worktree but the actual filesystem executor launched sys.executable with -I. That isolated worker resolved the editable primary checkout, so adding a managed root-pin fix alone could not qualify the actual helper. An original -I origin/hash probe proved the primary root-pin and filesystem identity bytes still matched the immutable baseline; this supported the genuine Windows stat/HANDLE mismatch without claiming a changed worker was tested.
 
 A private EvidenceRoot-only interpreter of the same Python 3.12 ABI then exposed the managed app and profile-core paths before the existing dependency environment. Ordinary -I probes verified five managed module origins/hashes and matching dependency versions before regression qualification. The native identity controls passed afterward. A pytest working directory or parent sys.path insertion does not establish child source identity; verify the actual isolated helper launch before attributing its outcome to the worktree. Preserve the shipping loader and primary environment when test-only isolation is sufficient.
 

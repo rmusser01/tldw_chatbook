@@ -1844,7 +1844,7 @@ recorded UAT artifact. Commit with message
   of Done is satisfied.
 
 
-## Character browser message-pump lifetime follow-up (TASK-34403 AC17)
+## Character browser message-pump lifetime follow-up (TASK-34561 AC17)
 
 ADR required: no
 ADR path: backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md
@@ -1894,9 +1894,9 @@ Production widget SHA256 is
 3499dd1f22831f2afd853db308e1709a687c950390748fa449b5a53d52e9e52b.
 Scoped Ruff, edited-method formatting and diff checks pass. Textual teardown
 warnings remain in the mounted receipt; this is not a warning-free whole-suite,
-native-matrix or captured-send budget claim. TASK-34403 remains In Progress.
+native-matrix or captured-send budget claim. TASK-34561 remains In Progress.
 
-### Badge fixture consumer qualification (TASK-34403, 2026-10-04)
+### Badge fixture consumer qualification (TASK-34561, 2026-10-04)
 
 The original badge node passed uninstrumented at exact original `0ecd8327`
 and also passed a current standalone run. The earlier mounted bundle failure

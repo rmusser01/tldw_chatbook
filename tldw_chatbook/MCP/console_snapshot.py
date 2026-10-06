@@ -704,7 +704,7 @@ def _controller_inputs_checker_current():
     )
 
 
-# TASK-34403: defining metadata for the fresh composition switch pipeline.
+# TASK-34561: defining metadata for the fresh composition switch pipeline.
 # This table is callback provenance only; each actual source read stays native.
 _CONTROLLER_PRECHECK_MODULE = sys.modules[__name__]
 _CONTROLLER_PRECHECK_CLASS = _CapturedSources

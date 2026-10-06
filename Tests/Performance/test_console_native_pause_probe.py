@@ -29,7 +29,7 @@ import pytest
 from Tests.private_profile import private_profile_test
 
 
-# Recorded before the final integration measurement (TASK-34403). Earlier native
+# Recorded before the final integration measurement (TASK-34561). Earlier native
 # Windows sends took 53/51/41s with 8-9s UI stalls and >100,000 opens per send;
 # Linux/macOS sends were ~3-4s. These bound actual work, never provider latency.
 MAX_CAPTURED_SEND_SECONDS = 15

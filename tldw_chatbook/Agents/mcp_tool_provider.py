@@ -2075,7 +2075,7 @@ def _controller_inputs_checker_current():
     )
 
 
-# TASK-34403: captured at defining-module completion, before consumer imports.
+# TASK-34561: captured at defining-module completion, before consumer imports.
 _CONTROLLER_COMPOSE_MODULE = sys.modules[__name__]
 _CONTROLLER_COMPOSE_FACTORY = MCPToolProvider
 _CONTROLLER_COMPOSITIONS = weakref.WeakSet()

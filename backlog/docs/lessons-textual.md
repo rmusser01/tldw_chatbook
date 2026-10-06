@@ -1559,7 +1559,7 @@ that chat no longer shows, and post awaited answers with an explicit
 `session_id`. **Making a call asynchronous changes the contract of everything
 it calls: list each handler's awaits and what it re-reads after them.**
 
-## A widget's `_task` belongs to Textual's message pump (TASK-34403, 2026-10-04)
+## A widget's `_task` belongs to Textual's message pump (TASK-34561, 2026-10-04)
 
 The Character browser reused `self._task` for an `asyncio.create_task` controller
 refresh. Textual also stores its message-pump task there, and `App._prune` waits

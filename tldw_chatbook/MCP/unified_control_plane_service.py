@@ -5821,7 +5821,7 @@ _CONSOLE_STANDARD_METHODS = (
 )
 
 
-# TASK-34403: definition-time provenance of the omitted controller callback.
+# TASK-34561: definition-time provenance of the omitted controller callback.
 # These are callable inputs only; the provider still reads live native policy.
 _CONSOLE_CONTROLLER_SWITCH_MODULE = sys.modules[__name__]
 _CONSOLE_CONTROLLER_SWITCH_CLASS = UnifiedMCPControlPlaneService

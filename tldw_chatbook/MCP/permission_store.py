@@ -2649,7 +2649,7 @@ _CONSOLE_STANDARD_METHODS = (
 )
 
 
-# TASK-34403: only the two original guarded members used by the omitted getter.
+# TASK-34561: only the two original guarded members used by the omitted getter.
 # The known decorator's function cell is captured here, never lazily unwrapped.
 _CONSOLE_CONTROLLER_PERMISSION_MODULE = sys.modules[__name__]
 _CONSOLE_CONTROLLER_PERMISSION_CLASS = MCPPermissionStore

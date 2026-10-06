@@ -1399,7 +1399,7 @@ finite intent boundary. No serialized locator grants authority, and unchanged
 ancestors without an exact creation intent receive no durability barrier.
 
 
-### TASK-34403 amendment: finite fresh paired-witness metadata observation (2026-10-04)
+### TASK-34561 amendment: finite fresh paired-witness metadata observation (2026-10-04)
 An installed Windows MCP permission read repeated current-generation selection eighteen times. Its nineteen witness reads each independently reread control records three times and registry twice. The measured 3,003 native opens are governed read work, not provider latency.
 
 Each witness query may read full validated control records and registry once and share those values among its existing source-scope, startup and paired-generation decisions. The observation belongs only to that finite call and its actual admitted lease execution context. Public startup/source-scope readers continue to perform fresh native reads. No mapping, absence, selected path or empty witness is retained for a later call, callback or turn.
@@ -1408,7 +1408,7 @@ The reader must preserve all record-schema, unknown-record, pending-intent, cros
 
 This is an ADR amendment because metadata sharing changes the recovery reader's observation boundary. Retaining repeated full reads was rejected after actual native attribution proved their cost; cross-call witness caching and omission of empty-generation checks remain rejected because later recovery evidence must be visible immediately.
 
-### TASK-34403 amendment: admitted MCP generation observations retain exact custody
+### TASK-34561 amendment: admitted MCP generation observations retain exact custody
 
 A real seeded permission read-modify-write starts before local pause and must finish under its existing native custody. Its repeated bound-source checks still read fresh paired-generation evidence. They must not request a new ordinary storage acquisition after pause, nor borrow a selected-generation lease for a different canonical path. An installed MCP raw operation retains an exact canonical observation lease before acceptance when canonical and selected paths differ; otherwise its already admitted exact canonical lease serves that observation. Only the same source's active issued operation, current process/thread/task, installed participant mapping and positively live native leases may supply this retained observation. A foreign source, child task, sibling path, retired operation or unqualified native hold cannot inherit it.
 
@@ -1417,10 +1417,10 @@ The retained lease changes no execution selection or path authority. Each observ
 Participant closure, drain and resume are coordinator bookkeeping over exact installed source identities and counted native work. They do not obtain fresh file authority, create an observation acquisition or validate generation metadata while a pause is active. Closure may run on the maintenance thread while an accepted source operation retains its own canonical observer. Drain tests exact counters and persistence readiness; resume remains refused during process pause. Every actual source admission/use retains its fresh out-of-lock bound-source and native parent proof, so opening the bookkeeping gate cannot authorize a stale or retargeted source.
 
 
-The TASK-34403 finite-observation completion fence must verify native containing ancestors as well as the selected control entries. On Windows, retain all ancestor receipts from the same fresh bottom-up named tree and apply the existing private-parent owner and writable/sticky policy; observing but discarding those receipts is insufficient. On POSIX, hold completion pins live while reopening descendants before ancestors through the verified native path walk and compare the actual named physical identities to their held identities. A containing ancestor may be renamed without changing descendant inode metadata, so held-descriptor fstat alone is not a named-binding proof. These checks retain the existing platform trust rules and add no authority/cache boundary.
+The TASK-34561 finite-observation completion fence must verify native containing ancestors as well as the selected control entries. On Windows, retain all ancestor receipts from the same fresh bottom-up named tree and apply the existing private-parent owner and writable/sticky policy; observing but discarding those receipts is insufficient. On POSIX, hold completion pins live while reopening descendants before ancestors through the verified native path walk and compare the actual named physical identities to their held identities. A containing ancestor may be renamed without changing descendant inode metadata, so held-descriptor fstat alone is not a named-binding proof. These checks retain the existing platform trust rules and add no authority/cache boundary.
 
 
-### Checked sparse Console display policy sharing (TASK-34403 AC9)
+### Checked sparse Console display policy sharing (TASK-34561 AC9)
 
 A screen-owned readiness read may capture the immutable sparse global Console policy
 from the same actual CLI bootstrap mapping while its existing native config operation
@@ -1439,14 +1439,14 @@ separate so first publication does not masquerade as a changed modal owner. Reje
 pending reads after source/generation/profile/session/workspace/settings changes.
 
 
-### TASK-34403 amendment: finite MCP owner classification and nested selection
+### TASK-34561 amendment: finite MCP owner classification and nested selection
 
 Immutable owner classification may use the actual installed class/kind mapping, checked against its existing bound source type, without re-reading generation evidence merely to choose that owner's fixed member names. It grants no file, payload or permission authority. Source admission retains fresh initial and final bound-source proof, native custody, exact path membership and producer identity checks. An exact same-source nested MCP raw scope may name its selected path from the full raw check that just returned in that synchronous call; its selected_read/path/writing checks and the subsequent full raw check remain in force. No witness value or selected path is cached across calls, workers, awaits or operations, and every raw check still observes fresh source/generation/native state.
 
 Creation evidence completeness: _ensure consumes exact ancestor creation intents before ordinary admission. The cache now stamps those exact paths absent; present markers force the unchanged full initializer, preserving its refusal or completed durable retry. Genuine Windows warm/full verdict divergence RED2 precedes this change; final root bundle32passed2 ordinary capability skips13.29s includes both new controls and the original creation/admission controls. No marker contents are parsed or trusted by optional evidence, no security/durability check is bypassed. Native macOS completeness qualification remains pending.
 
 
-### Bounded body-free Console display observations (TASK-34403)
+### Bounded body-free Console display observations (TASK-34561)
 
 Ordinary subagent badge counts and Character browser scope presentation may retain their successful process-local observation for at most two seconds. This display-only cadence follows the existing subagent count TTL and reduces actual finite callbacks rather than weakening native checks inside them. Counts remain body-free and use one exact captured AgentRunsDB receiver. A bridge or receiver/library change, visible row set, run target or live child identity change invalidates immediately; a pending read cannot redirect to a replacement receiver or publish under its owner.
 
@@ -1455,7 +1455,7 @@ The separately named Character presentation facade belongs only to general scree
 The memo grants no file, permission or dispatch authority. Existing direct refresh, action scope capture, final commit and midpoint validation always run their fresh native checks. A changed live run/child/owner is not delayed by the TTL. Cross-callback native/permission caching and retaining the 0.2-second active badge polling were rejected: the former loses fresh authority, while measured actual display-only callbacks make the latter a major preparation cost. Existing whole-send and heartbeat ratchets remain unchanged.
 
 
-### TASK-34403 amendment: finite external MCP catalog worker and loop projection
+### TASK-34561 amendment: finite external MCP catalog worker and loop projection
 
 The exact standard UnifiedMCPControlPlaneService / LocalMCPControlService /
 LocalMCPStore catalog route reads one fresh catalog bundle in a finite worker.
@@ -1491,14 +1491,14 @@ The shared storage coordinator synchronizes exact issued operation membership, i
 Already counted same-owner work may complete during pause while its exact lease/hold remains live. New owners and independent repositories still require ordinary admission and refuse after pause; removed operations, leases or installed participants, changed source/path and unqualified native holds refuse even when native observation started earlier. Pure source checks do not grant native or maintenance authority. Moving guards into a worker while retaining the shared coordinator and temporarily unlocking callers through private RLock methods were rejected: the former still blocks the UI and the latter obscures producer ownership and final state races.
 
 
-### Exact live-empty fleet display precedence (TASK-34403)
+### Exact live-empty fleet display precedence (TASK-34561)
 
 The fleet rail shares the existing summary live-over-historical contract: an exact real bridge and AgentRunsDB may render its process-owned setup marker or its bound running primary snapshot even when its children are empty. Nonempty fleet handles remain first, including survivors from a preceding turn; inline live summaries render from the same current snapshot. A live setup marker deliberately suppresses the previous terminal turn, as the bridge already documents. Unknown or restored bridges lacking that process-local ownership, terminal runs and custom bridge fallbacks continue fresh bounded durable history projection.
 
 This is display source selection, not storage admission or a permission verdict. It removes repeated native historical queries and prevents previous durable children from being attributed to a known current empty run. Skipping history for arbitrary non-idle/custom snapshots or deleting terminal history was rejected because those states do not establish this live source contract.
 
 
-### TASK-34403 amendment: fresh async Console definition maximum preparation
+### TASK-34561 amendment: fresh async Console definition maximum preparation
 
 Actual asynchronous Console submission and continuation paths may prepare their
 MCP definition maximum through a separately named asynchronous capture entry.
@@ -1563,7 +1563,7 @@ The native permission scope has one named parent. Applying a full tree snapshot 
 Settings source capture includes the actual writer body: private expected receivers supplied only by the qualified async route reject body-entry identity drift and anchor every standard generation CAS read/update and context policy transaction to the strong captured Notes receiver. The captured original same-DB policy writer cannot redirect through a replaced repository. Before/after equality alone was rejected after an actual A-to-B-to-A native control wrote B while publishing success for A. Default synchronous/custom calls keep their existing arguments; these private expected receivers grant no admission or permission authority.
 
 
-### Exact checked warm Console display scope (TASK-34403 AC18)
+### Exact checked warm Console display scope (TASK-34561 AC18)
 
 A successfully published standard readiness mapping may render synchronously
 within its original one-second age without opening another enclosing native
@@ -1862,7 +1862,7 @@ survivor contracts and existing budgets/deadlines remain. This is refusal-only
 finite metadata, not permission or a resolved sensitive-context cache.
 
 
-### TASK-34403 AC23 finite stock MCP composition precheck (2026-10-05)
+### TASK-34561 AC23 finite stock MCP composition precheck (2026-10-05)
 
 ADR required: yes; this extends the existing finite source-custody interface.
 The ordinary controller and exact stock provider currently read the same kill
