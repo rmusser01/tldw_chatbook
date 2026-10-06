@@ -150,23 +150,8 @@ Tests/UI/test_approval_batch_geometry.py
 # out. Appended, so no other file changes shard.
 Tests/UI/test_library_note_autosave_recovers.py
 
-# TASK-33620.9: durable rename publication through the mounted rail menu.
-Tests/UI/test_console_rename_consistency.py
-
-# TASK-31245: constructor hydration and finite workspace handle ownership.
-Tests/UI/test_console_fixture_ownership.py
-Tests/UI/test_console_finite_read_ownership.py
-
-# TASK-31966: stable recovery-bar refresh and real recovery-height transitions.
-Tests/UI/test_console_control_bar_recovery_height.py
-
-# TASK-31966: Send-reason size idempotence, resize and override repair.
-Tests/UI/test_console_composer_reason_restyles.py
-
-# TASK-34100.16: setup's Restore entry (Inspect mode, title, format hint), the
-# settings-file / folder pre-checks, and the reason line above a disabled Create.
-Tests/UI/test_backup_restore_setup_entry.py
-
+# (TASK-34000 wave 1b: these two blocks sit here, not at the end, on purpose --
+# every PR appends at the end and the tail conflicted on each rebase.)
 # TASK-34000.4: Library Media Export… opens Export instead of freezing the app;
 # real-app, bounded polls (4 tests: mouse/keyboard x default/eager task
 # factory). The guard's real-screen tests are deliberately NOT here
@@ -183,3 +168,20 @@ Tests/UI/test_library_media_export_no_freeze.py
 # pytest / 43 s wall): all eight together measured 24-26 s pytest / 28-30 s
 # wall, too close to the lane's 60 s budget.
 Tests/UI/test_study_flashcards_real_service_contract.py
+
+# TASK-33620.9: durable rename publication through the mounted rail menu.
+Tests/UI/test_console_rename_consistency.py
+
+# TASK-31245: constructor hydration and finite workspace handle ownership.
+Tests/UI/test_console_fixture_ownership.py
+Tests/UI/test_console_finite_read_ownership.py
+
+# TASK-31966: stable recovery-bar refresh and real recovery-height transitions.
+Tests/UI/test_console_control_bar_recovery_height.py
+
+# TASK-31966: Send-reason size idempotence, resize and override repair.
+Tests/UI/test_console_composer_reason_restyles.py
+
+# TASK-34100.16: setup's Restore entry (Inspect mode, title, format hint), the
+# settings-file / folder pre-checks, and the reason line above a disabled Create.
+Tests/UI/test_backup_restore_setup_entry.py
