@@ -105,9 +105,9 @@ def _remote_whisper_headers(monkeypatch, tmp_path, remote_config, environ):
     monkeypatch.setattr(
         config_module,
         "get_cli_setting",
-        lambda key, default=None: remote_config
-        if key == "transcription.remote_whisper"
-        else default,
+        lambda key, default=None: (
+            remote_config if key == "transcription.remote_whisper" else default
+        ),
     )
     captured: dict = {}
 
