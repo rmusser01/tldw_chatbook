@@ -740,6 +740,32 @@ def _valid_continuation_context(
     return True
 
 
+def _first_final_continuation_problem(
+    candidate: ProviderContinuationCheckpoint, assistant_text: str
+) -> str | None:
+    """Name why a first, tool-free final checkpoint is not the k3 shape.
+
+    TASK-19170: the only legal first checkpoint on a tool-free turn is a
+    versioned-kimi reasoning round whose visible content is the delivered
+    text. TASK-34100.3 AC#3 splits the old single compound check so a live
+    failure names which part of that shape it broke.
+    """
+    final_round = candidate.rounds[-1]
+    if candidate.checkpoint_revision != 1:
+        return "final_first_revision_invalid"
+    if candidate.provider != "moonshot":
+        return "final_first_provider_unsupported"
+    if not moonshot_model_returns_reasoning_content(candidate.model):
+        return "final_first_model_unsupported"
+    if len(candidate.rounds) != 1:
+        return "final_first_round_count_invalid"
+    if final_round.calls:
+        return "final_first_round_has_calls"
+    if final_round.assistant_content != assistant_text:
+        return "final_first_content_mismatch"
+    return None
+
+
 def _same_continuation_target(
     current: ProviderContinuationCheckpoint,
     candidate: ProviderContinuationCheckpoint,
@@ -1457,17 +1483,34 @@ def run_agent_loop(
             **kw,
         )
 
-    def continuation_error() -> RunOutcome:
+    store_failure: str | None = None
+
+    def continuation_error(reason: str) -> RunOutcome:
+        # TASK-34100.3 AC#3: every exit shares the user-facing summary, so the
+        # code-owned ``reason`` (and the store's own precondition code, when a
+        # persist call failed) is what names the failed precondition.
+        nonlocal store_failure
+        field_states = {"continuation_error": reason}
+        if store_failure is not None:
+            field_states["continuation_store_failure"] = store_failure
+            store_failure = None
+        logger.warning(
+            "Provider continuation stopped the run: reason={} store_failure={}",
+            reason,
+            field_states.get("continuation_store_failure", "none"),
+        )
         add(
             STEP_ERROR,
             summary=(
                 "Provider continuation could not be persisted; retry or recover "
                 "the interrupted run."
             ),
+            field_states=field_states,
         )
         return _outcome(RUN_ERROR)
 
     def persist_continuation(event: ProviderContinuationEvent) -> bool:
+        nonlocal store_failure
         try:
             if isinstance(event, ToolBatchReady):
                 event = replace(
@@ -1480,7 +1523,21 @@ def run_agent_loop(
                     checkpoint=project_continuation_checkpoint(event.checkpoint),
                 )
             deps.persist_provider_continuation(event)
-        except Exception:
+        except Exception as exc:
+            # Deferred: only a failed persist needs the code table (ADR-097).
+            from tldw_chatbook.Chat.provider_continuation_diagnostics import (
+                store_failure_code,
+            )
+
+            store_failure = store_failure_code(exc)
+            logger.warning(
+                "Provider continuation persist failed: event={} store_failure={} "
+                "error_type={} cause_type={}",
+                type(event).__name__,
+                store_failure,
+                type(exc).__name__,
+                type(exc.__cause__).__name__,
+            )
             return False
         return True
 
@@ -1569,11 +1626,11 @@ def run_agent_loop(
                 raise ValueError
             validate_continuation_restore(checkpoint, restore_provider_target)
         except Exception:
-            return continuation_error()
+            return continuation_error("restore_target_invalid")
         if checkpoint.state != "active" or not _valid_continuation_context(
             context, deps.persist_provider_continuation
         ):
-            return continuation_error()
+            return continuation_error("restore_context_invalid")
         if not resume_provider_continuation:
             add(
                 STEP_ERROR,
@@ -1594,7 +1651,7 @@ def run_agent_loop(
             )
             return _outcome(RUN_STUCK)
         if not expand_restore_history(checkpoint):
-            return continuation_error()
+            return continuation_error("restore_history_unavailable")
         continuation_checkpoint = checkpoint
         restored_calls = []
         for round_ in checkpoint.rounds:
@@ -2203,30 +2260,32 @@ def run_agent_loop(
             context = deps.continuation_context
             if not _valid_continuation_context(
                 context, deps.persist_provider_continuation
-            ) or not _continuation_calls_match(
+            ):
+                return continuation_error("batch_context_invalid")
+            if not _continuation_calls_match(
                 candidate, calls, turn.text, turn.assistant_message
             ):
-                return continuation_error()
+                return continuation_error("batch_calls_mismatch")
             expected_revision = (
                 continuation_checkpoint.checkpoint_revision
                 if continuation_checkpoint is not None
                 else None
             )
             if not _valid_batch_update(continuation_checkpoint, candidate):
-                return continuation_error()
+                return continuation_error("batch_revision_invalid")
             batch_event = ToolBatchReady(
                 context=context,  # type: ignore[arg-type]
                 checkpoint=candidate,
                 expected_checkpoint_revision=expected_revision,
             )
             if not persist_continuation(batch_event):
-                return continuation_error()
+                return continuation_error("batch_persist_failed")
             continuation_checkpoint = candidate
             ephemeral_continuation = bool(
                 context is not None and context.durability == "ephemeral"
             )
         elif not restoring_batch and calls and continuation_checkpoint is not None:
-            return continuation_error()
+            return continuation_error("batch_checkpoint_missing")
 
         if not calls:
             # A Stop can land while this (tool-call-free) turn was still
@@ -2282,34 +2341,28 @@ def run_agent_loop(
                 try:
                     dump_provider_continuation_json(candidate)
                 except Exception:
-                    return continuation_error()
-                if (
-                    not _valid_continuation_context(
-                        context, deps.persist_provider_continuation
-                    )
-                    or candidate.state != "complete"
+                    return continuation_error("final_checkpoint_unserializable")
+                if not _valid_continuation_context(
+                    context, deps.persist_provider_continuation
                 ):
-                    return continuation_error()
+                    return continuation_error("final_context_invalid")
+                if candidate.state != "complete":
+                    return continuation_error("final_state_not_complete")
                 expected_revision = (
                     continuation_checkpoint.checkpoint_revision
                     if continuation_checkpoint is not None
                     else None
                 )
                 if continuation_checkpoint is None:
-                    final_round = candidate.rounds[-1]
-                    if (
-                        candidate.checkpoint_revision != 1
-                        or candidate.provider != "moonshot"
-                        or not moonshot_model_returns_reasoning_content(candidate.model)
-                        or len(candidate.rounds) != 1
-                        or final_round.calls
-                        or final_round.assistant_content != turn.text
-                    ):
-                        return continuation_error()
+                    shape_problem = _first_final_continuation_problem(
+                        candidate, turn.text
+                    )
+                    if shape_problem is not None:
+                        return continuation_error(shape_problem)
                 elif not _valid_final_update(
                     continuation_checkpoint, candidate, turn.text
                 ):
-                    return continuation_error()
+                    return continuation_error("final_update_invalid")
                 final_event = FinalContinuation(
                     context=context,  # type: ignore[arg-type]
                     checkpoint=candidate,
@@ -2317,10 +2370,10 @@ def run_agent_loop(
                     assistant_content=turn.text,
                 )
                 if not persist_continuation(final_event):
-                    return continuation_error()
+                    return continuation_error("final_persist_failed")
                 continuation_checkpoint = candidate
             elif continuation_checkpoint is not None:
-                return continuation_error()
+                return continuation_error("final_checkpoint_missing")
 
         if not restoring_batch:
             # A provider tool-call turn can carry raw fence/native arguments
@@ -2597,7 +2650,7 @@ def run_agent_loop(
         verdicts.update(guard_refusals)
 
         if review_hook_failed and continuation_checkpoint is not None:
-            return continuation_error()
+            return continuation_error("review_hook_failed")
 
         dispatchable_calls = [
             call
@@ -2775,7 +2828,7 @@ def run_agent_loop(
                 if not transition_call(
                     call, "failed", ContinuationResult(continuation_content)
                 ):
-                    return continuation_error()
+                    return continuation_error("refusal_transition_failed")
                 _emit_record(
                     deps,
                     "tool_call",
@@ -2800,7 +2853,7 @@ def run_agent_loop(
                 )
                 if restoring_batch:
                     if not expand_restore_history(continuation_checkpoint):
-                        return continuation_error()
+                        return continuation_error("refusal_restore_history_unavailable")
                 else:
                     _append_tool_result(messages, call, content)
                 account_denial(
@@ -2821,7 +2874,7 @@ def run_agent_loop(
             if continuation_checkpoint is not None and not transition_call(
                 call, "executing"
             ):
-                return continuation_error()
+                return continuation_error("executing_transition_failed")
             _emit_record(
                 deps,
                 "tool_call",
@@ -3380,7 +3433,7 @@ def run_agent_loop(
                     target_state,
                     ContinuationResult(str(continuation_content)),
                 ):
-                    return continuation_error()
+                    return continuation_error("result_transition_failed")
                 _emit_record(
                     deps,
                     "tool_result",
@@ -3464,7 +3517,7 @@ def run_agent_loop(
             )
             if restoring_batch and continuation_checkpoint is not None:
                 if not expand_restore_history(continuation_checkpoint, (call, content)):
-                    return continuation_error()
+                    return continuation_error("result_restore_history_unavailable")
             else:
                 _append_tool_result(messages, call, content)
             if automatic is not None and automatic.goal is not None:

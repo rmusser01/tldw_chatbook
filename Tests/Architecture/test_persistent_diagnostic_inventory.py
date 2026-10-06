@@ -25,6 +25,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
+    # TASK-34100.3: code-owned continuation reason codes and class names only;
+    # the store's exception text is mapped to a code, never logged.
+    "tldw_chatbook/Agents/agent_runtime.py": {
+        "Provider continuation stopped the run": (
+            "reason",
+            "field_states.get('continuation_store_failure', 'none')",
+        ),
+        "Provider continuation persist failed": (
+            "type(event).__name__",
+            "store_failure",
+            "type(exc).__name__",
+            "type(exc.__cause__).__name__",
+        ),
+    },
     "tldw_chatbook/Agents/agent_service.py": {
         "autowake_enabled is not boolean; using default": (),
         "child_max_wall_seconds is not numeric": (),
