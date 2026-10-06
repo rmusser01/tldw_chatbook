@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-06 16:15'
+updated_date: '2026-10-06 16:18'
 labels: []
 dependencies: []
 ---
@@ -294,6 +294,8 @@ Verified badge/fixture/coalescer checkpoint: genuine original-source Native badg
 Default Workspace committed verification checkpoint: current merged sources pass all13 focused controls99.16s, Native elapsed104.891s and unchanged-source inventory. Original public legacy removal, custom/refusal behavior and seven physical-reader cancellation/current-success controls remain valid. The normal owned Job is empty after return; bounded identity samples report overflow307 and one lookup race, which are diagnostic limits rather than an application cleanup claim. Staging includes only the required original config identity metadata, no Compact source record or changed config reader. New test files pass formatting and all six scoped Default files pass Ruff with the existing exact-type E721 exception. Existing ADR028/126 applies; whole startup, Send, heartbeat and final UAT remain open.
 
 Custom unread-reader compatibility repair: the unchanged original custom reader cases reproduced three failures before the fix (22.641s) and pass afterward (three cases,22.406s). All48 original source-provenance,worker-lifetime,local marks and timestamp cases pass together (77.833s); all before/after source inventories are unchanged and contained process trees retire normally without forced termination or identity loss. The defining exact stock file reader alone enters the added owned scope; original custom readers,memory and borrowed-handle behavior remain. This is targeted evidence,not whole-app cleanup or performance acceptance. Existing ADR126 applies; no new ADR is required.
+
+Boot census integration repair: the retained c8a CI job failed solely on the unreviewed existing refresh_if_scope_changed/console-character-context-refresh pair. The allowlist now names that issued stock resume worker and documents its current-owner finite drain. All21 original census and boot staggering controls pass together (102.77s),source inventory unchanged and normal contained process retirement; no worker budget,required start,priority,deadline or production behavior changed. This repairs membership documentation only and is not whole performance-budget acceptance.
 <!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up

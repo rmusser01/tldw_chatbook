@@ -101,6 +101,11 @@ ALLOWED_BOOT_WORKERS: frozenset[tuple[str, str]] = frozenset(
         # Both are demand driven by the first visible owner/row projection.
         ("_load_historical_presentation", "console-agent-history"),
         ("_load_subagent_counts", "console-subagent-counts"),
+        # TASK-34406 / ADR-085/126: the already-issued resume Character
+        # display now uses a retained finite callback instead of a direct
+        # native read. First-screen resume can issue it; initial widget load
+        # and the existing bounded refresh memo preserve the read behavior.
+        ("refresh_if_scope_changed", "console-character-context-refresh"),
         # TASK-34406 / ADR-126: cold provider/context display obtains one
         # checked off-loop mapping, then publishes only its same-owner result.
         ("_refresh", "console-readiness-config"),
