@@ -43,6 +43,10 @@ from tldw_chatbook.TTS.openai_compatible_config import (
     normalize_openai_compatible_endpoint,
     openai_destination_fingerprint,
 )
+from tldw_chatbook.TTS.pocket_tts_native import (
+    POCKET_TTS_WAV_ONLY_COPY,
+    is_pocket_tts_native_url,
+)
 from tldw_chatbook.TTS.preferences import TTSPreferencesSnapshot
 from tldw_chatbook.TTS.sample_audio_validation import (
     CONTENT_TYPES_BY_FORMAT,
@@ -2284,6 +2288,34 @@ def count_global_speech_tts_unsaved_fields(
     return count
 
 
+def _require_wav_for_pocket_tts(
+    draft: GlobalSpeechTTSState, preferences: TTSPreferencesSnapshot
+) -> None:
+    """Refuse a non-WAV default format while pocket-tts reads replies.
+
+    TASK-34100.8 review round 2 (G8-R2-F3). An OpenAI Base URL whose path is
+    ``/tts`` speaks pocket-tts's native API, which returns WAV only; the
+    OpenAI backend refuses any other format at speak time. Settings used to
+    save that pair, so every reply failed and the first-run Voice step (which
+    refuses it) disagreed with Settings about the same slot. The format is
+    the shared default, so it binds only while the OpenAI slot reads replies,
+    whichever provider's pane the save comes from.
+
+    Raises:
+        GlobalSpeechTTSValidationError: On the default output format.
+    """
+    if preferences.provider_id != "openai" or preferences.response_format == "wav":
+        return
+    try:
+        endpoint = normalize_openai_compatible_endpoint(
+            str(draft.providers["openai"].get("base_url") or "")
+        )
+    except ValueError:
+        return  # the OpenAI pane's own validation names a bad Base URL
+    if is_pocket_tts_native_url(endpoint.speech_url):
+        _validation_error("defaults", "response_format", POCKET_TTS_WAV_ONLY_COPY)
+
+
 def build_global_speech_tts_save_proposal(
     original: GlobalSpeechTTSState,
     draft: GlobalSpeechTTSState,
@@ -2306,6 +2338,7 @@ def build_global_speech_tts_save_proposal(
     preferences = draft.defaults.snapshot(
         max_identifier_characters=identifier_limit,
     )
+    _require_wav_for_pocket_tts(draft, preferences)
     validated = _validated_provider_values(
         configure_provider,
         draft.providers[configure_provider],
