@@ -524,12 +524,14 @@ async def test_workspace_availability_cancelled_owner_keeps_interval_until_retir
         assert await asyncio.to_thread(entered.wait, 10)
         pause = storage._begin_local_pause()
         pending.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await pending
+        await asyncio.sleep(0)
+        assert not pending.done()
         assert live_operations(database)
         assert worker_leases(database)
         assert not pause.drain(time.monotonic() + 0.02)
         release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
         assert await asyncio.to_thread(finished.wait, 10)
         for _ in range(200):
             if not live_operations(database) and not worker_leases(database):

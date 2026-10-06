@@ -9,6 +9,7 @@ from typing import Any, Callable
 from tldw_chatbook.Utils.input_validation import escape_markup as _escape_markup
 from rich.text import Text
 from textual import events
+from textual._context import active_message_pump
 from textual.app import ComposeResult
 from textual.containers import Horizontal, HorizontalScroll, Vertical
 from textual.css.query import NoMatches
@@ -763,6 +764,10 @@ class ConsoleSessionSurface(Vertical):
                 )
             except NoMatches:
                 return
+            # Attachment precedes Textual's original composed children.
+            # A strip mount handler must not await its own completion.
+            if active_message_pump.get(None) is not tab_strip:
+                await tab_strip._mounted_event.wait()
             if not self._session_strip_is_attached(tab_strip):
                 return
             desired_ids = self._desired_tab_child_ids(
