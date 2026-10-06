@@ -18749,3 +18749,21 @@ PR2918's published bb79 hosted storage step failed tested credential opens10.125
 The new probe regression retained RED1FAIL then GREEN1PASS0.501XML. After preserving dev76d, both affected private-profile storage variants passed2 in59.193XML on darwin with9.25credential opens/tick, unchanged24keys/8ticks/canaries/counter seams/all13MAX/eightkeystrokeMAX/slack/default temporary depth/cwd/PYTHONPATH/outer private profile. A deliberate extra-I/O control made two real config reads per tick and failed once1FAIL30.499XML at config2>1 and storage4>2. It is expected negative evidence, not a green selection. The original fb14FIVE5PASS112.657 launcher was never replayed; the original raw/XML and all earlier NON-GREEN/warning/FD/platform limits remain.
 
 The same integration exposed independent schema composition hazards: two Chat76→77 methods shadowed each other, AgentRuns23 was derived before the complete landed native22 catalog, and a SQL sorter mishandled quoted FTS names/VIEW entries. Complete exact-catalog migration controls and native dispatch reached their actual boundaries after repair. Initial214cases/45FAIL98.900XML, then44PASS28.706XML migration controls; native4PASS11.281XML and separate159PASS111.357XML retain their own scopes. A later8case selection had one stale current77 oracle; corrected backup1PASS3.406XML. Provider/replay/mounted30cases had4failures59.376XML: two stale diagnostic-period literals, a stale wrapper-exception expectation, and an assertion racing the real discard worker. Correct the narrow typed/presentation oracles and await worker completion while retaining credential/audit/committed deletion assertions; the affected failures plus two progress controls passed6 in21.339XML. No failed receipt is erased or summed into later passes. Immutable independent final review remains pending at this source record.
+
+
+## TASK-33664.2: retire captured Console owners before their prepared profile
+
+PR2918 final-head UI shard3 failed with `OSError: [Errno 39] Directory not empty`
+when `_pending_close_app` removed its `TemporaryDirectory` while a separately
+captured Console runtime still owned the registered Chat/AgentRuns databases.
+The raw job log shows runtime writes/disposal after helper cleanup. A real delayed
+SQLite write after helper return reproduced `unsafe_parent: missing_parent`.
+Keeping the directory under pytest's private `tmp_path` and letting existing
+`owned_console_apps` drain the exact runtime before closing registered databases
+made the mounted pending/race/fleet journey pass. The focused regression also
+passes after checking AgentRuns' held cache, rather than its caller-owned one-off
+`_get_connection()` result, and retiring the worker thread's own caches. The first
+oracle failure remains NON-GREEN. Helper return is not the captured owner's
+retirement boundary; reuse that fixture lifetime rather than racing deletion or
+ignoring cleanup errors. This is test evidence, not a new production/resource or
+physical-platform certificate. Receipts: `/private/tmp/pr2918-oct06-close-profile-local-proof.json`.

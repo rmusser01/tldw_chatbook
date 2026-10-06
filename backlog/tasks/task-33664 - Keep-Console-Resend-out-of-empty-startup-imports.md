@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-06 17:29'
+updated_date: '2026-10-06 17:43'
 labels:
   - agents
   - console
@@ -1070,4 +1070,14 @@ October6 human-authorized repair on exact dev76d: root storage census owns wall-
 October6 immutable source236608ca73 Ready/no actionable findings/all activity settled; review JSON SHA256 22f5df01b6fe82a00bc113eae539400cf8b2c934939f3f18c48c1dc7fbb2caad. Source/local evidence approval is separate from hosted qualification. Original FIVE remains historical only; incoming import/UI/CSS changes deny full current carry. Fresh published-head hosted budgets/allFOUR/allTHREE UI/Qodo/protection remain required. ParentAC3 and childAC4 stay In Progress/unchecked until actual current qualification. Only five owned Markdown records may change after source approval; no application/test edit or heartbeat action.
 
 October6 current-source hosted qualification: exact head c467b383fc00ea0988ba410a39b7170c75e401c3, PR Fast Lane/all THREE UI shards/latency/Derived SUCCESS; full pagination/all conversations resolved/older nested feedback unchanged. Actual dev equals qualified 76d5d157aa6a628584ead573976c9adee72f5412; live strict/admin/conversation protection intact. Source236608ca73 independent Ready and local targeted evidence remain authenticated. Hosted qualification: /private/tmp/pr2918-oct06-source-hosted-qualification.json; reader /private/tmp/pr2918-oct06-source-ci-20261006-1700. Original FIVE remains historical only, never replayed; no current-budget carry asserted. Pins/counts/slack/work and source outside five documentation files remain unchanged. Initial failures, expected extra-I/O negative and all inherited limitations remain retained; selections NEVER SUM. No app/test edit or heartbeat action. Subsequent documentation head must itself pass current protected checks before merge. Qodo has not reviewed this source head; its last old-head summary 2026-10-05T04:07:02Z remains historical only. Fresh independent source review approves task acceptance; current Qodo remains a separate pending merge prerequisite.
+
+Prepared-close fixture repair reuses pytest's private tmp_path lifetime and the existing owned_console_apps captured-runtime disposal/database retirement. The helper no longer removes its directory or closes registered stores before that owner drains. No application, shutdown, authority, performance guard, CSS, dependency or product assertion changes.
+
+Final published5a CI remains NON-GREEN: UI3 job112394882798 failed with OSError39 Directory not empty during prepared-close TemporaryDirectory cleanup; the raw log shows runtime work continuing afterwards. Derived job112405222646 failed only its required-UI prerequisite. PRFast/UI1/UI2/Perf passed separately; all jobs are terminal. No rerun/dispatch or auto-merge request occurred.
+
+Real delayed-write regression RED1FAIL/4.356s XML reproduces missing_parent after the helper returns. Corrected helper selection remains NON-GREEN1PASS1FAIL/66.435s XML: actual mounted pending/race/fleet journey PASS case62.411s; the new regression's delayed write succeeds, then its initial close assertion incorrectly checks a caller-owned one-off AgentRuns connection. Correcting only that oracle to the actual held connection, with explicit worker-thread cache retirement, gives ONLY regression1PASS/3.839s XML. The mounted journey was never replayed. Actual Chat and AgentRuns SQLite writes and retained UI handles are exercised; no cleanup errors are suppressed. Selections NEVER SUM.
+
+Same-filename scoped static evidence: ownership test0prior/0current; session-close test5prior/5current inherited diagnostics; zeroNEW/fatal0. Only the changed helper/new regression are formatted, with AST identity. Raw/XML/command/exit/static/format evidence is indexed in /private/tmp/pr2918-oct06-close-profile-local-proof.json. The initial erroneous oracle, all earlier NON-GREEN results and warning/FD/resource/platform/optional/physical/wider limits remain retained. Original FIVE budgets and completed checks are never replayed. Independent review and fresh published-head CI/review/live protection/current concurrency remain pending; parent AC3 stays unchecked and AC4 checked. No heartbeat action.
+
+ADR required: no. Existing ADR199 and the Console fixture ownership incident apply; this corrects test-resource retirement within the existing boundary.
 <!-- SECTION:NOTES:END -->

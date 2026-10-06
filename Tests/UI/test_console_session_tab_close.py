@@ -678,36 +678,30 @@ async def _verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
 
 @contextmanager
 def _pending_close_app(request, kind, *, surviving_child=False):
-    """Give only prepared new-chat cases a real, explicitly owned database."""
-    from tempfile import TemporaryDirectory
+    """Keep prepared databases alive until their captured Console owner retires."""
+    from tempfile import mkdtemp
 
     app = _ready_app()
     if kind != "chat_create":
         yield app
         return
-    with TemporaryDirectory(
-        prefix="prepared-close-", dir=request.getfixturevalue("tmp_path")
-    ) as directory:
-        db = CharactersRAGDB(
-            Path(directory) / "chats.sqlite", client_id="prepared-close"
-        )
-        register_database = request.getfixturevalue("owned_console_apps")
-        register_database(app.console_runtime, db)
-        app.chachanotes_db = db
-        app.local_chat_conversation_service = ChatConversationService(db)
-        runs = None
-        if surviving_child:
-            from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    # The private pytest profile owns this directory. owned_console_apps drains
+    # its exact runtime before closing the registered databases at test teardown.
+    directory = Path(
+        mkdtemp(prefix="prepared-close-", dir=request.getfixturevalue("tmp_path"))
+    )
+    db = CharactersRAGDB(directory / "chats.sqlite", client_id="prepared-close")
+    register_database = request.getfixturevalue("owned_console_apps")
+    register_database(app.console_runtime, db)
+    app.chachanotes_db = db
+    app.local_chat_conversation_service = ChatConversationService(db)
+    if surviving_child:
+        from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-            runs = AgentRunsDB(Path(directory) / "runs.sqlite")
-            register_database(app.console_runtime, runs)
-            app._pending_close_runs = runs
-        try:
-            yield app
-        finally:
-            if runs is not None:
-                runs.close()
-            db.close_connection()
+        runs = AgentRunsDB(directory / "runs.sqlite")
+        register_database(app.console_runtime, runs)
+        app._pending_close_runs = runs
+    yield app
 
 
 def _prepare_surviving_child(controller, session_id):

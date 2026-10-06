@@ -1388,3 +1388,16 @@ Reason: correct only the test helper's premature resource deletion; production s
 3. Reuse pytest's private tmp_path lifetime and the existing owned_console_apps runtime/database drain; remove the helper's competing temporary-directory and connection cleanup.
 4. Verify the delayed-write regression and actual failed mounted pending/race/fleet group once on corrected source. Compare only affected static findings, preserve unchanged application/performance/CSS sources and historical records, and obtain immutable independent review.
 5. Publish one necessary source update after the current CI cycle settles; require fresh protected checks, all three UI shards, live protection/current concurrency and the established current-review condition before normal head-matched merge.
+
+
+## October 6 prepared-close fixture evidence — review and fresh CI pending
+
+Prepared-close fixture repair reuses pytest's private tmp_path lifetime and the existing owned_console_apps captured-runtime disposal/database retirement. The helper no longer removes its directory or closes registered stores before that owner drains. No application, shutdown, authority, performance guard, CSS, dependency or product assertion changes.
+
+Final published5a CI remains NON-GREEN: UI3 job112394882798 failed with OSError39 Directory not empty during prepared-close TemporaryDirectory cleanup; the raw log shows runtime work continuing afterwards. Derived job112405222646 failed only its required-UI prerequisite. PRFast/UI1/UI2/Perf passed separately; all jobs are terminal. No rerun/dispatch or auto-merge request occurred.
+
+Real delayed-write regression RED1FAIL/4.356s XML reproduces missing_parent after the helper returns. Corrected helper selection remains NON-GREEN1PASS1FAIL/66.435s XML: actual mounted pending/race/fleet journey PASS case62.411s; the new regression's delayed write succeeds, then its initial close assertion incorrectly checks a caller-owned one-off AgentRuns connection. Correcting only that oracle to the actual held connection, with explicit worker-thread cache retirement, gives ONLY regression1PASS/3.839s XML. The mounted journey was never replayed. Actual Chat and AgentRuns SQLite writes and retained UI handles are exercised; no cleanup errors are suppressed. Selections NEVER SUM.
+
+Same-filename scoped static evidence: ownership test0prior/0current; session-close test5prior/5current inherited diagnostics; zeroNEW/fatal0. Only the changed helper/new regression are formatted, with AST identity. Raw/XML/command/exit/static/format evidence is indexed in /private/tmp/pr2918-oct06-close-profile-local-proof.json. The initial erroneous oracle, all earlier NON-GREEN results and warning/FD/resource/platform/optional/physical/wider limits remain retained. Original FIVE budgets and completed checks are never replayed. Independent review and fresh published-head CI/review/live protection/current concurrency remain pending; parent AC3 stays unchecked and AC4 checked. No heartbeat action.
+
+ADR required: no. Existing ADR199 and the Console fixture ownership incident apply; this corrects test-resource retirement within the existing boundary.
