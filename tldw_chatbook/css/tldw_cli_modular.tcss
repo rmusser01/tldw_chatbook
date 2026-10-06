@@ -15070,6 +15070,7 @@ SplashScreen, .splash-screen {
 
 
 #splash-skip-hint, .splash-skip-hint {
+    dock: bottom;
     width: $ds-width-full;
     height: $ds-size-1;
     text-align: center;
