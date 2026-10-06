@@ -54,6 +54,7 @@ from tldw_chatbook.Chat.provider_readiness import (
     STILL_ENCRYPTED_REASON,
     ProviderReadiness,
     configured_provider_credential_source,
+    custom_endpoint_family_readiness,
     get_provider_readiness,
     provider_config_key,
     safe_provider_label,
@@ -1924,7 +1925,14 @@ def build_console_settings_readiness(
             settings.provider if entry is not None else provider_key,
         )
     )
-    readiness = get_provider_readiness(
+    # TASK-34100.4 review (F3): an entry rides its family's readiness with
+    # the family slot's own stranded key lifted (never the entry's key).
+    family_readiness = (
+        custom_endpoint_family_readiness
+        if entry is not None
+        else get_provider_readiness
+    )
+    readiness = family_readiness(
         provider_key,
         app_config,
         environ=environ,

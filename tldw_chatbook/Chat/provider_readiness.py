@@ -719,6 +719,48 @@ def provider_credential_source(
     return resolve_provider_credential(provider_key, settings, environ=env)[1]
 
 
+def custom_endpoint_family_readiness(
+    family_key: str,
+    app_config: Mapping[str, object],
+    *,
+    environ: Mapping[str, str] | None = None,
+    background_credentials: bool = False,
+) -> ProviderReadiness:
+    """The family readiness an ADR-146 custom endpoint entry rides.
+
+    The family slot's own saved key (``[api_settings.<family>] api_key``) is
+    never the entry's credential, so a keyless family blocked only because
+    that key is still ``enc:`` ciphertext reads as ready here; the caller
+    then applies the entry's own credential rule
+    (``_custom_endpoint_missing_key_readiness``). TASK-34100.4 review (F3):
+    every path that read the family readiness directly -- Settings, the
+    Console header, the send gateway, sub-agent routing -- blocked an entry
+    with a working key of its own, with recovery naming the wrong page.
+
+    Args:
+        family_key: The entry family's readiness key (``llama_cpp`` ...).
+        app_config: Loaded app configuration.
+        environ: Environment mapping, injectable for deterministic tests.
+        background_credentials: Forwarded to ``get_provider_readiness``.
+
+    Returns:
+        The family readiness, with only that stranded-credential block lifted.
+    """
+    family = get_provider_readiness(
+        family_key,
+        app_config,
+        environ=environ,
+        background_credentials=background_credentials,
+    )
+    if (
+        not family.ready
+        and family.reason == STILL_ENCRYPTED_REASON
+        and not family.requires_api_key
+    ):
+        return replace(family, ready=True, reason="Ready", recovery=None)
+    return family
+
+
 def _custom_endpoint_readiness(
     provider_name: str,
     app_config: Mapping[str, object],
@@ -779,22 +821,12 @@ def _custom_endpoint_readiness(
             ),
         )
     family_key = family_execution_key(entry.family)
-    family = get_provider_readiness(
+    family = custom_endpoint_family_readiness(
         family_key,
         app_config,
         environ=environ,
         background_credentials=background_credentials,
     )
-    if (
-        not family.ready
-        and family.reason == STILL_ENCRYPTED_REASON
-        and not family.requires_api_key
-    ):
-        # TASK-34100.4 review (F3): the family slot's stranded key is never
-        # the entry's credential, yet it read the entry "Not ready" with
-        # recovery naming Providers & Models. A keyless family is otherwise
-        # ready; the entry's own key decides below.
-        family = replace(family, ready=True, reason="Ready", recovery=None)
     if family.ready:
         missing_key = _custom_endpoint_missing_key_readiness(entry, family_key, environ)
         if missing_key is not None:

@@ -179,3 +179,71 @@ def test_a_stranded_entry_key_still_blocks_beside_a_stranded_family_key():
     assert readiness.ready is False
     assert readiness.reason == STILL_ENCRYPTED_REASON
     assert "Custom endpoints" in readiness.recovery
+
+
+# --- every path that rides the family readiness (live check of F3) ----------
+#
+# Live, the Console's "Get started" card still read "Not ready · no key" for
+# an entry with its own plaintext key beside a stranded family key: the
+# Console header, the send gateway and sub-agent routing each read the
+# family readiness themselves and applied the entry rule only when it was
+# ready.
+
+
+def _entry_plain_family_stranded() -> dict:
+    config = _with_stranded_family_key(
+        _entry_config("llama_cpp", api_key="entry-plain-key")
+    )
+    config["custom_endpoints"]["home"]["models"] = ["selected"]
+    return config
+
+
+def test_console_header_ignores_a_stranded_family_key_for_an_entry_with_its_own():
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="custom-ep:home", model="selected"),
+        app_config=_entry_plain_family_stranded(),
+        environ={},
+    )
+
+    assert readiness.operability != "not_ready"
+    assert readiness_words(readiness) == "Ready · not tested"
+
+
+def test_sub_agent_routing_ignores_a_stranded_family_key():
+    from tldw_chatbook.Agents.agent_routing import _default_readiness
+
+    assert _default_readiness(_entry_plain_family_stranded(), "custom-ep:home") is None
+
+
+@pytest.mark.asyncio
+async def test_the_send_uses_the_entry_key_beside_a_stranded_family_key():
+    import httpx
+
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        ConsoleProviderGateway,
+        ConsoleProviderSelection,
+    )
+
+    seen_auth = []
+
+    async def handler(request):
+        seen_auth.append(request.headers.get("Authorization"))
+        if request.url.path == "/props":
+            return httpx.Response(
+                200, json={"default_generation_settings": {"n_ctx": 8192}}
+            )
+        return httpx.Response(200, json={"data": [{"id": "selected"}]})
+
+    config = _entry_plain_family_stranded()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        gateway = ConsoleProviderGateway(
+            http_client=client, config_provider=lambda: config, environ={}
+        )
+        resolution = await gateway.resolve_for_send(
+            ConsoleProviderSelection(
+                provider="custom-ep:home", explicit_model="selected", max_tokens=64
+            )
+        )
+
+    assert resolution.ready, resolution.visible_copy
+    assert all(auth in (None, "Bearer entry-plain-key") for auth in seen_auth)

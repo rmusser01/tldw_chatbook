@@ -162,7 +162,10 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingHistoryPolicy,
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
-from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+from tldw_chatbook.Chat.provider_readiness import (
+    custom_endpoint_family_readiness,
+    get_provider_readiness,
+)
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_session_settings import reasoning_effort_hint_for_model
@@ -4634,7 +4637,13 @@ class ConsoleProviderGateway:
                 custom_entry, self._environ
             )
         if identity.uses_direct_llama_path:
-            readiness = get_provider_readiness(
+            # TASK-34100.4 review (F3): an entry never blocks on the family
+            # slot's own stranded key; its credential was resolved above.
+            readiness = (
+                custom_endpoint_family_readiness
+                if custom_entry is not None
+                else get_provider_readiness
+            )(
                 identity.readiness_key,
                 app_config,
                 environ=self._environ,
