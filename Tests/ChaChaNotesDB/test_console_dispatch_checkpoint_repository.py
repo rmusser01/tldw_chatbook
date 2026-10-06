@@ -292,7 +292,8 @@ def _continuation_acceptance(conversation_id: str) -> ConsoleDurableTurnAcceptan
         resolved_destination=ConsoleResolvedDestination(
             provider="deepseek",
             model="deepseek-v4-flash",
-            endpoint_identity="https://api.deepseek.com/v1",
+            # The resolver records the ORIGIN, never the path (TASK-34100.3).
+            endpoint_identity="https://api.deepseek.com",
             egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
         ),
     )

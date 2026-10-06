@@ -154,10 +154,12 @@ def _deepseek_acceptance(conversation_id: str):
                 endpoint="https://api.deepseek.com/v1",
             ),
         ),
+        # The ORIGIN identity resolve_console_destination records (TASK-34100.3);
+        # pinned by test_continuation_destination_identity.py.
         resolved_destination=ConsoleResolvedDestination(
             provider="deepseek",
             model="deepseek-v4-flash",
-            endpoint_identity="https://api.deepseek.com/v1",
+            endpoint_identity="https://api.deepseek.com",
             egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
         ),
     )
@@ -175,10 +177,11 @@ def _moonshot_acceptance(conversation_id: str):
                 endpoint="https://api.moonshot.ai/v1",
             ),
         ),
+        # The ORIGIN identity resolve_console_destination records (TASK-34100.3).
         resolved_destination=ConsoleResolvedDestination(
             provider="moonshot",
             model="kimi-k3",
-            endpoint_identity="https://api.moonshot.ai/v1",
+            endpoint_identity="https://api.moonshot.ai",
             egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
         ),
     )

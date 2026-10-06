@@ -315,7 +315,8 @@ class _ReasoningOnlyGateway:
             resolved_destination=ConsoleResolvedDestination(
                 provider="moonshot",
                 model="kimi-k3",
-                endpoint_identity="https://api.moonshot.ai/v1",
+                # The resolver records the ORIGIN, never the path (TASK-34100.3).
+                endpoint_identity="https://api.moonshot.ai",
                 egress_class=ConsoleEgressClass.PUBLIC_NETWORK,
             ),
         )

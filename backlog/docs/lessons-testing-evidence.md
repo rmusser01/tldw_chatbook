@@ -426,14 +426,18 @@ and then thrown away behind "Provider continuation could not be persisted" and a
 false delivery-unknown card. The store had a test for exactly that path, and a
 controller test drove a reasoning-only Kimi turn end to end; both passed. Both
 built the dispatch row's destination by hand as
-`endpoint_identity="https://api.moonshot.ai/v1"`, and 38 fixtures elsewhere do
+`endpoint_identity="https://api.moonshot.ai/v1"`, and 38 fixtures elsewhere did
 the same. The real `resolve_console_destination` records only the origin
 (`https://api.moonshot.ai`), while the continuation carries the full base URL,
 and the repository compared the two for equality. That check could only pass
 with the hand-built value. The defect surfaced once a test took the
 destination from the real resolver and a pilot ran the real gateway with the
 real Moonshot response builder (only the HTTP call replaced). Both failed on
-the pre-fix code.
+the pre-fix code. The first version of the fix then repeated the mistake: the
+match also accepted the raw base URL "so an identity recorded as the exact URL
+still matches", a case no real row can produce, kept only so those fixtures
+stayed green. Review removed it; the five fixtures on the match path now hold
+the origin, and a pin test compares the shared ones to the resolver's output.
 
 **What to do.** When a value crosses a persistence boundary and is compared
 later, build the fixture with the production function that produces it

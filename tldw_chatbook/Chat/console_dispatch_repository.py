@@ -1656,13 +1656,13 @@ class ConsoleDispatchRepository:
             # ORIGIN identity (https://api.moonshot.ai), the continuation its
             # full base URL (https://api.moonshot.ai/v1); equality of the two
             # never held, so every saved-chat continuation conflicted. Compare
-            # identities; an identity recorded as the exact URL still matches.
-            base_url = continuation.api_base_url
+            # the identity the resolver would record for that URL, and nothing
+            # else: no real row holds a path-bearing identity.
             return bool(
                 continuation.provider == destination.provider
                 and continuation.model == destination.model
                 and destination.endpoint_identity
-                in {base_url, console_endpoint_identity(base_url)}
+                == console_endpoint_identity(continuation.api_base_url)
             )
         except (AttributeError, ConsoleDispatchCheckpointValidationError):
             return False
