@@ -71,7 +71,14 @@ Facts verified in implementation task 1 (each has a fallback):
 | V1 | Can `GITHUB_TOKEN` delete a workflow run (the empty `action_required` runs)? | Verified (run 37154004733) | Leave them. CLAUDE.md says never click "Approve and run" on a queue-rebased PR, because that starts duplicate runs |
 | V2 | Can `GITHUB_TOKEN` cancel a workflow run (runs on a superseded head)? | Verified (run 37154004733, attempt 1; attempt 2's 409 was the already-cancelled target) | Leave superseded runs to finish |
 
-Retrying a failed run never uses the undocumented re-run API. It dispatches a fresh run (F1).
+Retrying a failed run re-runs that run's failed jobs (`POST /actions/runs/{id}/rerun-failed-jobs`, documented, covered by
+`actions: write`). It falls back to a fresh dispatch (F1) only when no required-workflow run is behind the failed check, or
+GitHub refuses the re-run. (Revised 2026-10-06. This line used to say the re-run API was undocumented and always
+dispatched a fresh run. That premise was wrong, and the fresh run stranded #2874 and #3026: see V3.)
+
+| # | Question | Result |
+|---|----------|--------|
+| V3 | Does a retry clear the failed required check for branch protection? | A re-run adds a new check run to the **same** check suite: `filter=latest` (what protection reads) then shows only the new one, while `filter=all` (what `read_checks` reads) keeps the old failure, so a second failure still evicts. Verified on #3019 head `6a11342309` (2026-10-05): one suite, failure at 22:11, success at 22:35, PR went `CLEAN`. A fresh dispatch opens a **second** suite, and the failure stays the latest in its own: #3026 head `d35d1fb595` (2026-10-06) had failure and success in two suites, both returned by `filter=latest`, and stayed `BLOCKED` while green, like #2874 before its stuck eviction. Verified with the owner's token; the queue's `GITHUB_TOKEN` re-run path is first exercised live on the next retry. |
 
 ## 5. Architecture
 
@@ -150,7 +157,7 @@ seconds apart (after each merge the next front is routinely `UNKNOWN` for a whil
 | Up to date, no required-check run on the head, or only cancelled ones; head commit older than 3 minutes | **Dispatch** `derived-artifacts.yml` |
 | Up to date, no run yet, head commit 3 minutes old or less | Wait (the author's own `pull_request` run may not be visible yet) |
 | Up to date, required check queued or in progress | Wait (in flight) |
-| Up to date, required check failed, first failure on this head | **Dispatch** a fresh run (retry), and comment noting the retry and linking the failed run |
+| Up to date, required check failed, first failure on this head | **Retry:** re-run the failed run's failed jobs (fresh dispatch as fallback, V3), and comment noting the retry and linking the failed run |
 | Up to date, required check failed, second failure on this head | **Evict:** CI failed twice, linking both runs |
 | `CLEAN` or `UNSTABLE` (or `BLOCKED` with no unresolved review threads, usually the state lagging the check), required check green, completed 15 minutes ago or less | Wait (auto-merge is about to fire) |
 | `CLEAN` or `UNSTABLE` (or `BLOCKED` with no unresolved review threads), required check green, completed more than 15 minutes ago | **Evict:** auto-merge did not fire, re-arm to retry |

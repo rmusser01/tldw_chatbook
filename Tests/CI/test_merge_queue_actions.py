@@ -76,7 +76,7 @@ class FakeGh:
 
     def __init__(self, nodes, *, checks=None, runs=None, comments=None, rebase_error=False,
                  reread=None, dispatch_refused=(), rebase_lag=1, disarm_error=False,
-                 line_page_size=None, late_runs=None, dispatch_status=422):
+                 line_page_size=None, late_runs=None, dispatch_status=422, rerun_refused=False):
         self.nodes = {n["number"]: n for n in nodes}
         self.checks = checks or {}
         self.runs = runs or {}
@@ -89,6 +89,7 @@ class FakeGh:
         self.line_page_size = line_page_size
         self.late_runs = late_runs or {}
         self.dispatch_status = dispatch_status
+        self.rerun_refused = rerun_refused
         self.runs_reads = {}
         self.reread_counts = {}
         self.rereads_since_rebase = None
@@ -168,6 +169,11 @@ class FakeGh:
             self._record(("dispatch", workflow, dict(fields or {})))
             if workflow in self.dispatch_refused:
                 raise mq.GhError(DISPATCH_ERRORS[self.dispatch_status])
+            return None
+        if method == "POST" and path.endswith("/rerun-failed-jobs"):
+            self._record(("rerun", path.split("/runs/")[1].split("/")[0]))
+            if self.rerun_refused:
+                raise mq.GhError("gh: This workflow run cannot be rerun (HTTP 403)")
             return None
         if method == "POST" and path.endswith("/cancel"):
             self._record(("cancel", path.split("/runs/")[1].split("/")[0]))
@@ -280,6 +286,59 @@ def test_first_failure_dispatches_a_retry():
     _run(gh)
     assert ("dispatch", "derived-artifacts.yml", {"ref": "feat/1", "inputs[pr]": "1"}) in gh.calls
     assert any(c[0] == "comment" and f"merge-queue:retry:{OLD}" in c[2] for c in gh.calls)
+
+
+def _required_failed_run(rid, suite):
+    """The required-workflow run whose check suite reported the failed required check."""
+    return {"id": rid, "path": ".github/workflows/derived-artifacts.yml", "event": "workflow_dispatch",
+            "status": "completed", "conclusion": "failure", "check_suite_id": suite,
+            "updated_at": "2026-10-03T11:58:00Z", "html_url": f"https://run/{rid}"}
+
+
+def test_first_failure_reruns_the_failed_run_in_its_own_check_suite():
+    """A fresh dispatch opens a second check suite and the failed one stays latest in its own,
+    so the PR stays BLOCKED on a green head (#2874, #3026). Re-running replaces it in place."""
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: [_required_failed_run(70, 700)]})
+    decisions = _run(gh)
+    assert decisions[0][1].kind == "retry" and decisions[0][1].suite_id == 700
+    assert ("rerun", "70") in gh.calls
+    assert not any(c[0] == "dispatch" for c in gh.calls)
+    comment = next(c for c in gh.calls if c[0] == "comment")
+    assert f"merge-queue:retry:{OLD}" in comment[2] and "re-running its failed jobs" in comment[2]
+
+
+@pytest.mark.parametrize(
+    ("runs", "refused"),
+    [([], False),
+     ([{**_required_failed_run(70, 700), "path": ".github/workflows/perf-guard.yml", "conclusion": "success"}], False),
+     ([_required_failed_run(70, 700)], True)],
+    ids=["no-run", "other-workflow", "rerun-refused"],
+)
+def test_retry_falls_back_to_a_fresh_dispatch(runs, refused):
+    """No required-workflow run behind the failed check's suite, or GitHub refuses the re-run:
+    dispatch, as before. Only a required-workflow run is ever re-run.
+
+    Args:
+        runs: The head's workflow runs.
+        refused: Whether GitHub refuses the re-run.
+    """
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure", suite=700)]},
+                runs={OLD: runs}, rerun_refused=refused)
+    _run(gh)
+    assert ("dispatch", "derived-artifacts.yml", {"ref": "feat/1", "inputs[pr]": "1"}) in gh.calls
+    assert any(c[0] == "comment" and "retrying with a fresh run" in c[2] for c in gh.calls)
+    assert any(c[0] == "rerun" for c in gh.calls) is refused
+
+
+def test_a_failed_rerun_still_counts_as_the_second_failure():
+    """After a re-run the old attempt's failed check stays listed (filter=all, verified live on
+    #3019's head 6a11342309), so a re-run that fails again evicts instead of re-running forever."""
+    checks = [_check("failure", completed="2026-10-03T11:00:00Z", url="https://run/a", suite=700),
+              _check("failure", completed="2026-10-03T11:40:00Z", url="https://run/b", suite=700)]
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: checks}, runs={OLD: [_required_failed_run(70, 700)]})
+    assert _run(gh)[0][1].kind == "evict"
+    assert not any(c[0] == "rerun" for c in gh.calls)
 
 
 def test_queue_tick_failure_is_not_a_ci_failure():

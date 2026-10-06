@@ -116,12 +116,15 @@ class Action:
         reason: A human-readable cause, logged and quoted in comments.
         links: Run URLs quoted in the comment (the failed runs).
         slug: An eviction's cause, used in its comment marker.
+        suite_id: For a retry, the failed check's check suite, which names the workflow run
+            to re-run; None when the failure has no check run (a broken run's stand-in).
     """
 
     kind: str
     reason: str
     links: tuple[str, ...] = ()
     slug: str = ""
+    suite_id: int | None = None
 
 
 def line_of(prs: list[PrState]) -> list[PrState]:
@@ -169,7 +172,7 @@ def decide_front(pr: PrState, now: datetime) -> Action:
     if latest.conclusion not in PASSING:
         if len(failed) >= 2:
             return Action("evict", "required check failed twice", tuple(c.url for c in failed[-2:]), "failed-twice")
-        return Action("retry", "required check failed once; retrying", (latest.url,))
+        return Action("retry", "required check failed once; retrying", (latest.url,), suite_id=latest.suite_id)
     if state == "BLOCKED" and pr.unresolved_threads > 0:
         return Action("evict", "green but blocked by unresolved conversations", slug="blocked")
     # BLOCKED with nothing unresolved is usually mergeStateStatus lagging the green check.
@@ -544,6 +547,39 @@ def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -
     return True
 
 
+def _rerun_failed(gh: GhApi, pr: PrState, suite_id: int | None, log: Callable[[str], None]) -> bool:
+    """Re-run the failed jobs of the required-workflow run that reported the failed check.
+
+    A re-run adds a new attempt to the SAME check suite, so branch protection (which reads the
+    latest check run per suite) stops counting the old failure, while `read_checks`
+    (`filter=all`) still lists it, so a second failure still evicts. A fresh dispatch instead
+    opens a second suite, and the failed one stays the latest in its own suite: the PR then
+    stays BLOCKED on a green head until the stuck eviction (#2874 and #3026, 2026-10-06).
+
+    Args:
+        gh: The GitHub client.
+        pr: The front PR.
+        suite_id: The failed check's check suite.
+        log: Receives one line per notable step.
+
+    Returns:
+        True if a re-run was started; False if there is no such run, or GitHub refused the
+        re-run (the caller then dispatches a fresh run, the old behaviour).
+    """
+    if suite_id is None:
+        return False
+    run = next((r for r in runs_on(gh, pr.head_sha)
+                if _workflow_name(r) == REQUIRED_WORKFLOW and r.get("check_suite_id") == suite_id), None)
+    if run is None:
+        return False
+    try:
+        gh.rest("POST", f"repos/{REPO}/actions/runs/{run['id']}/rerun-failed-jobs")
+    except GhError as exc:
+        log(f"  #{pr.number}: re-run of run {run['id']} refused ({exc}); dispatching a fresh run instead")
+        return False
+    return True
+
+
 def _dispatch_required(gh: GhApi, pr: PrState, log: Callable[[str], None]) -> bool:
     """Dispatch the required check on the PR's head; a branch-side refusal evicts the PR.
 
@@ -660,6 +696,13 @@ def apply(
         # section 7).
         if any(c.status != "completed" for c in required_run_stand_ins(gh, pr.head_sha, ())):
             log(f"  #{pr.number}: a required run appeared on {pr.head_sha[:10]} since the decision; not dispatching")
+            return False
+        if action.kind == "retry" and _rerun_failed(gh, pr, action.suite_id, log):
+            comment_once(
+                gh, pr.number, "retry", pr.head_sha,
+                f"Merge queue: the required check failed once on `{pr.head_sha[:10]}`; re-running its failed "
+                f"jobs. Failed run: {action.links[0]}",
+            )
             return False
         if _dispatch_required(gh, pr, log):
             return True
