@@ -6472,3 +6472,25 @@ def build_virtual_cli_review_hook(
         }
 
     return review_tool_calls
+
+
+# Definition-time sources for optional in-memory Inspector pending display only.
+_CONSOLE_PENDING_FACTS_READERS = tuple(
+    (
+        name,
+        method,
+        method.__code__,
+        method.__globals__,
+        method.__defaults__,
+        method.__kwdefaults__,
+        tuple((method.__kwdefaults__ or {}).items()),
+        method.__closure__,
+        tuple((cell, cell.cell_contents) for cell in method.__closure__ or ()),
+    )
+    for name in (
+        "pending_round_count",
+        "pending_round_kinds",
+        "has_pending_approval_round",
+    )
+    for method in (getattr(InterruptRoundHost, name),)
+)

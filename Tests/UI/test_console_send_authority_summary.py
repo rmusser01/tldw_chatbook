@@ -16,6 +16,9 @@ from tldw_chatbook.Widgets.Console.console_send_authority_summary import (
     project_console_send_authority,
 )
 
+# Real widget config readers retain the collection-time guarded profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _state(**overrides) -> ConsoleInspectorState:
     values = {

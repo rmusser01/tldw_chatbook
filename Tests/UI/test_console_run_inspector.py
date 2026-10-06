@@ -31,6 +31,9 @@ from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
 )
 
+# Real widget config readers retain the collection-time guarded profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 EXPECTED_ROW_OWNERS = {
     "Run recipe": "Run",

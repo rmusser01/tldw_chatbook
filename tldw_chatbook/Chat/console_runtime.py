@@ -5817,3 +5817,27 @@ def _initial_receipt_preparer(runtime: Any) -> Any | None:
         ):
             return None
     return MethodType(records[1][1], runtime)
+
+
+# Definition-time original peeks used by the optional pending-only display.
+_CONSOLE_PENDING_RUNTIME_PROPERTIES = (
+    ConsoleRuntime,
+    tuple(
+        (
+            name,
+            descriptor,
+            descriptor.fget,
+            descriptor.fget.__code__,
+            descriptor.fget.__globals__,
+            descriptor.fget.__defaults__,
+            descriptor.fget.__kwdefaults__,
+            tuple((descriptor.fget.__kwdefaults__ or {}).items()),
+            descriptor.fget.__closure__,
+            tuple(
+                (cell, cell.cell_contents) for cell in descriptor.fget.__closure__ or ()
+            ),
+        )
+        for name in ("chat_controller", "chat_store")
+        for descriptor in (inspect.getattr_static(ConsoleRuntime, name),)
+    ),
+)

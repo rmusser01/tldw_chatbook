@@ -2174,6 +2174,32 @@ acceptance requires the unchanged original genuine-expiry node, actual running
 and queued preexisting-reader controls, direct native/cancellation positives and
 nested/error restoration controls. No whole performance acceptance is implied.
 
+### TASK-34406 clarification: Default workspace binding presentation
+
+ADR028 forbids named folder bindings in Default; its private Chat scratch is a
+separate authority. The exact stock runtime-binding lister removes any legacy
+Default rows and always returns an empty tuple. A disposable presentation may
+derive that immutable empty-binding policy without invoking housekeeping only
+after qualifying the defining original service, database, Default constant,
+normalizer, lister and cleanup source, and the current profile, installed
+participant, registry/database and generation owner. This is a policy derivation,
+not a cached database or permission verdict. Memory, custom and unsupported
+sources retain their original public route.
+
+The public lister, direct scope reads and live actions retain fresh legacy-row
+cleanup. Named or mixed availability retains its original finite native reader,
+filesystem status, one-second TTL and cancellation drain. Only a wholly Default
+display may derive its existing empty result before starting a native worker;
+publication must recheck the original current-owner and source fences. An owner
+or source change after selection refuses publication. No connection, admission
+proof or action permission survives this derivation, and no timer, timeout,
+native guard or performance ceiling changes.
+
+Actual native source/custody controls must first reproduce the repeated cold
+Default display connection, then verify its removal alongside a direct native
+cleanup positive, real named availability and source/owner/custom/cancellation
+controls. The whole-app and platform budgets remain independent acceptance gates.
+
 
 ## Fresh Library initialization within the existing creation owner
 
@@ -2212,3 +2238,95 @@ and remain independent gates.
 An unchanged Character display observation may reuse its existing short presentation lifetime immediately after the same invocation has successfully published the original stock recent-groups refresh. A scalar generation receipt is produced only after the original finite batch publishes, its defining source bindings remain current, and the original generation still owns the result. The presentation caller additionally requires the expected generation, the captured original refresh binding, the current screen/app/store/session/source owner and a successful fingerprint before setting the existing memo timestamp.
 
 A prior successful state alone does not establish this receipt. Entry refusal, source drift, superseding generation, failure and cancellation cannot establish a memo. Public `refresh` still returns `None`; custom, unsupported, memory and direct routes retain their original fresh behavior. This does not lengthen the existing display TTL or grant permission to a live action.
+
+
+### TASK-34406 clarification: live pending facts during configuration refresh
+
+The real cold-owner regression in inspector-cold-live-pending-native-v4-red-1 reached the original checked worker with two actual raw leases, the real legacy approval card and in-memory count1. All source, monitor, worker, round, native custody and fixture retirement prerequisites passed. Its sole final oracle failure recorded three facts: Inspector count0, missing pending row paint, and disabled Review. The original denial and count0 after release passed. Earlier gate/cleanup failures remain excluded.
+
+Retain the original guarded full presentation and its one-second checked mapping age, pending/retry behavior and return value. Only after that full body defers may a previously complete state for this exact view/runtime/App/controller/store/actual selected-session/host/config selector/revision be reused as the unchanged base for a new pending-only fragment. Exact owner references include the config mapping, data owners, loop and Thread; changed attachment, session, source path, settings/workspace binding or runtime generation declines. Only configuration generation may differ from the prior complete base; it must remain unchanged across this synchronous fragment.
+
+Call the original in-memory count and kind readers with their original individual non-reentrant locks. No outer lock, config disk read, ensure, worker, permission verdict cache, await or new timer is introduced. Check definition-time original callable/code/globals/default/closure metadata and static receiver lookup before entry and between readers. The two Runtime property fget anchors belong at their defining module completion, so a preinstalled customized property declines without invocation. New field descriptors cannot redirect these instance-only owner/read fields. Malformed optional metadata, unknown bases or receivers decline safely to the existing retry.
+
+Retain only normalized display inputs for the recipe and launch title; custom non-string titles retain their original full-render coercion but are not retained for later partial coercion. Update Approvals/count/hasPending, Live work, recipe approvals, and the existing Review affordance coherently. Preserve provider, retrieval, scope and unrelated actions. Re-read actual count and kinds, then recheck ownership before and after publication; drift rejects acceptance and requests the existing coalesced retry. Original action/Send/approval authority gates and subsequent full publication remain fresh. No source body or automatic context is exposed.
+
+This refines ADR126 and preserves ADR085 App-owned runtime/view attachment and ADR210 current region/action ownership. It adds no visual tokens, action, keybinding or schema.
+
+
+### TASK-34406 clarification: finite compact model setup reads
+
+The compose and mount lifecycle paths in the stock compact model selector must avoid running the public checked provider-settings reader on the UI loop. They use one finite background invocation of the original public reader, retain its native checks, and apply the returned options and defaults only to the same mounted widget, App, configuration mapping, selection and source generation. The compose phase may yield controls from the current in-memory options while the checked refresh is pending. The original explicit provider-change action and custom reader contract remain fresh.
+
+Capture definition-time stock reader metadata and reject source or owner changes before invocation and before publication. Retain and drain the exact worker on cancellation, repeated cancellation or unmount, including physical resource retirement, before accepting another lifecycle result. Do not publish over user choices made during the wait. Preserve the existing default-provider resolution, model fallback, Select-change suppression, temperature and control-bar synchronization. No permission or native posture verdict is cached; no TTL, timer, source guard, startup or Send budget changes.
+
+Acceptance requires genuine held original-reader evidence for both lifecycle paths, actual UI-loop progress during the hold, normal worker and native retirement, current-source and owner controls, and the original provider/default-selection tests. Cross-platform and whole-app performance gates remain separate.
+
+
+#### Compact model display inputs and transient cache replacement
+
+The stock App retains its constructor settings mapping while ordinary original settings reloads may replace the global cache. Object identity with that transient cache, or its last source marker, is therefore not an eligibility proof for a finite stock provider read. Exact plain App mappings and nested display/default values may select that read under the existing defining callback/class/lookup, current lexical configuration identity, parent, loop and owner fences. These input values grant no native authority; the original public callback retains fresh permission, path and posture checks for each invocation.
+
+Capture and recheck the exact App mapping and its plain inputs without rebinding either App or cache. Custom mapping classes or nested coercions, customized readers/bodies/classes and unsupported sources retain the direct lifecycle contract. A preinstalled exact plain dict is display data under the same rule; it cannot grant storage or Send permission. Mid-read mapping, user selection, source or generation changes still refuse publication, and the exact original callback Task still drains before retirement.
+
+
+### TASK-34406 clarification: finite deferred Collections capture setup
+
+The stock post-ready timer currently calls the synchronous Collections capture initializer on the UI loop. The source-current contained whole probe records this original caller during the idle UI pause; detached setup must preserve the fresh path, data-root, schema, offline-store and legacy checks. This amendment refines ADR085 App-owned service lifetime and preserves ADR113 Local/Server authority selection.
+
+Only the original deferred timer with the exact existing stock file-backed LibraryCollectionsDB may select one finite background build. Keep constructor and synchronous first-use/custom/memory routes unchanged. The callback invokes the captured original native readers and builders, returns detached pieces, and physically retires only its newly created worker connection/resources on that same worker; existing borrowers remain live. The UI loop constructs the non-native scope/service, publishes fields and performs original authority activation only after exact App, deferred scope, database, original defining source bindings, selected configuration path/generation and runtime owner still match. A first-use winner, replacement, changed source or shutdown cannot be overwritten.
+
+Retain the exact initializer Task and native callback through cancellation, repeated cancellation and failure. Capture shutdown seals new initializer admission and deactivates the current scope before cancelling/draining the initializer, and completes the existing extraction shutdown before creator-resource close. A cancelled Task alone cannot prove native retirement. Late timer calls cannot start after this boundary; no result or authority survives retirement for another initialization. Generic unmount cancellation occurring later is insufficient.
+
+Keep the original timer interval, source/permission checks, reconciliation behavior and direct APIs. No configuration or native permission cache, longer TTL, constructor-wide guard, await-held native scope or performance ceiling change is introduced. Original Collections app-wiring contracts and genuine held native build/source/owner/first-use/cancellation/shutdown controls establish acceptance. Whole-app startup, Send and platform gates remain independent.
+
+
+### TASK-34406 clarification: pending-only display at first persistence
+
+The source-qualified first-persistence control now observes the same Session's
+ordinary None-to-durable-conversation publication while the original checked
+configuration reader owns two native leases. Every other owner/incarnation,
+host, binding-revision, Workspace, data, mapping and settings fence remains
+current. The original complete-base comparison correctly refuses the changed
+conversation; the live count is one, but Inspector and pinned counts remain
+stale. Original denial, callback, lease, observer and native process retirement
+all pass. Evidence: first-persistence-coalesced-observer-native-1, exact receipt
+df9a8354b386257ee65325bfa74771ee7b951e084cdae6f6c9dcf393b10cbc25.
+
+Under ADR-085 creator ownership and ADR-210 strict owned Inspector content,
+retain the complete-base key and original full-call deferral/retry contract.
+Add a separate explicit pending-only model/screen/pinned-summary display only
+for that positively identified first persistence of the same exact Session.
+It requires a valid prior complete base and every existing fence, permitting
+only config generation and None-to-nonempty durable identity to differ, while
+the binding revision remains unchanged. The old complete base is rejected and
+none of its provider, recipe, scope, retrieval, evidence, readiness or action
+values is transplanted. Missing base, replaced Session with the same ID,
+changed incarnation/host/runtime/profile/data/attachment/settings/Workspace,
+custom readers and any other revision change retain their prior refusal.
+
+Read only original current selected-session in-memory count and registered
+decision kinds, with their existing separate non-reentrant locks. Recheck
+count/kinds and the complete current owner around publication; drift refuses
+acceptance and requests the existing retry. Retain defining-source/code,
+globals/defaults/closure and static-receiver qualification. Never hold an outer
+host/controller lock, invoke native config/DB I/O for the fragment, or establish
+new permission or Send authority from display data.
+
+The explicit pending-only marker survives equality, cleaning, owned-content
+projection and pinned summary normalization. It is distinct from unknown or
+colliding row IDs and may not use full-state defaults. Existing owned rows show
+the current literal approval count and decision copy; unrelated Where, Scope,
+Sources, provider, retrieval, evidence, recipe and run readiness say Refreshing.
+Review alone may be available from current approval/question/confirmation kinds
+and uses its existing live card handler. Approval-first priority is preserved;
+questions/confirmations do not inflate approval count. An empty count/kind set
+clears Review without inferring Ready or No active work. Existing stable row IDs,
+strict ownership, token classes, reconciliation and focus recovery remain.
+
+This partial observation never becomes the complete pending-display base,
+configuration proof, persistent state or a cached decision. A later original
+fresh full publication restores complete content normally. Acceptance requires
+the actual first-persistence control, marker and no-foreign-field/action checks,
+owner/source/fact drift refusals, current decision-kind transitions, and the
+unchanged six original mounted journeys and cold/retirement controls. Whole
+startup/Send and platform performance budgets remain separate and unchanged.

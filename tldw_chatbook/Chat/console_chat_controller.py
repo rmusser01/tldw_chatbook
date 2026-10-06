@@ -29769,3 +29769,36 @@ _HOOK_AUTHORITY_VALUES_ORIGINAL = (
     ConsoleChatController._hook_authority_values.__kwdefaults__,
     ConsoleChatController._hook_authority_values.__closure__,
 )
+
+
+# Definition-time sources for optional in-memory Inspector pending display only.
+_CONSOLE_PENDING_FACTS_READERS = tuple(
+    (
+        name,
+        method,
+        method.__code__,
+        method.__globals__,
+        method.__defaults__,
+        method.__kwdefaults__,
+        tuple((method.__kwdefaults__ or {}).items()),
+        method.__closure__,
+        tuple((cell, cell.cell_contents) for cell in method.__closure__ or ()),
+    )
+    for name in (
+        "pending_round_count",
+        "pending_round_kinds",
+        "has_pending_approval_round",
+    )
+    for method in (getattr(ConsoleChatController, name),)
+)
+
+_CONSOLE_PENDING_FACTS_CALLBACK_CODES = {
+    attribute: next(
+        code
+        for code in ConsoleChatController.__init__.__code__.co_consts
+        if isinstance(code, type(ConsoleChatController.__init__.__code__))
+        and code.co_name == "<lambda>"
+        and code.co_names == (attribute,)
+    )
+    for attribute in ("_pending_approvals", "_pending_round_kinds")
+}

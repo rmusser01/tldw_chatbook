@@ -18602,3 +18602,26 @@ Related, from the same session: on macOS `/bin/bash` 3.2 has no `mapfile`, and
 node ids that contain spaces (`[...-Q3 retro.md]`) split under `$(cat list)`.
 Both produced "no tests ran" on the base arm. Drive node lists through a tiny
 Python `subprocess.run([... *nodes])` runner instead.
+
+
+## TASK-34406: restoring a Python allocator can still change construction
+
+**Incident (2026-10-06).** A mounted hostile-constructor test assigned a custom
+`ConsoleInspectorState.__new__`, then deleted it to restore the inherited method.
+The displayed source slots looked restored, but actual Python3.12.10 changed its
+allocator fast path: later keyword construction raised
+`object.__new__() takes exactly one argument`. A source-only reproduction proved
+clean construction, custom allocation, and the failing restoration in sequence.
+The production refusal guard was not the failing boundary. Keeping this mutation
+last and retaining the valid declared allocator through normal App/runtime and
+factory drains made all12 mounted controls pass. Restore only after those original
+owners retire, or isolate the allocator mutation in its own child; do not patch
+native allocator slots to make a test appear restored.
+
+The same verification run found100 older widget cases failing in setup with
+`raw_source_selection_changed`: per-test environment redirection disagreed with
+the config source selected at collection. Existing `bootstrap_profile` marks
+keep that canonical isolated test profile and retain singleton cleanup. Adding
+only the mark (preserving the worldbook module's existing asyncio mark) left all
+original test AST/assertions/bounds intact and the155 compatibility cases passed.
+An admission setup error is not a product regression or a passed product check.
