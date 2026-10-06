@@ -16359,6 +16359,9 @@ SmartContentTree Tree > .selected-node {
     color: $text-muted;
     margin-right: $ds-space-1;
 }
+.setup-welcome-restore-row #setup-welcome-reduce-motion {
+    margin-right: $ds-space-2;
+}
 .setup-welcome-restore-row .setup-tertiary-button {
     margin-top: $ds-space-0;
 }
