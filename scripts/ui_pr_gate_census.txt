@@ -176,6 +176,10 @@ Tests/UI/test_library_media_export_no_freeze.py
 
 # TASK-34000.6: Study ▸ Flashcards against the REAL StudyScopeService (local
 # over an in-memory DB, workspace over the real ServerStudyService) plus the
-# dashboard/editor geometry under the shipping CSS at 160x45, 160x70 and
-# 120x36 (8 tests; 24-26 s pytest / 28-30 s wall locally, bounded polls).
+# deck/card crash paths (2 tests; 16.7 s and 18.2 s pytest / 23.3 s and
+# 25.2 s wall locally, two runs, bounded polls). The six geometry
+# parametrizations (dashboard buttons / Flashcards controls at 160x45, 160x70,
+# 120x36) are deliberately NOT here (test_study_controls_geometry.py, 35 s
+# pytest / 43 s wall): all eight together measured 24-26 s pytest / 28-30 s
+# wall, too close to the lane's 60 s budget.
 Tests/UI/test_study_flashcards_real_service_contract.py

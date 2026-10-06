@@ -17269,6 +17269,7 @@ the start: `Tests/Backup_Recovery/config_test_support.install_config_source
 True)` -- `Tests/test_config_model_catalog_defaults.py` is the worked example
 and runs in ~3 s. `Tests/test_config_load_settings_table_guard.py` and
 `Tests/Library/test_ingest_analysis_load_settings.py` are written that way.
+
 ### An AST guard that greps a dumped statement list passes on an unawaited call (PR #2813)
 
 **What happened.** `test_every_replacement_progress_timer_retires_its_predecessor`
