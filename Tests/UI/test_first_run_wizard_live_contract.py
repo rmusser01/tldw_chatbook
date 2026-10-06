@@ -83,7 +83,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     SETUP_STARTED_KEY,
     STEP_APPEARANCE,
     STEP_MODEL,
-    STEP_NOTES,
     STEP_PROTECT,
     STEP_PROVIDER,
     STEP_RAG,
@@ -102,7 +101,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     FirstRunSetupWizard,
     ModelStep,
-    NotesSyncStep,
     ProviderStep,
     SetupWizardContainer,
     SpeechSetupStep,
@@ -1247,10 +1245,6 @@ async def test_resumed_target_restores_then_clears_attempt_after_mount(
                 model_step.query_one("#setup-model-custom", Input).value
                 == "gpt-resume-test"
             )
-            notes_step = container.steps[container._step_index_for_id(STEP_NOTES)]
-            assert notes_step.get_step_data() == {}
-            assert not notes_step.query("#setup-notes-enable")
-
             appearance_step = container.steps[
                 container._step_index_for_id(STEP_APPEARANCE)
             ]
@@ -1532,7 +1526,8 @@ async def test_required_provider_failure_manual_setup_routes_with_checkpoint(
 
 @pytest.mark.parametrize(
     ("step_type", "step_id"),
-    ((ToolsStep, STEP_TOOLS), (NotesSyncStep, STEP_NOTES)),
+    # TASK-34100.13: the Notes step left the Full track (fulltrack-05).
+    ((ToolsStep, STEP_TOOLS),),
 )
 @pytest.mark.asyncio
 async def test_tools_notes_failure_manual_setup_routes_to_advanced_config(
@@ -1811,7 +1806,6 @@ async def test_full_track_skip_everything_leaves_app_usable(
                 "rag",
                 "speech",
                 "tools",
-                "notes",
                 "appearance",
                 "protect-keys",
             ]

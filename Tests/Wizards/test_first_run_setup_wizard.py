@@ -52,7 +52,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     SETUP_DRAFT_VERSION,
     STEP_APPEARANCE,
     STEP_MODEL,
-    STEP_NOTES,
     STEP_PROTECT,
     STEP_PROVIDER,
     STEP_RAG,
@@ -71,7 +70,6 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     AppearanceStep,
     FirstRunSetupWizard,
     ModelStep,
-    NotesSyncStep,
     ProtectKeysStep,
     ProviderChoiceOption,
     ProviderStep,
@@ -10188,31 +10186,6 @@ async def test_tools_step_on_to_off_transition_writes_false():
 
 
 @pytest.mark.asyncio
-async def test_notes_step_is_informational_and_never_writes_legacy_sync_config():
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-
-    wizard = SimpleNamespace(
-        app_instance=MagicMock(app_config={}),
-        commit_config=AsyncMock(return_value=True),
-        rerun=False,
-    )
-    step = NotesSyncStep(
-        wizard=wizard,
-        config=WizardStepConfig(id="notes", title="Notes sync", step_number=6),
-    )
-    app = _StepHost(step)
-    async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
-        ok, _ = await step.commit()
-        assert ok
-        wizard.commit_config.assert_not_awaited()
-        assert step.get_step_data() == {}
-        assert not step.query("#setup-notes-enable")
-        assert not step.query("#setup-notes-directory")
-
-
-@pytest.mark.asyncio
 async def test_protect_keys_enables_encryption_via_injected_callable():
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
@@ -12127,8 +12100,9 @@ async def test_full_track_progress_content_stays_inside_non_overlapping_items(
         await pilot.pause(0.1)
 
         rows = list(wizard.query(".setup-progress-item"))
-        # TASK-21148 (UAT N-6): Protect is always on the track.
-        assert len(rows) == 11
+        # TASK-21148 (UAT N-6): Protect is always on the track. TASK-34100.13
+        # removed the Notes step (fulltrack-05): Full is ten steps.
+        assert len(rows) == 10
         assert sum(row.has_class("-active") for row in rows) == 1
         assert all(
             row.has_class("-active")
@@ -12502,7 +12476,6 @@ class TestComposeCrashPolicy:
             (STEP_VOICE, "speech-tts"),
             (STEP_SPEECH, "speech-tts"),
             (STEP_TOOLS, "advanced-config"),
-            (STEP_NOTES, "advanced-config"),
             (STEP_APPEARANCE, "appearance"),
             (STEP_PROTECT, "privacy-security"),
             (STEP_SUMMARY, "diagnostics"),

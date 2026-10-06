@@ -152,7 +152,6 @@ REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES: Mapping[str, str] = {
     wizard_state.STEP_VOICE: "speech-tts",
     wizard_state.STEP_SPEECH: "speech-tts",
     wizard_state.STEP_TOOLS: "advanced-config",
-    wizard_state.STEP_NOTES: "advanced-config",
     wizard_state.STEP_APPEARANCE: "appearance",
     wizard_state.STEP_PROTECT: "privacy-security",
     wizard_state.STEP_SUMMARY: "diagnostics",

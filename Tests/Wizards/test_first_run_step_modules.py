@@ -34,7 +34,6 @@ _STEP_MODULES = {
     "RagStep": "first_run_rag_step",
     "SpeechSetupStep": "first_run_speech_step",
     "ToolsStep": "first_run_tools_step",
-    "NotesSyncStep": "first_run_notes_step",
     "AppearanceStep": "first_run_appearance_step",
     "ProtectKeysStep": "first_run_protect_step",
     "SummaryStep": "first_run_summary_step",
@@ -237,7 +236,9 @@ _OLD_PUBLIC_NAMES = (
     "FirstRunSetupWizard",
     "GENERIC_DISCOVERY_FAILURE_CATEGORY",
     "ModelStep",
-    "NotesSyncStep",
+    # "NotesSyncStep" left with the Notes step itself (TASK-34100.13,
+    # fulltrack-05): the step configured nothing, so there is no class to
+    # import any more.
     "ProtectKeysStep",
     "ProviderChoiceList",
     "ProviderChoiceOption",
