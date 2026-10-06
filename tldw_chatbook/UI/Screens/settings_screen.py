@@ -112,6 +112,7 @@ from ...Chat.provider_readiness import (
     ProviderReadiness,
     get_provider_readiness,
     provider_config_key,
+    provider_credential_source,
 )
 from ...Chat.provider_setup_persistence import (
     ProviderSetupDraft,
@@ -486,6 +487,7 @@ if TYPE_CHECKING:
     from ...Agents.hook_permissions import HookReviewSnapshot
     from ...Tool_Packs.contracts import ToolPackError
     from ...Tool_Packs.service import ToolProfileListing
+    from ...Widgets.model_search_picker import ModelSearchPicker
     from ...Widgets.Settings_Widgets.personal_context_panel import (
         PersonalContextSettingsPanel,
     )
@@ -12579,20 +12581,16 @@ class SettingsScreen(BaseAppScreen):
 
         return anthropic_auth_source(self._provider_config("anthropic"))
 
-    def _provider_auth_readiness_config(
-        self, provider: object, *, auth_source: str | None = None
-    ) -> Mapping[str, object]:
+    def _provider_auth_readiness_config(self, provider: object) -> Mapping[str, object]:
         """Return readiness config with Anthropic's unsaved sign-in choice applied.
 
         The credential status, placeholder, key status and the subscription
         poller read this, so an unsaved choice shows at once and a cold
-        subscription check is followed to completion (Qodo #2990). Forcing
-        ``auth_source`` to the API key lets the saved-key check see a stored
-        key even while the saved choice is the subscription.
+        subscription check is followed to completion (Qodo #2990). The
+        saved-key check reads the table instead (``provider_credential_source``).
 
         Args:
             provider: The provider the panel shows.
-            auth_source: A choice to apply instead of the current one.
 
         Returns:
             The saved config, or a copy with the choice overlaid.
@@ -12600,7 +12598,7 @@ class SettingsScreen(BaseAppScreen):
         config = self._provider_readiness_app_config()
         if provider_config_key(str(provider or "")) != "anthropic":
             return config
-        value = auth_source or self._provider_auth_source_value(provider)
+        value = self._provider_auth_source_value(provider)
         if value == self._provider_saved_auth_source(provider):
             return config
         save_key, _config = self._provider_config_entry(str(provider))
@@ -14364,18 +14362,12 @@ class SettingsScreen(BaseAppScreen):
         return app_config or {}
 
     def _provider_saved_api_key_present(self, provider: str) -> bool:
-        # Qodo #2990: judge the stored key with the API-key path, so a saved
-        # subscription choice cannot hide it (Clear stays usable).
-        readiness = get_provider_readiness(
-            provider,
-            self._provider_auth_readiness_config(
-                provider, auth_source=_anthropic_auth_sources()[0]
-            ),
-            background_credentials=True,
+        # Read from the table, not readiness: neither a saved subscription
+        # choice (Qodo #2990) nor a base URL still to set may hide a saved key.
+        source = provider_credential_source(
+            provider, self._provider_readiness_app_config()
         )
-        return bool(
-            readiness.api_key_source and readiness.api_key_source.startswith("config:")
-        )
+        return (source or "").startswith("config:")
 
     def _provider_api_key_placeholder(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
@@ -18570,12 +18562,17 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
             yield Static("Local reasoning history", classes="destination-section")
-            yield Select(
-                REASONING_HISTORY_OPTIONS,
-                value=self._console_behavior_value("reasoning_history"),
-                allow_blank=False,
-                id="settings-console-reasoning-history",
-            )
+            # Parent AC#7 (TASK-33007): every Select on the card is one row.
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Replay", classes="settings-input-label")
+                yield Select(
+                    REASONING_HISTORY_OPTIONS,
+                    value=self._console_behavior_value("reasoning_history"),
+                    allow_blank=False,
+                    id="settings-console-reasoning-history",
+                    classes="settings-compact-select",
+                    compact=True,
+                )
             yield Static(
                 "These device-local controls refine Conversation Auto. Conversation "
                 "Include and Exclude override them, and Required continuation remains "
@@ -18596,13 +18593,17 @@ class SettingsScreen(BaseAppScreen):
                     markup=False,
                     classes="settings-detail-row",
                 )
-                yield Select(
-                    (("Use default", "inherit"), *REASONING_HISTORY_OPTIONS),
-                    value=self._reasoning_override_value(),
-                    allow_blank=False,
-                    disabled=target is None,
-                    id="settings-console-reasoning-override",
-                )
+                with Horizontal(classes="settings-input-row settings-select-row"):
+                    yield Static("Replay", classes="settings-input-label")
+                    yield Select(
+                        (("Use default", "inherit"), *REASONING_HISTORY_OPTIONS),
+                        value=self._reasoning_override_value(),
+                        allow_blank=False,
+                        disabled=target is None,
+                        id="settings-console-reasoning-override",
+                        classes="settings-compact-select",
+                        compact=True,
+                    )
                 yield Checkbox(
                     "Native tool support",
                     value=self._reasoning_native_override_value(),
@@ -18693,13 +18694,16 @@ class SettingsScreen(BaseAppScreen):
                 classes="settings-status-row",
             )
             yield Static("Rail presentation", classes="destination-section")
-            yield Static("Rail layout scope", classes="settings-input-label")
-            yield Select(
-                (("Global", "global"), ("Per workspace", "workspace")),
-                value=self._console_rail_layout_scope(),
-                allow_blank=False,
-                id="settings-console-rail-layout-scope",
-            )
+            with Horizontal(classes="settings-input-row settings-select-row"):
+                yield Static("Rail layout scope", classes="settings-input-label")
+                yield Select(
+                    (("Global", "global"), ("Per workspace", "workspace")),
+                    value=self._console_rail_layout_scope(),
+                    allow_blank=False,
+                    id="settings-console-rail-layout-scope",
+                    classes="settings-compact-select",
+                    compact=True,
+                )
             yield Static(
                 "Global keeps one arrangement everywhere. Per workspace restores "
                 "and keeps each workspace's saved arrangement.",
@@ -29590,7 +29594,9 @@ class SettingsScreen(BaseAppScreen):
 
     # Named handlers, not @on: @on would need the picker class imported with
     # this module (ADR-097 pre-import payload).
-    def on_model_search_picker_model_selected(self, event) -> None:
+    def on_model_search_picker_model_selected(
+        self, event: "ModelSearchPicker.ModelSelected"
+    ) -> None:
         """Stage a chosen model as the default for new chats (AC#3, C4).
 
         Any listed id replaces a default that is already set; the saved
@@ -29602,7 +29608,9 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         self._set_model_field_value(event.model_id, quiet=False)
 
-    def on_model_search_picker_model_value_changed(self, event) -> None:
+    def on_model_search_picker_model_value_changed(
+        self, event: "ModelSearchPicker.ModelValueChanged"
+    ) -> None:
         """Stage a typed Custom ID; an invalid one holds no model (AC#5).
 
         Args:
@@ -29887,6 +29895,13 @@ class SettingsScreen(BaseAppScreen):
         ):
             return
         self._stage_provider_value("api_key", event.value.strip())
+        draft = self._provider_draft()
+        if draft is not None and not event.value.strip():
+            # An emptied field keeps the saved key; only Clear stages removal.
+            draft.values.pop("api_key", None)
+            draft.originals.pop("api_key", None)
+            if not draft.is_dirty:
+                self._settings_drafts.pop(SettingsCategoryId.PROVIDERS_MODELS, None)
         self._reset_provider_model_discovery_state()
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)

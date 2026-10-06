@@ -209,7 +209,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # cost ~10.8 min serial, and replaying per-file seconds from three-shard job
 # logs over dev's census plus them put 19-20.5 min of pytest in one of three
 # shards and 16.6-17.5 in one of four; five give 13.3-14.5 at most.
-MINIMUM_FILES = 168
+# TASK-33007 (final review) raised it to 142: test_settings_save_reach.py
+# (6 cases; the real D1 reach save and Ctrl+T in Console) and
+# test_settings_providers_models_card_geometry.py (2 cases; the card's
+# hit-test net from the region-module move) were left out of the lane.
+MINIMUM_FILES = 170
 
 
 def read_census(path: Path) -> list[str]:

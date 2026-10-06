@@ -27,7 +27,11 @@ from ...Chat.provider_catalog import (
     PROVIDER_LEGACY_ALIAS_KEYS,
     provider_display_name,
 )
-from ...Chat.provider_readiness import get_provider_readiness, provider_config_key
+from ...Chat.provider_readiness import (
+    get_provider_readiness,
+    provider_config_key,
+    provider_credential_source,
+)
 from ...config import (
     DEFAULT_CONFIG_FROM_TOML,
     ProviderSettingsError,
@@ -353,13 +357,17 @@ def configured_provider_keys(
     configured: set[str] = set()
     for entry in catalog:
         provider_key = normalize_provider_config_key(entry.readiness_key)
-        readiness = get_provider_readiness(
-            entry.readiness_key,
-            app_config,
-            environ=environ,
-            background_credentials=True,
-        )
-        if readiness.api_key_source:
+        # A saved key counts before readiness can send with it (a base URL
+        # still to set); readiness adds a ready Claude subscription.
+        if (
+            provider_credential_source(entry.readiness_key, app_config, environ=environ)
+            or get_provider_readiness(
+                entry.readiness_key,
+                app_config,
+                environ=environ,
+                background_credentials=True,
+            ).api_key_source
+        ):
             configured.add(provider_key)
             continue
         try:

@@ -106,3 +106,16 @@ Baseline reds: task-15512 lists Settings provider-default contract tests that ar
 - [ ] #16 Docs/User_Guide pages updated: settings.md Providers & Models and Console Behavior sections (content only; verification is recorded in the task notes, never as a "Verified against" paragraph, per CLAUDE.md).
 - [ ] #17 ./scripts/preflight.sh passes.
 <!-- AC:END -->
+
+## Implementation Notes
+
+### Final review fix wave 1 (2026-10-06)
+
+The whole-branch review (`.superpowers/sdd/plan-2026-10-03-model-config-p7/final-review.md`) raised 10 findings; all are fixed in code, none deferred.
+
+- AC#2: no owner ruling is needed. The Chat-settings return actions (conflict, continuation, **Return without saving**) now compose after Default model's Applies-to row, so a pending return with an unsaved edit adds no stop between Provider and Model (pinned for Anthropic, OpenAI and QwenCloud in `test_model_stays_within_five_presses_while_a_return_is_pending`).
+- AC#4: the Applies-to row describes an open chat with no settings snapshot instead of raising, and never calls a chat with messages "unused".
+- AC#7: the three remaining tall Console Behavior Selects (reasoning history, reasoning replay override, rail layout scope) are compact one-row labelled rows; the one-row test now measures every Select on both cards.
+- TASK-33007.2 AC#2/AC#4: Azure, Cloudflare and Databricks keys read **saved in config** / **from env var**, Clear works and the provider is Configured before the base URL is set (`provider_credential_source` in `provider_readiness.py`, used by Settings and `configured_provider_keys`).
+- An emptied API key field is no edit; only Clear (or Ctrl+L) stages removal.
+- Also: both missing test files added to the UI PR gate census (floor 142), the card module ruff-formatted with `ClassVar` BINDINGS, the narrow Sampling title clamps its name and drops its state first, the picker handlers are typed, and the saved-provider-return projection asserts the visible picker.

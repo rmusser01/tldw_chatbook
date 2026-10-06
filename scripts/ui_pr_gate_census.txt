@@ -140,6 +140,8 @@ Tests/UI/test_settings_discovered_model_toggle.py
 Tests/UI/test_settings_model_defaults_rows.py
 Tests/UI/test_settings_network_defaults.py
 Tests/UI/test_settings_provider_view_model.py
+Tests/UI/test_settings_providers_models_card_geometry.py
+Tests/UI/test_settings_save_reach.py
 Tests/UI/test_shell_product_model_visibility.py
 Tests/UI/test_smart_content_tree_tooltips.py
 Tests/UI/test_speech_axis_row.py

@@ -227,7 +227,9 @@ def hidden_fields_line(
         Anthropic: Min P, Seed (this provider does not accept them)"`` when
         the labels fit ``cells``; else ``"Sampling · Together does not
         accept 10 fields (open to list them)"``, the name shortened with
-        ``…`` if even that is too wide. A ``state`` follows "Sampling".
+        ``…`` if even that is too wide. A ``state`` follows "Sampling"; it
+        goes first when nothing of the name fits, then the hidden-field part
+        (the opened disclosure still lists them).
     """
     title = f"{SAMPLING_TITLE} · {state}" if state else SAMPLING_TITLE
     labels = [MODEL_FIELD_LABELS[name] for name in hidden]
@@ -242,6 +244,11 @@ def hidden_fields_line(
     noun = "field" if len(labels) == 1 else "fields"
     tail = f" does not accept {len(labels)} {noun} {HIDDEN_FIELDS_OPEN_HINT}"
     room = cells - cell_len(f"{title} · {tail}")
+    if room < 1:
+        # Not even "…" fits: a negative size would cut the name from its end.
+        if state:
+            return hidden_fields_line(provider_name, hidden, cells=cells)
+        return title
     if cell_len(provider_name) > room:
         provider_name = set_cell_size(provider_name, room - 1) + "…"
     return f"{title} · {provider_name}{tail}"

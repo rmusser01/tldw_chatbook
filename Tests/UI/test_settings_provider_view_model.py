@@ -211,6 +211,10 @@ def test_configured_provider_keys_reads_credentials_and_own_endpoints():
             "openai": {"api_key": "sk-proj-abcdefghijklmnop1234"},
             "ollama": dict(template["ollama"]),
             "llama_cpp": {**template["llama_cpp"], "api_url": "http://10.0.0.9:9099"},
+            # Final review finding 2: readiness drops these keys' source until
+            # a base URL is set; the key still counts.
+            "azure": {"api_key": "sk-proj-abcdefghijklmnop1234"},
+            "databricks": {},
         }
     }
     catalog = (
@@ -219,16 +223,24 @@ def test_configured_provider_keys_reads_credentials_and_own_endpoints():
         _entry("groq", "Groq", requires_api_key=True),
         _entry("ollama", "Ollama", requires_api_key=False),
         _entry("llama_cpp", "llama.cpp", requires_api_key=False),
+        _entry("azure", "Azure OpenAI", requires_api_key=True),
+        _entry("databricks", "Databricks", requires_api_key=True),
+        _entry("cloudflare", "Cloudflare", requires_api_key=True),
     )
 
     configured = configured_provider_keys(
         catalog,
         app_config,
         ("api_base_url", "api_url"),
-        environ={"ANTHROPIC_API_KEY": "sk-ant-abcdefghijklmnop1234"},
+        environ={
+            "ANTHROPIC_API_KEY": "sk-ant-abcdefghijklmnop1234",
+            "DATABRICKS_TOKEN": "dapi-abcdefghijklmnop1234",
+        },
     )
 
-    assert configured == frozenset({"openai", "anthropic", "llama_cpp"})
+    assert configured == frozenset(
+        {"openai", "anthropic", "llama_cpp", "azure", "databricks"}
+    )
 
 
 def test_provider_picker_no_match_keeps_only_honest_manual_action():
