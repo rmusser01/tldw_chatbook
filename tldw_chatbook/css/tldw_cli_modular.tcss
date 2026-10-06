@@ -16328,6 +16328,24 @@ SmartContentTree Tree > .selected-node {
 }
 
 
+.setup-welcome-footer {
+    height: auto;
+    padding: $ds-space-0 $ds-space-2;
+    background: $panel;
+}
+.setup-welcome-restore-row {
+    height: auto;
+}
+.setup-welcome-restore-label {
+    width: auto;
+    color: $text-muted;
+    margin-right: $ds-space-1;
+}
+.setup-welcome-restore-row .setup-tertiary-button {
+    margin-top: $ds-space-0;
+}
+
+
 .setup-rag-extras-row {
     height: auto;
     margin-top: $ds-space-1;
