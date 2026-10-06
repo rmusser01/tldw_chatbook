@@ -21148,7 +21148,9 @@ class ConsoleChatStore(ConsoleReceivedTurnAdmissionMixin, ConsoleReceivedIntentI
                     provider_continuation_json=private_json,
                     provider_continuation=checkpoint,
                 ):
-                    self.mark_dispatch_recovery_needed(session_id, message.id)
+                    # TASK-34100.3: the atomic settlement committed nothing and
+                    # the dispatch stays in flight, so the runtime can keep the
+                    # reply through the ordinary completion path.
                     raise RuntimeError(
                         "Provider continuation terminal settlement failed."
                     )

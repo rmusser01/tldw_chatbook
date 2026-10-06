@@ -38,6 +38,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
             "type(exc).__name__",
             "type(exc.__cause__).__name__",
         ),
+        "Reasoning not preserved for replay": ("store_failure",),
     },
     "tldw_chatbook/Agents/agent_service.py": {
         "autowake_enabled is not boolean; using default": (),

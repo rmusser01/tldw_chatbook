@@ -1511,6 +1511,7 @@ def run_agent_loop(
 
     def persist_continuation(event: ProviderContinuationEvent) -> bool:
         nonlocal store_failure
+        projected = False
         try:
             if isinstance(event, ToolBatchReady):
                 event = replace(
@@ -1522,14 +1523,16 @@ def run_agent_loop(
                     event,
                     checkpoint=project_continuation_checkpoint(event.checkpoint),
                 )
+            projected = True
             deps.persist_provider_continuation(event)
         except Exception as exc:
             # Deferred: only a failed persist needs the code table (ADR-097).
             from tldw_chatbook.Chat.provider_continuation_diagnostics import (
+                PROJECTION_FAILED,
                 store_failure_code,
             )
 
-            store_failure = store_failure_code(exc)
+            store_failure = store_failure_code(exc) if projected else PROJECTION_FAILED
             logger.warning(
                 "Provider continuation persist failed: event={} store_failure={} "
                 "error_type={} cause_type={}",
@@ -1539,6 +1542,42 @@ def run_agent_loop(
                 type(exc.__cause__).__name__,
             )
             return False
+        return True
+
+    def keep_reply_without_replay(
+        current: ProviderContinuationCheckpoint | None,
+    ) -> bool:
+        """Decide whether a failed final checkpoint may cost only its replay.
+
+        TASK-34100.3 AC#2: a tool-free first final checkpoint (no ``current``)
+        only preserves reasoning for replay on the next turn, which the
+        provider accepts but never requires. When the store wrote nothing, the
+        reply the provider already delivered is kept as an ordinary assistant
+        reply and the trace says reasoning was not preserved. A tool run's
+        final checkpoint, or a failure after a commit, still fails closed.
+        """
+        nonlocal store_failure
+        from tldw_chatbook.Chat.provider_continuation_diagnostics import (
+            UNWRITTEN_STORE_FAILURES,
+        )
+
+        if current is not None or store_failure not in UNWRITTEN_STORE_FAILURES:
+            return False
+        logger.warning(
+            "Reasoning not preserved for replay: store_failure={}", store_failure
+        )
+        trace(
+            STEP_MODEL_ERROR,
+            summary="Reasoning not preserved for replay",
+            status="failed",
+            field_states={
+                "payload": "omitted",
+                "continuation_error": "final_persist_failed",
+                "continuation_store_failure": store_failure,
+            },
+            sensitivity="diagnostic",
+        )
+        store_failure = None
         return True
 
     def transition_call(
@@ -2369,9 +2408,10 @@ def run_agent_loop(
                     expected_checkpoint_revision=expected_revision,
                     assistant_content=turn.text,
                 )
-                if not persist_continuation(final_event):
+                if persist_continuation(final_event):
+                    continuation_checkpoint = candidate
+                elif not keep_reply_without_replay(continuation_checkpoint):
                     return continuation_error("final_persist_failed")
-                continuation_checkpoint = candidate
             elif continuation_checkpoint is not None:
                 return continuation_error("final_checkpoint_missing")
 

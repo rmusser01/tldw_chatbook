@@ -25,9 +25,11 @@ from Tests.Agents.test_provider_continuation_runtime import (
     _native_turn,
 )
 from tldw_chatbook.Agents.agent_models import (
+    RUN_DONE,
     RUN_ERROR,
     STEP_ERROR,
     ContinuationEventContext,
+    FinalContinuation,
     ModelTurn,
     ToolBatchReady,
     ToolCall,
@@ -354,9 +356,126 @@ def test_every_store_precondition_message_has_a_code() -> None:
     messages = _store_precondition_messages()
 
     assert len(messages) >= 20, sorted(messages)
-    missing = sorted(message for message in messages if message not in STORE_FAILURE_CODES)
+    missing = sorted(
+        message for message in messages if message not in STORE_FAILURE_CODES
+    )
     assert missing == []
     assert all(
         code.replace("_", "").isalnum() and code.islower()
         for code in STORE_FAILURE_CODES.values()
     )
+
+
+# --- AC#2: the optional reasoning-replay checkpoint never costs the reply. ---
+
+
+def _first_final_turn() -> ModelTurn:
+    return ModelTurn(
+        text="answer",
+        provider_continuation=_kimi_checkpoint(
+            revision=1, state="complete", rounds=(_final_round(),)
+        ),
+    )
+
+
+def _run_with_trace(turns, *, persist):
+    order: list[str] = []
+    traced: list[object] = []
+    deps = _deps(
+        turns,
+        order=order,
+        persist=persist,
+        invoke=lambda call: pytest.fail("no tool expected"),
+    )
+    deps.on_trace_step = traced.append
+    outcome = run_agent_loop(
+        CONFIG, [{"role": "user", "content": "go"}], [CALCULATOR], deps
+    )
+    return outcome, traced
+
+
+@pytest.mark.parametrize(
+    ("store_text", "store_code"),
+    [
+        (
+            "Provider continuation terminal settlement failed.",
+            "terminal_settlement_failed",
+        ),
+        ("Continuation revision conflict.", "revision_conflict"),
+        ("Durable continuation storage is unavailable.", "create_unavailable"),
+    ],
+)
+def test_unstored_reasoning_checkpoint_keeps_the_delivered_reply(
+    store_text, store_code, warnings_log
+) -> None:
+    """A tool-free first final whose optional checkpoint was not written."""
+
+    def persist(event) -> None:
+        raise RuntimeError(store_text)
+
+    outcome, traced = _run_with_trace([_first_final_turn()], persist=persist)
+
+    assert outcome.status == RUN_DONE
+    assert outcome.final_text == "answer"
+    assert not [step for step in outcome.steps if step.kind == STEP_ERROR]
+    notes = [
+        step for step in traced if step.summary == "Reasoning not preserved for replay"
+    ]
+    assert len(notes) == 1
+    assert notes[0].field_states == {
+        "payload": "omitted",
+        "continuation_error": "final_persist_failed",
+        "continuation_store_failure": store_code,
+    }
+    assert any(
+        f"Reasoning not preserved for replay: store_failure={store_code}" in line
+        for line in warnings_log
+    )
+
+
+@pytest.mark.parametrize(
+    "store_text",
+    [
+        # Raised after the store committed the row: not a clean "unwritten".
+        "Local continuation intent is stale or unavailable; save and retry.",
+        "Dispatch recovery owner changed during settlement.",
+        # Unknown text: fail closed, as before.
+        "PRIVATE-CANARY",
+    ],
+)
+def test_possibly_written_checkpoint_still_fails_closed(store_text) -> None:
+    def persist(event) -> None:
+        raise RuntimeError(store_text)
+
+    outcome, traced = _run_with_trace([_first_final_turn()], persist=persist)
+
+    assert outcome.status == RUN_ERROR
+    assert _error_states(outcome)["continuation_error"] == "final_persist_failed"
+    assert not [
+        step for step in traced if step.summary == "Reasoning not preserved for replay"
+    ]
+
+
+def test_post_tool_final_persist_failure_still_fails_closed() -> None:
+    """Only the first, tool-free checkpoint is optional; a tool run's is not."""
+
+    def persist(event) -> None:
+        if isinstance(event, FinalContinuation):
+            raise RuntimeError("Provider continuation terminal settlement failed.")
+
+    final = _kimi_checkpoint(
+        revision=4,
+        state="complete",
+        rounds=(_completed_tool_round(), _final_round("visible answer")),
+    )
+    outcome = _run(
+        _tool_then_final(final),
+        persist=persist,
+        invoke=lambda call: ToolResult(ok=True, content="4"),
+    )
+
+    assert outcome.status == RUN_ERROR
+    assert _error_states(outcome) == {
+        "continuation_error": "final_persist_failed",
+        "continuation_store_failure": "terminal_settlement_failed",
+    }

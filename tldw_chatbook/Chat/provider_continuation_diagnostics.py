@@ -74,6 +74,32 @@ STORE_FAILURE_CODES: Mapping[str, str] = MappingProxyType(
 )
 
 
+#: The runtime could not project the checkpoint, so the store was never called.
+PROJECTION_FAILED = "projection_failed"
+
+#: Failures raised before the store wrote the continuation or settled the
+#: dispatch (a failed terminal settlement is one atomic, rolled-back write).
+#: The durability-barrier codes and ``settlement_owner_changed`` are absent on
+#: purpose: they are raised after a commit. ``UNRECOGNIZED_STORE_FAILURE`` is
+#: absent too, so anything unknown keeps failing closed.
+UNWRITTEN_STORE_FAILURES = frozenset(
+    {
+        PROJECTION_FAILED,
+        "owner_not_primary",
+        "owner_unavailable",
+        "storage_unavailable",
+        "managed_owner_unavailable",
+        "state_unserializable",
+        "create_unavailable",
+        "version_conflict",
+        "version_unavailable",
+        "terminal_settlement_failed",
+        "revision_conflict",
+        "unsupported_event",
+    }
+)
+
+
 def store_failure_code(exc: BaseException) -> str:
     """Name the store precondition behind ``exc`` without exposing its text.
 
