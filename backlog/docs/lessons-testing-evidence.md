@@ -1447,6 +1447,17 @@ while Retry remained focused. A focus event cannot repair later content growth.
 Follow the Library rail pattern: schedule current-focus reveal after virtual-size
 layout settles. The attempted general deferred-scroll guard was removed.
 
+## A focus-trap test in a bare harness can pass with no trap at all
+
+**TASK-33008.4, 2026-10-06.** The first Tab-cycle test for the Get started
+card mounted only the card in a harness App. It passed at base, where Tab did
+not move between the card's actions in the real Console: the card's buttons
+were the harness's only focusable widgets, so Textual's own `focus_next`
+walked exactly them and wrapped. One focusable widget outside the card (an
+`Input` standing in for the workbench) made the test fail at base for the real
+reason, focus escaping to it. Give a harness focus test something focusable
+outside the trap, and watch it fail at base before trusting it.
+
 ## Retained option controls need event-order tests across reset
 
 **TASK-32666, 2026-09-16.** Replacing import-form recomposition with retained
