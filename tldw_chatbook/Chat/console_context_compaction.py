@@ -3456,7 +3456,7 @@ class ConsoleCompactionPreflight:
             )
             if callable(preview):
                 try:
-                    tools = list(preview())
+                    tools = list(preview(resolution))
                 except Exception:
                     tools = []
         prepared_before = prepare(
@@ -4077,7 +4077,7 @@ class ConsoleCompactionPreflight:
             )
             if callable(preview):
                 try:
-                    tools = list(preview())
+                    tools = list(preview(resolution))
                 except Exception:
                     tools = []
         prepared = prepare(
