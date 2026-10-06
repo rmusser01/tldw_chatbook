@@ -61,8 +61,7 @@ _DEFAULT_ACTION_TOOLTIP = "Choose the provider and model for this Console sessio
 #: user types while the composer is locked. Not per keystroke -- a toast on
 #: every letter would be spam; one per episode makes the lock perceivable.
 _TYPING_LOCKED_HINT = (
-    "Typing is locked until setup finishes — press Enter to use the "
-    "highlighted action."
+    "Typing is locked until setup finishes — press Enter to use the highlighted action."
 )
 
 
