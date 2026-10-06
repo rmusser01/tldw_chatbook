@@ -58,8 +58,8 @@ with a **Save** / **Revert** action row at the bottom.
      your server expects (whatever its docs say — it is passed through
      unmodified).
    - **Voice policy** → **Exact**, and **Voice value** → one of your
-     server's voice names (also passed through unmodified). Or choose
-     **Server default** to let the server pick.
+     server's voice names (also passed through unmodified). OpenAI needs an
+     exact voice; Settings does not offer **Server default** for it.
    - **Output format** and **Speed** as you like (check which formats your
      server supports; `mp3` and `wav` are the most widely implemented).
 5. Press **Save**.
@@ -86,8 +86,8 @@ it with `pip install pocket-tts` and start its server with `pocket-tts serve`
 | Credential | leave unset |
 | Default TTS Provider | OpenAI |
 | Model policy / Model value | Exact / `pocket-tts` (the server ignores it) |
-| Voice policy / Voice value | Exact / a built-in voice such as `alba`, `marius`, `jean` or `eve` (or Server default) |
-| Output format | `wav` — pocket-tts returns WAV only, and any other format is refused before the request |
+| Voice policy / Voice value | Exact / a built-in voice such as `alba`, `marius`, `jean` or `eve` |
+| Output format | `wav` — pocket-tts returns WAV only. While OpenAI is the default provider, **Save** refuses any other format under Output format ("PocketTTS returns WAV audio only. Set the output format to wav."), and a request in another format is refused before it is sent |
 
 The first-run setup's Voice step has a **PocketTTS** choice that fills in
 exactly these values.

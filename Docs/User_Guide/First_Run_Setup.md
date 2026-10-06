@@ -132,7 +132,8 @@ reads your replies (for example kokoro, set up in Settings), the step starts on
 A profile that still holds the PocketTTS address an earlier version of setup
 wrote (`127.0.0.1:8765/v1/audio/speech`, which pocket-tts never serves) also
 starts on **No voice for now**, with a line saying that voice can't speak; pick
-a service to replace it.
+a service to replace it. Resuming a setup that an earlier version left
+unfinished doesn't bring that address back either.
 
 A line under the service choice says whether it will work: "PocketTTS — not
 running at 127.0.0.1:8000" (one quick connection check), "OpenAI — uses your
@@ -147,8 +148,11 @@ failed test starts "Test failed —" and names the cause: the server isn't
 running at that address, the key was rejected, there is no speech endpoint at
 that host, it timed out, or the reply wasn't audio. A PocketTTS address on
 another port counts as Custom, but its failures still name PocketTTS and say
-how to start it there (`pocket-tts serve --port 8766`). After a test, focus
-goes back to **Test and Hear**, unless you moved it while the test ran.
+how to start it there (`pocket-tts serve --port 8766`). While **Test and
+Hear** can't run, the status line under it says why ("Type some sample text
+above to test the voice.", or "To test, fix this under Advanced: …", for
+example a PocketTTS address with a format other than `wav`). After a test,
+focus goes back to **Test and Hear**, unless you moved it while the test ran.
 
 PocketTTS, OpenAI and Custom share one OpenAI-compatible voice slot. While no
 other provider reads your replies, a voice saved there *is* the one replies
@@ -158,7 +162,10 @@ can't be unticked, and the line under it says so ("Replies will use this voice
 replaces OpenAI · tts-1-hd · shimmer."). When another provider reads replies,
 the box is yours: a successful test ticks it, and unticked the service is
 saved for later while replies keep using that provider ("Saved for later;
-replies keep using kokoro."). The
+replies keep using kokoro."). When OmniVoice reads your replies, the step
+starts on **OmniVoice** with the box ticked and locked ("Replies use OmniVoice
+now — pick another service to change that."), and the other services name it
+("Saved for later; replies keep using OmniVoice."). The
 endpoint, authentication, model, voice and format sit under "Advanced" (the
 **API key** option uses your OpenAI key, from the Provider step, this step,
 Settings or `OPENAI_API_KEY`); Voice and Format are pickers with an "Other…"
@@ -182,7 +189,9 @@ picks up at Voice next time.
 When Voice does save, the step reports the result itself and refuses to move
 on if the save failed, so setup never raises a pop-up notification over a
 later step's buttons. On terminals smaller than about 100×30 the wizard shows
-a one-line nudge — everything still works, steps just scroll.
+a one-line nudge — everything still works, steps just scroll. Where one row is
+too narrow for every service name (80 columns, for example), the Voice
+service choice wraps to two rows so no name is cut off.
 
 Choosing **OmniVoice** shows a local panel instead of the endpoint fields: it
 tells you if the `omnivoice_tts` engine is missing, installs the 1.1 GB model
