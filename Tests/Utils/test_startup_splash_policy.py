@@ -16,7 +16,9 @@ import sys
 from pathlib import Path
 
 import pytest
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
+
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from textual.widgets import Static
 
 from tldw_chatbook.Utils import startup_logging
@@ -79,7 +81,12 @@ def test_a_joke_card_still_plays_when_chosen_by_name() -> None:
 # -- AC#11: the skip hint ------------------------------------------------------
 
 
-class _SplashHost(App):
+class _SplashHost(ConsolidatedCSSApp):
+    """The app's real stylesheet: #splash-display takes the full height there,
+    which pushed an in-flow hint off screen on the first build."""
+
+    CSS_PATH = str(REPO_ROOT / "tldw_chatbook/css/tldw_cli_modular.tcss")
+
     def __init__(self, splash: SplashScreen) -> None:
         super().__init__()
         self._splash = splash
@@ -100,7 +107,9 @@ async def test_the_splash_draws_a_skip_hint_whenever_skip_works(skip: bool) -> N
         if skip:
             assert len(hints) == 1
             assert str(hints[0].render()) == "Press any key to skip"
-            assert hints[0].region.height >= 1
+            region = hints[0].region
+            assert region.height >= 1
+            assert region.bottom <= pilot.app.size.height, "hint is off screen"
         else:
             assert hints == []
 
