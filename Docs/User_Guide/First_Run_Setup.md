@@ -289,8 +289,9 @@ way, re-enter or clear the key in Settings ▸ Providers & Models.
 
 A second computer does not need setup again. There are three routes:
 carry your config.toml, export the same environment keys, or restore a
-backup. The first two carry settings only; a backup can also carry your
-data, but check what its Review lists first (see "Restore a backup" below).
+backup. The first two carry settings only. A backup can also carry your
+data, but Create backup does not yet work on every profile; see "Restore a
+backup" below before relying on it.
 
 ### Carry your config.toml
 
@@ -309,11 +310,12 @@ TLDW_CONFIG_PATH=/path/to/config.toml tldw-cli
 thing: `--config` for one launch, the variable for every launch that sees
 it. When both are set, `--config` wins. If the file does not exist yet,
 chatbook creates a new config there and offers setup as on a first launch;
-its folder must already exist. `--config` refuses a folder ("give the
-config.toml file inside it"), a file in a folder that does not exist ("…
-does not exist; create that folder or check the path") and a path it cannot
-read, each before anything starts. With either, Settings names the file an
-override config.
+its folder must already exist. Before anything starts, `--config` refuses
+a folder ("give the config.toml file inside it"), a file in a folder that
+does not exist ("… does not exist; create that folder or check the path"),
+a new file in a folder you cannot write to ("cannot create …"), and a file
+or folder you cannot read ("cannot read …"). With either, Settings names
+the file an override config.
 
 The `[first_run]` table decides whether setup is offered:
 
@@ -377,6 +379,13 @@ Backup coverage is still growing: the Review lists each store, and one
 marked `unsupported` (on some profiles that includes the config and the main
 databases) is not in the archive. Until the Review shows what you need as
 included, carry config.toml as described above to move your settings.
+
+**Known problem:** on some profiles Create backup currently stops with
+"Failed: capturing …" (ending in `backup_operation_failed` or
+`admission_timeout`) and writes no file, even after a successful Review. If
+that happens, carry config.toml as described above to move your settings;
+your chats, notes and documents stay on the old machine until Create backup
+succeeds there.
 
 In the Create backup form, the line just above the buttons says why
 **Create backup** is disabled: "Create backup unlocks after a successful
