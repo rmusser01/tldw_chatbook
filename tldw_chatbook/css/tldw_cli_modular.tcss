@@ -15052,6 +15052,15 @@ SplashScreen, .splash-screen {
 }
 
 
+#splash-skip-hint, .splash-skip-hint {
+    width: $ds-width-full;
+    height: $ds-size-1;
+    text-align: center;
+    color: $text-muted;
+    text-style: dim;
+}
+
+
 #splash-progress-bar, .splash-progress-bar {
     width: $ds-percent-80;
     max-width: $ds-splash-progress-cap;

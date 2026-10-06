@@ -1046,6 +1046,10 @@ def configure_application_logging(app_instance):
         )
 
     sync_loguru_forward_level()
+    # TASK-34100.13: warnings held off the pre-TUI terminal go to the log now.
+    from tldw_chatbook.Utils.startup_logging import replay_startup_notices
+
+    replay_startup_notices()
     logging.info("Logging setup complete.")
     logging.info("--- _setup_logging END ---")
 

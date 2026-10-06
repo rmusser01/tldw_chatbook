@@ -134,7 +134,6 @@ from tldw_chatbook.Chat.console_settings_durability import (
 )
 from tldw_chatbook.Constants import (
     ALL_TABS,
-    DEFAULT_SPLASH_DURATION_SECONDS,
     LIBRARY_NAV_CONTEXT_INGEST,
     LIBRARY_NAV_CONTEXT_NOTES_CREATE,
     TAB_CHAT,
@@ -2339,33 +2338,28 @@ class TldwCli(
         # downstream reads the same module state.
         set_ascii_glyph_mode(get_cli_setting("appearance", "ascii_glyphs", False))
 
-        no_splash = getattr(self, "_cli_no_splash", False)  # --no-splash (TASK-34100.16)
-        splash_enabled = not no_splash and get_cli_setting("splash_screen", "enabled", True)
-        logging.info(f"Splash screen enabled: {splash_enabled}")
-        if splash_enabled:
-            # Get splash screen configuration
-            splash_duration = get_cli_setting(
-                "splash_screen", "duration", DEFAULT_SPLASH_DURATION_SECONDS
-            )
-            splash_skip = get_cli_setting("splash_screen", "skip_on_keypress", True)
-            splash_progress = get_cli_setting("splash_screen", "show_progress", True)
-            splash_card = get_cli_setting("splash_screen", "card_selection", "random")
-            # TASK-2154.10 (AC-04): vestibular-accessible static splash.
-            splash_reduced_motion = get_cli_setting(
-                "appearance", "reduce_motion", False
-            )
-            logging.info(
-                f"Creating splash screen - duration: {splash_duration}, card: {splash_card}"
-            )
+        # TASK-34100.13 (E7): a profile's first launch plays no splash, and
+        # TLDW_REDUCE_MOTION / NO_MOTION reduce its motion (splash_options).
+        # Each key is still read through get_cli_setting, the seam tests use.
+        from tldw_chatbook.Widgets import splash_screen as splash_policy
 
-            # Create and yield splash screen
+        no_splash = getattr(self, "_cli_no_splash", False)  # --no-splash (TASK-34100.16)
+        splash = None if no_splash else splash_policy.splash_options(
+            {
+                "first_run": self.app_config.get("first_run", {}),
+                "splash_screen": {
+                    key: get_cli_setting("splash_screen", key, default)
+                    for key, default in splash_policy.SPLASH_SETTING_DEFAULTS
+                },
+                "appearance": {
+                    "reduce_motion": get_cli_setting("appearance", "reduce_motion", False)
+                },
+            }
+        )
+        logging.info(f"Splash screen: {splash}")
+        if splash is not None:
             self._splash_screen_widget = SplashScreen(
-                card_name=splash_card if splash_card != "random" else None,
-                duration=splash_duration,
-                skip_on_keypress=splash_skip,
-                show_progress=splash_progress,
-                reduced_motion=splash_reduced_motion,
-                id="app-splash-screen",
+                **splash, id="app-splash-screen"
             )
             self.splash_screen_active = True
             yield self._splash_screen_widget
