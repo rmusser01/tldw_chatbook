@@ -65,6 +65,8 @@ FAST_LANE_TARGETS = (
     "Tests/Chat/test_first_reply_failure_copy.py",
     "Tests/Chat/test_first_token_window.py",
     "Tests/Architecture/test_surface_swap_guard.py",
+    "Tests/Library/test_ingest_analysis_load_settings.py",
+    "Tests/test_config_load_settings_table_guard.py",
 )
 #: The lasting-sync real-stack files (a real database, a real ``.md``, the
 #: production runtime). They are ``bootstrap_profile``, so they run in the

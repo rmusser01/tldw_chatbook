@@ -533,7 +533,9 @@ still spans the pane.
   straight back.
   Analysis is produced at import time (the "Analyze after import" option),
   written by hand here, or generated in place: **"Generate"** (**"Regenerate"**
-  once one exists) calls the configured analysis provider without leaving
+  once one exists) calls the configured analysis provider — the `provider`
+  and `model` named under `[analysis_defaults]` in `config.toml`, the same
+  table bulk **Analyze** and "Analyze after import" use — without leaving
   the reading flow. With no provider configured it reads **"○ Generate"**
   and an always-visible line beneath the button names the reason and the
   next step ("No analysis provider is configured · Set one in Settings ▸
