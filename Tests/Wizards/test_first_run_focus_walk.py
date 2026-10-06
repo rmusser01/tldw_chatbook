@@ -167,6 +167,13 @@ def _wizard(monkeypatch, *, failed_discovery: bool) -> FirstRunSetupWizard:
     app_instance.app_config = {
         "api_settings": {"custom": {"api_url": "https://walk.example.test/v1"}}
     }
+    # TASK-34100.4: Protect reads config.toml back (as Summary does). In this
+    # suite the in-memory config IS the disk -- writes are mirrored into it,
+    # no file is touched -- so the read-back returns it too.
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Wizards.first_run_protect_step._load_persisted_config",
+        lambda: (app_instance.app_config, "/walk/config.toml"),
+    )
     app_instance.llm_provider_catalog_scope_service = MagicMock(
         discover_models=AsyncMock(return_value=_discovery(failed=failed_discovery))
     )

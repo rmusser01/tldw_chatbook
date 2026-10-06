@@ -119,7 +119,6 @@ tldw_chatbook/UI/Watchlists_Modules/watchlists_workbench.py::_reconcile_body	2
 tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py::open_voice_api_key_settings	1
 tldw_chatbook/UI/Wizards/first_run_appearance_step.py::_on_show_all_cards	1
 tldw_chatbook/UI/Wizards/first_run_appearance_step.py::_on_show_all_themes	1
-tldw_chatbook/UI/Wizards/first_run_protect_step.py::_apply_password_worker	1
 tldw_chatbook/UI/Wizards/first_run_provider_step.py::_discover_selected_provider	1
 tldw_chatbook/UI/Wizards/first_run_provider_step.py::_run_probe	1
 tldw_chatbook/UI/Wizards/first_run_summary_step.py::_render_rows	2
