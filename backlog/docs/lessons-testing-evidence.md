@@ -19528,3 +19528,15 @@ fixture path is corrected.
 **Incident, 2026-10-10.** The expanded retained-Eval full-App fixture passed on Linux and macOS but Windows rebackup reported operational_validation_unavailable, core_validation_unavailable and recovered_validation_unavailable for restored SQLite owners. Preserved item metadata and direct validator results traced their shared preview snapshot path. CI selected a private parent through TEMP/TMP; select_profile rebuilt the environment with an allowlist that kept TMPDIR but dropped TEMP/TMP. Passing the same private parent through the existing TMPDIR selector and asserting the selected parent made all 75 Windows cases pass (one FIFO capability skip). The native launch-selector regression then reproduced two failures for TEMP/TMP and passed all five home/temp cases after those platform selectors were added; provider and app overrides stayed excluded.
 
 **What to do.** Before treating several unavailable owner labels as separate schema or custody defects, preserve full fresh-child output and inspect the environment after profile selection. Verify tempfile's actual parent under that selected environment. Keep native ancestry and SQLite guards intact; repair selector loss rather than relaxing validation. The same run also showed why a full-App parent deadline must budget for cold startup separately from the capture watchdog: more than 30 seconds elapsed before a 30-second capture watchdog started inside a child with a 45-second overall deadline.
+## Independent tree slices need exact row readiness
+
+TASK-34414, 2026-10-06: PR3029's Notes sync Delete/Undo test waited for any
+folder row, then immediately selected VSync. CI failed with StopIteration;
+the isolated unchanged test passed. Holding only the real folder-page response
+while a real Unfiled note painted reproduced the same failure. An initial
+concurrently paused control passed and was not RED; observing the actual wait
+handoff made the failure deterministic. Wait for the exact domain identity,
+then re-query its live row without yielding. A generic row and a Pilot settle
+pause do not prove that a sibling slice has arrived. The 30-second budget,
+real service, storage and all original action assertions remain unchanged.
+Evidence: [retained controls and RED/GREEN](../../Docs/QA/task-34414/README.md).

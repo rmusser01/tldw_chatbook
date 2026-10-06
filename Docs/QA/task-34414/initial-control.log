@@ -1,0 +1,13 @@
+--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.--- _setup_logging START (from Logging_Config.py) ---
+Loguru: All pre-existing sinks removed.
+Loguru: Configured to forward its messages to standard Python logging system.
+.                                                                       [100%]
+============================= slowest 25 durations =============================
+9.26s call     Tests/UI/test_library_notes_sync_delete_restore.py::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[False]
+7.97s call     Tests/UI/test_library_notes_sync_delete_restore.py::test_delete_holds_the_folder_and_undo_returns_it_to_up_to_date[True]
+
+(4 durations < 1s hidden.)
+2 passed in 19.91s
