@@ -1061,6 +1061,14 @@ configured in **F4 ▸ Providers & Models**.
   is private but is replayed when K3 requires it. Other Kimi models follow only
   their curated policy. GLM keeps reasoning for an active or restored function
   tool run with `clear_thinking=false`; ordinary GLM chat clears prior thinking.
+- Every model Moonshot lists today (`kimi-k2.6`, `kimi-k2.7-code`,
+  `kimi-k2.7-code-highspeed`, `kimi-k3`) returns reasoning even on a plain
+  reply. In a saved chat, Console saves that reasoning privately with the reply
+  so the next turn can replay it, exactly as a Temporary chat keeps it for the
+  session. If that optional copy cannot be saved, the reply is still shown and
+  saved as an ordinary assistant message, Send stays available, and the run's
+  trace records **Reasoning not preserved for replay**; the reply is never
+  held behind a response-recovery card.
 - Private continuation data is assistant/variant-owned, bounded, and omitted
   from the visible transcript, logs, summaries, ordinary exports, and usage
   details. It still counts against the context window and is evicted atomically
