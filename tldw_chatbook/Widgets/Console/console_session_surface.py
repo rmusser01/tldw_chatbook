@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import replace
+from types import CoroutineType, FunctionType
 from typing import Any, Callable
 
 from tldw_chatbook.Utils.input_validation import escape_markup as _escape_markup
@@ -764,9 +766,35 @@ class ConsoleSessionSurface(Vertical):
                 )
             except NoMatches:
                 return
-            # Attachment precedes Textual's original composed children.
-            # A strip mount handler must not await its own completion.
-            if active_message_pump.get(None) is not tab_strip:
+            # A copied pump context does not identify its actual mount task.
+            # Eager execution can enter Mount before Textual assigns _task.
+            task = asyncio.current_task()
+            strip_task = tab_strip._task
+            owns_mount = (
+                active_message_pump.get(None) is tab_strip
+                and task is not None
+                and task is strip_task
+            )
+            if (
+                not owns_mount
+                and strip_task is None
+                and task is not None
+                and active_message_pump.get(None) is tab_strip
+            ):
+                function = inspect.getattr_static(
+                    type(tab_strip), "_process_messages", None
+                )
+                coroutine = task.get_coro()
+                frame = coroutine.cr_frame if type(coroutine) is CoroutineType else None
+                owns_mount = (
+                    type(function) is FunctionType
+                    and type(coroutine) is CoroutineType
+                    and coroutine.cr_code is function.__code__
+                    and frame is not None
+                    and frame.f_locals.get("self") is tab_strip
+                )
+                del frame, coroutine, function
+            if not owns_mount:
                 await tab_strip._mounted_event.wait()
             if not self._session_strip_is_attached(tab_strip):
                 return

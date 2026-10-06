@@ -25,9 +25,10 @@ class InitialComposeHost(App[None]):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("caller_context", ("app", "strip-inherited"))
 @pytest.mark.parametrize("task_factory", ("normal", "eager"))
 async def test_session_update_waits_for_actual_initial_strip_composition(
-    monkeypatch, task_factory
+    monkeypatch, task_factory, caller_context
 ):
     loop = asyncio.get_running_loop()
     previous_factory = loop.get_task_factory()
@@ -58,11 +59,19 @@ async def test_session_update_waits_for_actual_initial_strip_composition(
             await asyncio.wait_for(entered.wait(), 5)
             strip = observation["strip"]
             assert app.surface.is_attached and not strip._mounted_event.is_set()
-            pending = asyncio.create_task(
-                original_sync(
-                    app.surface, sessions=sessions, active_session_id="initial"
+            if caller_context == "strip-inherited":
+                with strip._context():
+                    pending = asyncio.create_task(
+                        original_sync(
+                            app.surface, sessions=sessions, active_session_id="initial"
+                        )
+                    )
+            else:
+                pending = asyncio.create_task(
+                    original_sync(
+                        app.surface, sessions=sessions, active_session_id="initial"
+                    )
                 )
-            )
             await asyncio.sleep(0.05)
             observation["pending_before_release"] = not pending.done()
             observation["ids_before_release"] = [child.id for child in strip.children]
