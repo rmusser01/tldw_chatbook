@@ -1,0 +1,224 @@
+"""TASK-34100.13: the Appearance step's startup and comfort settings.
+
+coverage-15: setup offered a 78-card splash gallery but no way to turn the
+splash off, shorten it, reduce motion or use ASCII marks. fulltrack-09: the
+gallery is gone; one line names the current card (from the full TOML) and
+points at Settings ▸ Splash Screen. fulltrack-13: themes are labelled by
+display name and tone, and the curated shortlist hides no row.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from textual.app import ComposeResult
+from textual.widgets import Checkbox, RadioButton, RadioSet, Static
+
+from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from tldw_chatbook.Constants import DEFAULT_SPLASH_DURATION_SECONDS
+from tldw_chatbook.UI.Wizards import first_run_appearance_state as look
+from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
+from tldw_chatbook.UI.Wizards.BaseWizard import WizardStepConfig
+from tldw_chatbook.UI.Wizards.first_run_appearance_step import AppearanceStep
+
+_BUNDLE = str(
+    Path(__file__).resolve().parents[2] / "tldw_chatbook/css/tldw_cli_modular.tcss"
+)
+
+
+class _StepHost(ConsolidatedCSSApp):
+    CSS_PATH = _BUNDLE
+
+    def __init__(self, step):
+        super().__init__()
+        self._step = step
+
+    def compose(self) -> ComposeResult:
+        yield self._step
+
+
+def _step(app_config, *, environ=None):
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config=app_config),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    step = AppearanceStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="appearance", title="Appearance", step_number=8),
+        environ=environ if environ is not None else {},
+    )
+    return wizard, step
+
+
+def _raw(**sections):
+    return {"COMPREHENSIVE_CONFIG_RAW": sections}
+
+
+def _text(step) -> str:
+    return "\n".join(str(widget.render()) for widget in step.query(Static))
+
+
+# -- AC#13: the gallery is gone -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_no_splash_gallery_one_line_names_the_card_from_the_full_toml() -> None:
+    _wizard, step = _step(_raw(splash_screen={"card_selection": "matrix"}))
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert not step.query("#setup-splash-choice")
+        assert not step.query("#setup-splash-show-all")
+        line = str(step.query_one("#setup-appearance-splash-card", Static).render())
+    assert line == (
+        "Splash card: Matrix — preview and pick one in Settings ▸ Splash Screen."
+    )
+
+
+# -- AC#12: startup animation, reduce motion, ASCII marks ------------------------
+
+
+@pytest.mark.asyncio
+async def test_untouched_step_writes_nothing() -> None:
+    wizard, step = _step(_raw(splash_screen={"enabled": True}))
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        labels = [
+            str(button.label)
+            for button in step.query("#setup-startup-choice RadioButton")
+        ]
+        full = step.query_one("#setup-startup-full", RadioButton)
+        assert full.value
+        ok, error = await step.commit()
+    assert (ok, error) == (True, "")
+    assert labels == [
+        "Off",
+        "Short (2 s)",
+        f"Full ({float(DEFAULT_SPLASH_DURATION_SECONDS):g} s)",
+    ]
+    wizard.commit_config.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_off_writes_only_splash_enabled_false() -> None:
+    wizard, step = _step(_raw(splash_screen={"enabled": True}))
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-startup-off", RadioButton).value = True
+        await pilot.pause()
+        await step.commit()
+    assert wizard.commit_config.await_args.args[0] == {
+        "splash_screen": {"enabled": False}
+    }
+
+
+@pytest.mark.asyncio
+async def test_short_and_reduce_motion_and_ascii_are_delta_commits() -> None:
+    wizard, step = _step(_raw(splash_screen={}, appearance={}))
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        step.query_one("#setup-startup-short", RadioButton).value = True
+        step.query_one("#setup-appearance-reduce-motion", Checkbox).value = True
+        step.query_one("#setup-appearance-ascii", Checkbox).value = True
+        await pilot.pause()
+        await step.commit()
+    committed = wizard.commit_config.await_args.args[0]
+    assert committed == {
+        "splash_screen": {"enabled": True, "duration": look.SHORT_SPLASH_SECONDS},
+        "appearance": {"reduce_motion": True, "ascii_glyphs": True},
+    }
+    assert wizard_state.commit_sections_allowed(committed)
+
+
+@pytest.mark.asyncio
+async def test_rerun_prefills_saved_comfort_and_short_splash() -> None:
+    _wizard, step = _step(
+        _raw(
+            splash_screen={"enabled": True, "duration": 2},
+            appearance={"reduce_motion": True},
+        )
+    )
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert step.query_one("#setup-startup-short", RadioButton).value
+        assert step.query_one("#setup-appearance-reduce-motion", Checkbox).value
+        assert not step.query_one("#setup-appearance-ascii", Checkbox).value
+
+
+@pytest.mark.parametrize(
+    ("environ", "expected"),
+    [({"NO_COLOR": "1"}, True), ({"TERM": "linux"}, True), ({"TERM": "xterm"}, False)],
+)
+@pytest.mark.asyncio
+async def test_ascii_marks_are_preset_from_no_color_or_the_linux_console(
+    environ, expected
+) -> None:
+    _wizard, step = _step(_raw(appearance={}), environ=environ)
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert step.query_one("#setup-appearance-ascii", Checkbox).value is expected
+
+
+def test_summary_shows_the_startup_and_motion_row() -> None:
+    rows = {
+        row.label: row
+        for row in wizard_state.build_summary_rows(
+            {
+                "splash_screen": {"enabled": True, "duration": 2.0},
+                "appearance": {"reduce_motion": True},
+            },
+            {},
+            rag_deps_installed=True,
+        )
+    }
+    row = rows["Startup and motion"]
+    assert row.state == wizard_state.ROW_CONFIGURED
+    assert row.detail == "short splash (2 s) · motion reduced"
+    default = {
+        r.label: r
+        for r in wizard_state.build_summary_rows({}, {}, rag_deps_installed=True)
+    }["Startup and motion"]
+    assert default.state == wizard_state.ROW_DEFAULT
+    assert default.detail == (
+        f"full splash ({float(DEFAULT_SPLASH_DURATION_SECONDS):g} s)"
+    )
+
+
+# -- AC#14: theme names and the whole shortlist ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_theme_rows_use_display_names_with_a_tone_tag_and_hide_no_row() -> None:
+    _wizard, step = _step({})
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        radio_set = step.query_one("#setup-theme-choice", RadioSet)
+        buttons = list(radio_set.query(RadioButton))
+        labels = {getattr(b, "_theme_name", ""): str(b.label) for b in buttons}
+        hidden = radio_set.max_scroll_y
+    assert labels["textual-dark"] == "Default dark"
+    assert labels["textual-light"] == "Default light"
+    assert labels["nord"] == "Nord · dark"
+    assert labels["tokyo-night"] == "Tokyo Night · dark"
+    assert len(buttons) >= 6
+    assert hidden == 0, "a shortlist row sits below the list's visible rows"
+
+
+def test_summary_theme_row_uses_the_display_name() -> None:
+    rows = {
+        row.label: row
+        for row in wizard_state.build_summary_rows(
+            {"general": {"default_theme": "nord"}}, {}, rag_deps_installed=True
+        )
+    }
+    assert rows["Theme"].detail == "Nord · dark"
+    default = {
+        r.label: r
+        for r in wizard_state.build_summary_rows(
+            {"general": {"default_theme": "textual-dark"}}, {}, rag_deps_installed=True
+        )
+    }["Theme"]
+    assert default.detail == "Default dark"
