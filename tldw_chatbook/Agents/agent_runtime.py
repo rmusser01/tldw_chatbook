@@ -1844,15 +1844,20 @@ def _loop_outcome(
 def _continuation_error(state: LoopState, reason: str) -> RunOutcome:
     # TASK-34100.3 AC#3: every exit shares the user-facing summary, so the
     # code-owned ``reason`` (and the store's own precondition code, when a
-    # persist call failed) is what names the failed precondition.
-    field_states = {"continuation_error": reason}
-    if state.continuation_store_failure is not None:
-        field_states["continuation_store_failure"] = state.continuation_store_failure
-        state.continuation_store_failure = None
+    # persist call failed) is what names the failed precondition. The codes
+    # ride in field_states KEYS: a code as a VALUE broke Trace export.
+    from tldw_chatbook.Chat.provider_continuation_diagnostics import (
+        continuation_reason_states,
+    )
+
+    failed_store, state.continuation_store_failure = (
+        state.continuation_store_failure,
+        None,
+    )
     logger.warning(
         "Provider continuation stopped the run: reason={} store_failure={}",
         reason,
-        field_states.get("continuation_store_failure", "none"),
+        failed_store or "none",
     )
     state.add(
         STEP_ERROR,
@@ -1860,7 +1865,7 @@ def _continuation_error(state: LoopState, reason: str) -> RunOutcome:
             "Provider continuation could not be persisted; retry or recover "
             "the interrupted run."
         ),
-        field_states=field_states,
+        field_states=continuation_reason_states(reason, failed_store),
     )
     return _loop_outcome(state, RUN_ERROR)
 
@@ -2109,6 +2114,7 @@ def _keep_reply_without_replay(state: LoopState) -> bool:
     """
     from tldw_chatbook.Chat.provider_continuation_diagnostics import (
         UNWRITTEN_STORE_FAILURES,
+        continuation_reason_states,
     )
 
     store_failure = state.continuation_store_failure
@@ -2127,8 +2133,7 @@ def _keep_reply_without_replay(state: LoopState) -> bool:
         status="failed",
         field_states={
             "payload": "omitted",
-            "continuation_error": "final_persist_failed",
-            "continuation_store_failure": store_failure,
+            **continuation_reason_states("final_persist_failed", store_failure),
         },
         sensitivity="diagnostic",
     )
