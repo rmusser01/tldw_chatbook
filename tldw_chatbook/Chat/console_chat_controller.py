@@ -15796,16 +15796,16 @@ class ConsoleChatController:
             return None
         providers = [provider]
         if plugin_maximum is not None:
+            local = getattr(self._skills_service, "local_service", None)
+            plugins = getattr(local, "plugin_service", None)
+            if plugins is None:
+                raise PermissionError("plugin_mcp_authority_unavailable")
             from tldw_chatbook.MCP.connection_ownership import ConnectionOwnership
             from tldw_chatbook.Plugins.mcp_provider import (
                 MCPProviderGroup,
                 PluginMCPProvider,
             )
 
-            local = getattr(self._skills_service, "local_service", None)
-            plugins = getattr(local, "plugin_service", None)
-            if plugins is None:
-                raise PermissionError("plugin_mcp_authority_unavailable")
             snapshots = await plugins.component_snapshots(plugin_maximum)
             local_mcp = service.local_service
             ownership = local_mcp.connection_ownership

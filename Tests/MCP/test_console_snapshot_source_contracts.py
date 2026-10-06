@@ -3,7 +3,6 @@
 import asyncio
 import dis
 import inspect
-import sys
 import threading
 from types import MethodType, SimpleNamespace
 
@@ -752,12 +751,8 @@ async def test_empty_mcp_maximum_preserves_plugin_route(snapshot_case, plugin_ma
     _loop_projection(case)
     _require_stock_empty_route(case)
     assert case.controller._skills_service is None
-    # The current plugin module has a POSIX-only import on Windows. An empty
-    # bound must not silently bypass that existing route or its original error.
-    if sys.platform == "win32":
-        expected_error, reason = AttributeError, "O_DIRECTORY"
-    else:
-        expected_error, reason = PermissionError, "plugin_mcp_authority_unavailable"
+    # An unavailable service refuses before platform-specific plugin imports.
+    expected_error, reason = PermissionError, "plugin_mcp_authority_unavailable"
     with _EmptyMCPCompositionProbe(case).installed() as probe:
         with pytest.raises(expected_error, match=reason):
             await case.controller._compose_mcp_provider(

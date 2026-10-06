@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-04 19:53'
-updated_date: '2026-10-06 18:12'
+updated_date: '2026-10-06 18:27'
 labels: []
 dependencies: []
 ---
@@ -54,6 +54,7 @@ Repair measured root causes from TASK-34402 under the user-authorized combined p
 - [ ] #34 Actual supported Console host shutdown retains the issued readiness, historical Agent and context presentation Workers until their exact finite callbacks and newly owned native resources retire; repeated cancellation preserves that ordering, and borrowed or custom reader lifetimes and original test deadlines remain intact.
 - [x] #35 Default stock prompt-history creation and selection avoid UI-thread configuration IO; one shared sink preserves current path/source checks,explicit-path/custom factory ABI,recall/load/append and original queued/running/repeated-cancel cleanup.
 - [ ] #36 Actual Console host shutdown retains its original hook-refresh Worker and permission-snapshot producer until the exact guarded configuration callback and native leases retire; real changed configuration, repeated cancellation, normal callback errors and original deadlines remain intact.
+- [x] #37 MCP preparation with an unavailable plugin service refuses with plugin_mcp_authority_unavailable on every platform before importing platform-specific plugin ownership modules; an available plugin service retains the original fresh preparation and permission checks.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -252,6 +253,8 @@ AC25 refinement: install the reviewed v3 Collections creator retirement witness 
 AC35 test-source prerequisites: move existing logger.remove ahead of project imports in the two original uncertain-close child scripts to avoid unread startup stderr pipe backpressure; select a private profile before collection for only the three mounted composer cases using the existing private_profile_test marker and required request fixture. Preserve every original test body, assertion, close injection and deadline; qualify with the original close pair and composer module. Broader credential diagnosis: add bounded actor/calling-code facts only to the existing os.open audit callback while idle counting is active, leaving all original counters, hooks, limits, actions and retirement checks unchanged. ADR required: no; test setup and diagnostic-only changes preserve existing contracts.
 
 Original failure-only diagnostic refinement before installation: extend the existing CI storage-census JSONL payload with its already-retired observer receipt caller diagnostic and literal qualification flags, without changing counters or limits. For the separate PreparedClose creator refusal, capture bounded exact declared-owner connection/lease/thread facts only after the original close helper returns False; preserve the helper call, original negative RuntimeError and all waits. Closed status requires explicit native descriptor closed evidence; opaque or other errors stay unknown. For Collections AC25, add bounded scalar start/normal-return attribution of only the original config publisher body to the existing code-local observer; keep producer generation/source refusal, custody and all original monitor retirement and .35/.1/10/240 bounds. Run the unchanged single history host case and original Collections refusal/borrower controls serially before any further production fix. ADR required: no; diagnostic-only observation preserves existing ADR126 contracts.
+
+AC37 Windows absent-plugin ordering before implementation: strengthen the existing two original empty/populated plugin-bound cases to require the intended PermissionError on Windows as on POSIX. First obtain actual Windows AttributeError RED without changing production, native custody or test actions. Then move only the existing optional plugin imports below the existing None-service refusal. Rerun the same two cases and original MCP source/composition compatibility controls. ADR required: no; routine import ordering preserves existing ADR126 permission and runtime boundaries and adds no Windows plugin authority.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -320,6 +323,8 @@ AC35 verified: five targeted current-source history modules passed all81 tests (
 Credential attribution diagnostic installed and reviewed: only the existing idle os.open audit callback gains bounded actor/calling-code facts; full actual-byte AST reversal restores all original counters, actions, phase settles, limits, source and retirement behavior. Six scalar callback controls and current-file Ruff/format pass; these are diagnostic logic checks, not native opening or Linux cost evidence. Actual caller attribution remains pending CI; original140/167 opens over8 ticks include1 config/2 storage admissions and do not prove repeated synchronous poll I/O.
 
 Credential diagnostic report delivery: the existing CI census JSONL now copies its own already-retired original observer receipt diagnostic and literal qualification flags. Independent exact-byte AST review confirms counters, limits, actions, hooks, outcome checks and existing log I/O unchanged; Ruff and format pass. Actual Linux caller attribution remains pending the next committed CI run. Administrative task-ID correction passed all three original uniqueness checks in 2.13 seconds; landed owners stay34403/34410 and existing performance/Vision tasks are now34561/34562, with unchanged executable AST.
+
+AC37 verified Windows absent-plugin fix: the original two strengthened plugin-bound cases first failed with AttributeError on os.O_DIRECTORY, then passed after only moving the original optional imports below the existing None-service refusal. The original MCP source/composition bundle passes all 44 cases (252.39s), with source unchanged and normal contained-process cleanup. Available/custom/nonempty preparation actions and permission checks are unchanged by actual-byte AST reversal. No new lint findings; inherited module findings remain. ADR required: no; routine ordering preserves ADR126 boundaries. This does not establish available Windows plugin support or complete application/performance acceptance.
 <!-- SECTION:NOTES:END -->
 
 ## Exact non-chat fixture Runtime ownership follow-up
