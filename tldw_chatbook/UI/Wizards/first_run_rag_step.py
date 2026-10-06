@@ -108,6 +108,11 @@ class RagStep(SetupStep):
             )
             privacy.display = False
             yield privacy
+            download = Static(
+                "", id="setup-rag-download", classes="setup-step-note", markup=False
+            )
+            download.display = False
+            yield download
             if not deps:
                 yield Static(
                     rag_state.SEARCH_EXTRAS_MISSING_COPY,
@@ -151,11 +156,26 @@ class RagStep(SetupStep):
             privacy.display = True
         else:
             privacy.display = False
+        self._facts = facts
+        self._show_download_note()
+
+    _facts: Optional[rag_state.EmbeddingModelFacts] = None
+
+    def _show_download_note(self) -> None:
+        """Under "automatically": what the first automatic search can fetch."""
+        try:
+            note = self.query_one("#setup-rag-download", Static)
+        except NoMatches:
+            return
+        text = rag_state.automatic_download_note(self._facts)
+        note.update(text)
+        note.display = bool(text) and self._pressed_is_automatic()
 
     @on(RadioSet.Changed, "#setup-rag-auto-retrieve")
     def _on_auto_retrieve(self, event: RadioSet.Changed) -> None:
         event.stop()
         self.auto_retrieve = self._pressed_is_automatic()
+        self._show_download_note()
 
     @on(Button.Pressed, "#setup-rag-copy-extras")
     def _on_copy_extras(self, event: Button.Pressed) -> None:

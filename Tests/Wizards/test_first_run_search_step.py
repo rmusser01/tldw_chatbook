@@ -269,3 +269,22 @@ def test_listable_embedding_models_hide_incomplete_and_sample_rows() -> None:
         "e5-small-v2": {"provider": "huggingface", "model_name_or_path": "e5"},
     }
     assert list(listable_embedding_models(models)) == ["e5-small-v2"]
+
+
+@pytest.mark.asyncio
+async def test_choosing_automatic_says_the_first_search_may_download_a_local_model() -> None:
+    """Live: the first automatic search on a fresh profile fetched the model."""
+    _wizard, step = _rag_step({})
+    async with _StepHost(step).run_test(size=(120, 40)) as pilot:
+        await _settle(pilot, step)
+        note = step.query_one("#setup-rag-download", Static)
+        assert not note.display  # "only when I ask" fetches nothing
+        step.query_one("#setup-rag-auto-retrieve-automatic", RadioButton).value = True
+        await pilot.pause()
+        assert note.display
+        text = str(note.render())
+    assert "all-MiniLM-L6-v2" in text and "downloads it" in text
+
+
+def test_a_cloud_model_has_no_download_note() -> None:
+    assert rag_state.automatic_download_note(CLOUD_MODEL) == ""
