@@ -24,16 +24,23 @@ ends (a refusal before the echo). The paint is for the Enter's own tab: if
 another tab is shown by the time it runs, nothing is painted (the send is
 refused for its changed tab).
 
-Imported on the first Enter only, so it adds nothing to the ADR-097 boot
+TASK-33620.15: the Send button and the Workbench's send now start here too
+(``request_visible_send``), and the send runs as its own task: awaited from
+the app pump's callback, as it was, every await of it held key delivery.
+A send request made while one runs is replayed when it settles, as the busy
+app pump used to replay it.
+
+Imported on the first send only, so it adds nothing to the ADR-097 boot
 census; boot-time readers go through ``getattr(screen, ACK_ATTRIBUTE)``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator
+import asyncio
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 import contextlib
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Any
 from uuid import uuid4
@@ -55,6 +62,8 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import (
 
 #: Screen attribute holding the lazily created acknowledgement.
 ACK_ATTRIBUTE = "_console_send_ack"
+#: Screen attribute holding the visible sends in flight (TASK-33620.15).
+FLIGHT_ATTRIBUTE = "_console_send_flight"
 #: Run chip / hidden mode-bar copy while a send is acknowledged.
 SENDING_RUN_COPY = "Sending…"
 #: Frame-length waits the hand-off may spend on the acknowledgement's layout.
@@ -391,12 +400,109 @@ def schedule_acknowledged_send(screen: Any, pending_send: Any) -> None:
             ack.dispatch_finished(token)
 
     def dispatch() -> None:
-        screen.app.call_later(observed_send)
+        screen.app.call_later(_start_send, screen, observed_send)
 
     if token is None or not screen.call_later(
         _paint_then, screen, session_id, dispatch
     ):
         dispatch()
+
+
+def request_visible_send(
+    screen: Any, *, guard: Callable[[], bool] | None = None
+) -> None:
+    """Capture the visible draft now and send it, acknowledged (TASK-33620.15).
+
+    Enter, the Send button and the Workbench's send all start here, so all
+    three get the same "Sending…" acknowledgement (TASK-33620.5 gave it to
+    Enter only) and the same send: a task the app pump starts and never
+    awaits, so its admission never holds key delivery.
+
+    Args:
+        screen: The Console ``ChatScreen``.
+        guard: Enter's check that the Send action is available, run once the
+            draft is captured; ``False`` releases the capture unsent.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import _ConsolePendingSend
+
+    if screen._console_pending_send is not None:
+        # A send keypress is already scheduled on the app pump; a second
+        # Enter in that window must not enqueue it twice.
+        return
+    flight = _flight(screen)
+    if flight.tasks:
+        # The app pump used to hold this request until the running send's
+        # admission returned; replay it then (one request, as the second
+        # Enter of a double press would have found an empty draft).
+        if flight.deferred is None:
+            flight.deferred = partial(request_visible_send, screen, guard=guard)
+        return
+    session_id = screen._console_visible_send_session_id()
+    if session_id is None:
+        screen.app_instance.notify("Console send is unavailable.", severity="error")
+        return
+    composer = screen._console_composer_or_none()
+    # TASK-340: capture the payload now so printable keys handled before the
+    # scheduled callback belong to the next draft.
+    stash = composer.capture_draft_for_send() if composer is not None else None
+    pending_send = _ConsolePendingSend(session_id, stash, object())
+    screen._console_pending_send = pending_send
+    if stash is not None:
+        try:
+            screen._ensure_console_chat_store().set_session_draft(
+                session_id, stash.text
+            )
+        except KeyError:
+            screen._console_pending_send = None
+            return
+    if guard is not None and not guard():
+        screen._console_pending_send = None
+        return
+    schedule_acknowledged_send(screen, pending_send)
+
+
+@dataclass
+class _SendFlight:
+    """The screen's visible sends still running, and one deferred request."""
+
+    tasks: set[asyncio.Task[Any]] = field(default_factory=set)
+    deferred: Callable[[], None] | None = None
+
+
+def _flight(screen: Any) -> _SendFlight:
+    flight = getattr(screen, FLIGHT_ATTRIBUTE, None)
+    if flight is None:
+        flight = _SendFlight()
+        setattr(screen, FLIGHT_ATTRIBUTE, flight)
+    return flight
+
+
+def _start_send(screen: Any, send: Callable[[], Awaitable[bool]]) -> None:
+    """Run ``send`` as its own task; the app pump returns at its first await.
+
+    Awaited from this callback instead, every await of the send -- the hook
+    snapshot, the turn authority read off the UI pump -- kept the app pump
+    from delivering keys, so moving work to a thread alone unblocked nothing.
+    An exception still reaches the app as it did from the pump.
+    """
+    flight = _flight(screen)
+    task = asyncio.get_running_loop().create_task(send())
+    flight.tasks.add(task)
+    task.add_done_callback(partial(_send_settled, screen, flight))
+
+
+def _send_settled(screen: Any, flight: _SendFlight, task: asyncio.Task[Any]) -> None:
+    flight.tasks.discard(task)
+    if not task.cancelled() and (error := task.exception()) is not None:
+        screen.app.call_later(_raise, error)
+    if not flight.tasks and (deferred := flight.deferred) is not None:
+        flight.deferred = None
+        if not _torn_down(screen):
+            screen.call_later(deferred)
+
+
+def _raise(error: BaseException) -> None:
+    raise error
 
 
 async def _paint_then(

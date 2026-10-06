@@ -360,7 +360,9 @@ select raw mode; this prevents a pasted prompt from silently turning into host
 execution. A physically typed prefix may be followed by pasted command text.
 Start with `\! ` to send an ordinary chat message beginning with literal `! `.
 When raw mode is recognized, the composer turns red and identifies host access
-before you send.
+before you send. Enter, **Send** and the Workbench's send all take the command
+out of the composer; if Console refuses it (raw CLI locked or not armed, for
+example), the exact draft comes back once.
 
 Console raw commands use automatic shell selection. The shared executor
 supports **Bash**, **PowerShell**, and **CMD**, invokes them with fixed
@@ -384,7 +386,8 @@ statistics tools.
 
 ### Sending, streaming, and stopping
 
-- Enter sends the draft. Your message appears in the transcript at once,
+- Enter, the **Send** button and the Workbench's send all send the draft the
+  same way. Your message appears in the transcript at once,
   marked **Sending…**, while Console prepares the turn: the header reads
   **Running**, the tab shows **●**, the status row shows **Run: Sending…** and
   Send reads **Sending...** (its strip: "Queue opens once this turn is
@@ -394,6 +397,10 @@ statistics tools.
   with **Restore**.
   Slash commands, typed `! ` commands, Enter during a run (which queues) and
   a send behind a **Blocked** turn (which is refused) skip this step.
+- Console stays responsive while it prepares the turn. Keys you type go into
+  the composer and stay there for your next message. An Enter pressed in that
+  moment is handled once the turn is accepted, so pressing Enter twice never
+  sends the same text twice.
 - The reply row then appears with a dim "Generating…" placeholder and streams
   in with a "[streaming]" suffix until it completes.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's

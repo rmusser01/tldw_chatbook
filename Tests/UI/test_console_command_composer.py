@@ -19,6 +19,7 @@ from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
     _build_console_send_test_app,
     _configure_native_ready_console,
+    _wait_for_reply,
     _wait_for_text,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -912,7 +913,7 @@ async def test_console_unknown_command_second_unmodified_enter_sends_as_text():
         submit_spy.assert_not_called()
 
         send_button.press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
         assert submit_spy.await_count == 1
         submit_call = submit_spy.await_args
@@ -1049,7 +1050,7 @@ async def test_console_collapsed_paste_starting_with_slash_sends_normally():
         submit_spy = await _spy_submit_draft(console)
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
         assert submit_spy.await_count == 1
         submit_call = submit_spy.await_args

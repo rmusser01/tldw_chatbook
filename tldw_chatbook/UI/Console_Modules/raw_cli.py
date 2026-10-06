@@ -119,11 +119,20 @@ def prepare_visible_send(
     stash: ConsoleDraftStash | None,
     composer_accessor: Callable[[], Any | None],
     start_user_command: Callable[[ConsoleDraftStash], Any],
+    commit_captured: Callable[[ConsoleDraftStash], Any] | None = None,
 ) -> tuple[ConsoleDraftStash | None, Any | None, str, bool]:
-    """Classify a visible draft and consume direct raw submissions."""
+    """Classify a visible draft and consume direct raw submissions.
+
+    ``commit_captured`` (TASK-33620.15) takes a captured raw draft -- Enter,
+    Send and the Workbench's send capture without clearing -- out of the
+    composer before the command starts, as the destructive stash did, so a
+    refusal restores it once instead of beside the live copy.
+    """
     if stash is not None:
         classified = classify_console_raw_draft(stash)
         if classified.kind == "raw":
+            if commit_captured is not None:
+                commit_captured(stash)
             start_user_command(stash)
             return stash, None, "", True
         if classified.kind == "escaped_chat":

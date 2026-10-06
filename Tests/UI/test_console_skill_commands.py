@@ -24,6 +24,7 @@ from Tests.UI.test_console_command_composer import _spy_submit_draft
 from Tests.UI.test_console_native_chat_flow import (
     CapturingGateway,
     _configure_native_ready_console,
+    _wait_for_reply,
     _wait_for_text,
 )
 from Tests.UI.test_destination_shells import _build_test_app, _wait_for_selector
@@ -298,7 +299,7 @@ async def test_leading_dollar_skill_mention_executes_through_normal_send():
         assert session_id is not None
 
         console.query_one("#console-send-message", Button).press()
-        await _wait_for_text(console, pilot, "accepted")
+        await _wait_for_reply(console, pilot)
 
         # The raw `$`-prefixed draft is submitted verbatim -- no composer
         # command dispatch ever intercepts it.
