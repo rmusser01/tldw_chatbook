@@ -51,9 +51,12 @@ WORKSPACE_HINT = (
 #: ``all_tool_gates()`` cannot describe them. TASK-34100.5 measured what plain
 #: chat is offered; the owner's "light surface by default" ruling
 #: (TASK-34100.5.3) changes it, and that task changes this one sentence.
+#: Measured live (TASK-34100.13, gpt-4.1-mini, every switch off): the request
+#: also carried sub-agent, skill, to-do, canvas, run-log, chat-fork,
+#: calculator and date tools.
 AGENT_RUNTIME_TOOLS_NOTE = (
-    "chatbook's own agent tools (sub-agents, skills, to-dos) are offered when "
-    "the model's context window has room"
+    "chatbook's own agent tools (sub-agents, skills, to-dos, canvas, run log, "
+    "calculator) are offered when the model's context window has room"
 )
 
 
