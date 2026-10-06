@@ -1482,6 +1482,18 @@ TOML, reloads, reads the setting). When new code reads a section from `app_confi
 in `load_settings()`'s returned dict and test through a real save-then-load, not
 a hand-seeded dict.
 
+**TASK-34100.4 part 2, 2026-10-05: the same trap, read-only.** The setup
+wizard's Protect step and `stored_plaintext_key_present` asked
+`app_config["encryption"]["enabled"]` whether keys were encrypted. `[encryption]`
+is not in `load_settings()`'s dict, so in the running app the answer was always
+"no" -- and the unlocked session holds the DECRYPTED keys, so an encrypted config
+read as "plain text" and was offered a second password. Every unit test passed,
+because each one seeded `{"encryption": {"enabled": True}}` by hand. The fix
+reads the file back (`load_cli_config_and_ensure_existence(force_reload=True)`,
+which keeps the table), and the new test feeds the step the in-memory shape the
+real app has: decrypted key, no `[encryption]`. If a section is deliberately not
+copied, a reader of it must not use `app_config` at all.
+
 ## Tests/UI `RecoveryRequired` at setup is a profile-selection trip, not a broken test
 
 **TASK-32954, 2026-09-25.** Task 5's `Tests/UI/test_personas_character_changed.py`
