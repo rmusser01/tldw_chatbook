@@ -137,7 +137,10 @@ def test_every_worker_method_is_still_a_worker_on_the_moved_class(
 #: class's own source, so a handler moved into a plain mixin, or one that lost
 #: its decorator, drops out of what they check and they still pass.
 _BASE_ON_HANDLERS = {
-    "WelcomeStep": ("open_backup_restore",),
+    # TASK-34100.13: Restore a backup moved below the nav bar (Tab reaches Next
+    # first), into WelcomeFooter, with its handler; see
+    # Tests/Wizards/test_first_run_welcome_copy.py for that class's handlers.
+    "WelcomeStep": (),
     "ProviderStep": (
         "_on_clear", "_on_detect_pressed", "_on_detected_endpoint_selected",
         "_on_endpoint_changed", "_on_keep", "_on_key_changed",
