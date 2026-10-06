@@ -152,6 +152,33 @@ def detect_engine_facts(
     )
 
 
+def refresh_engine_facts(step: Any) -> None:
+    """Re-detect the engine facts when the Speech step is shown.
+
+    Live (TASK-34100.13): the step is built when the wizard opens, before
+    Connect saves a key, so an OpenAI key typed in this run never offered the
+    Cloud row. Facts a caller injected are left alone.
+
+    Args:
+        step: The ``SpeechSetupStep``.
+    """
+    if getattr(step, "_facts_injected", False):
+        return
+    app_config = getattr(getattr(step.wizard, "app_instance", None), "app_config", {})
+    fresh = detect_engine_facts(
+        app_config if isinstance(app_config, Mapping) else {},
+        parakeet_bytes=step._parakeet_bytes(),
+    )
+    if fresh == step._engine_facts:
+        return
+    step._engine_facts = fresh
+    if (step._engine == ENGINE_CLOUD and not fresh.openai_key) or (
+        step._engine == ENGINE_INSTALLED and not fresh.installed_engine
+    ):
+        step._engine = ENGINE_NONE
+    step.refresh(recompose=True)
+
+
 def engine_choices(facts: EngineFacts) -> list[EngineChoice]:
     """The engine radio's rows, in order, built from what was detected."""
     size = f"{facts.parakeet_mib} MiB download" if facts.parakeet_mib else "download"

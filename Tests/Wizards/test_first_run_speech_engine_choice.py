@@ -361,3 +361,34 @@ def test_summary_names_an_installed_local_engine_honestly() -> None:
     assert row.detail == "Parakeet MLX on this computer"
     missing = _speech_row(config, installed_stt=())
     assert missing.detail == "not set up (optional)"
+
+
+@pytest.mark.asyncio
+async def test_a_key_saved_on_connect_this_run_adds_the_cloud_row_on_show(monkeypatch) -> None:
+    """Live: the step is built before Connect saves a key; showing it re-detects."""
+    wizard = SimpleNamespace(
+        app_instance=MagicMock(app_config={}),
+        commit_config=AsyncMock(return_value=True),
+        rerun=False,
+    )
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    step = SpeechSetupStep(
+        wizard=wizard,
+        config=WizardStepConfig(id="speech", title="Speech", step_number=6),
+        service_factory=_FakeService,
+        runtime_installed=lambda: True,
+    )
+    async with _Host(step).run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert not any("Cloud" in label for label in _labels(step))
+        # Connect saves the key and mirrors it into app_config.
+        wizard.app_instance.app_config["api_settings"] = {
+            "openai": {"api_key": "sk-saved-on-connect"}
+        }
+        step.on_show()
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if any("Cloud" in label for label in _labels(step)):
+                break
+        labels = _labels(step)
+    assert "Cloud — OpenAI Whisper (audio is sent to OpenAI)" in labels
