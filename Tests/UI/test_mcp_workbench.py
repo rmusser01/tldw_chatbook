@@ -3491,7 +3491,8 @@ async def test_empty_diagnosis_names_the_gate_off_count_when_gates_are_off():
     count, and this test is about the breadcrumb, not the arity."""
     from tldw_chatbook.Agents.tool_catalog import _GATEABLE_BUILTINS
 
-    off_count = len(_GATEABLE_BUILTINS) + 1  # + web_deep_search, - the master
+    # + web_deep_search + Full agent tools (TASK-34100.5.3), - the master
+    off_count = len(_GATEABLE_BUILTINS) + 2
     app = NoServersApp()
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()

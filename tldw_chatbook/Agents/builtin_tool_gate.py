@@ -910,10 +910,11 @@ TOOL_GATES_PANE_PATH = "Settings ▸ Tools & MCP ▸ Servers ▸ built-in row �
 #: behavior change.
 _LOCAL_TOOLS_MASTER_DESCRIPTION = (
     "Master switch for workspace, web, and Watchlists tools in the "
-    "Console/agent path. On by default; every call still follows the MCP "
-    "permission state, and web_deep_search also needs its individual gate. "
-    "Does NOT govern exposure to external MCP clients -- that's the separate "
-    "[mcp] expose_local_tools switch."
+    "Console/agent path. On by default, but plain chat gets these tools only "
+    "with Full agent tools on (ask_user and an opted-in web_deep_search need "
+    "this switch either way); every call still follows the MCP permission "
+    "state. Does NOT govern exposure to external MCP clients -- that's the "
+    "separate [mcp] expose_local_tools switch."
 )
 
 #: Hand-written description for web_deep_search -- also has no Tool
@@ -948,8 +949,8 @@ _ASK_USER_DESCRIPTION = (
 #: CHARACTER_TOOLS_GATE_KEY): every save still asks via the mutates floor.
 _CHARACTER_TOOLS_DESCRIPTION = (
     "Lets the Console assistant search, read, create, and update your local "
-    "character cards (and set their avatars). On by default; every save asks "
-    "for your approval first."
+    "character cards (and set their avatars) when Full agent tools is on. On "
+    "by default; every save asks for your approval first."
 )
 
 
@@ -997,9 +998,13 @@ def all_tool_gates() -> list[ToolGate]:
     retires the "Unavailable on this system." degrade path this used to
     need when an optional tool would not construct.
 
+    TASK-34100.5.3 appends the ``"agent"`` group's one gate last:
+    ``[tools] full_agent_tools_enabled``, the switch that gives plain Console
+    chat the full agent surface (``plain_chat_tool_surface``).
+
     Returns:
         Every gate in the order described above (the `_GATEABLE_BUILTINS`
-        rows, then the local group's two).
+        rows, then the local group's, then Full agent tools).
     """
     from ..config import coerce_bool_setting
     from .code_review_models import CODE_REVIEW_DEFAULT_ENABLED, CODE_REVIEW_GATE_KEY
@@ -1117,6 +1122,24 @@ def all_tool_gates() -> list[ToolGate]:
             effect_scope=scopes[("tools", CHARACTER_TOOLS_GATE_KEY)],
         )
     )
+    from .plain_chat_tool_surface import (
+        FULL_AGENT_TOOLS_DESCRIPTION,
+        FULL_AGENT_TOOLS_GATE_KEY,
+        FULL_AGENT_TOOLS_TITLE,
+        full_agent_tools_enabled,
+    )
+
+    gates.append(
+        ToolGate(
+            section="tools",
+            key=FULL_AGENT_TOOLS_GATE_KEY,
+            tool_name="full_agent_tools",
+            title=FULL_AGENT_TOOLS_TITLE,
+            description=FULL_AGENT_TOOLS_DESCRIPTION,
+            enabled=full_agent_tools_enabled(tools_cfg),
+            group="agent",
+        )
+    )
     return gates
 
 
@@ -1140,6 +1163,9 @@ def _gate_key_pairs() -> list[tuple[str, str]]:
     pairs.append(("tools", WEB_DEEP_SEARCH_GATE_KEY))
     pairs.append(("tools", ASK_USER_GATE_KEY))
     pairs.append(("tools", CHARACTER_TOOLS_GATE_KEY))
+    from .plain_chat_tool_surface import FULL_AGENT_TOOLS_GATE_KEY
+
+    pairs.append(("tools", FULL_AGENT_TOOLS_GATE_KEY))
     return pairs
 
 

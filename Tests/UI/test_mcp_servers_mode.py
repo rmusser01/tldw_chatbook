@@ -830,9 +830,11 @@ async def test_builtin_toggles_container_does_not_expand_past_content():
         assert toggles.size.height < 12
         # One row per `all_tool_gates()` entry + a title + two subheadings +
         # the includes line + two apply notes (task-32284 added the
-        # external-MCP one) -- still a content-sized handful of rows, not an
-        # expanding 1fr container, which measured in the hundreds.
-        assert tool_gates.size.height < 26
+        # external-MCP one) + TASK-34100.5.3's light-surface line (wraps to
+        # two rows at this width) above the Full agent tools row -- still a
+        # content-sized handful of rows, not an expanding 1fr container,
+        # which measured in the hundreds.
+        assert tool_gates.size.height < 29
 
         # The tool-gates container sits directly under the [mcp] toggles.
         gap_between = tool_gates.region.y - (toggles.region.y + toggles.region.height)
