@@ -447,3 +447,22 @@ cleared the 21-case strict gate. Trace unpublished allocations and the first ope
 (including requester attribution before later source reads), not just caches or
 registry counts. Preserve the original error and failed-close evidence; do not
 invent a global closer or GC policy to hide a failed initialization owner.
+
+## Recovery copy needs the actual rollback outcome and every input path
+
+**TASK-33622.20, 2026-10-06.** A switcher-owned quit question deliberately
+refused the synchronous Character reveal; rollback succeeded but generic failure
+copy replaced the user's intent. The first recovery attempt then failed again:
+cold hydration had persisted settings and advanced the immutable search revision.
+Refreshing only the Retry button left Enter and row click equally stale. Valid
+mounted RED controls pinned all three before they converged at the common
+activation entry on a fenced same-target refresh.
+
+The first refusal flag also masked failed prior-session restoration: the real
+best-effort repaint helper swallowed repaint/focus errors, so a coordinator-only
+exception control never observed them. Actual-helper RED controls required its
+existing adapter to report a bounded success signal; exceptions or explicit
+failed recovery clear refusal provenance. Keep closed outcomes and strict owner
+proofs unchanged. Live Active updates must refresh badges without silently
+erasing retained recovery, and a missing target must never donate Retry to its
+neighbor. Mounted evidence does not establish native quit or resource retirement.

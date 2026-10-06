@@ -1,0 +1,19 @@
+.FF                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_production_prior_restore_reports_swallowed_errors_to_coordinator[repaint] _
+Tests/Chat/test_console_conversation_activation.py:185: in test_production_prior_restore_reports_swallowed_errors_to_coordinator
+    assert result.presentation_refused is (fault is None)
+E   AssertionError: assert True is ('repaint' is None)
+E    +  where True = ConsoleConversationActivationResult(kind=<ConsoleActivationResultKind.FAILED: 'failed'>, target=LocalCharacterConversa...y_id='authority-A', character_id=7), conversation_id='conversation-X'), commit_started=True, presentation_refused=True).presentation_refused
+_ test_production_prior_restore_reports_swallowed_errors_to_coordinator[focus] _
+Tests/Chat/test_console_conversation_activation.py:185: in test_production_prior_restore_reports_swallowed_errors_to_coordinator
+    assert result.presentation_refused is (fault is None)
+E   AssertionError: assert True is ('focus' is None)
+E    +  where True = ConsoleConversationActivationResult(kind=<ConsoleActivationResultKind.FAILED: 'failed'>, target=LocalCharacterConversa...y_id='authority-A', character_id=7), conversation_id='conversation-X'), commit_started=True, presentation_refused=True).presentation_refused
+============================= slowest 25 durations =============================
+
+(9 durations < 1s hidden.)
+=========================== short test summary info ============================
+FAILED Tests/Chat/test_console_conversation_activation.py::test_production_prior_restore_reports_swallowed_errors_to_coordinator[repaint]
+FAILED Tests/Chat/test_console_conversation_activation.py::test_production_prior_restore_reports_swallowed_errors_to_coordinator[focus]
+2 failed, 1 passed, 35 deselected in 1.47s

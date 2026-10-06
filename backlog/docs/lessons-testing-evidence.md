@@ -18537,3 +18537,16 @@ all five exited-worker handles to exact Character-target revalidation. Check
 coverage of retained identities, not just observer drop counts; preserve the
 incomplete attempt and do not use instrumented timings as latency evidence.
 Evidence: [both probes and corrected origins](../../Docs/QA/task-31245/fixture-rebuild-2026-10-04.md).
+
+## Independent tree slices need exact row readiness
+
+TASK-34414, 2026-10-06: PR3029's Notes sync Delete/Undo test waited for any
+folder row, then immediately selected VSync. CI failed with StopIteration;
+the isolated unchanged test passed. Holding only the real folder-page response
+while a real Unfiled note painted reproduced the same failure. An initial
+concurrently paused control passed and was not RED; observing the actual wait
+handoff made the failure deterministic. Wait for the exact domain identity,
+then re-query its live row without yielding. A generic row and a Pilot settle
+pause do not prove that a sibling slice has arrived. The 30-second budget,
+real service, storage and all original action assertions remain unchanged.
+Evidence: [retained controls and RED/GREEN](../../Docs/QA/task-34414/README.md).
