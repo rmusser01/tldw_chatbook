@@ -30,7 +30,7 @@ REVIEWED_METADATA_ONLY_DIAGNOSTICS = {
     "tldw_chatbook/Agents/agent_runtime.py": {
         "Provider continuation stopped the run": (
             "reason",
-            "field_states.get('continuation_store_failure', 'none')",
+            "failed_store or 'none'",
         ),
         "Provider continuation persist failed": (
             "type(event).__name__",
