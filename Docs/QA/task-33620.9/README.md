@@ -704,3 +704,61 @@ publication. All eleven artifact guards and whitespace checks pass. Covering
 receipt SHA256: `63de612dbc535fbdd89d1429c3703a071ed432d1a6dd98b4e4149b6e36309c2a`;
 artifact receipt `/tmp/pr3024-runtime-owner-preflight.log`:
 `4652125092d82f67edcfc15a51476afdd002998ec9f2cebc1ed69627a585eeb9`.
+
+### Finite run-log reader ownership — 2026-10-06
+
+On published `c97e5aa57311ecf820cc78ddf50f16e19f2085c0`, a forwarding-only
+native lease trace ran four real mounted start/acceptance workflows: **4 passed
+in 29.64s**, no warnings, strict retirement exit **1**. The last two retain
+one/two `runs.db` leases on exited executor threads with zero active operations
+and no close-failure flag. Both allocation stacks lead through the installed
+`_probe_console_agent_run_log` → `run_log_available` →
+`_owning_run_id_for_log` → `get_run_metadata`. The observer delegates the actual
+registration and stores only identifiers/path/stack strings; it never closes
+handles or retains native objects. It is diagnostic, not latency qualification.
+Trace `/tmp/pr3024-runs-origin.log` SHA256:
+`98af1733c7e46a90c6c3de3f51b1779724fb1019fdbf993238a85c1f414b8912`;
+temporary plugin `/tmp/pr3024_runs_origin_probe.py` SHA256:
+`940a0e6835b07eca77f6f01baa86495d4ed85e8cc63eb0ce4f859d3367639128`.
+
+Reuse the existing finite-operation guard around that one shared metadata
+lookup, matching the neighboring resolver. No general connection-lifetime,
+constructor/shared-cache, scratch-authority, cancellation, GC or budget change.
+Real SQLite controls for all three log readers produce a valid **6 cold failures,
+6 warm passes in 2.34s** before repair, then **26 passed in 3.88s**, no warnings,
+strict exit **0** with zero database files, including incumbent replacement and
+borrowed-transaction controls. Native closure is asserted before test cleanup.
+The new regression joins the existing admission-sensitive CI invocation only.
+
+The complete corrected runtime/fixture batch, without the allocation observer,
+passes **100 tests, 1 existing xfail, 4 inherited AST SyntaxWarnings in 183.34s**,
+strict exit **0**, zero database files at all **101** teardown checkpoints.
+The existing log contract independently passes **34 in 8.19s**, no warnings.
+The broader mixed rail run is **38 failed, 46 passed in 14.29s**; inspected
+failures occur in unchanged configuration admission (`raw_source_selection_changed`)
+before the repaired lookup. Its failure is retained, not counted as GREEN.
+The first contract invocation without an explicit temporary root passed 34 bodies
+but warned while pytest cleaned older unrelated garbage; no cleanup or warning
+suppression was performed. The final contract receipt uses a fresh owned root.
+
+Independent scoped source/test review finds no actionable issue for partial draft
+publication. New test Ruff/format clean; production Ruff remains 29 identical
+inherited findings and normalized formatter debt 160/160 with no changed-hunk
+overlap (digest `e2d2644aa46035bb63c789d1be26f3f6c7c788be8c59ff75b80843ecf28a729a`).
+Existing ADR126 applies; no new ADR. Previous failed receipts remain historical.
+Native/Windows/participant/full-latency/application-retirement and actual
+external-review HOLDs are not waived; tasks remain In Progress.
+
+Temporary local receipts (not portable qualification archives):
+`/tmp/pr3024-run-log-{red,green,contract,mounted,behavior-fresh,static}.log`.
+RED SHA256 `1c1b2ebdbeff111a4c88699cdad1005415db3e441d6b4bb79bd6f46409720e90`;
+GREEN `b97fc2ef8057f4bce63af8b1dbd8eaef11ed66f5998a0fcd457e844d757ed9f9`;
+complete mounted `9ea582af17cfa162ec1aca591de72461f0a89eeee448371baf973bce181b09f4`;
+contract `1b91b524d7f3c8c0ad3c4af0f490eca444b383956e5df5f8895464ee5776cb2d`;
+failed mixed run `36a05f91cd50bf0368cc4ea287f53b756c9dd34be5f9a1ba0f2c313d78cedf95`.
+All eleven source-reproduction guards pass; final task-file guards and whitespace
+also pass after documentation edits. The two affected CI contract modules pass
+**23 in 1.02s**, no warnings. Artifact receipt `/tmp/pr3024-run-log-preflight.log`
+SHA256 `4652125092d82f67edcfc15a51476afdd002998ec9f2cebc1ed69627a585eeb9`;
+CI contract `/tmp/pr3024-run-log-ci-contract.log`
+`6523a39bdb6a8e82597177020e2b065f8e5264f1287b4e87d15939d1e9d37228`.

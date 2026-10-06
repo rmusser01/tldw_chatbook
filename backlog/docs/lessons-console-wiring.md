@@ -42,6 +42,17 @@ retire a replacement acquired within the completed operation. Do not infer that
 an object is caller-owned merely because its predecessor was borrowed, or claim
 this deterministic defect explains an intermittent failure not yet captured.
 
+**PR3024, 2026-10-06.** After test-owner adoption, a complete runtime batch
+still retained runs.db leases. A forwarding native-allocation trace identified
+exited executor owners with no active operations at the run-log availability
+probe's shared parent-run metadata lookup. The adjacent target resolver already
+retired finite reads, but all three log readers bypassed that boundary. Six real
+cold success/error controls failed while six unchanged warm transactions passed.
+Guarding the shared lookup with the installed helper clears the complete 101-case
+strict resource gate without adding cross-thread fixture closes or a new cache policy.
+Trace the first acquisition in every sibling caller; a later guarded read may
+correctly regard an already leaked handle as borrowed.
+
 The initial observer covered constructor profiles, not every test `tmp_path`.
 Adding the current run's explicit temporary root exposed Chat handles that the
 first filter could not see. Local quiescence then retired them, but the shared
