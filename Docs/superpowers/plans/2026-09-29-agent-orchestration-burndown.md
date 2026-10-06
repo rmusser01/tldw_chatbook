@@ -1406,3 +1406,16 @@ ADR required: no. Existing ADR199 and the Console fixture ownership incident app
 ## October 6 prepared-close independent publication review
 
 Prepared-close immutable sourced670062aae64c8b0639fc99c49cc5b3c07ba57c5 is independently Ready/no actionable findings/all activity settled. Review /private/tmp/pr2918-oct06-close-profile-independent-review.json SHA25646a56046e6bac5de33c5c9620d94f1ed85742d7b449ec3b20a7ba64ed676c33c authenticates full31088/all31080 outside eight, unchanged app/performance/CSS/workflows/shared fixture, published history and the separate RED/NON-GREEN/mounted-PASS/final-regression receipts. This approves one necessary source publication; fresh CI/current Qodo or explicit pending review exception/live protection/concurrency remain merge prerequisites. Parent AC3 and TASK33664.2 stay In Progress pending new-head qualification; AC4 and Done33664.1 remain exact. Only five owned documentation records receive this receipt after review. No source edit, replay, retry, auto-merge or heartbeat action.
+
+
+## October 6 shared tab-strip lifecycle repair — TASK-33664.3
+
+ADR required: no
+ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md
+Reason: routine post-await view-lifecycle repair within the existing shared Console surface; no new execution owner, authority, schema, dependency, style, budget or navigation policy.
+1. Preserve published ec CI failures: UI1 MountError on detached ConsoleSessionTabStrip, PR Fast Lane headless-navigation Textual barrier timeout, and separate successful UI2/UI3/latency evidence. Auto-merge is null and current CI must finish before any source update.
+2. Add one real Textual regression that detaches the surface during lock wait and the strip during child removal or each inter-mount boundary. Demonstrate the old shared sync_sessions failure first.
+3. Reuse existing liveness checks in shared sync_sessions at awaited boundaries. Preserve live child order/builders/awaits, tab labels/markers/focus, mount-churn accounting and all token/CSS/authority behavior; do not catch live mount failures or change callers.
+4. Verify the new regression, existing live tab-strip controls, actual failed pending-projection journey and headless-navigation case on new source once. The instrumented unchanged headless case already passed 1 in11.226s XML, all11 actual barriers acknowledged; its hosted timeout remains a separate non-green receipt with cause unqualified. Change no test or production timeout without causal evidence.
+5. Run only affected scoped static/CSS/post-await/task guards, retain unchanged-source and all raw evidence/history, then commit immutable source for focused independent review. Keep parent AC3 unchecked and AC4 checked; close no incoming task or original performance qualification.
+6. After Ready/all activity settled, publish one necessary real repair with the exact observed ec lease and fresh feedback/protection/current qualified refs. Require all four fresh gates/all three UI shards and current review before normal protected head-matched merge; verify actual merged parents/tree/concurrency. No heartbeat, retry, manual dispatch, dummy head or bypass.
