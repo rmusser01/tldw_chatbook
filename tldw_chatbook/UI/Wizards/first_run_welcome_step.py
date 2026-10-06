@@ -58,7 +58,7 @@ WELCOME_PITCH = (
 )
 #: What the Full track adds to today's Quick track (Voice and key protection
 #: are on both), instead of "configure everything".
-FULL_TRACK_LABEL = "Full setup — adds search, dictation, tools and appearance"
+FULL_TRACK_LABEL = "Full setup — adds search, dictation, tools, appearance"
 
 
 def _live_app_config(app_instance: Any) -> Optional[dict]:
