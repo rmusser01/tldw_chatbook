@@ -213,6 +213,7 @@ def main():
     assert type(controller) is controller_class and controller._screen is screen
     default_route = outcome in {'default_double', 'default_success'}
     workspace_id = DEFAULT_WORKSPACE_ID if default_route else 'availability-owned'
+    workspace_ids = tuple(sorted((workspace_id, 'availability-owned'))) if default_route else (workspace_id,)
     count = {'single': 1, 'double': 2, 'triple': 3, 'default_double': 2,
              'borrowed_double': 2, 'current_success': 0, 'default_success': 0}[outcome]
     borrowed = outcome == 'borrowed_double'
@@ -250,7 +251,7 @@ def main():
             and type(operation) is MethodType and operation.__self__ is controller
             and operation.__func__ is reader_function and type(args) is tuple
             and len(args) == 3 and args[0] is registry and args[1] is database
-            and args[2] == (workspace_id,)
+            and args[2] == workspace_ids
         )
 
     def observe_start(code, offset):
@@ -281,7 +282,7 @@ def main():
             return
         try:
             assert read.f_locals.get('registry') is registry and read.f_locals.get('database') is database
-            assert read.f_locals.get('workspace_ids') == (workspace_id,)
+            assert read.f_locals.get('workspace_ids') == workspace_ids
             assert registry.db is database
             connection = frame.f_locals['conn']
             assert isinstance(connection, sqlite3.Connection) and not closed(connection)
@@ -390,7 +391,7 @@ def main():
             borrowed_connection, borrowed_thread = await loop.run_in_executor(executor, borrow)
         original = None
         try:
-            controller._request_workspace_files_availability_refresh((workspace_id,))
+            controller._request_workspace_files_availability_refresh(workspace_ids)
             assert len(screen.workers) == 1
             original = screen.workers[0][0]
             assert type(original) is asyncio.Task and not original.done()
@@ -424,11 +425,11 @@ def main():
                     violations.append('availability_published_before_native_callback_retired')
                 # This unchanged scheduling entry must coalesce while the exact
                 # native callback is still alive; no state is forged for the test.
-                controller._request_workspace_files_availability_refresh((workspace_id,))
+                controller._request_workspace_files_availability_refresh(workspace_ids)
                 if len(screen.workers) != 1:
                     violations.append('availability_rearmed_before_native_callback_retired')
             if count == 0:
-                controller._request_workspace_files_availability_refresh((workspace_id,))
+                controller._request_workspace_files_availability_refresh(workspace_ids)
                 assert len(screen.workers) == 1 and not sync_calls
                 assert controller._workspace_files_availability_refresh_in_flight
         finally:
@@ -485,15 +486,15 @@ def main():
             if not violations:
                 assert not sync_calls and dict(controller._workspace_files_availability_by_id) == {}
                 before = len(screen.workers)
-                controller._request_workspace_files_availability_refresh((workspace_id,))
+                controller._request_workspace_files_availability_refresh(workspace_ids)
                 assert len(screen.workers) == before + 1
                 await screen.workers[-1][0]
                 assert len(sync_calls) == 1
         else:
             assert not original.cancelled() and len(sync_calls) == 1
         if not violations:
-            assert dict(controller._workspace_files_availability_by_id) == {workspace_id: False}
-            assert dict(controller._workspace_files_runtime_bindings_by_id) == {workspace_id: ()}
+            assert dict(controller._workspace_files_availability_by_id) == {item: False for item in workspace_ids}
+            assert dict(controller._workspace_files_runtime_bindings_by_id) == {item: () for item in workspace_ids}
 
     try:
         install_monitoring()

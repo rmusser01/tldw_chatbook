@@ -4236,3 +4236,160 @@ _WORKSPACE_COMPOSITE_FACTORY_SOURCE = (
         )
     ),
 )
+
+
+def _default_presentation_bindings(registry):
+    """Return an invocation-local stock policy checker, never DB authority."""
+    try:
+        from tldw_chatbook import config
+        from tldw_chatbook.Backup_Recovery import (
+            participants,
+            storage_admission as storage,
+        )
+
+        source = _DEFAULT_PRESENTATION_SOURCE
+        if type(source) is not tuple or len(source) != 7:
+            return None
+        (
+            owner,
+            lookup,
+            dictionary,
+            records,
+            default_id,
+            profile_record,
+            database_dictionary,
+        ) = source
+        if (
+            LocalWorkspaceRegistryService is not owner
+            or type(registry) is not owner  # noqa: E721 - exact defining class required.
+            or inspect.getattr_static(owner, "__getattribute__") is not lookup
+            or inspect.getattr_static(owner, "__dict__") is not dictionary
+            or "db" in vars(owner)
+        ):
+            return None
+        values = vars(registry)
+        if type(values) is not dict:  # noqa: E721 - exact stock owner dictionaries required.
+            return None
+        database = values.get("db")
+        if (
+            database is None
+            or type(database) is not WorkspaceDB
+            or inspect.getattr_static(WorkspaceDB, "__dict__")
+            is not database_dictionary
+            or type(vars(database)) is not dict  # noqa: E721 - exact stock owner dictionaries required.
+            or not _workspace_sources_current(registry, database)
+        ):
+            return None
+        profile = getattr(config, "_CONSOLE_PENDING_FACTS_IDENTITY_SOURCE", None)
+        if (
+            type(profile) is not tuple
+            or len(profile) != 6
+            or profile is not profile_record
+        ):
+            return None
+
+        def profile_current():
+            function, code, namespace, defaults, keywords, closure = profile
+            return (
+                config.__dict__ is namespace
+                and config.current_config_identity is function
+                and function.__code__ is code
+                and function.__globals__ is namespace
+                and function.__defaults__ is defaults is None
+                and function.__kwdefaults__ is keywords is None
+                and function.__closure__ is closure is None
+            )
+
+        if not profile_current():
+            return None
+        identity_reader = profile[0]
+        identity = identity_reader()
+        participant = database._maintenance_participant
+        actor = os.getpid(), threading.current_thread()
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            task = None
+
+        def current():
+            try:
+                try:
+                    current_task = asyncio.current_task()
+                except RuntimeError:
+                    current_task = None
+                if (
+                    os.getpid() != actor[0]
+                    or threading.current_thread() is not actor[1]
+                    or current_task is not task
+                    or globals().get("_DEFAULT_PRESENTATION_SOURCE") is not source
+                    or DEFAULT_WORKSPACE_ID is not default_id
+                    or getattr(config, "_CONSOLE_PENDING_FACTS_IDENTITY_SOURCE", None)
+                    is not profile
+                    or config.current_config_identity is not identity_reader
+                    or not profile_current()
+                    or inspect.getattr_static(owner, "__getattribute__") is not lookup
+                    or inspect.getattr_static(owner, "__dict__") is not dictionary
+                    or type(vars(registry)) is not dict  # noqa: E721 - exact stock owner dictionaries required.
+                    or vars(registry).get("db") is not database
+                    or inspect.getattr_static(WorkspaceDB, "__dict__")
+                    is not database_dictionary
+                    or type(vars(database)) is not dict  # noqa: E721 - exact stock owner dictionaries required.
+                    or not _workspace_sources_current(registry, database)
+                    or any(
+                        inspect.getattr_static(owner, name) is not record[0]
+                        or name in vars(registry)
+                        or not _workspace_function_current(record)
+                        for name, record in records
+                    )
+                    or identity_reader() != identity
+                ):
+                    return False
+                with storage._lock:
+                    return (
+                        participant in participants._installed_repositories
+                        and participant.repository() is database
+                        and database._maintenance_participant is participant
+                        and participant.path == database.db_path
+                        and not participant.closed
+                        and storage._pause is None
+                    )
+            except Exception:  # noqa: BLE001 - optional metadata must decline safely.
+                return False
+
+        return current if current() else None
+    except (AttributeError, TypeError, ValueError, KeyError):
+        return None
+
+
+def _default_presentation_record(function):
+    return (
+        function,
+        function.__code__,
+        function.__globals__,
+        function.__defaults__,
+        function.__kwdefaults__,
+        tuple((function.__kwdefaults__ or {}).items()),
+        function.__closure__,
+        tuple((cell, cell.cell_contents) for cell in function.__closure__ or ()),
+    )
+
+
+_DEFAULT_PRESENTATION_SELECTOR_SOURCE = _default_presentation_record(
+    _default_presentation_bindings
+)
+_DEFAULT_PRESENTATION_SOURCE = (
+    LocalWorkspaceRegistryService,
+    inspect.getattr_static(LocalWorkspaceRegistryService, "__getattribute__"),
+    inspect.getattr_static(LocalWorkspaceRegistryService, "__dict__"),
+    tuple(
+        (name, _default_presentation_record(vars(LocalWorkspaceRegistryService)[name]))
+        for name in ("list_runtime_bindings", "_delete_default_runtime_bindings")
+    ),
+    DEFAULT_WORKSPACE_ID,
+    getattr(
+        sys.modules.get("tldw_chatbook.config"),
+        "_CONSOLE_PENDING_FACTS_IDENTITY_SOURCE",
+        None,
+    ),
+    inspect.getattr_static(WorkspaceDB, "__dict__"),
+)

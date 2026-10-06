@@ -11771,3 +11771,13 @@ _SENSITIVE_INPUT_CACHED_READERS = (
         _resolve_effective_config_path.__wrapped__.__globals__,
     ),
 )
+
+
+_CONSOLE_PENDING_FACTS_IDENTITY_SOURCE = (
+    current_config_identity,
+    current_config_identity.__code__,
+    current_config_identity.__globals__,
+    current_config_identity.__defaults__,
+    current_config_identity.__kwdefaults__,
+    current_config_identity.__closure__,
+)

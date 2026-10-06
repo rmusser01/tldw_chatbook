@@ -475,6 +475,13 @@ class _ConsoleRegistryDisplayReads:
         return self._read(("workspaces",), "list_workspaces")
 
     def list_runtime_bindings(self, workspace_id: str) -> Any:
+        if type(workspace_id) is str and workspace_id == DEFAULT_WORKSPACE_ID:  # noqa: E721 - plain IDs only.
+            service = self._service
+            policy = _default_presentation_policy(service)
+            if policy is not None:
+                if self._service is not service or not policy():
+                    raise RuntimeError("default_presentation_source_changed")
+                return ()
         return self._read(
             ("bindings", str(workspace_id)), "list_runtime_bindings", workspace_id
         )
@@ -736,6 +743,8 @@ class ConsoleWorkspaceController:
             screen_lifecycle_token_accessor: Return the current screen mount identity.
             persist_workspace_tree_expansion_preferences: Persist the exact Tree
                 disclosure set to durable Console configuration.
+            begin_manual_read_visit: Begin a retained explicit read visit.
+            complete_manual_read_visit: Complete a retained explicit read visit.
             session_id_for_browser_row: Resolve an already-open session for a row.
             ensure_chat_controller: Resolve or create the native chat controller.
             set_conversation_row_loading: Paint persisted-row loading state.
@@ -6846,7 +6855,17 @@ class ConsoleWorkspaceController:
                     self.app_instance, "workspace_registry_service", None
                 )
                 database = getattr(registry, "db", None)
-                if type(database) is WorkspaceDB and not database.is_memory_db:
+                policy = (
+                    _default_presentation_policy(registry)
+                    if workspace_ids == (DEFAULT_WORKSPACE_ID,)
+                    else None
+                )
+                if policy is not None:
+                    availability_snapshot = {DEFAULT_WORKSPACE_ID: False}
+                    bindings_snapshot = {DEFAULT_WORKSPACE_ID: ()}
+                    if not policy():
+                        return
+                elif type(database) is WorkspaceDB and not database.is_memory_db:
                     read_operation = run_owned_db_call(
                         database,
                         self._read_workspace_files_availability,
@@ -6860,26 +6879,28 @@ class ConsoleWorkspaceController:
                         registry,
                         workspace_ids,
                     )
-                read_task = asyncio.create_task(read_operation)
-                try:
-                    availability_snapshot, bindings_snapshot = await asyncio.shield(
-                        read_task
-                    )
-                except asyncio.CancelledError:
-                    # Keep the exact producer claim until its native callback and
-                    # owned connection have physically retired, even on recancel.
-                    while not read_task.done():
-                        try:
-                            await asyncio.shield(read_task)
-                        except asyncio.CancelledError:
-                            continue
-                        except Exception:  # noqa: BLE001 - preserve cancellation.
-                            break
-                    if not read_task.cancelled():
-                        read_task.exception()
-                    raise
+                if policy is None:
+                    read_task = asyncio.create_task(read_operation)
+                    try:
+                        availability_snapshot, bindings_snapshot = await asyncio.shield(
+                            read_task
+                        )
+                    except asyncio.CancelledError:
+                        # Keep the exact producer claim until its native callback and
+                        # owned connection have physically retired, even on recancel.
+                        while not read_task.done():
+                            try:
+                                await asyncio.shield(read_task)
+                            except asyncio.CancelledError:
+                                continue
+                            except Exception:  # noqa: BLE001 - preserve cancellation.
+                                break
+                        if not read_task.cancelled():
+                            read_task.exception()
+                        raise
                 if (
-                    generation == self._workspace_files_availability_generation
+                    (policy is None or policy())
+                    and generation == self._workspace_files_availability_generation
                     and registry
                     is getattr(self.app_instance, "workspace_registry_service", None)
                     and database is getattr(registry, "db", None)
@@ -8371,3 +8392,35 @@ def _capture_stock_browser_read(controller, service, local_service, scope_servic
             _CONSOLE_BROWSER_FACTORY is _browser_read_source.capture_stock_browser_read
         ),
     )
+
+
+
+def _default_presentation_policy(registry):
+    """Dispatch only the original defining policy selector, never custom code."""
+    try:
+        from ...Workspaces import registry_service as source
+
+        record = source._DEFAULT_PRESENTATION_SELECTOR_SOURCE
+        if type(record) is not tuple or len(record) != 8:
+            return None
+        function, code, namespace, defaults, keywords, items, closure, cells = record
+        from types import FunctionType
+
+        if not isinstance(function, FunctionType):
+            return None
+        if (
+            source.__dict__ is not namespace
+            or namespace.get("_default_presentation_bindings") is not function
+            or function.__code__ is not code
+            or function.__globals__ is not namespace
+            or function.__defaults__ is not defaults
+            or function.__kwdefaults__ is not keywords
+            or function.__closure__ is not closure
+            or len(keywords or {}) != len(items)
+            or any((keywords or {}).get(name) is not value for name, value in items)
+            or any(cell.cell_contents is not value for cell, value in cells)
+        ):
+            return None
+        return function(registry)
+    except Exception:  # noqa: BLE001 - malformed optional source metadata declines.
+        return None
