@@ -118,6 +118,23 @@ class ConsoleContextControlState:
     def conversation_budget_tokens(self) -> int | None:
         return self.resolved_policy.effective_conversation_budget_tokens
 
+    def overhead_label(self) -> str:
+        """The "Request overhead" value, naming the tool schemas' share.
+
+        TASK-34100.5.3 AC#5: the overhead comes from the last prepared
+        request, whose accounting now counts the tools the send carries.
+        An unmeasured overhead reads "unknown", never "unknown tokens", as
+        ``context_token_row`` does (TASK-33007).
+        """
+        if self.request_overhead_tokens is None:
+            return "unknown"
+        text = f"{format_context_tokens(self.request_overhead_tokens)} tokens"
+        tools = next(
+            (row.tokens for row in self.breakdown_rows if row.label == "Tool schemas"),
+            0,
+        )
+        return f"{text} (tool schemas {format_context_tokens(tools)})" if tools else text
+
     @property
     def compaction_trigger_tokens(self) -> int | None:
         budget = self.conversation_budget_tokens
@@ -316,6 +333,15 @@ def build_console_context_control_state(
     a prepared request.  Until then, the honest fallback marks overhead as
     unknown and uses the displayed request estimate for conversation usage.
     """
+    if request_overhead_tokens is None and accounting is not None:
+        # TASK-34100.5.3: the last prepared request's exact non-conversation
+        # tokens -- system prompt, tool schemas, instructions.
+        request_overhead_tokens = max(
+            0,
+            accounting.system_tokens
+            + accounting.tool_schema_tokens
+            + accounting.mandatory_tokens,
+        )
     local_overrides = overrides or ConsoleContextPolicyOverrides()
     inherited = merge_context_policy(global_overrides=global_overrides)
     request_capacity = resolve_request_capacity(

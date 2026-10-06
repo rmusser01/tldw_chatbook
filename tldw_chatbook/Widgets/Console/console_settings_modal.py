@@ -1884,7 +1884,7 @@ class ConsoleSettingsModal(
                             markup=False,
                         )
                         yield Static(
-                            context_token_row("Request overhead", self._context_state.request_overhead_tokens),
+                            f"{'Request overhead':<20}{self._context_state.overhead_label()}",
                             id="console-context-overhead",
                             classes="console-settings-modal-row",
                             markup=False,
