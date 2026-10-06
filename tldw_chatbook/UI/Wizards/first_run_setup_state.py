@@ -1772,61 +1772,37 @@ def read_wizard_prefill(app_config: Mapping[str, object]) -> WizardPrefill:
     )
 
 
-def _voice_service_name(base_url: object) -> str:
-    """Name an OpenAI-compatible endpoint the way the Voice step labels it."""
-    from urllib.parse import urlsplit
-
-    from tldw_chatbook.TTS.openai_compatible_config import (
-        normalize_openai_compatible_endpoint,
-    )
-    from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
-
-    if not isinstance(base_url, str) or not base_url.strip():
-        return "OpenAI"  # the openai provider's own default endpoint
-    try:
-        speech_url = normalize_openai_compatible_endpoint(base_url).speech_url
-    except ValueError:
-        return "Custom endpoint"
-    if speech_url == voice_state.POCKET_TTS_ENDPOINT:
-        return "PocketTTS"
-    if speech_url == voice_state.OFFICIAL_OPENAI_TTS_ENDPOINT:
-        return "OpenAI"
-    # Host and port only: a URL's userinfo must never reach the screen.
-    parts = urlsplit(speech_url)
-    host = parts.hostname or ""
-    if ":" in host:  # IPv6: keep the brackets so the port stays readable
-        host = f"[{host}]"
-    if parts.port:
-        host = f"{host}:{parts.port}"
-    return f"Custom endpoint {host}".rstrip()
-
-
 def _voice_summary_row(app_config: Mapping[str, object]) -> "SummaryRow":
     """TASK-32959: read back what the Voice step saved.
 
     Only the raw ``[app_tts]`` table counts: the loaded settings back-fill
     ``default_provider = "openai"`` when nothing was saved, which must not
-    read as the user's choice.
+    read as the user's choice. TASK-34100.8 (voice-speech-06): the row names
+    service, model and voice -- "OpenAI · tts-1-hd · shimmer". Review round 1:
+    it names the voice replies use (an OpenAI-slot endpoint with no
+    default_provider IS that voice), names an endpoint saved beside another
+    provider's default as extra, and gives the old wizard's unspeakable
+    PocketTTS write no tick.
     """
-    app_tts = _section(app_config, "app_tts")
-    provider = app_tts.get("default_provider")
-    provider = provider.strip() if isinstance(provider, str) else ""
-    base_url = app_tts.get("OPENAI_BASE_URL")
-    if provider == "omnivoice":
-        return SummaryRow("Voice", ROW_CONFIGURED, "OmniVoice (default voice)")
-    if provider == "openai":
+    from tldw_chatbook.UI.Wizards import first_run_voice_prefill as voice_prefill
+
+    saved = voice_prefill.saved_voice_from_config(_section(app_config, "app_tts"))
+    if saved is None:
+        return SummaryRow("Voice", ROW_DEFAULT, "not set up (optional)")
+    if saved.legacy:
         return SummaryRow(
-            "Voice", ROW_CONFIGURED, f"{_voice_service_name(base_url)} (default voice)"
+            "Voice", ROW_ATTENTION, voice_prefill.legacy_summary_detail()
         )
-    if provider:
-        return SummaryRow("Voice", ROW_CONFIGURED, f"{provider} (default voice)")
-    if isinstance(base_url, str) and base_url.strip():
-        return SummaryRow(
-            "Voice",
-            ROW_CONFIGURED,
-            f"{_voice_service_name(base_url)} (saved, not the default voice)",
+    label = voice_prefill.voice_label(saved)
+    if saved.other_provider:
+        extra = (
+            f"; {voice_prefill.service_name(saved.slot_preset, saved.draft.endpoint)}"
+            " also saved"
+            if saved.slot_preset
+            else ""
         )
-    return SummaryRow("Voice", ROW_DEFAULT, "not set up (optional)")
+        return SummaryRow("Voice", ROW_CONFIGURED, f"{label} (default voice){extra}")
+    return SummaryRow("Voice", ROW_CONFIGURED, label)
 
 
 def build_summary_rows(

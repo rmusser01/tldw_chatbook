@@ -3707,7 +3707,7 @@
       "call_count": 6,
       "diagnostic_digest": "6a2fba384dfad6e3c7a1",
       "owner": "TASK-494",
-      "path": "tldw_chatbook/UI/Wizards/first_run_voice_step.py",
+      "path": "tldw_chatbook/UI/Wizards/first_run_voice_omnivoice.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {

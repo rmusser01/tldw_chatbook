@@ -94,7 +94,7 @@ OpenAI-compatible**.
 | Tools | Built-in tool gates (all off by default) | MCP ▸ Servers ▸ built-in row ▸ **Tool gates**, or `[tools]` in config.toml — no Settings category owns them |
 | Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |
 | Appearance | Theme and splash screen card | Settings ▸ Appearance |
-| Voice | Spoken replies — PocketTTS, OmniVoice (local, installs its model here), Official OpenAI or a compatible endpoint; sample + "Test and Hear" (endpoint/model under Advanced) | Settings ▸ Speech & TTS |
+| Voice | Spoken replies — "No voice for now" (the default), PocketTTS (its own local server), OpenAI (your OpenAI key), a Custom endpoint, or OmniVoice (local, installs its model here); sample + "Test and Hear" (endpoint, model, voice and format under Advanced) | Settings ▸ Speech & TTS |
 | Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security ▸ **Encryption**: Encrypt keys, Change password, Turn off encryption (each asks for the master password) |
 
 The Tools step is the only place in setup that turns a tool on, and it says
@@ -117,12 +117,81 @@ app's internal `chat_with_llm` tool, which the in-process server cannot run,
 is never offered. A self-hosted model whose context window the app has not
 read yet gets a plain request with no tools until it can be sized.
 
-The Voice step leads with a sample text and **Test and Hear**; the endpoint,
-model, and output settings sit under its "Advanced" section. Advancing saves
-the voice settings; the step reports the result itself and refuses to move on
-if the save failed, so setup never raises a pop-up notification over a later
-step's buttons. On terminals smaller than about 100×30 the wizard shows a
-one-line nudge — everything still works, steps just scroll.
+The Voice step's first choice is **No voice for now**, and it is selected
+unless a voice is already saved: Next then writes nothing, and the step says
+so ("Nothing is saved. Set up a voice any time in Settings ▸ Speech & TTS.").
+On a re-run the step starts from the voice you saved, for example "Current
+voice: OpenAI · tts-1-hd · shimmer — unchanged unless you edit it.", and Next
+leaves it exactly as it was unless you change something, test a sample, or
+change **Use this voice when Chatbook reads replies aloud**. Choosing **No
+voice for now** over a saved voice keeps that voice and says so ("Keeps your
+current voice (OpenAI · tts-1-hd · shimmer); Next changes nothing. Replies are
+read aloud only while Speak replies is on in Console."). When another provider
+reads your replies (for example kokoro, set up in Settings), the step starts on
+**No voice for now** and names it ("Current voice: kokoro — kept as it is").
+A profile that still holds the PocketTTS address an earlier version of setup
+wrote (`127.0.0.1:8765/v1/audio/speech`, which pocket-tts never serves) also
+starts on **No voice for now**, with a line saying that voice can't speak; pick
+a service to replace it. Resuming a setup that an earlier version left
+unfinished doesn't bring that address back either.
+
+A line under the service choice says whether it will work: "PocketTTS — not
+running at 127.0.0.1:8000" (one quick connection check), "OpenAI — uses your
+OpenAI key (key found)", and so on. That check only shows that something is
+listening at the address, so when it is, the line says "a server is listening"
+and leaves it to **Test and Hear** to confirm the server is PocketTTS (port
+8000 is a common default for other local servers). It only connects to an IP
+address or `localhost`; for a host name the line says **Test and Hear** checks
+it, so typing an address never waits on a name lookup. **Test and Hear** plays a
+short sample; Enter in **Sample text** runs it too (the hint line says so). A
+failed test starts "Test failed —" and names the cause: the server isn't
+running at that address, the key was rejected, there is no speech endpoint at
+that host, it timed out, or the reply wasn't audio. A PocketTTS address on
+another port counts as Custom, but its failures still name PocketTTS and say
+how to start it there (`pocket-tts serve --port 8766`). While **Test and
+Hear** can't run, the status line under it says why ("Type some sample text
+above to test the voice.", or "To test, fix this under Advanced: …", for
+example a PocketTTS address with a format other than `wav`). After a test,
+focus goes back to **Test and Hear**, unless you moved it while the test ran.
+
+PocketTTS, OpenAI and Custom share one OpenAI-compatible voice slot. While no
+other provider reads your replies, a voice saved there *is* the one replies
+use, so **Use this voice when Chatbook reads replies aloud** is ticked and
+can't be unticked, and the line under it says so ("Replies will use this voice
+— no other voice is set up.", or "This becomes the voice replies use — it
+replaces OpenAI · tts-1-hd · shimmer."). When another provider reads replies,
+the box is yours: a successful test ticks it, and unticked the service is
+saved for later while replies keep using that provider ("Saved for later;
+replies keep using kokoro."). When OmniVoice reads your replies, the step
+starts on **OmniVoice** with the box ticked and locked ("Replies use OmniVoice
+now — pick another service to change that."), and the other services name it
+("Saved for later; replies keep using OmniVoice."). The
+endpoint, authentication, model, voice and format sit under "Advanced" (the
+**API key** option uses your OpenAI key, from the Provider step, this step,
+Settings or `OPENAI_API_KEY`); Voice and Format are pickers with an "Other…"
+choice, and editing one of these away from the selected service's own values
+switches the service to **Custom** (your edits are kept if you switch away and
+back).
+
+**PocketTTS** is a separate local server, not part of Chatbook: install
+`pocket-tts` (from PyPI) and start it with `pocket-tts serve`. Chatbook talks
+to its own API at `http://127.0.0.1:8000/tts` (its default port; change the
+endpoint under Advanced if you started it on another port). It returns WAV
+audio only.
+
+**OpenAI** needs an OpenAI API key. If none is found, paste one into the
+masked **OpenAI API key** field that appears: it is kept in setup until you
+press Next, then saved where Settings ▸ Speech & TTS keeps it, so **Protect
+keys** can still encrypt it. You can also pick another service or choose "No
+voice for now". **Leave setup and add key in Settings…** asks first — setup
+picks up at Voice next time.
+
+When Voice does save, the step reports the result itself and refuses to move
+on if the save failed, so setup never raises a pop-up notification over a
+later step's buttons. On terminals smaller than about 100×30 the wizard shows
+a one-line nudge — everything still works, steps just scroll. Where one row is
+too narrow for every service name (80 columns, for example), the Voice
+service choice wraps to two rows so no name is cut off.
 
 Choosing **OmniVoice** shows a local panel instead of the endpoint fields: it
 tells you if the `omnivoice_tts` engine is missing, installs the 1.1 GB model
@@ -136,9 +205,11 @@ saved — and if the connection check failed while you were setting up (a
 rejected API key, an unreachable local server), the summary says so instead
 of showing a ✓, the progress tracker marks those steps with !, and moving
 past the model step asks for an explicit "Continue anyway". The Voice line names
-the saved service (for example "✓ Voice — OmniVoice (default voice)"), says
-when a voice was saved without being made the default, and reads "not set up
-(optional)" when you skipped the step.
+the voice replies use — service, model and voice (for example "✓ Voice —
+OpenAI · tts-1-hd · shimmer") — or another provider that reads them, adding a
+voice saved beside it ("kokoro (default voice); PocketTTS also saved"). It
+reads "not set up (optional)" when no voice is saved, and flags the old
+`127.0.0.1:8765` PocketTTS address as unable to speak instead of showing a ✓.
 
 The Summary's exits are **Review provider setup**, **Add your first document**
 (lands on Library's Import canvas — this is where your content lives),
