@@ -35,12 +35,24 @@ def test_a_fresh_profile_summary_names_the_light_set_without_hedging():
 
     assert row.state == ROW_DEFAULT
     assert row.detail == (
-        "on: date and time, calculator and ask you a question. Sub-agents, "
+        "on: date and time, calculator and ask you a question, plus tools from "
+        "MCP servers you add and Library tools in chats you allow. Sub-agents, "
         "skills, web, Watchlists, workspace files and characters stay off "
-        f"until you turn on Full agent tools under {TOOL_GATES_PANE_PATH}"
+        f"until you turn on Full agent tools under {TOOL_GATES_PANE_PATH}. "
+        "A model with a small or not-yet-known context window gets no tools."
     )
     assert "may still" not in row.detail
     assert "all off" not in row.detail
+
+
+def test_deep_web_research_on_does_not_also_say_web_stays_off():
+    """Review round 1 (F4a): with web_deep_search on, the row listed "Deep web
+    research" as on and, in the same sentence, said "web ... stay off"."""
+    detail = _tools_row({"tools": {"web_deep_search_enabled": True}}).detail
+
+    assert "Deep web research" in detail
+    assert "web, Watchlists" not in detail
+    assert "web search and fetch, Watchlists" in detail
 
 
 def test_tools_switched_on_one_by_one_are_named():
@@ -51,7 +63,7 @@ def test_tools_switched_on_one_by_one_are_named():
     assert row.state == ROW_CONFIGURED
     assert row.detail.startswith(
         "on: date and time, calculator, ask you a question, Read file and "
-        "Create note. Sub-agents, skills"
+        "Create note, plus tools from MCP servers you add"
     )
 
 
@@ -123,9 +135,10 @@ async def test_the_tools_step_states_the_light_set_and_offers_full_agent_tools()
         posture = str(step.query_one("#setup-tools-posture", Static).render())
         assert "Everything is off by default" not in posture
         assert posture.startswith(
-            "Always available in chat: date and time, calculator and ask you "
-            "a question."
+            "Chat starts with date and time, calculator and ask you a question; "
+            "a model with a small or not-yet-known context window gets no tools."
         )
+        assert "Always available" not in posture
         # One line, like every other row (the full description was clipped).
         desc = str(step.query_one("#setup-tool-desc-full_agent_tools", Static).render())
         assert desc.startswith("Adds sub-agents, skills, web")

@@ -311,6 +311,8 @@ class ToolSurfaceSummary:
         local_group_on: Whether the workspace, web and Watchlists group is on
             (it only matters with the full surface).
         character_tools_on: Whether the character tools are on (same).
+        web_research_on: Whether a local web opt-in (Deep web research) is
+            on, so plain chat has a web tool.
     """
 
     full_agent: bool
@@ -318,6 +320,7 @@ class ToolSurfaceSummary:
     switched_on: tuple[str, ...]
     local_group_on: bool
     character_tools_on: bool
+    web_research_on: bool = False
 
     @property
     def user_turned_on(self) -> bool:
@@ -387,6 +390,7 @@ def summarize_tool_surface(app_config: Mapping[str, Any]) -> ToolSurfaceSummary:
         character_tools_on=flag(
             tools, CHARACTER_TOOLS_GATE_KEY, CHARACTER_TOOLS_DEFAULT_ENABLED
         ),
+        web_research_on=any(gate.tool_name == "web_deep_search" for gate in opt_ins_on),
     )
 
 
@@ -408,6 +412,25 @@ def full_agent_tool_groups(summary: ToolSurfaceSummary) -> tuple[str, ...]:
     return tuple(groups)
 
 
+#: Review round 1 (F4): the first-request planner sends no tools when even
+#: the light set does not fit the window -- a self-hosted server whose window
+#: the app has not read is planned as 4,096 tokens -- so every place that
+#: names the light set says so, plainly.
+SMALL_WINDOW_NOTE = (
+    "A model with a small or not-yet-known context window gets no tools."
+)
+
+
+def _stays_off(summary: ToolSurfaceSummary) -> str:
+    """What the full agent surface would add, as plain chat's "stay off" list.
+
+    With Deep web research on, plain chat does have a web tool, so the list
+    names the web tools that stay off instead of "web" (review round 1, F4).
+    """
+    web = "web search and fetch" if summary.web_research_on else "web"
+    return f"Sub-agents, skills, {web}, Watchlists, workspace files and characters"
+
+
 def tool_surface_detail(summary: ToolSurfaceSummary) -> str:
     """The Summary's Tools row: exactly which tools plain chat is offered."""
     from tldw_chatbook.Agents.builtin_tool_gate import TOOL_GATES_PANE_PATH
@@ -416,31 +439,39 @@ def tool_surface_detail(summary: ToolSurfaceSummary) -> str:
         return (
             f"full agent tools ({_join(full_agent_tool_groups(summary))}), "
             f"plus {_join(summary.tools_on)}. Change them under "
-            f"{TOOL_GATES_PANE_PATH}"
+            f"{TOOL_GATES_PANE_PATH}. A model with a small or not-yet-known "
+            "context window gets fewer tools, or none."
         )
     return (
-        f"on: {_join(summary.tools_on)}. Sub-agents, skills, web, Watchlists, "
-        "workspace files and characters stay off until you turn on "
-        f"{FULL_AGENT_TOOLS_TITLE} under {TOOL_GATES_PANE_PATH}"
+        f"on: {_join(summary.tools_on)}, plus tools from MCP servers you add "
+        f"and Library tools in chats you allow. {_stays_off(summary)} stay off "
+        f"until you turn on {FULL_AGENT_TOOLS_TITLE} under "
+        f"{TOOL_GATES_PANE_PATH}. {SMALL_WINDOW_NOTE}"
     )
 
 
 def tools_step_posture(summary: ToolSurfaceSummary) -> str:
     """Setup's Tools step intro: what chat has before anything is switched on."""
+    small_window = SMALL_WINDOW_NOTE[0].lower() + SMALL_WINDOW_NOTE[1:]
     return (
-        f"Always available in chat: {_join(summary.light_names)}. Everything "
-        "below is off until you switch it on; tools that read or change your "
-        "files ask before they run."
+        f"Chat starts with {_join(summary.light_names)}; {small_window} "
+        "Everything below is off until you switch it on; tools that read or "
+        "change your files ask before they run."
     )
 
 
-def light_surface_note() -> str:
-    """One line naming the light surface, for the MCP hub's Tool gates pane."""
-    titles = [LIGHT_SURFACE_TOOL_TITLES[name] for name in LIGHT_SURFACE_TOOL_NAMES]
+def light_surface_note(summary: ToolSurfaceSummary) -> str:
+    """One line naming the light surface, for the MCP hub's Tool gates pane.
+
+    Derived from the pane's own switches (review round 1, F4/B-F3): it names
+    only the light tools that are on, and it does not promise "any tool
+    switched on below" -- the workspace/web/Watchlists master and Character
+    cards read "on" by default yet add nothing to plain chat.
+    """
     return (
-        f"Plain chat: {_join(titles)}, plus any tool switched on below. "
-        f"{FULL_AGENT_TOOLS_TITLE} adds sub-agents, skills, web, Watchlists, "
-        "workspace files and characters."
+        f"Plain chat: {_join(summary.light_names)}, plus any Agent built-in or "
+        f"Deep web research switched on. {FULL_AGENT_TOOLS_TITLE} adds the "
+        "rest: sub-agents, skills, web, Watchlists, files and characters."
     )
 
 
