@@ -15,6 +15,12 @@ unlocked) went out as the key, token or bearer:
 Each test records what reaches the request or the client. A still-encrypted
 value reads as absent, so the next source (an environment variable, the
 keyring, a legacy table) is used, or nothing is sent.
+
+TTS is defence in depth (review round 1, R1-F8/TE-3): the OpenAI and
+ElevenLabs backends already ran their key through `resolve_provider_api_key`,
+so on the pre-fix code the ciphertext was *held* in the manager's backend
+config, not put on the wire. Those tests pin what the manager (and the
+legacy bridge that feeds it in production) passes to the backend.
 """
 
 from __future__ import annotations
@@ -87,6 +93,70 @@ def test_tts_elevenlabs_encrypted_key_falls_through_to_the_normalized_table():
     assert config["ELEVENLABS_API_KEY"] == "el-plain"
 
 
+def test_tts_openai_legacy_slot_still_encrypted_is_not_passed_to_the_backend():
+    # TE-3: `openai_api` is the slot the production bridge fills.
+    config = _tts_config({"openai_api": {"api_key": _enc("sk-tts-real")}})
+
+    assert "OPENAI_API_KEY" not in config
+
+
+def test_tts_elevenlabs_normalized_slot_still_encrypted_is_not_passed():
+    from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
+
+    manager = TTSBackendManager({"elevenlabs_api": {"api_key": _enc("el-real")}})
+
+    assert "ELEVENLABS_API_KEY" not in manager._prepare_backend_config("elevenlabs")
+
+
+def _bridged_backend_config(provider_id: str, backend_id: str, app_config: dict):
+    """The production path: legacy bridge projection -> manager -> backend."""
+    from tldw_chatbook.TTS.legacy_bridge import legacy_provider_config
+    from tldw_chatbook.TTS.TTS_Backends import TTSBackendManager
+
+    projected = legacy_provider_config(provider_id, app_config)["app_config"]
+    return TTSBackendManager(projected)._prepare_backend_config(backend_id)
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "backend_id", "table", "env_var", "config_key"),
+    [
+        ("openai", "openai_official_tts", "openai", "OPENAI_API_KEY", "OPENAI_API_KEY"),
+        (
+            "elevenlabs",
+            "elevenlabs",
+            "elevenlabs",
+            "ELEVENLABS_API_KEY",
+            "ELEVENLABS_API_KEY",
+        ),
+    ],
+    ids=["openai", "elevenlabs"],
+)
+def test_tts_bridge_skips_a_still_encrypted_stored_key_for_the_env_var(
+    monkeypatch, provider_id, backend_id, table, env_var, config_key
+):
+    # TE-3: the bridge took the first truthy stored value, so ciphertext
+    # short-circuited the environment variable that should come next.
+    monkeypatch.setenv(env_var, "env-plain-key")
+    config = _bridged_backend_config(
+        provider_id,
+        backend_id,
+        {"api_settings": {table: {"api_key": _enc("stored-real")}}},
+    )
+
+    assert config.get(config_key) == "env-plain-key"
+
+
+def test_tts_bridge_never_projects_a_still_encrypted_key(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    config = _bridged_backend_config(
+        "openai",
+        "openai_official_tts",
+        {"api_settings": {"openai": {"api_key": _enc("stored-real")}}},
+    )
+
+    assert "OPENAI_API_KEY" not in config
+
+
 # --- Remote Whisper --------------------------------------------------------
 
 
@@ -110,8 +180,10 @@ def _remote_whisper_headers(monkeypatch, tmp_path, remote_config, environ):
         ),
     )
     captured: dict = {}
+    posted: list[str] = []
 
     def _post(url, **kwargs):
+        posted.append(url)
         captured.update(kwargs.get("headers") or {})
         raise _RequestSent()
 
@@ -120,6 +192,9 @@ def _remote_whisper_headers(monkeypatch, tmp_path, remote_config, environ):
         transcription_service._LegacyTranscriptionBackend._transcribe_with_remote_whisper(
             SimpleNamespace(), str(audio)
         )
+    # TE-7: the request was really attempted, so "no Authorization header"
+    # is a statement about what was sent, not about an early exit.
+    assert posted == [remote_config["api_endpoint"]]
     return captured
 
 
@@ -275,6 +350,22 @@ def test_server_client_never_sends_an_encrypted_bearer_token(monkeypatch):
         monkeypatch, {"auth_mode": "bearer", "bearer_token": _enc("server-bearer")}
     )
 
+    assert client.bearer_token is None
+
+
+def test_server_client_never_sends_an_encrypted_explicit_token(monkeypatch):
+    # TE-4: server_context.build_client and the unified-MCP factory pass
+    # auth_token= explicitly; that path had no pin.
+    from tldw_chatbook.runtime_policy import bootstrap
+
+    monkeypatch.setattr(bootstrap, "httpx_verify", lambda: True)
+    client = bootstrap.build_runtime_api_client(
+        endpoint_url="http://127.0.0.1:9",
+        auth_token=_enc("server-explicit"),
+        app_config={"tldw_api": {"base_url": "http://127.0.0.1:9"}},
+    )
+
+    assert client.token is None
     assert client.bearer_token is None
 
 
