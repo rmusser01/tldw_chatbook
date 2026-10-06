@@ -177,6 +177,21 @@ def build_search_commit(
     return {AUTO_RETRIEVE_SECTION: {AUTO_RETRIEVE_KEY: bool(auto_retrieve)}}
 
 
+def automatic_download_note(facts: EmbeddingModelFacts | None) -> str:
+    """What turning automatic search on can fetch, for a model run here.
+
+    Live (TASK-34100.13): on a fresh profile the first automatic search built
+    the RAG service and downloaded all-MiniLM-L6-v2 (87 MB) from Hugging
+    Face in the background; that first send paused while it happened.
+    """
+    if facts is None or facts.cloud or facts.local_server or not facts.name:
+        return ""
+    return (
+        f"If {facts.name} isn't on this computer yet, your first automatic "
+        "search downloads it, and that first message may wait for it."
+    )
+
+
 def search_summary_detail(
     *, auto_retrieve: bool, facts: EmbeddingModelFacts | None
 ) -> str:
