@@ -162,8 +162,10 @@ _BASE_ON_HANDLERS = {
         "_on_speech_precision_changed", "_retry_pressed",
         "_use_as_default_pressed", "_use_external_pressed",
     ),
+    # TASK-34100.13 removed the splash-card gallery (`_on_card`,
+    # `_on_show_all_cards`); the step gained a Reduce-motion handler.
     "AppearanceStep": (
-        "_on_card", "_on_show_all_cards", "_on_show_all_themes", "_on_theme",
+        "_on_reduce_motion", "_on_show_all_themes", "_on_theme",
     ),
     "ProtectKeysStep": ("_on_set_password",),
     "SummaryStep": (
